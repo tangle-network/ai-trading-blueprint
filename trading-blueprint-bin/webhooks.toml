@@ -1,0 +1,15 @@
+bind_address = "0.0.0.0:9090"
+
+[[endpoints]]
+path = "/hooks/alert"
+job_id = 40
+auth = "bearer"
+secret = "env:WEBHOOK_SECRET"
+name = "Trading Alert"
+
+[[endpoints]]
+path = "/hooks/tradingview"
+job_id = 40
+auth = "hmac-sha256"
+secret = "env:TRADINGVIEW_SECRET"
+name = "TradingView Signal"

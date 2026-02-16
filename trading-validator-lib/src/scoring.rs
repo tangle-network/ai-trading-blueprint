@@ -42,11 +42,14 @@ fn policy_score(intent: &TradeIntent) -> ScoringResult {
 
 /// Compute composite score: policy (fast) + AI (optional, slower).
 ///
-/// If `operator_address` is provided, records metrics (latency, score,
-/// AI failures) for QoS tracking.
+/// `strategy_context` is an optional one-liner injected into the AI prompt
+/// to give the evaluator protocol-specific awareness.
+///
+/// Records metrics (latency, score, AI failures) for QoS tracking.
 pub async fn compute_score(
     intent: &TradeIntent,
     ai_provider: Option<&AiProvider>,
+    strategy_context: Option<&str>,
 ) -> Result<ScoringResult, String> {
     let start = std::time::Instant::now();
     let policy = policy_score(intent);
@@ -59,7 +62,7 @@ pub async fn compute_score(
 
     // If AI provider is available, get AI score and blend
     let result = if let Some(provider) = ai_provider {
-        match crate::risk_evaluator::evaluate_risk(intent, provider).await {
+        match crate::risk_evaluator::evaluate_risk(intent, provider, strategy_context).await {
             Ok(ai_result) => {
                 // Blend: 40% policy + 60% AI
                 let blended_score = (policy.score * 40 + ai_result.score * 60) / 100;
@@ -131,7 +134,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None).await.unwrap();
+        let result = compute_score(&intent, None, None).await.unwrap();
         assert_eq!(result.score, 100);
     }
 
@@ -147,7 +150,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None).await.unwrap();
+        let result = compute_score(&intent, None, None).await.unwrap();
         assert_eq!(result.score, 80); // -20 for no min output
     }
 
@@ -163,7 +166,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None).await.unwrap();
+        let result = compute_score(&intent, None, None).await.unwrap();
         assert_eq!(result.score, 0);
     }
 }

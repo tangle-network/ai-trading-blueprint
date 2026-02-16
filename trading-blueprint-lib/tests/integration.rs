@@ -11,7 +11,10 @@ use trading_blueprint_lib::jobs::{
     configure_core, deprovision_core, extend_core, provision_core, start_core, status_core,
     stop_core,
 };
-use trading_blueprint_lib::prompts::{build_loop_prompt, build_system_prompt};
+use trading_blueprint_lib::prompts::{
+    build_generic_agent_profile, build_loop_prompt, build_pack_agent_profile,
+    build_pack_loop_prompt, build_pack_system_prompt, build_system_prompt, packs,
+};
 use trading_blueprint_lib::state::{bot_key, bots, find_bot_by_sandbox};
 use trading_blueprint_lib::{
     TradingExtendRequest, TradingProvisionOutput, TradingProvisionRequest, TradingStatusResponse,
@@ -377,6 +380,7 @@ async fn test_system_prompt_includes_api_info() {
         operator_address: String::new(),
         validator_service_ids: vec![],
         max_lifetime_days: 30,
+        paper_trade: true,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -536,4 +540,319 @@ async fn test_abi_round_trip_extend() {
     let decoded = TradingExtendRequest::abi_decode(&encoded).unwrap();
     assert_eq!(decoded.sandbox_id, "sb-extend-abi");
     assert_eq!(decoded.additional_days, 90);
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Pack tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_provision_with_pack_creates_rich_workflow() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-pack-prediction");
+    let request = make_provision_request("pack-bot", "prediction");
+    let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+    // Verify workflow_json contains backend_profile_json with agent profile
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist");
+
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+
+    // Should NOT have legacy system_prompt
+    assert!(
+        wf_json.get("system_prompt").is_none(),
+        "workflow should not have legacy system_prompt"
+    );
+
+    // Should have backend_profile_json
+    let profile_str = wf_json["backend_profile_json"]
+        .as_str()
+        .expect("should have backend_profile_json");
+    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
+
+    // Profile uses resources.instructions, not systemPrompt
+    assert!(
+        profile.get("systemPrompt").is_none(),
+        "profile should not set systemPrompt directly"
+    );
+    let instructions = profile["resources"]["instructions"]["content"]
+        .as_str()
+        .expect("profile should have resources.instructions.content");
+    assert!(
+        instructions.contains("gamma-api.polymarket.com"),
+        "instructions should contain Polymarket Gamma API URL"
+    );
+    assert!(
+        instructions.contains("clob.polymarket.com"),
+        "instructions should contain Polymarket CLOB API URL"
+    );
+    assert!(
+        instructions.contains("/validate"),
+        "instructions should contain base Trading HTTP API endpoints"
+    );
+    assert!(
+        instructions.contains("persistent workspace"),
+        "instructions should contain workspace awareness"
+    );
+
+    // Profile has permissions and memory
+    assert_eq!(profile["permission"]["bash"], "allow");
+    assert_eq!(profile["memory"]["enabled"], true);
+
+    // Loop prompt should reference the pack name
+    let loop_prompt = wf_json["prompt"].as_str().unwrap();
+    assert!(loop_prompt.contains("Polymarket Prediction Trading"));
+
+    // Pack overrides
+    assert_eq!(wf_json["max_turns"], 20);
+    assert_eq!(wf_json["timeout_ms"], 240_000);
+}
+
+#[tokio::test]
+async fn test_provision_without_pack_uses_generic_prompt() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-pack-unknown");
+    let request = make_provision_request("generic-bot", "exotic");
+    let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist");
+
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+    // No legacy system_prompt
+    assert!(
+        wf_json.get("system_prompt").is_none(),
+        "workflow should not have legacy system_prompt"
+    );
+
+    // Should still have backend_profile_json even for unknown strategy types
+    let profile_str = wf_json["backend_profile_json"]
+        .as_str()
+        .expect("generic strategy should still get a backend_profile_json");
+    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
+    let instructions = profile["resources"]["instructions"]["content"]
+        .as_str()
+        .expect("generic profile should have instructions");
+    assert!(
+        instructions.contains("persistent workspace"),
+        "generic profile should have workspace awareness"
+    );
+    assert!(
+        instructions.contains("multi-strategy"),
+        "generic profile should contain multi-strategy fragment"
+    );
+
+    // Generic loop prompt
+    let prompt = wf_json["prompt"].as_str().unwrap();
+    assert!(prompt.contains("exotic"));
+    assert!(prompt.contains("trading loop iteration"));
+
+    // Default max_turns and timeout
+    assert_eq!(wf_json["max_turns"], 10);
+    assert_eq!(wf_json["timeout_ms"], 120_000);
+}
+
+#[tokio::test]
+async fn test_provision_pack_uses_default_cron() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-pack-cron");
+    let mut request = make_provision_request("cron-pack-bot", "prediction");
+    request.trading_loop_cron = String::new(); // Empty — should use pack default
+
+    let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist");
+
+    // Polymarket pack default cron: every 3 minutes
+    assert_eq!(wf.trigger_config, "0 */3 * * * *");
+}
+
+#[tokio::test]
+async fn test_pack_system_prompt_includes_base_config() {
+    let pack = packs::get_pack("prediction").unwrap();
+    let config = trading_blueprint_lib::state::TradingBotRecord {
+        id: "test".to_string(),
+        sandbox_id: "sb".to_string(),
+        vault_address: "0xTEST_VAULT".to_string(),
+        share_token: String::new(),
+        strategy_type: "prediction".to_string(),
+        strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({"max_drawdown_pct": 10}),
+        chain_id: 137,
+        rpc_url: "http://polygon-rpc".to_string(),
+        trading_api_url: "http://my-api:9100".to_string(),
+        trading_api_token: "bearer-xyz".to_string(),
+        workflow_id: None,
+        trading_active: true,
+        created_at: 0,
+        operator_address: String::new(),
+        validator_service_ids: vec![],
+        max_lifetime_days: 30,
+        paper_trade: true,
+    };
+
+    let combined = build_pack_system_prompt(&pack, &config);
+
+    // Should contain base Trading HTTP API config
+    assert!(combined.contains("http://my-api:9100"), "Should contain trading API URL");
+    assert!(combined.contains("bearer-xyz"), "Should contain bearer token");
+    assert!(combined.contains("0xTEST_VAULT"), "Should contain vault address");
+    assert!(combined.contains("137"), "Should contain chain ID");
+
+    // Should contain expert Polymarket knowledge
+    assert!(combined.contains("gamma-api.polymarket.com"), "Should contain Gamma API");
+    assert!(combined.contains("half-Kelly"), "Should contain Kelly criterion");
+    assert!(combined.contains("Expert Strategy Instructions"), "Should have section header");
+}
+
+// ---------------------------------------------------------------------------
+// Agent Profile tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_provision_creates_backend_profile() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-profile-1");
+    let request = make_provision_request("profile-bot", "dex");
+    let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist");
+
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+
+    // Must have backend_profile_json
+    let profile_str = wf_json["backend_profile_json"]
+        .as_str()
+        .expect("workflow must have backend_profile_json");
+    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
+
+    // Profile has resources.instructions
+    let instructions = profile["resources"]["instructions"]["content"]
+        .as_str()
+        .expect("profile must have resources.instructions.content");
+    assert!(instructions.contains("Uniswap V3"));
+    assert!(instructions.contains("persistent workspace"));
+    assert!(instructions.contains("/home/agent/"));
+}
+
+#[tokio::test]
+async fn test_provision_no_system_prompt_in_workflow() {
+    let _dir = common::init_test_env();
+
+    // Test all known pack types
+    for strategy in &["prediction", "dex", "yield", "perp"] {
+        let sandbox = mock_sandbox(&format!("sb-no-sp-{strategy}"));
+        let request = make_provision_request(&format!("no-sp-{strategy}"), strategy);
+        let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key)
+            .unwrap()
+            .expect("workflow should exist");
+
+        let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+        assert!(
+            wf_json.get("system_prompt").is_none(),
+            "strategy {strategy} should not have system_prompt in workflow_json"
+        );
+        assert!(
+            wf_json.get("backend_profile_json").is_some(),
+            "strategy {strategy} should have backend_profile_json in workflow_json"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_provision_generic_strategy_gets_profile() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-generic-profile");
+    let request = make_provision_request("generic-profile-bot", "exotic");
+    let output = provision_core(request, Some(sandbox)).await.unwrap();
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist");
+
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+    let profile_str = wf_json["backend_profile_json"]
+        .as_str()
+        .expect("exotic strategy must get backend_profile_json");
+    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
+
+    // Generic profile has workspace awareness
+    let instructions = profile["resources"]["instructions"]["content"].as_str().unwrap();
+    assert!(instructions.contains("persistent workspace"));
+    assert!(instructions.contains("multi-strategy"));
+    // Still has permissions
+    assert_eq!(profile["permission"]["bash"], "allow");
+}
+
+#[tokio::test]
+async fn test_build_pack_agent_profile_integration() {
+    let pack = packs::get_pack("yield").unwrap();
+    let config = trading_blueprint_lib::state::TradingBotRecord {
+        id: "test".to_string(),
+        sandbox_id: "sb".to_string(),
+        vault_address: "0xVAULT_YIELD".to_string(),
+        share_token: String::new(),
+        strategy_type: "yield".to_string(),
+        strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({"max_drawdown_pct": 5}),
+        chain_id: 1,
+        rpc_url: "http://mainnet-rpc".to_string(),
+        trading_api_url: "http://api:9100".to_string(),
+        trading_api_token: "yield-token".to_string(),
+        workflow_id: None,
+        trading_active: true,
+        created_at: 0,
+        operator_address: String::new(),
+        validator_service_ids: vec![],
+        max_lifetime_days: 30,
+        paper_trade: true,
+    };
+
+    let profile = build_pack_agent_profile(&pack, &config);
+
+    // Structural checks
+    assert!(profile.get("systemPrompt").is_none());
+    assert_eq!(profile["name"], "trading-yield");
+    assert_eq!(profile["description"], "DeFi Yield Optimization");
+
+    // Content checks
+    let instructions = profile["resources"]["instructions"]["content"].as_str().unwrap();
+    assert!(instructions.contains("Aave V3"));
+    assert!(instructions.contains("Morpho"));
+    assert!(instructions.contains("0xVAULT_YIELD"));
+    assert!(instructions.contains("yield-token"));
+    assert!(instructions.contains("persistent workspace"));
+    assert!(instructions.contains("metrics"));
 }

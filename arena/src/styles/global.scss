@@ -1,0 +1,201 @@
+@use 'variables';
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    background: var(--arena-elements-bg-depth-1);
+    color: var(--arena-elements-textPrimary);
+  }
+
+  /* Scrollbar styling — theme-aware */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--arena-elements-dividerColor);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--glass-border-hover);
+  }
+}
+
+/* ═══ Typography Classes ═══ */
+.font-display {
+  font-family: 'Outfit', system-ui, sans-serif;
+}
+
+.font-body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+.font-data,
+.font-mono {
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ═══ Background Effects ═══ */
+.bg-mesh {
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 40%, var(--mesh-emerald), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 20%, var(--mesh-violet), transparent),
+      radial-gradient(ellipse 50% 60% at 50% 80%, var(--mesh-blue), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+.bg-noise {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+/* ═══ Glass Card Effects ═══ */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover {
+    border-color: var(--glass-border-hover);
+  }
+}
+
+.glass-card-strong {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+}
+
+/* ═══ Theme-aware borders & hovers ═══ */
+.border-themed {
+  border-color: var(--glass-border);
+}
+
+.border-themed-subtle {
+  border-color: var(--arena-elements-dividerColor);
+}
+
+.hover-themed:hover {
+  background: var(--arena-elements-bg-depth-3);
+}
+
+/* ═══ Glow Effects ═══ */
+.glow-emerald {
+  box-shadow:
+    0 0 20px rgba(0, 255, 136, 0.08),
+    0 0 60px rgba(0, 255, 136, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.glow-amber {
+  box-shadow:
+    0 0 20px rgba(255, 184, 0, 0.08),
+    0 0 60px rgba(255, 184, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.glow-crimson {
+  box-shadow:
+    0 0 20px rgba(255, 59, 92, 0.08),
+    0 0 60px rgba(255, 59, 92, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ═══ Rank Medals ═══ */
+.rank-medal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.rank-1 {
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  color: #1A0F00;
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+}
+
+.rank-2 {
+  background: linear-gradient(135deg, #C0C0C0, #A0A0B0);
+  color: #1A1A25;
+  box-shadow: 0 0 12px rgba(192, 192, 192, 0.3);
+}
+
+.rank-3 {
+  background: linear-gradient(135deg, #CD7F32, #A0622A);
+  color: #1A0F00;
+  box-shadow: 0 0 12px rgba(205, 127, 50, 0.3);
+}
+
+/* ═══ Score Ring ═══ */
+.score-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-ring svg {
+  transform: rotate(-90deg);
+}
+
+.score-ring .score-value {
+  position: absolute;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* ═══ Selection ═══ */
+::selection {
+  background: rgba(0, 255, 136, 0.2);
+  color: #F0F0F5;
+}

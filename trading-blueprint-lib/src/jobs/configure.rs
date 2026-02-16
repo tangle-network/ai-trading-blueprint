@@ -19,8 +19,13 @@ pub async fn configure_core(
     crate::state::bots()?
         .update(&bot_key(&bot_id), |b| {
             if !new_strategy_config.trim().is_empty() {
-                b.strategy_config =
-                    serde_json::from_str(&new_strategy_config).unwrap_or_default();
+                if let Ok(config) = serde_json::from_str::<serde_json::Value>(&new_strategy_config) {
+                    // Check for paper_trade toggle in strategy config
+                    if let Some(paper_val) = config.get("paper_trade").and_then(|v| v.as_bool()) {
+                        b.paper_trade = paper_val;
+                    }
+                    b.strategy_config = config;
+                }
             }
             if !new_risk_params.trim().is_empty() {
                 b.risk_params =

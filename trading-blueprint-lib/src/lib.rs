@@ -9,8 +9,12 @@ pub mod discovery;
 pub mod fees;
 pub mod jobs;
 pub mod on_chain;
+pub mod polymarket_ws;
 pub mod prompts;
+pub mod providers;
 pub mod state;
+
+pub use providers::{EventContext, ProviderRegistry, TradingProvider, registry};
 
 // Re-export sandbox-runtime modules so downstream crates can access them.
 pub use sandbox_runtime::{
@@ -38,6 +42,7 @@ pub const JOB_PROMPT: u8 = 10;
 pub const JOB_TASK: u8 = 11;
 pub const JOB_EXEC: u8 = 12;
 pub const JOB_WORKFLOW_TICK: u8 = 30;
+pub const JOB_WEBHOOK_EVENT: u8 = 40;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ABI types — must match TradingBlueprint.sol structs
@@ -114,4 +119,5 @@ pub fn router() -> Router {
         .route(JOB_TASK, jobs::task.layer(TangleLayer))
         .route(JOB_EXEC, jobs::exec.layer(TangleLayer))
         .route(JOB_WORKFLOW_TICK, jobs::workflow_tick)
+        .route(JOB_WEBHOOK_EVENT, jobs::webhook_event)
 }

@@ -22,4 +22,5 @@ blueprint-sdk = { path = "../blueprint/crates/sdk" }
 blueprint-anvil-testing-utils = { path = "../blueprint/crates/testing-utils/anvil" }
 blueprint-producers-extra = { path = "../blueprint/crates/producers-extra" }
 blueprint-qos = { path = "../blueprint/crates/qos" }
+blueprint-webhooks = { path = "../blueprint/crates/webhooks" }
 blueprint-x402 = { path = "../blueprint/crates/x402" }

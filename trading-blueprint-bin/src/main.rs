@@ -7,6 +7,8 @@
 //! Vault deployment is handled by the Solidity `onServiceInitialized` hook.
 //! The operator binary focuses on sidecar management and trading loop execution.
 
+mod operator_api;
+
 use blueprint_producers_extra::cron::CronJob;
 use blueprint_sdk::contexts::tangle::TangleClientContext;
 use blueprint_sdk::runner::BlueprintRunner;
@@ -248,6 +250,25 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         });
     }
 
+    // ── 6c. Spawn operator API server ─────────────────────────────────────
+    {
+        let port: u16 = std::env::var("OPERATOR_API_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9200);
+
+        let router = operator_api::build_operator_router();
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+            .await
+            .map_err(|e| blueprint_sdk::Error::Other(format!("Operator API bind failed: {e}")))?;
+        tracing::info!("Operator API listening on 0.0.0.0:{port}");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router).await {
+                tracing::error!("Operator API server error: {e}");
+            }
+        });
+    }
+
     // ── 7. Set up Tangle producer/consumer + cron workflow tick ───────────────
     let tangle_producer = TangleProducer::new(tangle_client.clone(), service_id);
     let tangle_consumer = TangleConsumer::new(tangle_client);
@@ -318,12 +339,85 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         }
     };
 
+    // ── 8b. Webhook gateway (optional — only if config exists) ──────────────
+    let webhook_producer = {
+        let webhook_config_path = std::env::var("WEBHOOK_CONFIG")
+            .unwrap_or_else(|_| "webhooks.toml".into());
+
+        if std::path::Path::new(&webhook_config_path).exists() {
+            match blueprint_webhooks::WebhookConfig::from_toml(&webhook_config_path) {
+                Ok(mut wh_config) => {
+                    wh_config.service_id = service_id;
+                    match blueprint_webhooks::WebhookGateway::new(wh_config) {
+                        Ok((gateway, producer)) => {
+                            tracing::info!("Webhook gateway initialized from {webhook_config_path}");
+                            Some((gateway, producer))
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create webhook gateway: {e} — continuing without webhooks");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse webhook config: {e} — continuing without webhooks");
+                    None
+                }
+            }
+        } else {
+            tracing::info!("No webhook config at {webhook_config_path} — webhook gateway disabled");
+            None
+        }
+    };
+
+    // ── 8c. Polymarket WebSocket producer (optional) ─────────────────────────
+    let polymarket_producer = {
+        if let Ok(markets_str) = std::env::var("POLYMARKET_MARKETS") {
+            let market_ids: Vec<String> = markets_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            if !market_ids.is_empty() {
+                let threshold = std::env::var("POLYMARKET_THRESHOLD_PCT")
+                    .ok()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(5.0);
+
+                tracing::info!(
+                    markets = market_ids.len(),
+                    threshold_pct = threshold,
+                    "Starting Polymarket WebSocket producer"
+                );
+
+                Some(trading_blueprint_lib::polymarket_ws::PolymarketProducer::new(
+                    market_ids,
+                    threshold,
+                    service_id,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
     // ── 9. Build and run the blueprint ───────────────────────────────────────
     let mut runner = BlueprintRunner::builder(tangle_config, env)
         .router(trading_blueprint_lib::router())
         .producer(tangle_producer)
         .producer(workflow_cron)
         .consumer(tangle_consumer);
+
+    if let Some((gateway, producer)) = webhook_producer {
+        runner = runner.producer(producer).background_service(gateway);
+    }
+
+    if let Some(pm_producer) = polymarket_producer {
+        runner = runner.producer(pm_producer);
+    }
 
     #[cfg(feature = "x402")]
     if let Some((gateway, producer)) = x402_producer {

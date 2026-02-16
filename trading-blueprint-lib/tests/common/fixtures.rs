@@ -57,6 +57,7 @@ pub fn seed_bot_record(
         operator_address: String::new(),
         validator_service_ids: vec![],
         max_lifetime_days: 30,
+        paper_trade: true,
     };
     bots()
         .expect("bots store")

@@ -2822,6 +2822,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "blueprint-webhooks"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "axum",
+ "blueprint-core",
+ "blueprint-runner",
+ "bytes",
+ "futures-core",
+ "hex",
+ "hmac",
+ "http 1.4.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "blueprint-x402"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -9283,9 +9305,11 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "rustls 0.23.36",
  "rustls-pki-types",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls 0.26.4",
  "tungstenite",
  "webpki-roots 0.26.11",
@@ -9624,12 +9648,21 @@ version = "0.1.0"
 dependencies = [
  "ai-agent-sandbox-blueprint-lib",
  "alloy-primitives",
+ "axum",
  "blueprint-producers-extra",
  "blueprint-qos",
  "blueprint-sdk",
+ "blueprint-webhooks",
+ "http-body-util",
+ "hyper 1.8.1",
  "sandbox-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
+ "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber 0.3.22",
  "trading-blueprint-lib",
@@ -9645,7 +9678,10 @@ dependencies = [
  "axum",
  "blueprint-anvil-testing-utils",
  "blueprint-sdk",
+ "bytes",
  "chrono",
+ "futures-core",
+ "futures-util",
  "hex",
  "once_cell",
  "reqwest 0.12.28",
@@ -9655,6 +9691,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber 0.3.22",
  "trading-http-api",
@@ -9668,16 +9705,21 @@ name = "trading-http-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "http-body-util",
  "hyper 1.8.1",
+ "once_cell",
  "rust_decimal",
+ "sandbox-runtime",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "trading-runtime",
+ "uuid 1.21.0",
  "wiremock",
 ]
 
@@ -9767,6 +9809,7 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.9.2",
  "rustls 0.23.36",
  "rustls-pki-types",

@@ -5,3 +5,5 @@ pub mod validate;
 pub mod execute;
 pub mod circuit;
 pub mod adapters;
+pub mod metrics;
+pub mod trades;

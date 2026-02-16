@@ -137,21 +137,95 @@ pub async fn provision_core(
         r
     };
 
-    // 7. Create cron workflow for trading loop
-    let workflow_prompt = crate::prompts::build_loop_prompt(&request.strategy_type);
-    let workflow_json = json!({
-        "sidecar_url": record.sidecar_url,
-        "prompt": workflow_prompt,
-        "session_id": format!("trading-{bot_id}"),
-        "max_turns": 10,
-        "timeout_ms": 120_000,
-        "sidecar_token": record.token,
-    })
-    .to_string();
+    // 7. Build TradingBotRecord (before workflow so pack can reference it)
+    let operator_address = op_ctx
+        .map(|c| c.operator_address.clone())
+        .unwrap_or_default();
 
-    let workflow_id = chrono::Utc::now().timestamp_millis() as u64;
+    let validator_service_ids: Vec<u64> = request
+        .validator_service_ids
+        .iter()
+        .copied()
+        .collect();
+
+    let max_lifetime_days = if request.max_lifetime_days == 0 { 30 } else { request.max_lifetime_days };
+    // Use timestamp_millis + random bits to avoid collisions in parallel tests
+    let workflow_id = {
+        let ts = chrono::Utc::now().timestamp_millis() as u64;
+        let rand_bits = (uuid::Uuid::new_v4().as_u128() & 0xFFFF) as u64;
+        ts.wrapping_mul(100_000).wrapping_add(rand_bits)
+    };
+
+    let bot_record = TradingBotRecord {
+        id: bot_id.clone(),
+        sandbox_id: record.id.clone(),
+        vault_address: vault_address.clone(),
+        share_token: String::new(),
+        strategy_type: request.strategy_type.clone(),
+        strategy_config: serde_json::from_str(&request.strategy_config_json).unwrap_or_default(),
+        risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_default(),
+        chain_id,
+        rpc_url,
+        trading_api_url,
+        trading_api_token: api_token,
+        workflow_id: Some(workflow_id),
+        trading_active: true,
+        created_at: chrono::Utc::now().timestamp() as u64,
+        operator_address,
+        validator_service_ids,
+        max_lifetime_days,
+        paper_trade: true,
+    };
+
+    // 8. Look up strategy pack and run setup commands
+    let pack = crate::prompts::packs::get_pack(&request.strategy_type);
+
+    if let Some(ref p) = pack {
+        for cmd in &p.setup_commands {
+            let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: record.sidecar_url.clone(),
+                command: cmd.clone(),
+                cwd: String::new(),
+                env_json: String::new(),
+                timeout_ms: 300_000, // 5 min for pip installs
+                sidecar_token: record.token.clone(),
+            };
+            if let Err(e) = ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req).await {
+                tracing::warn!("Pack setup command failed (non-fatal): {cmd}: {e}");
+            }
+        }
+    }
+
+    // 9. Create cron workflow for trading loop
+    let (loop_prompt, backend_profile) = match &pack {
+        Some(p) => (
+            crate::prompts::build_pack_loop_prompt(p),
+            crate::prompts::build_pack_agent_profile(p, &bot_record),
+        ),
+        None => (
+            crate::prompts::build_loop_prompt(&request.strategy_type),
+            crate::prompts::build_generic_agent_profile(
+                &request.strategy_type,
+                &bot_record,
+            ),
+        ),
+    };
+
+    let wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": loop_prompt,
+        "session_id": format!("trading-{bot_id}"),
+        "max_turns": pack.as_ref().map(|p| p.max_turns).filter(|&t| t > 0).unwrap_or(10),
+        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(120_000),
+        "sidecar_token": record.token,
+        "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
+    });
+    let workflow_json = wf.to_string();
+
     let cron_config = if request.trading_loop_cron.is_empty() {
-        "0 */5 * * * *".to_string() // Default: every 5 minutes
+        pack.as_ref()
+            .map(|p| p.default_cron.clone())
+            .unwrap_or_else(|| "0 */5 * * * *".to_string())
     } else {
         request.trading_loop_cron.clone()
     };
@@ -182,39 +256,7 @@ pub async fn provision_core(
         )
         .map_err(|e| format!("Failed to store workflow: {e}"))?;
 
-    // 8. Store TradingBotRecord
-    let operator_address = op_ctx
-        .map(|c| c.operator_address.clone())
-        .unwrap_or_default();
-
-    let validator_service_ids: Vec<u64> = request
-        .validator_service_ids
-        .iter()
-        .copied()
-        .collect();
-
-    let max_lifetime_days = if request.max_lifetime_days == 0 { 30 } else { request.max_lifetime_days };
-
-    let bot_record = TradingBotRecord {
-        id: bot_id.clone(),
-        sandbox_id: record.id.clone(),
-        vault_address: vault_address.clone(),
-        share_token: String::new(),
-        strategy_type: request.strategy_type.clone(),
-        strategy_config: serde_json::from_str(&request.strategy_config_json).unwrap_or_default(),
-        risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_default(),
-        chain_id,
-        rpc_url,
-        trading_api_url,
-        trading_api_token: api_token,
-        workflow_id: Some(workflow_id),
-        trading_active: true,
-        created_at: chrono::Utc::now().timestamp() as u64,
-        operator_address,
-        validator_service_ids,
-        max_lifetime_days,
-    };
-
+    // 10. Store bot record
     bots()?
         .insert(bot_key(&bot_id), bot_record)
         .map_err(|e| format!("Failed to store bot record: {e}"))?;

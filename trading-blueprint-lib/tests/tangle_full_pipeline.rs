@@ -149,6 +149,8 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             vault_address: format!("{vault_addr}"),
             validator_endpoints: cluster.endpoints.clone(),
             validation_deadline_secs: 3600,
+            bot_id: "e2e-test-bot".to_string(),
+            paper_trade: false,
         });
 
         let api_router = trading_http_api::build_router(api_state);

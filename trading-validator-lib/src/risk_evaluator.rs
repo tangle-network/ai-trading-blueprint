@@ -34,7 +34,39 @@ impl AiProvider {
     }
 }
 
-fn build_prompt(intent: &TradeIntent) -> String {
+/// Return a short strategy context string for known strategy types.
+/// Injected into the AI scoring prompt to give the evaluator protocol awareness.
+pub fn strategy_context_for(strategy_type: &str) -> Option<String> {
+    match strategy_type {
+        "prediction" => Some(
+            "Polymarket prediction market. Token should be USDC on Polygon. \
+             Valid protocols: polymarket. Check condition_id and outcome_index in metadata."
+                .to_string(),
+        ),
+        "dex" => Some(
+            "DEX swap. Valid protocols: uniswap_v3. Check real ERC-20 token addresses. \
+             Verify fee_tier in metadata. Slippage protection via min_amount_out is critical."
+                .to_string(),
+        ),
+        "yield" => Some(
+            "DeFi yield operation. Valid protocols: aave_v3, morpho. Check health factor \
+             implications. Supply/withdraw/borrow/repay actions. Verify asset is a real token."
+                .to_string(),
+        ),
+        "perp" => Some(
+            "Perpetual futures trade. Valid protocols: gmx_v2, vertex. Max 3x leverage. \
+             Must have stop_loss_price in metadata. Check acceptable_price bounds."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn build_prompt(intent: &TradeIntent, strategy_context: Option<&str>) -> String {
+    let context_section = strategy_context
+        .map(|ctx| format!("\nStrategy Context: {ctx}\n"))
+        .unwrap_or_default();
+
     format!(
         "Evaluate this trade intent for risk (0-100, higher=safer):\n\
          Action: {:?}\n\
@@ -43,7 +75,13 @@ fn build_prompt(intent: &TradeIntent) -> String {
          Amount: {}\n\
          Min Output: {}\n\
          Protocol: {}\n\
-         Chain: {}\n\n\
+         Chain: {}\n\
+         {context_section}\n\
+         Consider:\n\
+         - Is the protocol legitimate for this action?\n\
+         - Is slippage protection adequate (min_amount_out)?\n\
+         - Are the amounts reasonable?\n\
+         - Does the action make sense for the protocol?\n\n\
          Respond with JSON only: {{\"score\": <number>, \"reasoning\": \"<text>\"}}",
         intent.action,
         intent.token_in,
@@ -99,8 +137,9 @@ fn extract_json(s: &str) -> &str {
 pub async fn evaluate_risk(
     intent: &TradeIntent,
     provider: &AiProvider,
+    strategy_context: Option<&str>,
 ) -> Result<ScoringResult, String> {
-    let prompt = build_prompt(intent);
+    let prompt = build_prompt(intent, strategy_context);
 
     match provider {
         AiProvider::Anthropic { api_key, model } => {
@@ -196,4 +235,62 @@ async fn call_zai(
         .unwrap_or("{\"score\": 50, \"reasoning\": \"Empty response from coding API\"}");
 
     Ok(parse_score_response(content))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strategy_context_for_known_types() {
+        assert!(strategy_context_for("prediction").is_some());
+        assert!(strategy_context_for("dex").is_some());
+        assert!(strategy_context_for("yield").is_some());
+        assert!(strategy_context_for("perp").is_some());
+
+        let ctx = strategy_context_for("prediction").unwrap();
+        assert!(ctx.contains("Polymarket"));
+        assert!(ctx.contains("USDC"));
+
+        let ctx = strategy_context_for("dex").unwrap();
+        assert!(ctx.contains("uniswap_v3"));
+
+        let ctx = strategy_context_for("yield").unwrap();
+        assert!(ctx.contains("aave_v3"));
+        assert!(ctx.contains("morpho"));
+
+        let ctx = strategy_context_for("perp").unwrap();
+        assert!(ctx.contains("gmx_v2"));
+        assert!(ctx.contains("3x leverage"));
+    }
+
+    #[test]
+    fn test_strategy_context_for_unknown() {
+        assert!(strategy_context_for("unknown").is_none());
+        assert!(strategy_context_for("multi").is_none());
+        assert!(strategy_context_for("").is_none());
+    }
+
+    #[test]
+    fn test_build_prompt_with_context() {
+        use trading_runtime::intent::TradeIntentBuilder;
+        use trading_runtime::Action;
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(rust_decimal::Decimal::new(100, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        let prompt_without = build_prompt(&intent, None);
+        assert!(!prompt_without.contains("Strategy Context:"));
+
+        let prompt_with = build_prompt(&intent, Some("DEX swap context"));
+        assert!(prompt_with.contains("Strategy Context: DEX swap context"));
+        assert!(prompt_with.contains("Is the protocol legitimate"));
+    }
 }

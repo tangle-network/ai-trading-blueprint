@@ -25,6 +25,11 @@ pub struct ValidateRequest {
     pub vault_address: String,
     /// Unix timestamp deadline for the validation signature
     pub deadline: u64,
+    /// Optional strategy type for protocol-aware scoring context.
+    /// When set, the AI evaluator gets strategy-specific context (e.g.
+    /// valid protocols, expected metadata fields).
+    #[serde(default)]
+    pub strategy_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -114,10 +119,17 @@ async fn handle_validate(
     State(server): State<Arc<ValidatorServer>>,
     Json(request): Json<ValidateRequest>,
 ) -> Json<ValidateResponse> {
+    // Look up strategy context for protocol-aware scoring
+    let strategy_context = request
+        .strategy_type
+        .as_deref()
+        .and_then(crate::risk_evaluator::strategy_context_for);
+
     // Run policy checks + AI scoring
     let score_result = scoring::compute_score(
         &request.intent,
         server.ai_provider.as_ref(),
+        strategy_context.as_deref(),
     )
     .await;
 
@@ -350,5 +362,50 @@ mod tests {
         // Without a signer, should return a zero signature
         assert_eq!(resp.signature, format!("0x{}", "00".repeat(65)));
         assert_eq!(resp.validator, "0x0000000000000000000000000000000000000000");
+    }
+
+    fn make_test_intent_json() -> serde_json::Value {
+        use trading_runtime::intent::TradeIntentBuilder;
+        use trading_runtime::Action;
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(rust_decimal::Decimal::new(100, 0))
+            .min_amount_out(rust_decimal::Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        serde_json::to_value(&intent).unwrap()
+    }
+
+    #[test]
+    fn test_validate_request_with_strategy_type() {
+        let json = serde_json::json!({
+            "intent": make_test_intent_json(),
+            "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": 9999999999u64,
+            "strategy_type": "dex"
+        });
+
+        let req: ValidateRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.strategy_type.as_deref(), Some("dex"));
+    }
+
+    #[test]
+    fn test_validate_request_without_strategy_type() {
+        let json = serde_json::json!({
+            "intent": make_test_intent_json(),
+            "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": 9999999999u64
+        });
+
+        let req: ValidateRequest = serde_json::from_value(json).unwrap();
+        assert!(req.strategy_type.is_none(), "strategy_type should default to None");
     }
 }

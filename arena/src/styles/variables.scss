@@ -1,0 +1,188 @@
+/*
+ * OBSIDIAN TERMINAL — CSS Variables
+ * Dark-first, luxury crypto terminal aesthetic.
+ */
+
+/* ═══ Dark Theme (Default) ═══ */
+:root,
+:root[data-theme='dark'] {
+  --arena-elements-borderColor: rgba(240, 240, 245, 0.06);
+  --arena-elements-borderColorActive: theme('colors.emerald.400');
+
+  --arena-elements-bg-depth-1: #0A0A0F;
+  --arena-elements-bg-depth-2: #12121A;
+  --arena-elements-bg-depth-3: #1A1A25;
+  --arena-elements-bg-depth-4: #22222E;
+
+  --arena-elements-textPrimary: #F0F0F5;
+  --arena-elements-textSecondary: #8A8A9E;
+  --arena-elements-textTertiary: #5A5A6E;
+
+  --arena-elements-button-primary-background: rgba(0, 255, 136, 0.12);
+  --arena-elements-button-primary-backgroundHover: rgba(0, 255, 136, 0.20);
+  --arena-elements-button-primary-text: #00FF88;
+
+  --arena-elements-button-secondary-background: rgba(240, 240, 245, 0.06);
+  --arena-elements-button-secondary-backgroundHover: rgba(240, 240, 245, 0.10);
+  --arena-elements-button-secondary-text: #F0F0F5;
+
+  --arena-elements-button-danger-background: rgba(255, 59, 92, 0.12);
+  --arena-elements-button-danger-backgroundHover: rgba(255, 59, 92, 0.20);
+  --arena-elements-button-danger-text: #FF3B5C;
+
+  --arena-elements-icon-success: #00FF88;
+  --arena-elements-icon-error: #FF4D6A;
+  --arena-elements-icon-primary: #F0F0F5;
+  --arena-elements-icon-secondary: #5A5A6E;
+
+  --arena-elements-dividerColor: rgba(240, 240, 245, 0.06);
+  --arena-elements-item-backgroundHover: rgba(240, 240, 245, 0.03);
+  --arena-elements-item-backgroundActive: rgba(240, 240, 245, 0.06);
+  --arena-elements-focus: #00FF88;
+
+  /* shadcn/ui CSS Variables - Dark */
+  --background: 240 30% 4%;
+  --foreground: 240 10% 95%;
+  --card: 240 25% 7%;
+  --card-foreground: 240 10% 95%;
+  --popover: 240 25% 7%;
+  --popover-foreground: 240 10% 95%;
+  --primary: 155 100% 50%;
+  --primary-foreground: 240 30% 4%;
+  --secondary: 240 15% 14%;
+  --secondary-foreground: 240 10% 95%;
+  --muted: 240 15% 14%;
+  --muted-foreground: 240 10% 55%;
+  --accent: 240 15% 14%;
+  --accent-foreground: 240 10% 95%;
+  --destructive: 348 100% 61%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 10% 16%;
+  --input: 240 10% 16%;
+  --ring: 155 100% 50%;
+  --radius: 0.625rem;
+
+  --chart-1: 155 100% 50%;
+  --chart-2: 197 100% 50%;
+  --chart-3: 45 100% 50%;
+  --chart-4: 263 90% 66%;
+  --chart-5: 348 100% 61%;
+
+  /* Glass morphism tokens */
+  --glass-bg: rgba(18, 18, 26, 0.60);
+  --glass-bg-strong: rgba(18, 18, 26, 0.80);
+  --glass-border: rgba(240, 240, 245, 0.06);
+  --glass-border-hover: rgba(240, 240, 245, 0.12);
+  --glass-blur: 16px;
+
+  /* Gradient mesh colors */
+  --mesh-emerald: rgba(0, 255, 136, 0.04);
+  --mesh-violet: rgba(139, 92, 246, 0.04);
+  --mesh-blue: rgba(0, 180, 255, 0.03);
+}
+
+/* ═══ Light Theme ═══ */
+:root[data-theme='light'] {
+  --arena-elements-borderColor: rgba(10, 10, 15, 0.08);
+  --arena-elements-borderColorActive: #00AA5C;
+
+  --arena-elements-bg-depth-1: #FAFAFE;
+  --arena-elements-bg-depth-2: #F0F0F5;
+  --arena-elements-bg-depth-3: #E5E5ED;
+  --arena-elements-bg-depth-4: #D8D8E2;
+
+  --arena-elements-textPrimary: #0E0E16;
+  --arena-elements-textSecondary: #5A5A6E;
+  --arena-elements-textTertiary: #8A8A9E;
+
+  --arena-elements-button-primary-background: rgba(0, 213, 115, 0.10);
+  --arena-elements-button-primary-backgroundHover: rgba(0, 213, 115, 0.18);
+  --arena-elements-button-primary-text: #008048;
+
+  --arena-elements-button-secondary-background: rgba(10, 10, 15, 0.05);
+  --arena-elements-button-secondary-backgroundHover: rgba(10, 10, 15, 0.08);
+  --arena-elements-button-secondary-text: #0E0E16;
+
+  --arena-elements-button-danger-background: rgba(229, 34, 62, 0.08);
+  --arena-elements-button-danger-backgroundHover: rgba(229, 34, 62, 0.14);
+  --arena-elements-button-danger-text: #B91C32;
+
+  --arena-elements-icon-success: #00AA5C;
+  --arena-elements-icon-error: #E5223E;
+  --arena-elements-icon-primary: #0E0E16;
+  --arena-elements-icon-secondary: #8A8A9E;
+
+  --arena-elements-dividerColor: rgba(10, 10, 15, 0.06);
+  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.03);
+  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.06);
+  --arena-elements-focus: #00AA5C;
+
+  /* shadcn/ui CSS Variables - Light */
+  --background: 240 20% 98%;
+  --foreground: 240 30% 5%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 30% 5%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 30% 5%;
+  --primary: 155 100% 33%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 10% 94%;
+  --secondary-foreground: 240 30% 5%;
+  --muted: 240 10% 94%;
+  --muted-foreground: 240 10% 40%;
+  --accent: 240 10% 94%;
+  --accent-foreground: 240 30% 5%;
+  --destructive: 348 85% 46%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 10% 90%;
+  --input: 240 10% 90%;
+  --ring: 155 100% 33%;
+  --chart-1: 155 80% 35%;
+  --chart-2: 197 80% 45%;
+  --chart-3: 45 80% 50%;
+  --chart-4: 263 70% 55%;
+  --chart-5: 348 80% 50%;
+
+  --glass-bg: rgba(255, 255, 255, 0.70);
+  --glass-bg-strong: rgba(255, 255, 255, 0.85);
+  --glass-border: rgba(10, 10, 15, 0.06);
+  --glass-border-hover: rgba(10, 10, 15, 0.12);
+  --glass-blur: 16px;
+
+  --mesh-emerald: rgba(0, 213, 115, 0.03);
+  --mesh-violet: rgba(139, 92, 246, 0.03);
+  --mesh-blue: rgba(0, 140, 200, 0.02);
+}
+
+:root {
+  --header-height: 64px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --header-height: 56px;
+  }
+}
+
+/* ═══ Focus Indicators ═══ */
+*:focus-visible {
+  outline: 2px solid var(--arena-elements-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--arena-elements-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 255, 136, 0.15);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--arena-elements-focus);
+  outline-offset: 1px;
+}
