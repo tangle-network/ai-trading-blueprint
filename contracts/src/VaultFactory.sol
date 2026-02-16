@@ -77,6 +77,17 @@ contract VaultFactory is Ownable2Step {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // OWNERSHIP
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Accept pending ownership of PolicyEngine and TradeValidator.
+    /// @dev Call this after the deployer calls transferOwnership(vaultFactory) on both.
+    function acceptDependencyOwnership() external onlyOwner {
+        policyEngine.acceptOwnership();
+        tradeValidator.acceptOwnership();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // VAULT CREATION
     // ═══════════════════════════════════════════════════════════════════════════
 

@@ -1,0 +1,17 @@
+# Operator 1 — Pricing Engine Configuration
+# Anvil key 1: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+
+database_path = "scripts/data/operator1/pricing-engine"
+benchmark_duration = 10
+benchmark_interval = 5
+
+# Keystore with imported Anvil key 1
+keystore_path = "scripts/data/operator1/keystore"
+
+# gRPC server — operator 1 on port 50051
+rpc_bind_address = "0.0.0.0"
+rpc_port = 50051
+rpc_timeout = 30
+rpc_max_connections = 256
+
+quote_validity_duration_secs = 300

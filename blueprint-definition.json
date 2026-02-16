@@ -1,0 +1,56 @@
+{
+  "metadata_uri": "ipfs://QmTradingBlueprint",
+  "manager": "0x0000000000000000000000000000000000000000",
+  "master_manager_revision": 0,
+  "jobs": [
+    { "name": "provision", "description": "Provision a new trading bot instance" },
+    { "name": "configure", "description": "Reconfigure an existing bot strategy" },
+    { "name": "start_trading", "description": "Start the trading loop" },
+    { "name": "stop_trading", "description": "Stop the trading loop" },
+    { "name": "status", "description": "Query bot status" },
+    { "name": "deprovision", "description": "Deprovision and clean up bot instance" },
+    { "name": "extend", "description": "Extend bot lifetime" },
+    { "name": "prompt", "description": "Send prompt to sandbox AI agent" },
+    { "name": "task", "description": "Submit task to sandbox AI agent" },
+    { "name": "exec", "description": "Execute command in sandbox" },
+    { "name": "workflow_tick", "description": "Periodic workflow execution" },
+    { "name": "webhook_event", "description": "Handle webhook events" }
+  ],
+  "sources": [
+    {
+      "kind": "native",
+      "fetcher": "none",
+      "entrypoint": "./target/release/trading-blueprint",
+      "artifact_uri": "file:///home/drew/code/ai-trading-blueprints/target/release/trading-blueprint",
+      "testing": {
+        "cargo_package": "trading-blueprint-bin",
+        "cargo_bin": "trading-blueprint",
+        "base_path": "."
+      },
+      "binaries": [
+        {
+          "name": "trading-blueprint",
+          "arch": "x86_64",
+          "os": "linux",
+          "sha256": "ca010b81f0fc953e62fbeac40389f6666ceb7de179f5a5cccadc88f0df3b2210"
+        }
+      ]
+    }
+  ],
+  "supported_memberships": ["fixed"],
+  "config": {
+    "membership": "fixed",
+    "pricing": "pay_once",
+    "min_operators": 1,
+    "max_operators": 10
+  },
+  "metadata": {
+    "name": "AI Trading Blueprint",
+    "description": "Autonomous AI trading bots on Tangle Network",
+    "author": "Tangle",
+    "category": "Trading",
+    "code_repository": "https://github.com/tangle-network/ai-trading-blueprints",
+    "website": "https://tangle.network",
+    "license": "MIT"
+  }
+}
