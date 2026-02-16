@@ -142,6 +142,15 @@ pub struct ValidatorResponse {
     pub score: u32,
     pub signature: String,
     pub reasoning: String,
+    /// Chain ID from the EIP-712 domain (if signer was configured)
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+    /// TradeValidator contract address from the EIP-712 domain
+    #[serde(default)]
+    pub verifying_contract: Option<String>,
+    /// ISO 8601 timestamp of when the validator produced this response
+    #[serde(default)]
+    pub validated_at: Option<String>,
 }
 
 /// Market data types

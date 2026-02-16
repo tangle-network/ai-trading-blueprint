@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod routes;
+pub mod session_auth;
 pub mod trade_store;
 pub mod metrics_store;
 
@@ -26,6 +27,12 @@ pub struct TradingApiState {
     pub bot_id: String,
     /// Paper trading mode — trades are logged but not executed on-chain.
     pub paper_trade: bool,
+    /// Wallet address of the bot owner (for session auth verification).
+    pub operator_address: String,
+    /// Sidecar container base URL (e.g. "http://localhost:8080").
+    pub sidecar_url: String,
+    /// Bearer token for authenticating with the sidecar API.
+    pub sidecar_token: String,
 }
 
 fn cors_layer() -> CorsLayer {
@@ -55,6 +62,7 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .merge(routes::adapters::router())
         .merge(routes::metrics::router())
         .merge(routes::trades::router())
+        .merge(routes::session::router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

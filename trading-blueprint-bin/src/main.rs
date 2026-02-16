@@ -7,6 +7,7 @@
 //! Vault deployment is handled by the Solidity `onServiceInitialized` hook.
 //! The operator binary focuses on sidecar management and trading loop execution.
 
+mod graceful_consumer;
 mod operator_api;
 
 use blueprint_producers_extra::cron::CronJob;
@@ -15,6 +16,7 @@ use blueprint_sdk::runner::BlueprintRunner;
 use blueprint_sdk::runner::config::BlueprintEnvironment;
 use blueprint_sdk::runner::tangle::config::TangleConfig;
 use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
+use graceful_consumer::GracefulConsumer;
 use trading_blueprint_lib::JOB_WORKFLOW_TICK;
 use trading_blueprint_lib::context::TradingOperatorContext;
 
@@ -294,7 +296,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     // ── 7. Set up Tangle producer/consumer + cron workflow tick ───────────────
     let tangle_producer = TangleProducer::new(tangle_client.clone(), service_id);
-    let tangle_consumer = TangleConsumer::new(tangle_client);
+    let tangle_consumer = GracefulConsumer::new(TangleConsumer::new(tangle_client));
 
     let tangle_config = {
         let mut config = TangleConfig::default();

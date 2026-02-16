@@ -39,6 +39,12 @@ pub struct ValidatorResponsePayload {
     pub score: u32,
     pub reasoning: String,
     pub signature: String,
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+    #[serde(default)]
+    pub verifying_contract: Option<String>,
+    #[serde(default)]
+    pub validated_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -91,6 +97,9 @@ async fn execute(
                 score: r.score,
                 reasoning: r.reasoning.clone(),
                 signature: r.signature.clone(),
+                chain_id: r.chain_id,
+                verifying_contract: r.verifying_contract.clone(),
+                validated_at: r.validated_at.clone(),
             }
         }).collect(),
     };
@@ -105,6 +114,9 @@ async fn execute(
                 score: r.score,
                 reasoning: r.reasoning.clone(),
                 signature: r.signature.clone(),
+                chain_id: r.chain_id,
+                verifying_contract: r.verifying_contract.clone(),
+                validated_at: r.validated_at.clone(),
             }
         }).collect(),
     };

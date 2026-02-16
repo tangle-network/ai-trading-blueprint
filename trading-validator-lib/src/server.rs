@@ -40,6 +40,14 @@ pub struct ValidateResponse {
     pub reasoning: String,
     /// Hex-encoded validator address (with 0x prefix)
     pub validator: String,
+    /// Chain ID from the EIP-712 domain (if signer configured)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    /// TradeValidator contract address from the EIP-712 domain (if signer configured)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifying_contract: Option<String>,
+    /// ISO 8601 timestamp of when this validation was produced
+    pub validated_at: String,
 }
 
 impl ValidatorServer {
@@ -141,6 +149,16 @@ async fn handle_validate(
         }
     };
 
+    let validated_at = chrono::Utc::now().to_rfc3339();
+
+    // Extract EIP-712 domain metadata from the signer (if present)
+    let (signer_chain_id, signer_contract) = server.signer.as_ref().map_or((None, None), |s| {
+        (
+            Some(s.chain_id()),
+            Some(format!("{}", s.verifying_contract())),
+        )
+    });
+
     // If we have a signer, produce a real EIP-712 signature
     if let Some(ref signer) = server.signer {
         // Parse intent_hash from hex string
@@ -153,6 +171,9 @@ async fn handle_validate(
                     signature: format!("0x{}", "00".repeat(65)),
                     reasoning: format!("{reasoning}; signature error: invalid intent_hash"),
                     validator: format!("0x{}", hex::encode(signer.address().as_slice())),
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
                 });
             }
         };
@@ -167,6 +188,9 @@ async fn handle_validate(
                     signature: format!("0x{}", "00".repeat(65)),
                     reasoning: format!("{reasoning}; signature error: invalid vault_address"),
                     validator: format!("0x{}", hex::encode(signer.address().as_slice())),
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
                 });
             }
         };
@@ -178,6 +202,9 @@ async fn handle_validate(
                     signature: format!("0x{}", hex::encode(sig_bytes)),
                     reasoning,
                     validator: format!("{addr}"),
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
                 });
             }
             Err(e) => {
@@ -187,6 +214,9 @@ async fn handle_validate(
                     signature: format!("0x{}", "00".repeat(65)),
                     reasoning: format!("{reasoning}; signing error: {e}"),
                     validator: format!("{}", signer.address()),
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
                 });
             }
         }
@@ -198,6 +228,9 @@ async fn handle_validate(
         signature: format!("0x{}", "00".repeat(65)),
         reasoning,
         validator: "0x0000000000000000000000000000000000000000".into(),
+        chain_id: None,
+        verifying_contract: None,
+        validated_at,
     })
 }
 
@@ -312,6 +345,14 @@ mod tests {
             resp.validator.to_lowercase(),
             "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
         );
+
+        // EIP-712 domain metadata should be present when signer is configured
+        assert_eq!(resp.chain_id, Some(31337));
+        assert_eq!(
+            resp.verifying_contract.as_deref().map(|s| s.to_lowercase()),
+            Some("0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string())
+        );
+        assert!(!resp.validated_at.is_empty());
     }
 
     #[tokio::test]
@@ -362,6 +403,11 @@ mod tests {
         // Without a signer, should return a zero signature
         assert_eq!(resp.signature, format!("0x{}", "00".repeat(65)));
         assert_eq!(resp.validator, "0x0000000000000000000000000000000000000000");
+
+        // No EIP-712 domain metadata without a signer
+        assert_eq!(resp.chain_id, None);
+        assert_eq!(resp.verifying_contract, None);
+        assert!(!resp.validated_at.is_empty());
     }
 
     fn make_test_intent_json() -> serde_json::Value {

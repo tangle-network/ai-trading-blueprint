@@ -30,6 +30,15 @@ struct ValidateResponse {
     reasoning: String,
     /// Hex-encoded validator address (with 0x prefix)
     validator: String,
+    /// Chain ID from the EIP-712 domain (if signer configured)
+    #[serde(default)]
+    chain_id: Option<u64>,
+    /// TradeValidator contract address from the EIP-712 domain
+    #[serde(default)]
+    verifying_contract: Option<String>,
+    /// ISO 8601 timestamp of when this validation was produced
+    #[serde(default)]
+    validated_at: Option<String>,
 }
 
 impl ValidatorClient {
@@ -104,6 +113,9 @@ impl ValidatorClient {
                 score: result.score,
                 signature: result.signature,
                 reasoning: result.reasoning,
+                chain_id: result.chain_id,
+                verifying_contract: result.verifying_contract,
+                validated_at: result.validated_at,
             });
         }
 

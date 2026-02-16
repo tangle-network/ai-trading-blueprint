@@ -35,6 +35,12 @@ pub struct ValidatorResponseEntry {
     pub score: u32,
     pub reasoning: String,
     pub signature: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifying_contract: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validated_at: Option<String>,
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
@@ -96,6 +102,9 @@ async fn validate(
         score: r.score,
         reasoning: r.reasoning.clone(),
         signature: r.signature.clone(),
+        chain_id: r.chain_id,
+        verifying_contract: r.verifying_contract.clone(),
+        validated_at: r.validated_at.clone(),
     }).collect();
 
     Ok(Json(ValidateResponse {

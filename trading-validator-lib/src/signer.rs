@@ -45,6 +45,16 @@ impl ValidatorSigner {
         self.signer.address()
     }
 
+    /// Returns the chain ID used in the EIP-712 domain.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    /// Returns the verifying contract address used in the EIP-712 domain.
+    pub fn verifying_contract(&self) -> Address {
+        self.verifying_contract
+    }
+
     /// Sign a trade validation using EIP-712 typed data.
     ///
     /// Returns the 65-byte signature (r, s, v) and the signer's address.

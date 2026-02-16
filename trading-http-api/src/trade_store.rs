@@ -37,6 +37,15 @@ pub struct StoredValidatorResponse {
     pub score: u32,
     pub reasoning: String,
     pub signature: String,
+    /// Chain ID from the validator's EIP-712 domain
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+    /// TradeValidator contract address used for EIP-712 verification
+    #[serde(default)]
+    pub verifying_contract: Option<String>,
+    /// ISO 8601 timestamp of when the validator produced this response
+    #[serde(default)]
+    pub validated_at: Option<String>,
 }
 
 pub fn trades() -> Result<&'static PersistentStore<TradeRecord>, String> {
