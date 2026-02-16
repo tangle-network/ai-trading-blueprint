@@ -44,3 +44,12 @@ blueprint-state/
 node_modules/
 .react-router/
 arena/build/
+
+# Local env overrides
+.env.local
+arena/.env.local
+
+# Keystore data (test keys)
+data/
+scripts/data/
+arena/scripts/data/
