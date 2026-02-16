@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = [
+    "trading-runtime",
+    "trading-http-api",
+    "trading-blueprint-lib",
+    "trading-blueprint-bin",
+    "trading-validator-lib",
+    "trading-validator-bin",
+]
+
+[workspace.package]
+authors = ["Drew Stone"]
+edition = "2024"
+description = "AI Trading Blueprints for Tangle Network"
+license = "MIT OR Apache-2.0"
+
+# Use local blueprint SDK checkout for development/testing.
+# Remove this section before publishing or when the upstream crates are published.
+[patch."https://github.com/tangle-network/blueprint.git"]
+blueprint-sdk = { path = "../blueprint/crates/sdk" }
+blueprint-anvil-testing-utils = { path = "../blueprint/crates/testing-utils/anvil" }
+blueprint-producers-extra = { path = "../blueprint/crates/producers-extra" }
+blueprint-qos = { path = "../blueprint/crates/qos" }
+blueprint-x402 = { path = "../blueprint/crates/x402" }

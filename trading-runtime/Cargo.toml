@@ -1,0 +1,33 @@
+[package]
+name = "trading-runtime"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Shared trading runtime library — intents, validation, portfolio, adapters"
+license.workspace = true
+
+[dependencies]
+alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+futures = "0.3"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha3 = "0.10"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "time"] }
+tracing = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+alloy = { version = "1", features = ["node-bindings"] }
+axum = "0.8"
+dotenv = "0.15"
+hex = "0.4"
+rust_decimal = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
+trading-validator-lib = { path = "../trading-validator-lib" }
+wiremock = "0.6"

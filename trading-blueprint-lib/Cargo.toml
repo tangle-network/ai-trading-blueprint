@@ -1,0 +1,41 @@
+[package]
+name = "trading-blueprint-lib"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Consolidated AI trading blueprint — uses sandbox-runtime for sidecar management"
+license.workspace = true
+
+[dependencies]
+trading-runtime = { path = "../trading-runtime" }
+trading-http-api = { path = "../trading-http-api" }
+sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
+ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
+alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
+axum = "0.8"
+hex = "0.4"
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+once_cell = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "net"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+anyhow = "1"
+alloy = { version = "1", features = ["node-bindings", "sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
+axum = "0.8"
+blueprint-anvil-testing-utils = { git = "https://github.com/tangle-network/blueprint.git", branch = "main" }
+hex = "0.4"
+once_cell = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = "1"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
+tracing-subscriber = "0.3"
+trading-http-api = { path = "../trading-http-api" }
+trading-runtime = { path = "../trading-runtime" }
+trading-validator-lib = { path = "../trading-validator-lib" }

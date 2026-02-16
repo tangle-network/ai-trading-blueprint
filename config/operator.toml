@@ -1,0 +1,41 @@
+# Operator configuration for the pricing-engine-server sidecar
+#
+# The pricing engine runs as a standalone gRPC server alongside the
+# trading blueprint binary. Service consumers call GetPrice / GetJobPrice
+# to get signed EIP-712 quotes before submitting jobs.
+#
+# Deploy this binary from: blueprint/crates/pricing-engine
+# Start with: pricing-engine-server --config config/operator.toml
+
+# ─── Benchmark Cache ──────────────────────────────────────────────────
+# RocksDB path for storing benchmark profiles per blueprint.
+database_path = "data/pricing-engine"
+
+# How long each benchmark run lasts (CPU, memory, storage, GPU).
+benchmark_duration = 60    # seconds
+
+# Interval between individual benchmark samples within a run.
+benchmark_interval = 5     # seconds
+
+# ─── Keystore ─────────────────────────────────────────────────────────
+# Directory containing the operator's k256 keypair.
+# Used for EIP-712 quote signing. Generated via blueprint-keystore.
+# The derived Ethereum address must match the operator's on-chain registration.
+keystore_path = "data/keystore"
+
+# ─── gRPC Server ──────────────────────────────────────────────────────
+# Bind address and port for the pricing RPC server.
+rpc_bind_address = "0.0.0.0"
+rpc_port = 50051
+
+# Request timeout for gRPC calls.
+rpc_timeout = 30           # seconds
+
+# Maximum concurrent gRPC connections.
+rpc_max_connections = 256
+
+# ─── Quote Validity ───────────────────────────────────────────────────
+# How long signed quotes remain valid (seconds).
+# The on-chain maxQuoteAge (default 1 hour) is the hard limit.
+# This should be shorter to give consumers time to submit.
+quote_validity_duration_secs = 300

@@ -1,0 +1,66 @@
+# Per-job pricing configuration for the AI Trading Blueprint
+#
+# Controls GetJobPrice RFQ quotes. Each section is a service ID.
+# Keys are job indices (matching TradingBlueprint.sol constants),
+# values are prices in wei (strings for large numbers).
+#
+# When a consumer calls GetJobPrice(service_id, job_index), the pricing
+# engine looks up the price here and returns a signed EIP-712 quote.
+# If no entry exists, the RPC returns NOT_FOUND (job is free or unsupported).
+#
+# The TradingBlueprint.sol contract enforces minimum payment via
+# `onJobCall` — set `jobPrice[jobId]` on-chain to match these values.
+
+# ─── Trading Blueprint Job IDs ────────────────────────────────────────
+# 0  = JOB_PROVISION       (deploy vault + sidecar — dynamic pricing)
+# 1  = JOB_CONFIGURE       (update strategy params — cheap)
+# 2  = JOB_START_TRADING    (start trading loop — cheap)
+# 3  = JOB_STOP_TRADING     (stop trading loop — free)
+# 4  = JOB_STATUS           (read-only query — free)
+# 5  = JOB_DEPROVISION      (teardown — free)
+# 6  = JOB_EXTEND           (extend bot lifetime — dynamic pricing)
+# 10 = JOB_PROMPT           (AI prompt execution — moderate)
+# 11 = JOB_TASK             (AI task execution — moderate)
+# 12 = JOB_EXEC             (agent execution — expensive)
+# 30 = JOB_WORKFLOW_TICK    (cron-triggered — free, internal)
+#
+# ─── Dynamic Provision Pricing ────────────────────────────────────────
+# JOB_PROVISION and JOB_EXTEND use dynamic pricing based on:
+#   - provisionBasePrice: one-time setup fee (only for PROVISION, not EXTEND)
+#   - dailyRate: per-day base rate
+#   - cpuDailyRate: per-CPU-core per-day rate
+#   - memGbDailyRate: per-GB-memory per-day rate
+#
+# Formula (PROVISION):
+#   basePrice + (days * dailyRate) + (days * cpuCores * cpuDailyRate) + (days * memMb/1024 * memGbDailyRate)
+#
+# Formula (EXTEND):
+#   additionalDays * dailyRate
+#
+# Set via setProvisionPricing() on-chain. When all rates are 0, provisioning is free.
+#
+# Strategy-specific jobs (10+) in subclass blueprints:
+# DexTrading:        10 = TWAP, 11 = ConfigureArb
+# DefiYield:         10 = Rebalance
+# PerpTrading:       10 = OpenPosition, 11 = ClosePosition, 12 = AdjustLeverage
+# PredictionMarket:  10 = PlaceBet, 11 = ExitPosition, 12 = ListMarkets
+# MultiStrategy:     10 = DefineStrategy, 11 = Execute
+
+# ─── Example: Service ID 1 ───────────────────────────────────────────
+# Uncomment and adjust for your service.
+
+# [1]
+# 0  = "10000000000000000"     # JOB_PROVISION:    0.01 ETH
+# 1  = "1000000000000000"      # JOB_CONFIGURE:    0.001 ETH
+# 2  = "500000000000000"       # JOB_START_TRADING: 0.0005 ETH
+# 10 = "5000000000000000"      # JOB_PROMPT:       0.005 ETH
+# 11 = "5000000000000000"      # JOB_TASK:         0.005 ETH
+# 12 = "20000000000000000"     # JOB_EXEC:         0.02 ETH
+
+# ─── Validator Blueprint Job IDs ──────────────────────────────────────
+# 0 = JOB_UPDATE_REPUTATION  (reputation update — free, operator-internal)
+# 1 = JOB_UPDATE_CONFIG      (config change — free)
+# 2 = JOB_LIVENESS           (heartbeat — free)
+#
+# Validator jobs are all free (operator-submitted, not user-facing).
+# No entries needed here.

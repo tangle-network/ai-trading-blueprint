@@ -1,0 +1,70 @@
+# x402 Payment Gateway Configuration
+#
+# Enables cross-chain EVM stablecoin payments for trading blueprint jobs.
+# Users can pay for JOB_PROVISION, JOB_EXTEND, and other jobs using
+# USDC on any supported chain instead of native ETH on Tangle.
+#
+# When enabled (--features x402), the binary starts an HTTP server at
+# bind_address with these endpoints:
+#   GET  /x402/health                           → "ok"
+#   GET  /x402/jobs/{service_id}/{job}/price     → settlement options (JSON)
+#   POST /x402/jobs/{service_id}/{job}           → execute job (x402 payment required)
+
+# Address to bind the x402 HTTP server.
+# Use "0.0.0.0:8402" for external access, "127.0.0.1:8402" for local only.
+bind_address = "0.0.0.0:8402"
+
+# x402 facilitator URL for payment verification and settlement.
+# The facilitator validates that payment was made on the source chain.
+facilitator_url = "https://facilitator.x402.org"
+
+# How long dynamically-generated price quotes remain valid (seconds).
+quote_ttl_secs = 300
+
+# ─── Accepted Tokens ─────────────────────────────────────────────────
+#
+# Each [[accepted_tokens]] entry defines a token the operator will accept
+# for payment. Clients can pay using any of these tokens on the specified
+# chain.
+#
+# Fields:
+#   network               CAIP-2 chain identifier (e.g., "eip155:8453" for Base)
+#   asset                 Token contract address on that chain
+#   symbol                Human-readable token symbol
+#   decimals              Token decimals (6 for USDC, 18 for DAI)
+#   pay_to                Operator's receiving address on that chain
+#   rate_per_native_unit  Exchange rate: how many tokens per 1 ETH
+#   markup_bps            Markup in basis points (200 = 2%)
+
+# USDC on Base (cheapest, recommended for most users)
+[[accepted_tokens]]
+network = "eip155:8453"
+asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+symbol = "USDC"
+decimals = 6
+pay_to = "0x0000000000000000000000000000000000000001"   # CHANGE THIS to your operator address on Base
+rate_per_native_unit = "3200.00"
+markup_bps = 200
+transfer_method = "eip3009"
+eip3009_name = "USD Coin"
+eip3009_version = "2"
+
+# Uncomment to also accept USDC on Ethereum mainnet:
+# [[accepted_tokens]]
+# network = "eip155:1"
+# asset = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+# symbol = "USDC"
+# decimals = 6
+# pay_to = "0x0000000000000000000000000000000000000001"
+# rate_per_native_unit = "3200.00"
+# markup_bps = 300
+
+# Uncomment to also accept USDC on Arbitrum:
+# [[accepted_tokens]]
+# network = "eip155:42161"
+# asset = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+# symbol = "USDC"
+# decimals = 6
+# pay_to = "0x0000000000000000000000000000000000000001"
+# rate_per_native_unit = "3200.00"
+# markup_bps = 200

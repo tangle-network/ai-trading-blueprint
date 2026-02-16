@@ -1,0 +1,37 @@
+# Default resource pricing for the AI Trading Blueprint
+#
+# Defines pricing rates for compute resources consumed by trading bot
+# sidecar containers. The pricing engine uses these rates to calculate
+# GetPrice RFQ quotes for service consumers.
+#
+# Rates are specified in USD with decimal precision.
+# The pricing engine runs as a standalone sidecar — operators deploy it
+# alongside the blueprint binary and configure it with this file.
+
+[default]
+resources = [
+  # CPU for AI agent + trading loop
+  # Trading bots are CPU-light but need consistent allocation
+  { kind = "CPU", count = 2, price_per_unit_rate = 0.0008 },
+
+  # Memory for AI agent context, market data caching, portfolio state
+  { kind = "MemoryMB", count = 2048, price_per_unit_rate = 0.00004 },
+
+  # Storage for trade logs, strategy state, persistent store
+  { kind = "StorageMB", count = 4096, price_per_unit_rate = 0.00001 },
+
+  # Network egress for RPC calls, market data, validator requests
+  { kind = "NetworkEgressMB", count = 1024, price_per_unit_rate = 0.00003 },
+
+  # Network ingress for market data feeds, webhook callbacks
+  { kind = "NetworkIngressMB", count = 1024, price_per_unit_rate = 0.00001 },
+]
+
+# High-performance tier (e.g., HFT strategies, multi-strategy portfolios)
+# Override with blueprint_id if the operator registers a specific blueprint
+# [<blueprint_id>]
+# resources = [
+#   { kind = "CPU", count = 4, price_per_unit_rate = 0.0012 },
+#   { kind = "MemoryMB", count = 8192, price_per_unit_rate = 0.00006 },
+#   { kind = "GPU", count = 1, price_per_unit_rate = 0.005 },
+# ]

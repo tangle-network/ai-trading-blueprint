@@ -1,0 +1,23 @@
+[package]
+name = "trading-validator-bin"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Trading Validator Blueprint runner binary"
+license.workspace = true
+
+[[bin]]
+name = "trading-validator"
+path = "src/main.rs"
+
+[features]
+qos = ["dep:blueprint-qos"]
+
+[dependencies]
+trading-validator-lib = { path = "../trading-validator-lib" }
+axum = "0.8"
+blueprint-qos = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", optional = true }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tangle"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

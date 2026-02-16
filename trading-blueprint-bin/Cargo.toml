@@ -1,0 +1,28 @@
+[package]
+name = "trading-blueprint-bin"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Binary runner for the consolidated AI trading blueprint"
+license.workspace = true
+
+[[bin]]
+name = "trading-blueprint"
+path = "src/main.rs"
+
+[features]
+qos = ["dep:blueprint-qos"]
+x402 = ["blueprint-sdk/x402"]
+
+[dependencies]
+trading-blueprint-lib = { path = "../trading-blueprint-lib" }
+ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
+sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
+blueprint-producers-extra = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", features = ["cron"] }
+blueprint-qos = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", optional = true }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tangle"] }
+alloy-primitives = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
