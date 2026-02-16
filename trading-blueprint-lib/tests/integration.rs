@@ -381,6 +381,7 @@ async fn test_system_prompt_includes_api_info() {
         validator_service_ids: vec![],
         max_lifetime_days: 30,
         paper_trade: true,
+        wind_down_started_at: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -706,6 +707,7 @@ async fn test_pack_system_prompt_includes_base_config() {
         validator_service_ids: vec![],
         max_lifetime_days: 30,
         paper_trade: true,
+        wind_down_started_at: None,
     };
 
     let combined = build_pack_system_prompt(&pack, &config);
@@ -838,6 +840,7 @@ async fn test_build_pack_agent_profile_integration() {
         validator_service_ids: vec![],
         max_lifetime_days: 30,
         paper_trade: true,
+        wind_down_started_at: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);

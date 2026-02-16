@@ -778,6 +778,7 @@ mod tests {
             validator_service_ids: vec![],
             max_lifetime_days: 30,
             paper_trade: true,
+            wind_down_started_at: None,
         }
     }
 

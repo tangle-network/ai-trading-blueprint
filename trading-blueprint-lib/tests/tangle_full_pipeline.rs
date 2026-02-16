@@ -151,6 +151,9 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             validation_deadline_secs: 3600,
             bot_id: "e2e-test-bot".to_string(),
             paper_trade: false,
+            operator_address: String::new(),
+            sidecar_url: String::new(),
+            sidecar_token: String::new(),
         });
 
         let api_router = trading_http_api::build_router(api_state);

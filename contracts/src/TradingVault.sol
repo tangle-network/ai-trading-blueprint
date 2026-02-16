@@ -30,6 +30,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant CREATOR_ROLE = keccak256("CREATOR_ROLE");
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -45,6 +46,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error PolicyCheckFailed();
     error ValidatorCheckFailed();
     error IntentAlreadyExecuted(bytes32 intentHash);
+    error WindDownNotActive();
+    error WindDownAlreadyActive();
+    error WindDownBlocksExecute();
+    error AssetBalanceDecreased(uint256 before, uint256 after_);
+    error TargetNotWhitelisted(address target);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -58,6 +64,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         bytes32 indexed intentHash
     );
     event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
+    event WindDownActivated(uint256 timestamp);
+    event WindDownDeactivated(uint256 timestamp);
+    event PositionUnwound(address indexed caller, address indexed target, uint256 assetGained);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -81,6 +90,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Tracks executed intent hashes to prevent duplicate execution
     ///         across multiple operators submitting the same trade
     mapping(bytes32 => bool) public executedIntents;
+
+    /// @notice Whether wind-down mode is active (permissionless unwinds allowed, execute blocked)
+    bool public windDownActive;
+
+    /// @notice Timestamp when wind-down was activated (0 if not active)
+    uint256 public windDownStartedAt;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -248,12 +263,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Execute a validated trade through an arbitrary target contract
-    /// @dev Requires OPERATOR_ROLE + PolicyEngine approval + TradeValidator m-of-n sigs
+    /// @dev Requires OPERATOR_ROLE + PolicyEngine approval + TradeValidator m-of-n sigs.
+    ///      Blocked when wind-down mode is active — use unwind() instead.
     function execute(
         ExecuteParams calldata params,
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
 
         // 0. Intent deduplication — prevents multiple operators executing the same trade
@@ -310,6 +327,95 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WIND-DOWN — PERMISSIONLESS POSITION UNWINDING
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Activate wind-down mode. Blocks execute(), enables permissionless unwind().
+    /// @dev Callable by admin (BSM) or service creator. Typically triggered when the
+    ///      trading bot's TTL is approaching expiry.
+    function activateWindDown() external {
+        if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) && !hasRole(CREATOR_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, CREATOR_ROLE);
+        }
+        if (windDownActive) revert WindDownAlreadyActive();
+        windDownActive = true;
+        windDownStartedAt = block.timestamp;
+        emit WindDownActivated(block.timestamp);
+    }
+
+    /// @notice Deactivate wind-down mode (e.g. if vault is recovered by a new service).
+    function deactivateWindDown() external {
+        if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) && !hasRole(CREATOR_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, CREATOR_ROLE);
+        }
+        if (!windDownActive) revert WindDownNotActive();
+        windDownActive = false;
+        windDownStartedAt = 0;
+        emit WindDownDeactivated(block.timestamp);
+    }
+
+    /// @notice Permissionless position unwind — anyone can close positions back to the vault.
+    /// @dev Safety invariant: the vault's deposit asset balance can only increase.
+    ///      No signatures or operator role required. Only callable during wind-down.
+    ///      Target must be whitelisted in PolicyEngine (reuses existing whitelist).
+    /// @param target The protocol contract to call (must be whitelisted)
+    /// @param data The calldata to execute (e.g. Aave withdraw, GMX close position)
+    /// @param value ETH value to send (for protocols that require it)
+    function unwind(
+        address target,
+        bytes calldata data,
+        uint256 value
+    ) external nonReentrant {
+        if (!windDownActive) revert WindDownNotActive();
+        if (target == address(0)) revert ZeroAddress();
+
+        // Target must be in the PolicyEngine whitelist — reuse existing infra
+        if (!policyEngine.targetWhitelisted(address(this), target)) {
+            revert TargetNotWhitelisted(target);
+        }
+
+        // Snapshot deposit asset balance
+        uint256 assetBefore = _asset.balanceOf(address(this));
+
+        // Execute the unwind call
+        (bool success,) = target.call{value: value}(data);
+        if (!success) revert ExecutionFailed();
+
+        // Safety invariant: deposit asset balance can only increase
+        uint256 assetAfter = _asset.balanceOf(address(this));
+        if (assetAfter < assetBefore) revert AssetBalanceDecreased(assetBefore, assetAfter);
+
+        uint256 gained = assetAfter - assetBefore;
+        emit PositionUnwound(msg.sender, target, gained);
+    }
+
+    /// @notice Creator-only unwind for multi-step or delayed operations.
+    /// @dev No deposit-asset balance invariant — the service creator is trusted to
+    ///      use this for legitimate multi-step unwinds (intermediate token swaps,
+    ///      withdrawal queue requests, fee-paying close operations).
+    ///      Target must still be whitelisted.
+    /// @param target The protocol contract to call (must be whitelisted)
+    /// @param data The calldata to execute
+    /// @param value ETH value to send
+    function adminUnwind(
+        address target,
+        bytes calldata data,
+        uint256 value
+    ) external onlyRole(CREATOR_ROLE) nonReentrant {
+        if (!windDownActive) revert WindDownNotActive();
+        if (target == address(0)) revert ZeroAddress();
+
+        if (!policyEngine.targetWhitelisted(address(this), target)) {
+            revert TargetNotWhitelisted(target);
+        }
+
+        (bool success,) = target.call{value: value}(data);
+        if (!success) revert ExecutionFailed();
+
+        emit PositionUnwound(msg.sender, target, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

@@ -38,6 +38,9 @@ pub struct TradingBotRecord {
     /// Paper trading mode — trades are logged but not executed on-chain.
     #[serde(default = "default_paper_trade")]
     pub paper_trade: bool,
+    /// Timestamp when wind-down mode was initiated (None = normal operation).
+    #[serde(default)]
+    pub wind_down_started_at: Option<u64>,
 }
 
 /// A recorded paper trade (simulated execution).
@@ -191,6 +194,7 @@ mod tests {
             validator_service_ids: vec![],
             max_lifetime_days: 30,
             paper_trade: true,
+            wind_down_started_at: None,
         }
     }
 

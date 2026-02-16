@@ -102,6 +102,35 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
     )
 }
 
+/// Build the wind-down prompt that instructs the agent to close all positions.
+///
+/// This prompt replaces the normal trading loop prompt when wind-down is
+/// initiated. It stays active for all remaining cron ticks until the reaper
+/// kills the container, giving the agent multiple iterations to unwind.
+pub fn build_wind_down_prompt(bot: &crate::state::TradingBotRecord) -> String {
+    format!(
+        "CRITICAL: WIND-DOWN MODE ACTIVATED.\n\n\
+         Your trading bot is approaching its TTL expiry. You MUST close all open positions \
+         and return capital to the vault. DO NOT open any new positions.\n\n\
+         Steps:\n\
+         1. POST /portfolio/state to get all current positions\n\
+         2. For each open position, generate a close/unwind trade intent\n\
+         3. POST /validate for each closing trade\n\
+         4. POST /execute for each approved closing trade\n\
+         5. Report final portfolio state and P&L summary\n\n\
+         Vault: {vault}\n\
+         Chain: {chain_id}\n\
+         Strategy: {strategy}\n\n\
+         This prompt will repeat on every cron tick until shutdown. Prioritize largest \
+         positions first. Accept reasonable slippage to ensure positions are closed. \
+         If all positions are already closed, report the final state and confirm wind-down \
+         is complete.",
+        vault = bot.vault_address,
+        chain_id = bot.chain_id,
+        strategy = bot.strategy_type,
+    )
+}
+
 const DEX_FRAGMENT: &str = r#"You are a DEX trading specialist.
 Focus on: Uniswap V3 swaps, liquidity provision, and arbitrage opportunities.
 Target protocols: uniswap_v3
@@ -161,6 +190,7 @@ mod tests {
             validator_service_ids: vec![],
             max_lifetime_days: 30,
             paper_trade: true,
+            wind_down_started_at: None,
         }
     }
 

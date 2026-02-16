@@ -40,6 +40,9 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice OPERATOR_ROLE hash matching TradingVault's AccessControl role
     bytes32 public constant VAULT_OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
+    /// @notice CREATOR_ROLE hash matching TradingVault's AccessControl role
+    bytes32 public constant VAULT_CREATOR_ROLE = keccak256("CREATOR_ROLE");
+
     // ═══════════════════════════════════════════════════════════════════════════
     // STATE
     // ═══════════════════════════════════════════════════════════════════════════
@@ -71,6 +74,7 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     // ─── Pending request storage (requestId → config) ────────────────────────
 
     struct ServiceRequestConfig {
+        address requester;
         address assetToken;
         address[] signers;
         uint256 requiredSignatures;
@@ -157,7 +161,7 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     ///      uint256 requiredSignatures, string name, string symbol)
     function onRequest(
         uint64 requestId,
-        address,
+        address requester,
         address[] calldata,
         bytes calldata requestInputs,
         uint64,
@@ -174,6 +178,7 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
             ) = abi.decode(requestInputs, (address, address[], uint256, string, string));
 
             _pendingRequests[requestId] = ServiceRequestConfig({
+                requester: requester,
                 assetToken: assetToken,
                 signers: signers,
                 requiredSignatures: requiredSigs,
@@ -215,6 +220,12 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
             instanceVault[serviceId] = vault;
             instanceShare[serviceId] = shareToken;
             instanceProvisioned[serviceId] = true;
+
+            // Grant CREATOR_ROLE to the service requester so they can
+            // activate wind-down and perform admin unwinds.
+            if (req.requester != address(0)) {
+                IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, req.requester);
+            }
 
             emit VaultDeployed(serviceId, vault, shareToken);
         }

@@ -175,6 +175,7 @@ pub async fn provision_core(
         validator_service_ids,
         max_lifetime_days,
         paper_trade: true,
+        wind_down_started_at: None,
     };
 
     // 8. Look up strategy pack and run setup commands

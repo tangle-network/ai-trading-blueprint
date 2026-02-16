@@ -14,6 +14,7 @@ pub mod prompts;
 pub mod providers;
 pub mod registration;
 pub mod state;
+pub mod wind_down;
 
 pub use providers::{EventContext, ProviderRegistry, TradingProvider, registry};
 

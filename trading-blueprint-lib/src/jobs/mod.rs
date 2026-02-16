@@ -9,6 +9,7 @@ mod prompt;
 mod task;
 mod exec;
 mod webhook_event;
+mod workflow_tick;
 
 pub use provision::provision;
 pub use provision::provision_core;
@@ -29,4 +30,4 @@ pub use task::task;
 pub use exec::exec;
 pub use webhook_event::webhook_event;
 pub use webhook_event::webhook_event_core;
-pub use ai_agent_sandbox_blueprint_lib::workflow_tick_job as workflow_tick;
+pub use workflow_tick::trading_workflow_tick as workflow_tick;
