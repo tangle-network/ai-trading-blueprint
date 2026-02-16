@@ -12,6 +12,7 @@ pub mod on_chain;
 pub mod polymarket_ws;
 pub mod prompts;
 pub mod providers;
+pub mod registration;
 pub mod state;
 
 pub use providers::{EventContext, ProviderRegistry, TradingProvider, registry};

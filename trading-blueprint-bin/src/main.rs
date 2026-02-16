@@ -146,6 +146,29 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 2. Load blueprint environment + connect to Tangle ────────────────────
     let env = BlueprintEnvironment::load()?;
 
+    // ── Registration mode: write payload and exit early ──────────────────────
+    if env.registration_mode() {
+        let max_capacity = std::env::var("OPERATOR_MAX_CAPACITY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10u32);
+        let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
+        let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
+        let payload = trading_blueprint_lib::registration::trading_registration_payload(
+            max_capacity,
+            &api_endpoint,
+            &strategies,
+        );
+        let path = blueprint_sdk::registration::write_registration_inputs(&env, payload)
+            .await
+            .map_err(|e| blueprint_sdk::Error::Other(e.to_string()))?;
+        tracing::info!(
+            "Trading blueprint registration payload written to {}",
+            path.display()
+        );
+        return Ok(());
+    }
+
     let tangle_client = env
         .tangle_client()
         .await
@@ -278,8 +301,13 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         if let Ok(cap_str) = std::env::var("OPERATOR_MAX_CAPACITY") {
             if let Ok(capacity) = cap_str.parse::<u32>() {
                 tracing::info!("Registering with OPERATOR_MAX_CAPACITY={capacity}");
-                let mut inputs = vec![0u8; 32];
-                inputs[28..32].copy_from_slice(&capacity.to_be_bytes());
+                let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
+                let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
+                let inputs = trading_blueprint_lib::registration::trading_registration_payload(
+                    capacity,
+                    &api_endpoint,
+                    &strategies,
+                );
                 config = config.with_registration_inputs(inputs);
             }
         }

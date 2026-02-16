@@ -1,5 +1,6 @@
 pub mod context;
 pub mod jobs;
+pub mod registration;
 pub mod risk_evaluator;
 pub mod scoring;
 pub mod server;

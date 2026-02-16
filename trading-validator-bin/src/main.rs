@@ -168,6 +168,38 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 2. Load blueprint environment ────────────────────────────────────────
     let env = BlueprintEnvironment::load()?;
 
+    // ── Registration mode: write payload and exit early ──────────────────────
+    if env.registration_mode() {
+        let service_id: u64 = std::env::var("SERVICE_ID")
+            .or_else(|_| std::env::var("TANGLE_SERVICE_ID"))
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let chain_id: u64 = std::env::var("CHAIN_ID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let verifying_contract = std::env::var("VERIFYING_CONTRACT").unwrap_or_default();
+        let endpoint = format!(
+            "http://0.0.0.0:{}",
+            std::env::var("VALIDATOR_HTTP_PORT").unwrap_or_else(|_| "9090".into())
+        );
+        let payload = trading_validator_lib::registration::validator_registration_payload(
+            service_id,
+            chain_id,
+            &verifying_contract,
+            &endpoint,
+        );
+        let path = blueprint_sdk::registration::write_registration_inputs(&env, payload)
+            .await
+            .map_err(|e| blueprint_sdk::Error::Other(e.to_string()))?;
+        tracing::info!(
+            "Validator registration payload written to {}",
+            path.display()
+        );
+        return Ok(());
+    }
+
     let tangle_client = env
         .tangle_client()
         .await
