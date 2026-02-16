@@ -17,8 +17,8 @@ export function LiveTicker() {
             <span className="font-display font-medium text-arena-elements-textPrimary">{trade.botName}</span>
             <span className={`font-data font-semibold text-xs ${
               trade.action === 'buy'
-                ? 'text-emerald-400'
-                : 'text-crimson-400'
+                ? 'text-arena-elements-icon-success'
+                : 'text-arena-elements-icon-error'
             }`}>
               {trade.action.toUpperCase()}
             </span>

@@ -1,8 +1,10 @@
 import { Link } from 'react-router';
 import { motion } from 'framer-motion';
+import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '~/components/ui/table';
 import { Badge } from '~/components/ui/badge';
+import { Identicon } from '~/components/shared/Identicon';
 import { SparklineChart } from './SparklineChart';
 
 interface LeaderboardTableProps {
@@ -31,7 +33,7 @@ function RankCell({ rank }: { rank: number }) {
 }
 
 function ScoreIndicator({ score }: { score: number }) {
-  const color = score >= 85 ? 'text-emerald-400' : score >= 70 ? 'text-amber-400' : 'text-crimson-400';
+  const color = score >= 85 ? 'text-arena-elements-icon-success' : score >= 70 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error';
   const bg = score >= 85 ? 'bg-emerald-500/10' : score >= 70 ? 'bg-amber-500/10' : 'bg-crimson-500/10';
   return (
     <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${bg}`}>
@@ -75,11 +77,12 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             <TableCell>
               <Link
                 to={`/arena/bot/${bot.id}`}
-                className="font-display font-semibold text-sm hover:text-emerald-400 transition-colors duration-200"
+                className="font-display font-semibold text-sm hover:text-violet-400 transition-colors duration-200"
               >
                 {bot.name}
               </Link>
-              <div className="text-[11px] font-data text-arena-elements-textTertiary mt-0.5">
+              <div className="flex items-center gap-1.5 text-xs font-data text-arena-elements-textTertiary mt-0.5">
+                <Identicon address={bot.operatorAddress as Address} size={14} />
                 {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
               </div>
             </TableCell>
@@ -94,7 +97,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             <TableCell className="text-right">
               {bot.pnlPercent !== 0 ? (
                 <span className={`font-data font-bold text-sm ${
-                  bot.pnlPercent >= 0 ? 'text-emerald-400' : 'text-crimson-400'
+                  bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'
                 }`}>
                   {bot.pnlPercent >= 0 ? '+' : ''}{bot.pnlPercent.toFixed(1)}%
                 </span>
@@ -107,7 +110,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             </TableCell>
             <TableCell className="text-right font-data text-sm hidden md:table-cell">
               {bot.maxDrawdown !== 0 ? (
-                <span className="text-crimson-400">{bot.maxDrawdown.toFixed(1)}%</span>
+                <span className="text-arena-elements-icon-error">{bot.maxDrawdown.toFixed(1)}%</span>
               ) : (
                 <span className="text-arena-elements-textTertiary">—</span>
               )}

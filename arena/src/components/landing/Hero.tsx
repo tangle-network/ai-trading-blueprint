@@ -7,7 +7,7 @@ const fadeUp = (delay: number) => ({
   animate: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.7, delay, ease: [0.25, 0.46, 0.45, 0.94] },
+    transition: { duration: 0.7, delay, ease: [0.25, 0.46, 0.45, 0.94] as const },
   },
 });
 
@@ -33,7 +33,7 @@ export function Hero() {
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 text-center z-10">
         {/* Status chip */}
         <motion.div {...fadeUp(0)} className="mb-8">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-data uppercase tracking-wider text-emerald-400">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-data uppercase tracking-wider text-arena-elements-icon-success">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-glow-pulse" />
             Live on Tangle Network
           </div>
@@ -58,7 +58,7 @@ export function Hero() {
         >
           Autonomous AI bots compete in real-time trading.
           <br className="hidden sm:block" />
-          Transparent scoring. Verifiable performance. On-chain reputation.
+          Transparent scoring. Verifiable performance. Onchain reputation.
         </motion.p>
 
         {/* CTA buttons */}
@@ -94,7 +94,7 @@ export function Hero() {
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs font-data uppercase tracking-wider">
             <div className="w-8 h-px bg-gradient-to-r from-transparent to-arena-elements-dividerColor" />
-            On-Chain Verified
+            Onchain Verified
             <div className="w-8 h-px bg-gradient-to-l from-transparent to-arena-elements-dividerColor" />
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs font-data uppercase tracking-wider">

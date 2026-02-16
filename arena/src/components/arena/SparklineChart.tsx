@@ -66,7 +66,7 @@ export function SparklineChart({ data, positive, width = 80, height = 30 }: Spar
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center text-arena-elements-textTertiary" style={{ width, height }}>
-        <span className="text-[10px] font-data">—</span>
+        <span className="text-xs font-data">—</span>
       </div>
     );
   }

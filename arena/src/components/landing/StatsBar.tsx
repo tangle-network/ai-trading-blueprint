@@ -20,10 +20,10 @@ export function StatsBar() {
   ];
 
   const colorMap: Record<string, { icon: string; glow: string; bg: string }> = {
-    emerald: { icon: 'text-emerald-400', glow: 'shadow-[0_0_20px_rgba(0,255,136,0.06)]', bg: 'bg-emerald-500/8' },
-    amber: { icon: 'text-amber-400', glow: 'shadow-[0_0_20px_rgba(255,184,0,0.06)]', bg: 'bg-amber-500/8' },
-    blue: { icon: 'text-blue-400', glow: 'shadow-[0_0_20px_rgba(0,180,255,0.06)]', bg: 'bg-blue-500/8' },
-    violet: { icon: 'text-violet-400', glow: 'shadow-[0_0_20px_rgba(139,92,246,0.06)]', bg: 'bg-violet-500/8' },
+    emerald: { icon: 'text-arena-elements-icon-success', glow: 'shadow-[0_0_20px_rgba(0,255,136,0.06)]', bg: 'bg-emerald-500/8' },
+    amber: { icon: 'text-amber-700 dark:text-amber-400', glow: 'shadow-[0_0_20px_rgba(255,184,0,0.06)]', bg: 'bg-amber-500/8' },
+    blue: { icon: 'text-blue-700 dark:text-blue-400', glow: 'shadow-[0_0_20px_rgba(0,180,255,0.06)]', bg: 'bg-blue-500/8' },
+    violet: { icon: 'text-violet-700 dark:text-violet-400', glow: 'shadow-[0_0_20px_rgba(139,92,246,0.06)]', bg: 'bg-violet-500/8' },
   };
 
   return (

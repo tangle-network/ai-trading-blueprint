@@ -1,0 +1,177 @@
+// proto/pricing.proto
+syntax = "proto3";
+
+package pricing_engine;
+
+// The pricing service definition.
+service PricingEngine {
+  // Retrieves a signed price quote for a given blueprint (service creation RFQ).
+  rpc GetPrice (GetPriceRequest) returns (GetPriceResponse);
+
+  // Retrieves a signed per-job price quote (job RFQ).
+  rpc GetJobPrice (GetJobPriceRequest) returns (GetJobPriceResponse);
+}
+
+// Asset type definition
+enum AssetType {
+  CUSTOM = 0;
+  ERC20 = 1;
+}
+
+// Asset type definition
+message Asset {
+  oneof asset_type {
+    // Custom asset with a numeric identifier (u128 represented as 16 bytes)
+    bytes custom = 1;
+    // ERC20 token with an H160 address
+    bytes erc20 = 2;
+  }
+}
+
+// Security requirements for an asset
+message AssetSecurityRequirements {
+  // The asset type
+  Asset asset = 1;
+  // Minimum exposure percentage (0-100)
+  uint32 minimum_exposure_percent = 2;
+  // Maximum exposure percentage (0-100)
+  uint32 maximum_exposure_percent = 3;
+}
+
+// Security commitment for an asset
+message AssetSecurityCommitment {
+  // The asset type
+  Asset asset = 1;
+  // Committed exposure percentage (0-100)
+  uint32 exposure_percent = 2;
+}
+
+// Request message for GetPrice RPC
+message GetPriceRequest {
+  // The blueprint ID
+  uint64 blueprint_id = 1;
+  // Time-to-live for service in blocks
+  uint64 ttl_blocks = 2;
+  // Proof of work to prevent DDOS
+  bytes proof_of_work = 3;
+  // Optional resource recommendations
+  repeated ResourceRequirement resource_requirements = 4;
+  // Security requirements for assets
+  AssetSecurityRequirements security_requirements = 5;
+  // Timestamp used for generating the challenge
+  uint64 challenge_timestamp = 6;
+}
+
+// Resource requirement for a specific resource type
+message ResourceRequirement {
+  // Resource kind (CPU, Memory, GPU, etc.)
+  string kind = 1;
+  // Quantity required
+  uint64 count = 2;
+}
+
+// Response message for GetPrice RPC
+message GetPriceResponse {
+  // The quote details
+  QuoteDetails quote_details = 1;
+  // Signature of the hash of the body
+  bytes signature = 2;
+  // Operator ID
+  bytes operator_id = 3;
+  // Proof of work response
+  bytes proof_of_work = 4;
+}
+
+// The detailed quote information
+message QuoteDetails {
+  // The blueprint ID
+  uint64 blueprint_id = 1;
+  // Time-to-live for service in blocks
+  uint64 ttl_blocks = 2;
+  // Total cost in USD with decimal precision
+  double total_cost_rate = 3;
+  // Timestamp when quote was generated
+  uint64 timestamp = 4;
+  // Expiry timestamp
+  uint64 expiry = 5;
+  // Resource pricing details
+  repeated ResourcePricing resources = 6;
+  // Security commitments for assets
+  repeated AssetSecurityCommitment security_commitments = 7;
+}
+
+// Pricing for a specific resource type
+message ResourcePricing {
+  // Resource kind (CPU, Memory, GPU, etc.)
+  string kind = 1;
+  // Quantity of the resource
+  uint64 count = 2;
+  // Price per unit in USD with decimal precision (e.g., 0.00005 USD per MB)
+  double price_per_unit_rate = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Per-Job RFQ (Job Quote) Messages
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Request message for GetJobPrice RPC
+message GetJobPriceRequest {
+  // The service instance ID the job belongs to
+  uint64 service_id = 1;
+  // The job type index within the blueprint
+  uint32 job_index = 2;
+  // Proof of work to prevent DDOS
+  bytes proof_of_work = 3;
+  // Timestamp used for generating the challenge
+  uint64 challenge_timestamp = 4;
+}
+
+// Response message for GetJobPrice RPC
+message GetJobPriceResponse {
+  // The signed job quote details
+  JobQuoteDetails quote_details = 1;
+  // EIP-712 signature over the quote details
+  bytes signature = 2;
+  // Operator's Ethereum address (20 bytes)
+  bytes operator_id = 3;
+  // Proof of work response for next request
+  bytes proof_of_work = 4;
+
+  // ── x402 cross-chain settlement (optional) ─────────────────────────
+  // Available payment methods for settling this quote via x402.
+  // Clients that don't understand x402 simply ignore these fields.
+  repeated SettlementOption settlement_options = 5;
+  // Operator's x402 gateway endpoint URL (e.g. "https://operator.example.com:8402")
+  string x402_endpoint = 6;
+}
+
+// A cross-chain settlement option for x402 payment.
+// Describes one way a client can pay for a job quote off-chain.
+message SettlementOption {
+  // CAIP-2 network identifier, e.g. "eip155:8453" for Base
+  string network = 1;
+  // Token contract address (EVM) or mint address (Solana)
+  string asset = 2;
+  // Human-readable token symbol, e.g. "USDC"
+  string symbol = 3;
+  // Payment amount in the token's smallest unit
+  string amount = 4;
+  // Operator's receive address on this chain
+  string pay_to = 5;
+  // x402 payment scheme, e.g. "exact"
+  string scheme = 6;
+}
+
+// Per-job quote details matching tnt-core Types.JobQuoteDetails
+message JobQuoteDetails {
+  // The service instance ID
+  uint64 service_id = 1;
+  // The job type index
+  uint32 job_index = 2;
+  // Price in wei (native token)
+  bytes price = 3;
+  // Timestamp when quote was generated
+  uint64 timestamp = 4;
+  // Expiry timestamp for the quote
+  uint64 expiry = 5;
+}

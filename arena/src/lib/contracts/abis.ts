@@ -43,12 +43,49 @@ export const tangleJobsAbi = [
 
 export const tangleServicesAbi = [
   { type: 'function', name: 'requestService', inputs: [{ name: 'blueprintId', type: 'uint64' }, { name: 'operators', type: 'address[]' }, { name: 'config', type: 'bytes' }, { name: 'permittedCallers', type: 'address[]' }, { name: 'ttl', type: 'uint64' }, { name: 'paymentToken', type: 'address' }, { name: 'paymentAmount', type: 'uint256' }], outputs: [{ name: 'requestId', type: 'uint64' }], stateMutability: 'payable' },
+  {
+    type: 'function', name: 'createServiceFromQuotes',
+    inputs: [
+      { name: 'blueprintId', type: 'uint64' },
+      { name: 'quotes', type: 'tuple[]', components: [
+        { name: 'details', type: 'tuple', components: [
+          { name: 'blueprintId', type: 'uint64' },
+          { name: 'ttlBlocks', type: 'uint64' },
+          { name: 'totalCost', type: 'uint256' },
+          { name: 'timestamp', type: 'uint64' },
+          { name: 'expiry', type: 'uint64' },
+          { name: 'securityCommitments', type: 'tuple[]', components: [
+            { name: 'asset', type: 'tuple', components: [
+              { name: 'kind', type: 'uint8' },
+              { name: 'token', type: 'address' },
+            ] },
+            { name: 'exposureBps', type: 'uint16' },
+          ] },
+        ] },
+        { name: 'signature', type: 'bytes' },
+        { name: 'operator', type: 'address' },
+      ] },
+      { name: 'config', type: 'bytes' },
+      { name: 'permittedCallers', type: 'address[]' },
+      { name: 'ttl', type: 'uint64' },
+    ],
+    outputs: [{ name: 'serviceId', type: 'uint64' }],
+    stateMutability: 'payable',
+  },
   { type: 'function', name: 'getService', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'tuple', components: [{ name: 'blueprintId', type: 'uint64' }, { name: 'owner', type: 'address' }, { name: 'permittedCallers', type: 'address[]' }, { name: 'operators', type: 'address[]' }, { name: 'ttl', type: 'uint64' }] }], stateMutability: 'view' },
   { type: 'function', name: 'isServiceActive', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
   { type: 'function', name: 'getServiceOperators', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'address[]' }], stateMutability: 'view' },
   { type: 'function', name: 'isPermittedCaller', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'caller', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
-  { type: 'event', name: 'ServiceRequested', inputs: [{ name: 'requestId', type: 'uint64', indexed: true }, { name: 'blueprintId', type: 'uint64', indexed: true }, { name: 'requester', type: 'address', indexed: true }], anonymous: false },
+  { type: 'event', name: 'ServiceRequested', inputs: [{ name: 'requester', type: 'address', indexed: true }, { name: 'requestId', type: 'uint64', indexed: true }, { name: 'blueprintId', type: 'uint64', indexed: true }], anonymous: false },
   { type: 'event', name: 'ServiceActivated', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'requestId', type: 'uint64', indexed: true }, { name: 'blueprintId', type: 'uint64', indexed: true }], anonymous: false },
+] as const;
+
+export const tangleOperatorsAbi = [
+  { type: 'function', name: 'blueprintOperatorCount', inputs: [{ name: 'blueprintId', type: 'uint64' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'isOperatorRegistered', inputs: [{ name: 'blueprintId', type: 'uint64' }, { name: 'operator', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
+  { type: 'function', name: 'getOperatorPreferences', inputs: [{ name: 'blueprintId', type: 'uint64' }, { name: 'operator', type: 'address' }], outputs: [{ name: 'preferences', type: 'tuple', components: [{ name: 'ecdsaPublicKey', type: 'bytes' }, { name: 'rpcAddress', type: 'string' }] }], stateMutability: 'view' },
+  { type: 'event', name: 'OperatorRegistered', inputs: [{ name: 'blueprintId', type: 'uint64', indexed: true }, { name: 'operator', type: 'address', indexed: true }, { name: 'ecdsaPublicKey', type: 'bytes', indexed: false }, { name: 'rpcAddress', type: 'string', indexed: false }], anonymous: false },
+  { type: 'event', name: 'OperatorUnregistered', inputs: [{ name: 'blueprintId', type: 'uint64', indexed: true }, { name: 'operator', type: 'address', indexed: true }], anonymous: false },
 ] as const;
 
 export const tradingBlueprintAbi = [

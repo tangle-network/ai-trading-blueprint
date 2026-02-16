@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import type { Trade } from '~/lib/types/trade';
+import type { Trade, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
 import { mockTrades } from '~/lib/mock/trades';
@@ -30,6 +30,9 @@ interface ApiTrade {
       score: number;
       reasoning: string;
       signature: string;
+      chain_id?: number;
+      verifying_contract?: string;
+      validated_at?: string;
     }>;
   };
 }
@@ -70,6 +73,21 @@ async function fetchBotApi<T>(apiUrl: string, path: string): Promise<T> {
 }
 
 function mapApiTrade(t: ApiTrade, botName: string): Trade {
+  const validation: TradeValidation | undefined = t.validation ? {
+    approved: t.validation.approved,
+    aggregateScore: t.validation.aggregate_score,
+    intentHash: t.validation.intent_hash,
+    responses: t.validation.responses.map((r): ValidatorResponseDetail => ({
+      validator: r.validator,
+      score: r.score,
+      reasoning: r.reasoning,
+      signature: r.signature,
+      chainId: r.chain_id,
+      verifyingContract: r.verifying_contract,
+      validatedAt: r.validated_at,
+    })),
+  } : undefined;
+
   return {
     id: t.id,
     botId: t.bot_id,
@@ -83,8 +101,10 @@ function mapApiTrade(t: ApiTrade, botName: string): Trade {
     timestamp: new Date(t.timestamp).getTime(),
     status: t.paper_trade ? 'paper' : t.validation?.approved === false ? 'rejected' : t.tx_hash ? 'executed' : 'pending',
     txHash: t.tx_hash,
+    paperTrade: t.paper_trade,
     validatorScore: t.validation?.aggregate_score,
     validatorReasoning: t.validation?.responses?.[0]?.reasoning,
+    validation,
   };
 }
 

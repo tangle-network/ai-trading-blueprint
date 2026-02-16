@@ -2,6 +2,9 @@ import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagm
 import { parseUnits, maxUint256 } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
+import { tangleLocal } from '~/lib/contracts/chains';
+
+const chainId = tangleLocal.id;
 
 /** Approve the vault to spend the asset token. */
 export function useApprove() {
@@ -10,6 +13,7 @@ export function useApprove() {
 
   function approve(tokenAddress: Address, spender: Address) {
     writeContract({
+      chainId,
       address: tokenAddress,
       abi: erc20Abi,
       functionName: 'approve',
@@ -30,6 +34,7 @@ export function useDeposit() {
     if (!userAddress) return;
     const parsed = parseUnits(amount, decimals);
     writeContract({
+      chainId,
       address: vaultAddress,
       abi: tradingVaultAbi,
       functionName: 'deposit',
@@ -46,10 +51,11 @@ export function useRedeem() {
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  function redeem(vaultAddress: Address, shares: string) {
+  function redeem(vaultAddress: Address, shares: string, shareDecimals: number) {
     if (!userAddress) return;
-    const parsed = parseUnits(shares, 18);
+    const parsed = parseUnits(shares, shareDecimals);
     writeContract({
+      chainId,
       address: vaultAddress,
       abi: tradingVaultAbi,
       functionName: 'redeem',

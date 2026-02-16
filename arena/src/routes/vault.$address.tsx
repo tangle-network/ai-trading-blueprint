@@ -1,12 +1,14 @@
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
-import { useAccount } from 'wagmi';
+import { useAccount, useSwitchChain } from 'wagmi';
 import { AnimatedPage } from '~/components/motion/AnimatedPage';
 import { VaultStats } from '~/components/vault/VaultStats';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
+import { tangleLocal } from '~/lib/contracts/chains';
+import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
   { title: 'Vault — AI Trading Arena' },
@@ -15,11 +17,13 @@ export const meta: MetaFunction = () => [
 export default function VaultPage() {
   const { address } = useParams();
   const vaultAddress = address as Address | undefined;
-  const { isConnected } = useAccount();
+  const { isConnected, chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
 
   const vault = useVaultRead(vaultAddress);
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
+  const isWrongChain = isConnected && chainId !== tangleLocal.id;
 
   if (!isValidAddress) {
     return (
@@ -39,19 +43,19 @@ export default function VaultPage() {
     <AnimatedPage>
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
         <Link
-          to="/arena"
-          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-emerald-400 mb-6 transition-colors duration-200 font-display font-medium"
+          to="/"
+          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 transition-colors duration-200 font-display font-medium"
         >
-          <span className="text-xs">&larr;</span> Back to Arena
+          <span className="text-sm">&larr;</span> Back to Leaderboard
         </Link>
 
         <div className="mb-8">
           <h1 className="font-display font-bold text-3xl tracking-tight">Vault</h1>
-          <p className="text-sm text-arena-elements-textTertiary font-data mt-1 break-all">
+          <p className="text-sm text-arena-elements-textSecondary font-data mt-2 break-all">
             {vaultAddress}
           </p>
           {vault.assetSymbol !== '???' && (
-            <p className="text-sm text-arena-elements-textSecondary font-display mt-1">
+            <p className="text-base text-arena-elements-textPrimary font-display font-medium mt-1">
               Asset: {vault.assetSymbol}
             </p>
           )}
@@ -67,14 +71,27 @@ export default function VaultPage() {
           userSharesFormatted={vault.userSharesFormatted}
         />
 
-        {!isConnected && (
+        {!isConnected ? (
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
-            <div className="i-ph:wallet text-2xl text-arena-elements-textTertiary mb-3 mx-auto" />
-            <p className="text-sm text-arena-elements-textSecondary">
+            <div className="i-ph:wallet text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
+            <p className="text-base text-arena-elements-textSecondary">
               Connect your wallet to deposit or withdraw.
             </p>
           </div>
-        )}
+        ) : isWrongChain ? (
+          <div className="glass-card rounded-xl p-8 mb-6 text-center">
+            <div className="i-ph:arrow-square-out text-3xl text-amber-500 dark:text-amber-400 mb-3 mx-auto" />
+            <p className="text-base text-arena-elements-textSecondary mb-4">
+              Your wallet is connected to chain {chainId}. Switch to <span className="text-violet-700 dark:text-violet-400 font-semibold">Tangle Local ({tangleLocal.id})</span> to interact with this vault.
+            </p>
+            <Button
+              onClick={() => switchChain({ chainId: tangleLocal.id })}
+              className="bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
+            >
+              Switch to Tangle Local
+            </Button>
+          </div>
+        ) : null}
 
         <div className="grid md:grid-cols-2 gap-6">
           <DepositForm
@@ -91,6 +108,7 @@ export default function VaultPage() {
           <WithdrawForm
             vaultAddress={vaultAddress}
             assetSymbol={vault.assetSymbol}
+            shareDecimals={vault.shareDecimals}
             sharePrice={vault.sharePrice}
             userShares={vault.userShares}
             userSharesFormatted={vault.userSharesFormatted}

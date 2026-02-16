@@ -4,14 +4,25 @@ import type { Address } from 'viem';
 import type { Bot, BotStatus, StrategyType } from '~/lib/types/bot';
 import { tradingVaultAbi, tradingBlueprintAbi, tangleServicesAbi, erc20Abi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { mockBots } from '~/lib/mock/bots';
-import { getBotApiUrl, getBotMeta } from '~/lib/config/botRegistry';
+import { getBotMeta } from '~/lib/config/botRegistry';
+import { tangleLocal } from '~/lib/contracts/chains';
 
 // Parse service IDs from env or default to empty
 const SERVICE_IDS: number[] = (() => {
   const raw = import.meta.env.VITE_SERVICE_IDS;
   if (!raw) return [];
   return raw.split(',').map(Number).filter((n: number) => !isNaN(n) && n >= 0);
+})();
+
+// Direct vault address mapping: VITE_SERVICE_VAULTS={"0":"0x...","1":"0x..."}
+// Used when tradingBlueprint contract is not deployed (e.g. local devnet)
+const SERVICE_VAULTS: Record<string, Address> = (() => {
+  try {
+    const raw = import.meta.env.VITE_SERVICE_VAULTS;
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
 })();
 
 interface OnChainBot {
@@ -26,7 +37,7 @@ interface OnChainBot {
 }
 
 // Build multicall contract reads for a set of service IDs
-function buildServiceQueries(serviceIds: number[]) {
+function buildServiceQueries(serviceIds: number[], hasBlueprintContract: boolean) {
   const calls: Array<{
     address: Address;
     abi: typeof tradingBlueprintAbi | typeof tangleServicesAbi | typeof tradingVaultAbi | typeof erc20Abi;
@@ -34,15 +45,16 @@ function buildServiceQueries(serviceIds: number[]) {
     args: readonly unknown[];
   }> = [];
 
-  // For each service: get vault address, operators, active status
   for (const id of serviceIds) {
-    // 3 calls per service in first batch
-    calls.push({
-      address: addresses.tradingBlueprint,
-      abi: tradingBlueprintAbi,
-      functionName: 'instanceVault',
-      args: [BigInt(id)] as const,
-    });
+    if (hasBlueprintContract) {
+      // Query vault from blueprint contract
+      calls.push({
+        address: addresses.tradingBlueprint,
+        abi: tradingBlueprintAbi,
+        functionName: 'instanceVault',
+        args: [BigInt(id)] as const,
+      });
+    }
     calls.push({
       address: addresses.tangle,
       abi: tangleServicesAbi,
@@ -68,22 +80,9 @@ function buildVaultQueries(vaults: Array<{ serviceId: number; address: Address }
   }> = [];
 
   for (const v of vaults) {
-    // 3 calls per vault
-    calls.push({
-      address: v.address,
-      abi: tradingVaultAbi,
-      functionName: 'totalAssets',
-    });
-    calls.push({
-      address: v.address,
-      abi: tradingVaultAbi,
-      functionName: 'paused',
-    });
-    calls.push({
-      address: v.address,
-      abi: tradingVaultAbi,
-      functionName: 'asset',
-    });
+    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'totalAssets' });
+    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'paused' });
+    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'asset' });
   }
   return calls;
 }
@@ -91,29 +90,44 @@ function buildVaultQueries(vaults: Array<{ serviceId: number; address: Address }
 /**
  * Hook that discovers bots from on-chain data.
  * When VITE_SERVICE_IDS is set, queries the chain for real bot data.
- * Falls back to mock data when no services are configured.
+ * Uses VITE_SERVICE_VAULTS for vault addresses when no tradingBlueprint contract exists.
+ * Returns empty array when no services are configured (no mock data).
  */
 export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void } {
-  const hasServices = SERVICE_IDS.length > 0 && addresses.tradingBlueprint !== zeroAddress;
+  const hasServices = SERVICE_IDS.length > 0;
+  const hasBlueprintContract = addresses.tradingBlueprint !== zeroAddress;
+  const hasVaultMapping = Object.keys(SERVICE_VAULTS).length > 0;
 
   // Phase 1: service-level queries
-  const serviceQueries = hasServices ? buildServiceQueries(SERVICE_IDS) : [];
+  const serviceQueries = hasServices ? buildServiceQueries(SERVICE_IDS, hasBlueprintContract) : [];
   const { data: serviceResults, isLoading: serviceLoading, refetch: refetchServices } = useReadContracts({
     contracts: serviceQueries as any,
-    query: { enabled: hasServices },
+    query: {
+      enabled: hasServices,
+      // Force the chain ID so wagmi routes to the right RPC
+      ...(tangleLocal.id ? {} : {}),
+    },
   });
 
-  // Parse vault addresses from service results
+  // Parse vault addresses from service results or env mapping
   const vaultsToQuery: Array<{ serviceId: number; address: Address; operators: Address[]; isActive: boolean }> = [];
   if (serviceResults) {
+    const callsPerService = hasBlueprintContract ? 3 : 2;
     for (let i = 0; i < SERVICE_IDS.length; i++) {
-      const vaultResult = serviceResults[i * 3];
-      const operatorsResult = serviceResults[i * 3 + 1];
-      const activeResult = serviceResults[i * 3 + 2];
+      let vaultAddr: Address | undefined;
+      let operators: Address[];
+      let isActive: boolean;
 
-      const vaultAddr = vaultResult?.result as Address | undefined;
-      const operators = (operatorsResult?.result as Address[] | undefined) ?? [];
-      const isActive = (activeResult?.result as boolean | undefined) ?? false;
+      if (hasBlueprintContract) {
+        vaultAddr = serviceResults[i * callsPerService]?.result as Address | undefined;
+        operators = (serviceResults[i * callsPerService + 1]?.result as Address[] | undefined) ?? [];
+        isActive = (serviceResults[i * callsPerService + 2]?.result as boolean | undefined) ?? false;
+      } else {
+        // Use env-based vault mapping
+        vaultAddr = SERVICE_VAULTS[String(SERVICE_IDS[i])];
+        operators = (serviceResults[i * callsPerService]?.result as Address[] | undefined) ?? [];
+        isActive = (serviceResults[i * callsPerService + 1]?.result as boolean | undefined) ?? false;
+      }
 
       if (vaultAddr && vaultAddr !== zeroAddress) {
         vaultsToQuery.push({ serviceId: SERVICE_IDS[i], address: vaultAddr, operators, isActive });
@@ -176,9 +190,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
       const tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
 
-      // Get metadata from bot registry (names, strategy, etc.)
       const meta = getBotMeta(v.serviceId);
-
       const status: BotStatus = !v.isActive ? 'stopped' : paused ? 'paused' : 'active';
 
       onChainBots.push({
@@ -203,12 +215,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
   }
 
   const isLoading = hasServices && (serviceLoading || vaultLoading || assetLoading);
-  const bots = hasServices && onChainBots.length > 0 ? onChainBots : mockBots;
 
   return {
-    bots,
+    bots: onChainBots,
     isLoading,
-    isOnChain: hasServices && onChainBots.length > 0,
+    isOnChain: onChainBots.length > 0,
     refetch: () => { refetchServices(); refetchVaults(); },
   };
 }

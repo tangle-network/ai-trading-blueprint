@@ -122,7 +122,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
     {
       label: 'Total Return',
       value: `$${bot.pnlAbsolute.toLocaleString()}`,
-      color: bot.pnlPercent >= 0 ? 'text-emerald-400' : 'text-crimson-400',
+      color: bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
     },
     {
       label: 'Total Trades',
@@ -170,7 +170,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
             transition={{ delay: 0.2 + i * 0.06 }}
           >
             <Card className="p-5">
-              <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary mb-2">
+              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-2">
                 {card.label}
               </div>
               <div className={`text-2xl font-display font-bold ${card.color}`}>

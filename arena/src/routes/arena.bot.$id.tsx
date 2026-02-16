@@ -8,6 +8,7 @@ import { PerformanceTab } from '~/components/bot-detail/PerformanceTab';
 import { PositionsTab } from '~/components/bot-detail/PositionsTab';
 import { TradeHistoryTab } from '~/components/bot-detail/TradeHistoryTab';
 import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
+import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
@@ -52,7 +53,7 @@ export default function BotDetailPage() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
         <Link
           to="/arena"
-          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-emerald-400 mb-6 transition-colors duration-200 font-display font-medium"
+          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 transition-colors duration-200 font-display font-medium"
         >
           <span className="text-xs">&larr;</span> Back to Arena
         </Link>
@@ -65,6 +66,7 @@ export default function BotDetailPage() {
             <TabsTrigger value="positions">Positions</TabsTrigger>
             <TabsTrigger value="trades">Trade History</TabsTrigger>
             <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
+            <TabsTrigger value="chat">Chat</TabsTrigger>
           </TabsList>
 
           <TabsContent value="performance" className="mt-6">
@@ -81,6 +83,10 @@ export default function BotDetailPage() {
 
           <TabsContent value="reasoning" className="mt-6">
             <ReasoningTab botId={bot.id} botName={bot.name} />
+          </TabsContent>
+
+          <TabsContent value="chat" className="mt-6">
+            <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
           </TabsContent>
         </Tabs>
       </div>

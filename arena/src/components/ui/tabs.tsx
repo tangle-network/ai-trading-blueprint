@@ -28,9 +28,9 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
       className={cn(
         'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium font-display whitespace-nowrap transition-all duration-200',
         'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary',
-        'data-[state=active]:text-emerald-400 data-[state=active]:bg-emerald-500/10 data-[state=active]:shadow-[0_0_12px_rgba(0,255,136,0.1)]',
+        'data-[state=active]:text-violet-700 dark:data-[state=active]:text-violet-400 data-[state=active]:bg-violet-500/10 data-[state=active]:shadow-[0_0_12px_rgba(142,89,255,0.1)]',
         'disabled:pointer-events-none disabled:opacity-40',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/30',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/30',
         className,
       )}
       {...props}

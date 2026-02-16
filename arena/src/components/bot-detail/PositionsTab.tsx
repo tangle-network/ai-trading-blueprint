@@ -30,11 +30,11 @@ export function PositionsTab({ botId }: PositionsTabProps) {
     <div className="space-y-4">
       <div className="flex items-center gap-6 mb-4">
         <div className="glass-card rounded-lg px-4 py-2">
-          <span className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">Total Value </span>
+          <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Total Value </span>
           <span className="font-display font-bold text-lg">${portfolio.totalValueUsd.toLocaleString()}</span>
         </div>
         <div className="glass-card rounded-lg px-4 py-2">
-          <span className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">Cash </span>
+          <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Cash </span>
           <span className="font-data font-medium">${portfolio.cashBalance.toLocaleString()}</span>
         </div>
       </div>
@@ -59,7 +59,7 @@ export function PositionsTab({ botId }: PositionsTabProps) {
               <TableCell className="text-right font-data text-sm">${pos.valueUsd.toLocaleString()}</TableCell>
               <TableCell className="text-right font-data text-sm text-arena-elements-textSecondary">${pos.entryPrice.toLocaleString()}</TableCell>
               <TableCell className="text-right font-data text-sm">${pos.currentPrice.toLocaleString()}</TableCell>
-              <TableCell className={`text-right font-data text-sm font-bold ${pos.pnlPercent >= 0 ? 'text-emerald-400' : 'text-crimson-400'}`}>
+              <TableCell className={`text-right font-data text-sm font-bold ${pos.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`}>
                 {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
               </TableCell>
               <TableCell className="text-right font-data text-sm text-arena-elements-textSecondary">{pos.weight.toFixed(1)}%</TableCell>

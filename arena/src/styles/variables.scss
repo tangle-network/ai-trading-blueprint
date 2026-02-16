@@ -7,7 +7,7 @@
 :root,
 :root[data-theme='dark'] {
   --arena-elements-borderColor: rgba(240, 240, 245, 0.06);
-  --arena-elements-borderColorActive: theme('colors.emerald.400');
+  --arena-elements-borderColorActive: theme('colors.violet.400');
 
   --arena-elements-bg-depth-1: #0A0A0F;
   --arena-elements-bg-depth-2: #12121A;
@@ -18,9 +18,9 @@
   --arena-elements-textSecondary: #8A8A9E;
   --arena-elements-textTertiary: #5A5A6E;
 
-  --arena-elements-button-primary-background: rgba(0, 255, 136, 0.12);
-  --arena-elements-button-primary-backgroundHover: rgba(0, 255, 136, 0.20);
-  --arena-elements-button-primary-text: #00FF88;
+  --arena-elements-button-primary-background: rgba(142, 89, 255, 0.14);
+  --arena-elements-button-primary-backgroundHover: rgba(142, 89, 255, 0.24);
+  --arena-elements-button-primary-text: #A87BFF;
 
   --arena-elements-button-secondary-background: rgba(240, 240, 245, 0.06);
   --arena-elements-button-secondary-backgroundHover: rgba(240, 240, 245, 0.10);
@@ -38,7 +38,7 @@
   --arena-elements-dividerColor: rgba(240, 240, 245, 0.06);
   --arena-elements-item-backgroundHover: rgba(240, 240, 245, 0.03);
   --arena-elements-item-backgroundActive: rgba(240, 240, 245, 0.06);
-  --arena-elements-focus: #00FF88;
+  --arena-elements-focus: #8E59FF;
 
   /* shadcn/ui CSS Variables - Dark */
   --background: 240 30% 4%;
@@ -47,8 +47,8 @@
   --card-foreground: 240 10% 95%;
   --popover: 240 25% 7%;
   --popover-foreground: 240 10% 95%;
-  --primary: 155 100% 50%;
-  --primary-foreground: 240 30% 4%;
+  --primary: 263 100% 68%;
+  --primary-foreground: 0 0% 100%;
   --secondary: 240 15% 14%;
   --secondary-foreground: 240 10% 95%;
   --muted: 240 15% 14%;
@@ -59,7 +59,7 @@
   --destructive-foreground: 0 0% 100%;
   --border: 240 10% 16%;
   --input: 240 10% 16%;
-  --ring: 155 100% 50%;
+  --ring: 263 100% 68%;
   --radius: 0.625rem;
 
   --chart-1: 155 100% 50%;
@@ -83,75 +83,75 @@
 
 /* ═══ Light Theme ═══ */
 :root[data-theme='light'] {
-  --arena-elements-borderColor: rgba(10, 10, 15, 0.08);
-  --arena-elements-borderColorActive: #00AA5C;
+  --arena-elements-borderColor: rgba(10, 10, 15, 0.10);
+  --arena-elements-borderColorActive: #7C3AED;
 
-  --arena-elements-bg-depth-1: #FAFAFE;
-  --arena-elements-bg-depth-2: #F0F0F5;
-  --arena-elements-bg-depth-3: #E5E5ED;
-  --arena-elements-bg-depth-4: #D8D8E2;
+  --arena-elements-bg-depth-1: #F8F8FC;
+  --arena-elements-bg-depth-2: #EEEFF5;
+  --arena-elements-bg-depth-3: #E2E3EB;
+  --arena-elements-bg-depth-4: #D4D5DF;
 
   --arena-elements-textPrimary: #0E0E16;
-  --arena-elements-textSecondary: #5A5A6E;
-  --arena-elements-textTertiary: #8A8A9E;
+  --arena-elements-textSecondary: #44445A;
+  --arena-elements-textTertiary: #6B6B82;
 
-  --arena-elements-button-primary-background: rgba(0, 213, 115, 0.10);
-  --arena-elements-button-primary-backgroundHover: rgba(0, 213, 115, 0.18);
-  --arena-elements-button-primary-text: #008048;
+  --arena-elements-button-primary-background: rgba(124, 58, 237, 0.10);
+  --arena-elements-button-primary-backgroundHover: rgba(124, 58, 237, 0.18);
+  --arena-elements-button-primary-text: #6D28D9;
 
-  --arena-elements-button-secondary-background: rgba(10, 10, 15, 0.05);
-  --arena-elements-button-secondary-backgroundHover: rgba(10, 10, 15, 0.08);
+  --arena-elements-button-secondary-background: rgba(10, 10, 15, 0.06);
+  --arena-elements-button-secondary-backgroundHover: rgba(10, 10, 15, 0.10);
   --arena-elements-button-secondary-text: #0E0E16;
 
-  --arena-elements-button-danger-background: rgba(229, 34, 62, 0.08);
-  --arena-elements-button-danger-backgroundHover: rgba(229, 34, 62, 0.14);
-  --arena-elements-button-danger-text: #B91C32;
+  --arena-elements-button-danger-background: rgba(200, 30, 52, 0.08);
+  --arena-elements-button-danger-backgroundHover: rgba(200, 30, 52, 0.14);
+  --arena-elements-button-danger-text: #A01628;
 
-  --arena-elements-icon-success: #00AA5C;
-  --arena-elements-icon-error: #E5223E;
+  --arena-elements-icon-success: #007A42;
+  --arena-elements-icon-error: #C81E34;
   --arena-elements-icon-primary: #0E0E16;
-  --arena-elements-icon-secondary: #8A8A9E;
+  --arena-elements-icon-secondary: #6B6B82;
 
-  --arena-elements-dividerColor: rgba(10, 10, 15, 0.06);
-  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.03);
-  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.06);
-  --arena-elements-focus: #00AA5C;
+  --arena-elements-dividerColor: rgba(10, 10, 15, 0.08);
+  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.04);
+  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.07);
+  --arena-elements-focus: #7C3AED;
 
   /* shadcn/ui CSS Variables - Light */
-  --background: 240 20% 98%;
+  --background: 240 20% 97%;
   --foreground: 240 30% 5%;
   --card: 0 0% 100%;
   --card-foreground: 240 30% 5%;
   --popover: 0 0% 100%;
   --popover-foreground: 240 30% 5%;
-  --primary: 155 100% 33%;
+  --primary: 263 84% 52%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 240 10% 94%;
+  --secondary: 240 10% 92%;
   --secondary-foreground: 240 30% 5%;
-  --muted: 240 10% 94%;
-  --muted-foreground: 240 10% 40%;
-  --accent: 240 10% 94%;
+  --muted: 240 10% 92%;
+  --muted-foreground: 240 10% 35%;
+  --accent: 240 10% 92%;
   --accent-foreground: 240 30% 5%;
-  --destructive: 348 85% 46%;
+  --destructive: 348 85% 42%;
   --destructive-foreground: 0 0% 100%;
-  --border: 240 10% 90%;
-  --input: 240 10% 90%;
-  --ring: 155 100% 33%;
-  --chart-1: 155 80% 35%;
-  --chart-2: 197 80% 45%;
-  --chart-3: 45 80% 50%;
-  --chart-4: 263 70% 55%;
-  --chart-5: 348 80% 50%;
+  --border: 240 10% 88%;
+  --input: 240 10% 88%;
+  --ring: 155 100% 25%;
+  --chart-1: 155 80% 28%;
+  --chart-2: 197 80% 38%;
+  --chart-3: 45 80% 42%;
+  --chart-4: 263 70% 48%;
+  --chart-5: 348 80% 42%;
 
-  --glass-bg: rgba(255, 255, 255, 0.70);
-  --glass-bg-strong: rgba(255, 255, 255, 0.85);
-  --glass-border: rgba(10, 10, 15, 0.06);
-  --glass-border-hover: rgba(10, 10, 15, 0.12);
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg-strong: rgba(255, 255, 255, 0.90);
+  --glass-border: rgba(10, 10, 15, 0.08);
+  --glass-border-hover: rgba(10, 10, 15, 0.15);
   --glass-blur: 16px;
 
-  --mesh-emerald: rgba(0, 213, 115, 0.03);
-  --mesh-violet: rgba(139, 92, 246, 0.03);
-  --mesh-blue: rgba(0, 140, 200, 0.02);
+  --mesh-emerald: rgba(0, 122, 66, 0.03);
+  --mesh-violet: rgba(100, 60, 200, 0.03);
+  --mesh-blue: rgba(0, 100, 180, 0.02);
 }
 
 :root {
@@ -177,7 +177,7 @@ a:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--arena-elements-focus);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(0, 255, 136, 0.15);
+  box-shadow: 0 0 0 4px rgba(142, 89, 255, 0.15);
 }
 
 input:focus-visible,

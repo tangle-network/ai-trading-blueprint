@@ -7,6 +7,11 @@ interface TradeHistoryTabProps {
   botName?: string;
 }
 
+function truncateHash(hash: string): string {
+  if (hash.length <= 14) return hash;
+  return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
+}
+
 export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
   const { data: trades, isLoading } = useBotTrades(botId, botName);
 
@@ -37,57 +42,85 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
           <TableHead>Pair</TableHead>
           <TableHead className="text-right">Amount</TableHead>
           <TableHead className="text-right">Price</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Score</TableHead>
+          <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
           <TableHead>Status</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {trades.map((trade) => (
-          <TableRow key={trade.id}>
-            <TableCell className="text-arena-elements-textTertiary text-xs font-data">
-              {new Date(trade.timestamp).toLocaleString('en-US', {
-                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-              })}
-            </TableCell>
-            <TableCell>
-              <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
-                {trade.action.toUpperCase()}
-              </Badge>
-            </TableCell>
-            <TableCell className="font-display font-medium text-sm">
-              {trade.tokenIn}/{trade.tokenOut}
-            </TableCell>
-            <TableCell className="text-right font-data text-sm">
-              {trade.amountOut.toLocaleString()} {trade.tokenOut}
-            </TableCell>
-            <TableCell className="text-right font-data text-sm">
-              {trade.priceUsd > 0 ? `$${trade.priceUsd.toLocaleString()}` : '—'}
-            </TableCell>
-            <TableCell className="text-right hidden sm:table-cell">
-              {trade.validatorScore != null ? (
-                <span className={`font-data text-xs font-bold ${
-                  trade.validatorScore >= 80 ? 'text-emerald-400' :
-                  trade.validatorScore >= 50 ? 'text-amber-400' : 'text-crimson-400'
-                }`}>
-                  {trade.validatorScore}
-                </span>
-              ) : (
-                <span className="text-arena-elements-textTertiary font-data text-xs">-</span>
-              )}
-            </TableCell>
-            <TableCell>
-              <Badge
-                variant={
-                  trade.status === 'executed' ? 'success' :
-                  trade.status === 'rejected' ? 'destructive' :
-                  trade.status === 'paper' ? 'secondary' : 'outline'
-                }
-              >
-                {trade.status}
-              </Badge>
-            </TableCell>
-          </TableRow>
-        ))}
+        {trades.map((trade) => {
+          const responses = trade.validation?.responses ?? [];
+          const signedCount = responses.filter(
+            (r) => r.signature && r.signature !== `0x${'00'.repeat(65)}`
+          ).length;
+
+          return (
+            <TableRow key={trade.id}>
+              <TableCell className="text-arena-elements-textTertiary text-xs font-data">
+                {new Date(trade.timestamp).toLocaleString('en-US', {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                })}
+              </TableCell>
+              <TableCell>
+                <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
+                  {trade.action.toUpperCase()}
+                </Badge>
+              </TableCell>
+              <TableCell className="font-display font-medium text-sm">
+                {trade.tokenIn}/{trade.tokenOut}
+              </TableCell>
+              <TableCell className="text-right font-data text-sm">
+                {trade.amountOut.toLocaleString()} {trade.tokenOut}
+              </TableCell>
+              <TableCell className="text-right font-data text-sm">
+                {trade.priceUsd > 0 ? `$${trade.priceUsd.toLocaleString()}` : '—'}
+              </TableCell>
+              <TableCell className="text-right hidden sm:table-cell">
+                <div className="flex items-center justify-end gap-1.5">
+                  {/* Aggregate score */}
+                  {trade.validatorScore != null && (
+                    <span className={`font-data text-xs font-bold ${
+                      trade.validatorScore >= 80 ? 'text-arena-elements-icon-success' :
+                      trade.validatorScore >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error'
+                    }`}>
+                      {trade.validatorScore}
+                    </span>
+                  )}
+                  {/* Validator count */}
+                  {responses.length > 0 && (
+                    <Badge
+                      variant={signedCount === responses.length ? 'success' : 'amber'}
+                      className="text-xs py-0"
+                    >
+                      {signedCount}/{responses.length}
+                    </Badge>
+                  )}
+                  {/* No score */}
+                  {trade.validatorScore == null && responses.length === 0 && (
+                    <span className="text-arena-elements-textTertiary font-data text-xs">-</span>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-1.5">
+                  <Badge
+                    variant={
+                      trade.status === 'executed' ? 'success' :
+                      trade.status === 'rejected' ? 'destructive' :
+                      trade.status === 'paper' ? 'secondary' : 'outline'
+                    }
+                  >
+                    {trade.status}
+                  </Badge>
+                  {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (
+                    <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+                      {truncateHash(trade.txHash)}
+                    </span>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );

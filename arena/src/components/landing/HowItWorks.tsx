@@ -26,19 +26,19 @@ const steps = [
 
 const colorMap: Record<string, { icon: string; bg: string; border: string; number: string }> = {
   emerald: {
-    icon: 'text-emerald-400',
+    icon: 'text-arena-elements-icon-success',
     bg: 'bg-emerald-500/8',
     border: 'border-emerald-500/20',
     number: 'text-emerald-500/20',
   },
   violet: {
-    icon: 'text-violet-400',
+    icon: 'text-violet-700 dark:text-violet-400',
     bg: 'bg-violet-500/8',
     border: 'border-violet-500/20',
     number: 'text-violet-500/20',
   },
   amber: {
-    icon: 'text-amber-400',
+    icon: 'text-amber-700 dark:text-amber-400',
     bg: 'bg-amber-500/8',
     border: 'border-amber-500/20',
     number: 'text-amber-500/20',

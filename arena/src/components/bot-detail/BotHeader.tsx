@@ -1,8 +1,10 @@
 import { Link } from 'react-router';
 import { motion } from 'framer-motion';
+import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
+import { Identicon } from '~/components/shared/Identicon';
 
 interface BotHeaderProps {
   bot: Bot;
@@ -13,7 +15,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
     {
       label: 'PnL',
       value: `${bot.pnlPercent >= 0 ? '+' : ''}${bot.pnlPercent.toFixed(1)}%`,
-      color: bot.pnlPercent >= 0 ? 'text-emerald-400' : 'text-crimson-400',
+      color: bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
       glow: bot.pnlPercent >= 0 ? 'glow-emerald' : 'glow-crimson',
     },
     { label: 'Sharpe', value: bot.sharpeRatio.toFixed(2), color: '', glow: '' },
@@ -28,7 +30,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
     {
       label: 'Avg Score',
       value: `${bot.avgValidatorScore}`,
-      color: bot.avgValidatorScore >= 85 ? 'text-emerald-400' : bot.avgValidatorScore >= 70 ? 'text-amber-400' : 'text-crimson-400',
+      color: bot.avgValidatorScore >= 85 ? 'text-arena-elements-icon-success' : bot.avgValidatorScore >= 70 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error',
       glow: '',
     },
   ];
@@ -49,8 +51,9 @@ export function BotHeader({ bot }: BotHeaderProps) {
       </div>
 
       <div className="flex items-center gap-4 text-sm text-arena-elements-textTertiary mb-6 font-data">
-        <span>
-          <span className="text-arena-elements-textSecondary">Operator</span>{' '}
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-arena-elements-textSecondary">Operator</span>
+          <Identicon address={bot.operatorAddress as Address} size={16} />
           {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
         </span>
         {bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000' && (
@@ -71,7 +74,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
             transition={{ delay: i * 0.05, duration: 0.4 }}
             className={`glass-card rounded-xl p-4 ${stat.glow}`}
           >
-            <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1.5">
+            <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-1.5">
               {stat.label}
             </div>
             <div className={`text-xl font-display font-bold ${stat.color}`}>

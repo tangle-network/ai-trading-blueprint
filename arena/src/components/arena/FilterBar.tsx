@@ -31,9 +31,9 @@ export function FilterBar({ search, onSearchChange, timePeriod, onTimePeriodChan
           <button
             key={tp.value}
             onClick={() => onTimePeriodChange(tp.value)}
-            className={`px-3 py-1.5 text-xs font-data font-semibold uppercase tracking-wider rounded-md transition-all duration-200 ${
+            className={`px-3.5 py-2 text-sm font-data font-semibold uppercase tracking-wider rounded-md transition-all duration-200 ${
               timePeriod === tp.value
-                ? 'bg-emerald-500/10 text-emerald-400 shadow-[0_0_10px_rgba(0,255,136,0.08)]'
+                ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400 shadow-[0_0_10px_rgba(142,89,255,0.08)]'
                 : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'
             }`}
           >

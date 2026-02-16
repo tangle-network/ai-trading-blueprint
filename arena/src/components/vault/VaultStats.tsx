@@ -47,7 +47,7 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
       prefix: '',
       suffix: '',
       decimals: 4,
-      color: userSharesFormatted && userSharesFormatted > 0 ? 'text-emerald-400' : '',
+      color: userSharesFormatted && userSharesFormatted > 0 ? 'text-arena-elements-icon-success' : '',
       icon: 'i-ph:user',
     },
   ];
@@ -63,8 +63,8 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
           className="glass-card rounded-xl p-5"
         >
           <div className="flex items-center gap-2 mb-2">
-            <div className={`${stat.icon} text-sm text-arena-elements-textTertiary`} />
-            <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className={`${stat.icon} text-base text-arena-elements-textTertiary`} />
+            <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
               {stat.label}
             </div>
           </div>
@@ -83,7 +83,7 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
             <div className="text-2xl font-display font-bold text-arena-elements-textTertiary">—</div>
           )}
           {stat.label === 'Total Value Locked' && paused && (
-            <div className="mt-1 text-[10px] font-data uppercase tracking-wider text-crimson-400">Paused</div>
+            <div className="mt-1 text-xs font-data uppercase tracking-wider text-crimson-600 dark:text-crimson-400">Paused</div>
           )}
         </motion.div>
       ))}
