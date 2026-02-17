@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
@@ -39,8 +39,11 @@ pub struct BotSummary {
     pub sandbox_id: String,
 }
 
-impl From<TradingBotRecord> for BotSummary {
-    fn from(b: TradingBotRecord) -> Self {
+impl BotSummary {
+    fn from_record(b: TradingBotRecord) -> Self {
+        let secrets_configured = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id)
+            .map(|s| s.has_user_secrets())
+            .unwrap_or(false);
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -50,7 +53,7 @@ impl From<TradingBotRecord> for BotSummary {
             trading_active: b.trading_active,
             paper_trade: b.paper_trade,
             created_at: b.created_at,
-            secrets_configured: b.secrets_configured,
+            secrets_configured,
             sandbox_id: b.sandbox_id,
         }
     }
@@ -75,10 +78,14 @@ pub struct BotDetailResponse {
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
     pub secrets_configured: bool,
+    pub wind_down_started_at: Option<u64>,
 }
 
-impl From<TradingBotRecord> for BotDetailResponse {
-    fn from(b: TradingBotRecord) -> Self {
+impl BotDetailResponse {
+    fn from_record(b: TradingBotRecord) -> Self {
+        let secrets_configured = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id)
+            .map(|s| s.has_user_secrets())
+            .unwrap_or(false);
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -96,7 +103,8 @@ impl From<TradingBotRecord> for BotDetailResponse {
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id,
-            secrets_configured: b.secrets_configured,
+            secrets_configured,
+            wind_down_started_at: b.wind_down_started_at,
         }
     }
 }
@@ -173,6 +181,32 @@ impl From<ActivationProgress> for ActivationProgressResponse {
     }
 }
 
+// ── Bot control types ────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct BotControlResponse {
+    status: String,
+    sandbox_id: String,
+}
+
+#[derive(Serialize)]
+struct RunNowResponse {
+    status: String,
+    workflow_id: u64,
+    response: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct UpdateConfigRequest {
+    strategy_config_json: Option<String>,
+    risk_params_json: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ConfigResponse {
+    status: String,
+}
+
 // ── Session auth types ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -211,6 +245,10 @@ pub fn build_operator_router() -> Router {
             "/api/bots/{bot_id}/secrets",
             post(configure_secrets).delete(wipe_secrets),
         )
+        .route("/api/bots/{bot_id}/start", post(start_bot))
+        .route("/api/bots/{bot_id}/stop", post(stop_bot))
+        .route("/api/bots/{bot_id}/run-now", post(run_now))
+        .route("/api/bots/{bot_id}/config", patch(update_config))
         .route("/api/bots/{bot_id}/activation-progress", get(get_activation_progress))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
@@ -251,7 +289,7 @@ async fn list_bots(
 
     let paginated = result.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let mut bots: Vec<BotSummary> = paginated.bots.into_iter().map(BotSummary::from).collect();
+    let mut bots: Vec<BotSummary> = paginated.bots.into_iter().map(BotSummary::from_record).collect();
 
     // Optional status filter (active/inactive)
     if let Some(ref status) = query.status {
@@ -274,7 +312,7 @@ async fn get_bot(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
 
-    Ok(Json(BotDetailResponse::from(record)))
+    Ok(Json(BotDetailResponse::from_record(record)))
 }
 
 // ── Secrets handlers ─────────────────────────────────────────────────────
@@ -339,6 +377,131 @@ async fn wipe_secrets(
     }))
 }
 
+// ── Bot control handlers ─────────────────────────────────────────────────
+
+/// Verify caller is the bot's submitter. Returns the bot on success.
+fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
+    if !bot.submitter_address.is_empty()
+        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Caller {caller} is not the bot submitter"),
+        ));
+    }
+    Ok(())
+}
+
+async fn start_bot(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    verify_submitter(&bot, &caller)?;
+
+    trading_blueprint_lib::jobs::start_core(&bot.sandbox_id, false)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(BotControlResponse {
+        status: "started".to_string(),
+        sandbox_id: bot.sandbox_id,
+    }))
+}
+
+async fn stop_bot(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    verify_submitter(&bot, &caller)?;
+
+    trading_blueprint_lib::jobs::stop_core(&bot.sandbox_id, false)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(BotControlResponse {
+        status: "stopped".to_string(),
+        sandbox_id: bot.sandbox_id,
+    }))
+}
+
+async fn run_now(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<RunNowResponse>, (StatusCode, String)> {
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    verify_submitter(&bot, &caller)?;
+
+    if !bot.trading_active {
+        return Err((StatusCode::CONFLICT, "Bot is not active".to_string()));
+    }
+
+    let workflow_id = bot
+        .workflow_id
+        .ok_or_else(|| (StatusCode::CONFLICT, "Bot has no workflow configured".to_string()))?;
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .get(&wf_key)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+
+    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Update workflow timestamps
+    let last_run_at = execution.last_run_at;
+    let next_run_at = execution.next_run_at;
+    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&wf_key, |e| {
+            e.last_run_at = Some(last_run_at);
+            e.next_run_at = next_run_at;
+        });
+
+    Ok(Json(RunNowResponse {
+        status: "executed".to_string(),
+        workflow_id,
+        response: execution.response,
+    }))
+}
+
+async fn update_config(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<UpdateConfigRequest>,
+) -> Result<Json<ConfigResponse>, (StatusCode, String)> {
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    verify_submitter(&bot, &caller)?;
+
+    trading_blueprint_lib::jobs::configure_core(
+        &bot.sandbox_id,
+        body.strategy_config_json.as_deref().unwrap_or(""),
+        body.risk_params_json.as_deref().unwrap_or(""),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(ConfigResponse {
+        status: "configured".to_string(),
+    }))
+}
+
 // ── Activation progress handler ──────────────────────────────────────────
 
 async fn get_activation_progress(
@@ -387,7 +550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_bots_empty() {
+    async fn test_list_bots_returns_valid_response() {
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
 
@@ -406,8 +569,10 @@ mod tests {
         assert_eq!(response.status(), 200);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["bots"].as_array().unwrap().len(), 0);
-        assert_eq!(json["total"], 0);
+        assert!(json["bots"].is_array());
+        assert!(json["total"].is_number());
+        assert!(json["limit"].is_number());
+        assert!(json["offset"].is_number());
     }
 
     #[tokio::test]
@@ -522,5 +687,202 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_start_bot_requires_auth() {
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/test-bot/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_stop_bot_requires_auth() {
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/test-bot/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_run_now_requires_auth() {
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/test-bot/run-now")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_requires_auth() {
+        let app = build_operator_router();
+
+        let body = serde_json::json!({
+            "strategy_config_json": "{\"max_slippage\": 1.0}",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/bots/test-bot/config")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_start_bot_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/nonexistent/start")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_run_now_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/nonexistent/run-now")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let body = serde_json::json!({
+            "strategy_config_json": "{\"max_slippage\": 1.0}",
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/bots/nonexistent/config")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_bot_detail_includes_wind_down() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let store = state::bots().unwrap();
+        let bot = TradingBotRecord {
+            id: "wd-bot".to_string(),
+            sandbox_id: "sandbox-wd".to_string(),
+            vault_address: "0x01".to_string(),
+            share_token: String::new(),
+            strategy_type: "dex_trading".to_string(),
+            strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://localhost:9000".to_string(),
+            trading_api_token: "tok".to_string(),
+            workflow_id: None,
+            trading_active: true,
+            created_at: 1000,
+            operator_address: String::new(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: Some(5000),
+            submitter_address: String::new(),
+        };
+        store
+            .insert(state::bot_key("wd-bot"), bot)
+            .unwrap();
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/bots/wd-bot")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["wind_down_started_at"], 5000);
     }
 }

@@ -44,12 +44,6 @@ pub struct TradingBotRecord {
     /// Address of the wallet that submitted the provision job (for off-chain auth).
     #[serde(default)]
     pub submitter_address: String,
-    /// Whether the user has pushed secrets via the off-chain API.
-    #[serde(default)]
-    pub secrets_configured: bool,
-    /// User-provided environment variables, stored locally only — NEVER on-chain.
-    #[serde(default)]
-    pub user_env_json: Option<String>,
 }
 
 /// A recorded paper trade (simulated execution).
@@ -264,8 +258,6 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
-            secrets_configured: false,
-            user_env_json: None,
         }
     }
 

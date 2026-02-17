@@ -151,6 +151,13 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
             + (uint256(days_) * uint256(memoryMb) * memGbDailyRate / 1024);
     }
 
+    /// @notice Estimate the cost for extending a bot's lifetime.
+    /// @param additionalDays Number of extra days to add
+    /// @return cost Total cost in wei
+    function estimateExtendCost(uint64 additionalDays) public view returns (uint256 cost) {
+        cost = uint256(additionalDays) * dailyRate;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // SERVICE LIFECYCLE HOOKS
     // ═══════════════════════════════════════════════════════════════════════════

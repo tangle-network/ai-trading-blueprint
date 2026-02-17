@@ -23,4 +23,16 @@ export interface Bot {
 
   // Sparkline data (30 data points for ~30 days)
   sparklineData: number[];
+
+  // Control panel fields (populated from operator API)
+  sandboxId?: string;
+  tradingActive?: boolean;
+  workflowId?: number;
+  maxLifetimeDays?: number;
+  windDownStartedAt?: number;
+  secretsConfigured?: boolean;
+  submitterAddress?: string;
+  strategyConfig?: Record<string, unknown>;
+  riskParams?: Record<string, unknown>;
+  paperTrade?: boolean;
 }

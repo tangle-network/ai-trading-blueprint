@@ -1,13 +1,16 @@
 //! Bot activation with off-chain secrets (phase 2 of two-phase provisioning).
 //!
-//! After a bot is provisioned on-chain with empty `env_json`, the user pushes
-//! secrets through the operator API. This module handles recreating the sidecar
-//! with full environment, running strategy pack setup, and creating the cron
-//! workflow.
+//! After a bot is provisioned on-chain with base env only, the user pushes
+//! secrets through the operator API. This module handles injecting user secrets
+//! into the sidecar, running strategy pack setup, and creating the cron workflow.
+//!
+//! The sandbox-runtime handles base/user env separation internally:
+//! - `inject_secrets(id, user_env)` merges user env on top of base env
+//! - `wipe_secrets(id)` removes user env, preserving base env
 
 use serde_json::json;
 
-use crate::state::{bot_key, bots, get_bot, update_activation_progress, clear_activation, TradingBotRecord};
+use crate::state::{bot_key, bots, get_bot, update_activation_progress, clear_activation};
 
 /// Result of successful activation.
 #[derive(Debug)]
@@ -18,12 +21,11 @@ pub struct ActivateResult {
 
 /// Activate a bot that is awaiting secrets.
 ///
-/// 1. Validates the bot exists and secrets_configured == false
-/// 2. Builds full env (base + user secrets)
-/// 3. Recreates sidecar via `sandbox_runtime::runtime::recreate_sidecar_with_env()`
-/// 4. Runs strategy pack setup commands
-/// 5. Creates cron workflow
-/// 6. Updates bot record to active
+/// 1. Validates the bot exists and sandbox has no user secrets
+/// 2. Injects user secrets via `sandbox_runtime::secret_provisioning::inject_secrets()`
+/// 3. Runs strategy pack setup commands
+/// 4. Creates cron workflow
+/// 5. Updates bot record to active
 ///
 /// When `mock_sandbox` is `Some`, skips Docker sidecar recreation and uses the
 /// provided record instead.  Pass `None` in production.
@@ -38,31 +40,37 @@ pub async fn activate_bot_with_secrets(
     let bot = get_bot(bot_id)?
         .ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
-    if bot.secrets_configured {
-        clear_activation(bot_id);
-        return Err("Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure.".to_string());
+    // Check sandbox state — secrets_configured is derived from sandbox record
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
+    if let Some(ref s) = sandbox {
+        if s.has_user_secrets() {
+            clear_activation(bot_id);
+            return Err("Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure.".to_string());
+        }
     }
 
-    // 2. Inject secrets into sandbox (uses sandbox-runtime's 2-phase primitives)
+    // 2. Inject user secrets into sandbox (sandbox-runtime merges base + user internally)
     update_activation_progress(bot_id, "recreating_sidecar", "Recreating container with secrets");
-
-    // Merge base trading env vars into user secrets so inject_secrets gets the full picture
-    let mut merged_env = build_base_env_map(&bot);
-    merged_env.extend(user_env.clone());
 
     let is_mock = mock_sandbox.is_some();
     let record = if let Some(r) = mock_sandbox {
+        // Store mock sandbox with user_env_json so has_user_secrets() works for guards
+        let user_env_json = serde_json::to_string(&user_env).unwrap_or_default();
+        let mut stored = r.clone();
+        stored.user_env_json = user_env_json;
+        let _ = sandbox_runtime::runtime::sandboxes()
+            .map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {
         sandbox_runtime::secret_provisioning::inject_secrets(
             &bot.sandbox_id,
-            merged_env.clone(),
+            user_env,
         )
         .await
         .map_err(|e| format!("Failed to inject secrets: {e}"))?
     };
 
-    // 4. Strategy pack setup (skip in test/mock mode)
+    // 3. Strategy pack setup (skip in test/mock mode)
     update_activation_progress(bot_id, "running_setup", "Installing strategy dependencies");
     let pack = crate::prompts::packs::get_pack(&bot.strategy_type);
     if is_mock {
@@ -82,7 +90,7 @@ pub async fn activate_bot_with_secrets(
         }
     }
 
-    // 5. Create workflow
+    // 4. Create workflow
     update_activation_progress(bot_id, "creating_workflow", "Configuring trading loop");
     let workflow_id = {
         let ts = chrono::Utc::now().timestamp_millis() as u64;
@@ -143,16 +151,13 @@ pub async fn activate_bot_with_secrets(
         )
         .map_err(|e| format!("Failed to store workflow: {e}"))?;
 
-    // 6. Update bot record
+    // 5. Update bot record
     let new_sandbox_id = record.id.clone();
-    let user_env_stored = serde_json::to_string(&user_env).ok();
     bots()?
         .update(&bot_key(bot_id), |b| {
             b.sandbox_id.clone_from(&new_sandbox_id);
             b.workflow_id = Some(workflow_id);
             b.trading_active = true;
-            b.secrets_configured = true;
-            b.user_env_json = user_env_stored.clone();
         })
         .map_err(|e| format!("Failed to update bot record: {e}"))?;
 
@@ -172,7 +177,10 @@ pub async fn activate_bot_with_secrets(
     })
 }
 
-/// Remove secrets from a bot: stop workflow, recreate sidecar without secrets.
+/// Remove secrets from a bot: stop workflow, wipe user secrets from sidecar.
+///
+/// Uses `sandbox_runtime::secret_provisioning::wipe_secrets()` which preserves
+/// the base env and only removes user-injected secrets.
 ///
 /// When `mock_sandbox` is `Some`, skips Docker sidecar recreation and uses the
 /// provided record instead.  Pass `None` in production.
@@ -183,8 +191,12 @@ pub async fn wipe_bot_secrets(
     let bot = get_bot(bot_id)?
         .ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
-    if !bot.secrets_configured {
-        return Err("Bot has no secrets to wipe".to_string());
+    // Check sandbox state — secrets_configured is derived from sandbox record
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
+    if let Some(ref s) = sandbox {
+        if !s.has_user_secrets() {
+            return Err("Bot has no secrets to wipe".to_string());
+        }
     }
 
     // Stop and remove workflow
@@ -194,19 +206,18 @@ pub async fn wipe_bot_secrets(
             .map(|store| store.remove(&key));
     }
 
-    // Rebuild sidecar with base-only env (no user secrets).
-    // We can't use wipe_secrets() since it resets to empty — we need base trading env.
-    let base_env = build_base_env_map(&bot);
-
+    // Wipe user secrets — sandbox-runtime preserves base env automatically
     let new_record = if let Some(r) = mock_sandbox {
+        // Store mock sandbox with cleared user_env_json
+        let mut stored = r.clone();
+        stored.user_env_json = String::new();
+        let _ = sandbox_runtime::runtime::sandboxes()
+            .map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {
-        sandbox_runtime::secret_provisioning::inject_secrets(
-            &bot.sandbox_id,
-            base_env,
-        )
-        .await
-        .map_err(|e| format!("Failed to recreate sidecar: {e}"))?
+        sandbox_runtime::secret_provisioning::wipe_secrets(&bot.sandbox_id)
+            .await
+            .map_err(|e| format!("Failed to wipe secrets: {e}"))?
     };
 
     let new_sandbox_id = new_record.id.clone();
@@ -215,31 +226,9 @@ pub async fn wipe_bot_secrets(
             b.sandbox_id.clone_from(&new_sandbox_id);
             b.workflow_id = None;
             b.trading_active = false;
-            b.secrets_configured = false;
-            b.user_env_json = None;
         })
         .map_err(|e| format!("Failed to update bot record: {e}"))?;
 
     tracing::info!("Bot {bot_id} secrets wiped. Now in awaiting-secrets state.");
     Ok(())
-}
-
-/// Build the base environment map (no user secrets).
-fn build_base_env_map(bot: &TradingBotRecord) -> serde_json::Map<String, serde_json::Value> {
-    let mut env = serde_json::Map::new();
-    env.insert("TRADING_HTTP_API_URL".into(), json!(bot.trading_api_url));
-    env.insert("TRADING_API_TOKEN".into(), json!(bot.trading_api_token));
-    env.insert("VAULT_ADDRESS".into(), json!(bot.vault_address));
-    env.insert("STRATEGY_TYPE".into(), json!(bot.strategy_type));
-    env.insert(
-        "STRATEGY_CONFIG".into(),
-        serde_json::Value::String(
-            serde_json::to_string(&bot.strategy_config).unwrap_or_default(),
-        ),
-    );
-    env.insert("RPC_URL".into(), json!(bot.rpc_url));
-    env.insert("CHAIN_ID".into(), json!(bot.chain_id.to_string()));
-    env.insert("OPERATOR_ADDRESS".into(), json!(bot.operator_address));
-    env.insert("SUBMITTER_ADDRESS".into(), json!(bot.submitter_address));
-    env
 }

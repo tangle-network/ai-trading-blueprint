@@ -75,7 +75,8 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         container_removed_at: None,
         image_removed_at: None,
         original_image: String::new(),
-        env_json: "{}".to_string(),
+        base_env_json: "{}".to_string(),
+        user_env_json: String::new(),
         snapshot_destination: None,
         tee_deployment_id: None,
         tee_metadata_json: None,
@@ -85,7 +86,6 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
-        secrets_configured: false,
     }
 }
 
@@ -112,7 +112,6 @@ async fn test_provision_creates_records() {
     assert_eq!(bot.sandbox_id, sandbox_id);
     assert_eq!(bot.strategy_type, "dex");
     assert!(!bot.trading_active, "two-phase: bot should be inactive until secrets are pushed");
-    assert!(!bot.secrets_configured, "two-phase: secrets_configured should be false");
     assert_eq!(bot.submitter_address, "0xTESTCALLER");
     assert_eq!(bot.chain_id, 31337);
     assert_eq!(bot.workflow_id, None, "two-phase: no workflow until activation");
@@ -297,13 +296,11 @@ async fn test_bot_lifecycle_transitions() {
     let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     assert!(!bot.trading_active, "two-phase: bot starts inactive");
-    assert!(!bot.secrets_configured, "two-phase: secrets not configured yet");
 
     // Simulate activation (normally done via operator API + activate_bot_with_secrets)
     bots().unwrap()
         .update(&bot_key(&bot.id), |b| {
             b.trading_active = true;
-            b.secrets_configured = true;
         })
         .unwrap();
     assert!(find_bot_by_sandbox(&sandbox_id).unwrap().trading_active);
@@ -387,8 +384,6 @@ async fn test_system_prompt_includes_api_info() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -580,8 +575,6 @@ async fn test_pack_profile_has_rich_content() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -629,8 +622,6 @@ async fn test_generic_strategy_gets_profile() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -679,8 +670,6 @@ async fn test_pack_system_prompt_includes_base_config() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let combined = build_pack_system_prompt(&pack, &config);
@@ -725,8 +714,6 @@ async fn test_dex_profile_has_uniswap_content() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -765,8 +752,6 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
-            secrets_configured: false,
-            user_env_json: None,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -805,8 +790,6 @@ async fn test_build_pack_agent_profile_integration() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -851,10 +834,8 @@ async fn test_two_phase_provision_e2e() {
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     let bot_id = bot.id.clone();
     assert!(!bot.trading_active);
-    assert!(!bot.secrets_configured);
     assert_eq!(bot.workflow_id, None);
     assert_eq!(bot.submitter_address, "0xSUBMITTER");
-    assert!(bot.user_env_json.is_none());
 
     // Verify: no workflow exists for this bot (workflow_id=0 is sentinel)
     let wf_key_zero = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(0);
@@ -891,16 +872,8 @@ async fn test_two_phase_provision_e2e() {
         .unwrap()
         .unwrap();
     assert!(bot.trading_active);
-    assert!(bot.secrets_configured);
     assert_eq!(bot.sandbox_id, "sb-2phase-activated");
     assert_eq!(bot.workflow_id, Some(result.workflow_id));
-    assert!(bot.user_env_json.is_some());
-
-    // Verify stored secrets contain user keys
-    let stored_env: serde_json::Value =
-        serde_json::from_str(bot.user_env_json.as_ref().unwrap()).unwrap();
-    assert_eq!(stored_env["ANTHROPIC_API_KEY"], "sk-test-secret");
-    assert_eq!(stored_env["CUSTOM_VAR"], "custom-value");
 
     // Verify: workflow was created
     let wf_key =
@@ -938,10 +911,8 @@ async fn test_two_phase_provision_e2e() {
         .unwrap()
         .unwrap();
     assert!(!bot.trading_active);
-    assert!(!bot.secrets_configured);
     assert_eq!(bot.sandbox_id, "sb-2phase-wiped");
     assert_eq!(bot.workflow_id, None);
-    assert!(bot.user_env_json.is_none());
 
     // Verify: workflow was removed
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
@@ -972,11 +943,6 @@ async fn test_two_phase_provision_e2e() {
         .unwrap()
         .unwrap();
     assert!(bot.trading_active);
-    assert!(bot.secrets_configured);
     assert_eq!(bot.sandbox_id, "sb-2phase-reactivated");
     assert!(result2.workflow_id > 0);
-
-    let stored_env: serde_json::Value =
-        serde_json::from_str(bot.user_env_json.as_ref().unwrap()).unwrap();
-    assert_eq!(stored_env["ANTHROPIC_API_KEY"], "sk-new-key");
 }

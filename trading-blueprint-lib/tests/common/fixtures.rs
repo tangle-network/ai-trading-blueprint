@@ -23,7 +23,8 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         container_removed_at: None,
         image_removed_at: None,
         original_image: "tangle-sidecar:local".to_string(),
-        env_json: "{}".to_string(),
+        base_env_json: "{}".to_string(),
+        user_env_json: String::new(),
         snapshot_destination: None,
         tee_deployment_id: None,
         tee_metadata_json: None,
@@ -33,7 +34,6 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
-        secrets_configured: false,
     };
     record
 }
@@ -67,8 +67,6 @@ pub fn seed_bot_record(
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
-        secrets_configured: true,
-        user_env_json: None,
     };
     bots()
         .expect("bots store")

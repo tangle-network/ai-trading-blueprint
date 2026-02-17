@@ -104,7 +104,9 @@ export const tangleOperatorsAbi = [
 
 export const tradingBlueprintAbi = [
   { type: 'function', name: 'estimateProvisionCost', inputs: [{ name: 'maxLifetimeDays', type: 'uint64' }, { name: 'cpuCores', type: 'uint64' }, { name: 'memoryMb', type: 'uint64' }], outputs: [{ name: 'cost', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'estimateExtendCost', inputs: [{ name: 'additionalDays', type: 'uint64' }], outputs: [{ name: 'cost', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceVault', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceShare', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceProvisioned', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
+  { type: 'function', name: 'dailyRate', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
 ] as const;

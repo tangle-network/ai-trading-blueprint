@@ -260,12 +260,26 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
               paper_trade: boolean;
               created_at: number;
               sandbox_id: string;
+              secrets_configured?: boolean;
             }> = data.bots ?? [];
 
-            const existingVaults = new Set(builtBots.map((b) => b.vaultAddress.toLowerCase()));
+            // Merge operator API data into existing on-chain bots (by vault address)
+            const existingVaults = new Map(builtBots.map((b) => [b.vaultAddress.toLowerCase(), b]));
 
             for (const ob of operatorBots) {
-              if (existingVaults.has(ob.vault_address.toLowerCase())) continue;
+              const existing = existingVaults.get(ob.vault_address.toLowerCase());
+              if (existing) {
+                // Enrich existing bot with operator API fields
+                existing.sandboxId = ob.sandbox_id;
+                existing.tradingActive = ob.trading_active;
+                existing.secretsConfigured = ob.secrets_configured;
+                existing.paperTrade = ob.paper_trade;
+                // Update status from operator API if more specific
+                if (!ob.trading_active && existing.status === 'active') {
+                  existing.status = 'stopped';
+                }
+                continue;
+              }
               builtBots.push({
                 id: ob.id,
                 serviceId: 0,
@@ -284,6 +298,10 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 tvl: 0,
                 avgValidatorScore: 0,
                 sparklineData: [],
+                sandboxId: ob.sandbox_id,
+                tradingActive: ob.trading_active,
+                secretsConfigured: ob.secrets_configured,
+                paperTrade: ob.paper_trade,
               });
             }
           }

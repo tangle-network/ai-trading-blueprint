@@ -9,6 +9,7 @@ import { PositionsTab } from '~/components/bot-detail/PositionsTab';
 import { TradeHistoryTab } from '~/components/bot-detail/TradeHistoryTab';
 import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
 import { ChatTab } from '~/components/bot-detail/ChatTab';
+import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
@@ -67,6 +68,7 @@ export default function BotDetailPage() {
             <TabsTrigger value="trades">Trade History</TabsTrigger>
             <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
+            <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
           <TabsContent value="performance" className="mt-6">
@@ -87,6 +89,10 @@ export default function BotDetailPage() {
 
           <TabsContent value="chat" className="mt-6">
             <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+          </TabsContent>
+
+          <TabsContent value="controls" className="mt-6">
+            <ControlsTab bot={bot} />
           </TabsContent>
         </Tabs>
       </div>

@@ -18,7 +18,7 @@ use sandbox_runtime::SandboxRecord;
 ///
 /// Two-phase provisioning (always):
 ///   1. Sidecar created with base env only (no secrets)
-///   2. Bot record stored with `secrets_configured=false`, `trading_active=false`
+///   2. Bot record stored with `trading_active=false`
 ///   3. Returns `workflow_id: 0` to signal "awaiting secrets"
 ///   4. User pushes secrets via operator API → sidecar recreated → workflow created
 ///
@@ -135,6 +135,9 @@ pub async fn provision_core(
     );
 
     let record = if let Some(r) = mock_sandbox {
+        // Store mock sandbox so activate/wipe can look it up
+        let _ = sandbox_runtime::runtime::sandboxes()
+            .map(|s| s.insert(r.id.clone(), r.clone()));
         r
     } else {
         let params = CreateSandboxParams {
@@ -158,7 +161,7 @@ pub async fn provision_core(
             disk_gb: 10,
             tee_config: None,
             owner: String::new(),
-            secrets_pending: true, // Two-phase: secrets arrive via operator API
+            user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, None)
@@ -204,8 +207,6 @@ pub async fn provision_core(
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: caller,
-        secrets_configured: false,
-        user_env_json: None,
     };
 
     // 8. Store bot record
