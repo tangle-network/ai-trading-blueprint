@@ -151,8 +151,7 @@ async function fetchQuoteHttp(port) {
 
 const PRICING_SCALE = 1_000_000_000;
 
-async function mapQuote(response, operatorAddr) {
-  const { hashTypedData, recoverAddress } = await import('viem');
+function mapQuote(response, operatorAddr) {
   const d = response.quoteDetails;
   const totalCost = BigInt(Math.floor(d.totalCostRate * PRICING_SCALE));
 
@@ -168,70 +167,10 @@ async function mapQuote(response, operatorAddr) {
 
   console.log(`  Mapped totalCost: ${totalCost} (from rate ${d.totalCostRate})`);
 
-  // Recover v byte from 64-byte signature
-  const rawHex = Array.from(response.signature).map((b) => b.toString(16).padStart(2, '0')).join('');
-  console.log(`  Raw sig (${response.signature.length} bytes): 0x${rawHex.slice(0, 16)}...${rawHex.slice(-8)}`);
-
-  const digest = hashTypedData({
-    domain: {
-      name: 'TangleQuote',
-      version: '1',
-      chainId: 31337,
-      verifyingContract: TANGLE,
-    },
-    types: {
-      QuoteDetails: [
-        { name: 'blueprintId', type: 'uint64' },
-        { name: 'ttlBlocks', type: 'uint64' },
-        { name: 'totalCost', type: 'uint256' },
-        { name: 'timestamp', type: 'uint64' },
-        { name: 'expiry', type: 'uint64' },
-        { name: 'securityCommitments', type: 'AssetSecurityCommitment[]' },
-      ],
-      AssetSecurityCommitment: [
-        { name: 'asset', type: 'Asset' },
-        { name: 'exposureBps', type: 'uint16' },
-      ],
-      Asset: [
-        { name: 'kind', type: 'uint8' },
-        { name: 'token', type: 'address' },
-      ],
-    },
-    primaryType: 'QuoteDetails',
-    message: {
-      blueprintId: d.blueprintId,
-      ttlBlocks: d.ttlBlocks,
-      totalCost,
-      timestamp: d.timestamp,
-      expiry: d.expiry,
-      securityCommitments: securityCommitments.map((sc) => ({
-        asset: { kind: sc.asset.kind, token: sc.asset.token },
-        exposureBps: sc.exposureBps,
-      })),
-    },
-  });
-  console.log(`  EIP-712 digest: ${digest}`);
-
-  let sigHex;
-  for (const v of [27, 28]) {
-    const sig65 = `0x${rawHex}${v.toString(16).padStart(2, '0')}`;
-    try {
-      const recovered = await recoverAddress({ hash: digest, signature: sig65 });
-      console.log(`  v=${v}: recovered ${recovered}`);
-      if (recovered.toLowerCase() === operatorAddr.toLowerCase()) {
-        sigHex = sig65;
-        console.log(`  ✅ v=${v} matches operator!`);
-        break;
-      }
-    } catch (err) {
-      console.log(`  v=${v}: error ${err.message?.slice(0, 80)}`);
-    }
-  }
-
-  if (!sigHex) {
-    console.log(`  ⚠️ No v matched operator ${operatorAddr}, using v=27 as fallback`);
-    sigHex = `0x${rawHex}1b`;
-  }
+  // Pricing engine returns 65-byte signatures (r || s || v) — use directly
+  const sigHex = `0x${Array.from(response.signature).map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+  console.log(`  Sig (${response.signature.length} bytes): ${sigHex.slice(0, 18)}...${sigHex.slice(-8)}`);
+  console.log(`  v byte: ${response.signature[64]}`);
 
   return {
     details: {

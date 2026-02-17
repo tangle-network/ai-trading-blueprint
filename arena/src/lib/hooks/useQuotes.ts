@@ -2,10 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
-import { type Address, sha256 as viemSha256, hashTypedData, recoverAddress, toHex } from 'viem';
+import { type Address, sha256 as viemSha256, toHex } from 'viem';
 import type { DiscoveredOperator } from './useOperators';
-import { selectedChainIdStore } from '~/lib/contracts/publicClient';
-import { addresses } from '~/lib/contracts/addresses';
 import {
   PricingEngine,
   GetPriceRequestSchema,
@@ -121,78 +119,11 @@ function costRateToScaledAmount(costRate: number): bigint {
   return BigInt(Math.floor(costRate * PRICING_SCALE));
 }
 
-/** Recover the ECDSA v byte (27 or 28) from a 64-byte (r,s) signature.
- *  The pricing engine's K256 signer discards the recovery ID, so we
- *  recompute the EIP-712 digest and try both v values. */
-async function recoverSignatureV(
-  signature64: Uint8Array,
-  quoteMessage: {
-    blueprintId: bigint;
-    ttlBlocks: bigint;
-    totalCost: bigint;
-    timestamp: bigint;
-    expiry: bigint;
-    securityCommitments: readonly {
-      asset: { kind: number; token: Address };
-      exposureBps: number;
-    }[];
-  },
-  operator: Address,
-): Promise<`0x${string}`> {
-  const rawHex = Array.from(signature64).map((b) => b.toString(16).padStart(2, '0')).join('');
-
-  const digest = hashTypedData({
-    domain: {
-      name: 'TangleQuote',
-      version: '1',
-      chainId: selectedChainIdStore.get(),
-      verifyingContract: addresses.tangle,
-    },
-    types: {
-      QuoteDetails: [
-        { name: 'blueprintId', type: 'uint64' },
-        { name: 'ttlBlocks', type: 'uint64' },
-        { name: 'totalCost', type: 'uint256' },
-        { name: 'timestamp', type: 'uint64' },
-        { name: 'expiry', type: 'uint64' },
-        { name: 'securityCommitments', type: 'AssetSecurityCommitment[]' },
-      ],
-      AssetSecurityCommitment: [
-        { name: 'asset', type: 'Asset' },
-        { name: 'exposureBps', type: 'uint16' },
-      ],
-      Asset: [
-        { name: 'kind', type: 'uint8' },
-        { name: 'token', type: 'address' },
-      ],
-    },
-    primaryType: 'QuoteDetails',
-    message: quoteMessage,
-  });
-
-  // Try v=27 then v=28
-  for (const v of [27, 28]) {
-    const sig65 = `0x${rawHex}${v.toString(16).padStart(2, '0')}` as `0x${string}`;
-    try {
-      const recovered = await recoverAddress({ hash: digest, signature: sig65 });
-      if (recovered.toLowerCase() === operator.toLowerCase()) {
-        return sig65;
-      }
-    } catch {
-      // wrong v, try next
-    }
-  }
-
-  // Fallback: return with v=27 and let the contract reject it
-  console.warn('[useQuotes] Could not recover correct v for operator', operator);
-  return `0x${rawHex}1b` as `0x${string}`;
-}
-
-async function mapQuoteDetails(
+function mapQuoteDetails(
   details: QuoteDetails,
   operator: Address,
   signature: Uint8Array,
-): Promise<OperatorQuote> {
+): OperatorQuote {
   const totalCost = costRateToScaledAmount(details.totalCostRate);
 
   const securityCommitments = details.securityCommitments.map((sc) => ({
@@ -205,21 +136,8 @@ async function mapQuoteDetails(
     exposureBps: sc.exposurePercent * 100, // percent → bps
   }));
 
-  // Build the EIP-712 message matching the on-chain QuoteDetails struct
-  const quoteMessage = {
-    blueprintId: details.blueprintId,
-    ttlBlocks: details.ttlBlocks,
-    totalCost,
-    timestamp: details.timestamp,
-    expiry: details.expiry,
-    securityCommitments: securityCommitments.map((sc) => ({
-      asset: { kind: sc.asset.kind, token: sc.asset.token },
-      exposureBps: sc.exposureBps,
-    })),
-  };
-
-  // Recover 65-byte signature with correct v byte
-  const sigHex = await recoverSignatureV(signature, quoteMessage, operator);
+  // The pricing engine returns 65-byte signatures (r || s || v)
+  const sigHex = toHex(signature) as `0x${string}`;
 
   return {
     operator,
@@ -327,7 +245,7 @@ export function useQuotes(
 
           if (!response.quoteDetails) throw new Error('No quote details in response');
 
-          const quote = await mapQuoteDetails(
+          const quote = mapQuoteDetails(
             response.quoteDetails,
             op.address,
             response.signature,
