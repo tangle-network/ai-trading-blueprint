@@ -15,7 +15,7 @@ const badgeVariants = cva(
         destructive:
           'border-crimson-500/20 bg-crimson-500/10 text-arena-elements-icon-error',
         success:
-          'border-emerald-500/20 bg-emerald-500/10 text-arena-elements-icon-success',
+          'border-emerald-700/20 bg-emerald-700/10 dark:border-emerald-500/20 dark:bg-emerald-500/10 text-arena-elements-icon-success',
         outline:
           'text-arena-elements-textPrimary border-arena-elements-borderColor bg-transparent',
         accent:

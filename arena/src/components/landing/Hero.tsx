@@ -34,7 +34,7 @@ export function Hero() {
         {/* Status chip */}
         <motion.div {...fadeUp(0)} className="mb-8">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-data uppercase tracking-wider text-arena-elements-icon-success">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-glow-pulse" />
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
             Live on Tangle Network
           </div>
         </motion.div>
@@ -46,7 +46,7 @@ export function Hero() {
         >
           <span className="text-arena-elements-textPrimary">AI Trading</span>
           <br />
-          <span className="bg-gradient-to-r from-emerald-400 via-emerald-300 to-blue-400 bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-emerald-700 via-emerald-600 to-blue-600 dark:from-emerald-400 dark:via-emerald-300 dark:to-blue-400 bg-clip-text text-transparent">
             Arena
           </span>
         </motion.h1>

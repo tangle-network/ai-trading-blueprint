@@ -75,7 +75,7 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
             <Badge variant={strategyColors[bot.strategyType] ?? 'default'} className="text-xs">{bot.strategyType}</Badge>
             {bot.avgValidatorScore > 0 && (
               <span className={`text-xs font-data font-bold px-1.5 py-0.5 rounded ${
-                bot.avgValidatorScore >= 85 ? 'bg-emerald-500/10 text-arena-elements-icon-success' :
+                bot.avgValidatorScore >= 85 ? 'bg-emerald-700/10 dark:bg-emerald-500/10 text-arena-elements-icon-success' :
                 bot.avgValidatorScore >= 70 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-crimson-500/10 text-crimson-600 dark:text-crimson-400'
               }`}>{bot.avgValidatorScore}</span>
             )}
@@ -127,8 +127,8 @@ export default function IndexPage() {
         <div>
           <div className="flex items-center gap-3 mb-1.5">
             <h1 className="font-display font-bold text-3xl tracking-tight">Leaderboard</h1>
-            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 dark:bg-emerald-400 animate-glow-pulse" />
+            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-700/10 dark:bg-emerald-500/10 border border-emerald-700/20 dark:border-emerald-500/20">
+              <div className="w-2 h-2 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
               <span className="text-xs font-data font-semibold text-arena-elements-icon-success uppercase tracking-wider">
                 {isOnChain ? 'onchain' : 'Live'}
               </span>

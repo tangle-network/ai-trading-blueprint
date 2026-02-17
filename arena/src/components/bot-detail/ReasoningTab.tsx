@@ -98,7 +98,7 @@ function ValidatorCard({ response, index }: { response: ValidatorResponseDetail;
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
     >
-      <div className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 overflow-hidden">
+      <div className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 overflow-hidden">
         {/* Validator header */}
         <button
           onClick={() => setExpanded(!expanded)}

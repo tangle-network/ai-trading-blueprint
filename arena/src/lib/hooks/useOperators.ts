@@ -1,21 +1,14 @@
 import { useState, useEffect } from 'react';
-import { createPublicClient, http } from 'viem';
 import type { Address } from 'viem';
 import { tangleOperatorsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { tangleLocal, rpcUrl } from '~/lib/contracts/chains';
+import { publicClient } from '~/lib/contracts/publicClient';
 
 export interface DiscoveredOperator {
   address: Address;
   ecdsaPublicKey: string;
   rpcAddress: string;
 }
-
-// Direct client — doesn't depend on wagmi chain connection state
-const publicClient = createPublicClient({
-  chain: tangleLocal,
-  transport: http(rpcUrl),
-});
 
 export function useOperators(blueprintId: bigint) {
   const [operators, setOperators] = useState<DiscoveredOperator[]>([]);

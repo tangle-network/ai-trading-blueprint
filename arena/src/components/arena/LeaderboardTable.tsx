@@ -34,7 +34,7 @@ function RankCell({ rank }: { rank: number }) {
 
 function ScoreIndicator({ score }: { score: number }) {
   const color = score >= 85 ? 'text-arena-elements-icon-success' : score >= 70 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error';
-  const bg = score >= 85 ? 'bg-emerald-500/10' : score >= 70 ? 'bg-amber-500/10' : 'bg-crimson-500/10';
+  const bg = score >= 85 ? 'bg-emerald-700/10 dark:bg-emerald-500/10' : score >= 70 ? 'bg-amber-500/10' : 'bg-crimson-500/10';
   return (
     <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${bg}`}>
       <span className={`font-data text-xs font-bold ${color}`}>{score}</span>

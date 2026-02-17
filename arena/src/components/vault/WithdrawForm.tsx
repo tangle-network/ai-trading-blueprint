@@ -7,7 +7,7 @@ import { Input } from '~/components/ui/input';
 import { Button } from '~/components/ui/button';
 import { toast } from 'sonner';
 import { useRedeem } from '~/lib/hooks/useVaultWrite';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { selectedChainIdStore } from '~/lib/contracts/publicClient';
 import { addTx } from '~/lib/stores/txHistory';
 
 interface WithdrawFormProps {
@@ -30,7 +30,7 @@ export function WithdrawForm({
   onSuccess,
 }: WithdrawFormProps) {
   const { isConnected, chainId } = useAccount();
-  const isReady = isConnected && chainId === tangleLocal.id;
+  const isReady = isConnected && chainId === selectedChainIdStore.get();
   const [shares, setShares] = useState('');
   const redeem = useRedeem();
 
@@ -62,7 +62,7 @@ export function WithdrawForm({
 
   // Register tx in history store
   useEffect(() => {
-    if (redeem.hash) addTx(redeem.hash, `Withdraw ${shares || '?'} shares`, tangleLocal.id);
+    if (redeem.hash) addTx(redeem.hash, `Withdraw ${shares || '?'} shares`, selectedChainIdStore.get());
   }, [redeem.hash]);
 
   const handleClick = () => {
@@ -88,6 +88,27 @@ export function WithdrawForm({
     : isPending
     ? 'Withdrawing...'
     : 'Withdraw';
+
+  if (assetSymbol === '???') {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <div className="i-ph:arrow-up-right text-crimson-600 dark:text-crimson-400" />
+            Withdraw
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="py-6 text-center">
+            <div className="i-ph:warning-circle text-2xl text-amber-600 dark:text-amber-400 mb-2 mx-auto" />
+            <p className="text-sm text-arena-elements-textSecondary">
+              Vault asset token not found on-chain.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

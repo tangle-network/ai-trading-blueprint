@@ -1,145 +1,173 @@
-import { useCallback } from 'react';
-import { useReadContract, useReadContracts, useAccount } from 'wagmi';
+import { useEffect, useState, useCallback } from 'react';
+import { useAccount } from 'wagmi';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { publicClient } from '~/lib/contracts/publicClient';
 
-const chainId = tangleLocal.id;
+interface VaultReadState {
+  tvl?: number;
+  totalAssets?: bigint;
+  assetToken?: Address;
+  shareToken?: Address;
+  assetSymbol: string;
+  assetDecimals: number;
+  shareDecimals: number;
+  sharePrice?: number;
+  totalShares?: number;
+  paused: boolean;
+  userShares?: bigint;
+  userSharesFormatted?: number;
+  userAssetBalance?: bigint;
+  userAssetBalanceFormatted?: number;
+  userAllowance?: bigint;
+  isLoading: boolean;
+  error?: Error;
+}
 
-/** Read all vault on-chain state in a single multicall. */
+/** Read all vault on-chain state using a standalone viem client. */
 export function useVaultRead(vaultAddress: Address | undefined) {
   const { address: userAddress } = useAccount();
-
-  const vaultContract = { address: vaultAddress!, abi: tradingVaultAbi, chainId } as const;
-
-  // Batch vault reads into one multicall
-  const { data, isLoading, error, refetch: refetchVault } = useReadContracts({
-    contracts: [
-      { ...vaultContract, functionName: 'totalAssets' },
-      { ...vaultContract, functionName: 'asset' },
-      { ...vaultContract, functionName: 'share' },
-      { ...vaultContract, functionName: 'paused' },
-    ],
-    query: { enabled: !!vaultAddress },
+  const [state, setState] = useState<VaultReadState>({
+    assetSymbol: '???',
+    assetDecimals: 18,
+    shareDecimals: 18,
+    paused: false,
+    isLoading: true,
   });
 
-  const totalAssets = data?.[0]?.result as bigint | undefined;
-  const assetToken = data?.[1]?.result as Address | undefined;
-  const shareToken = data?.[2]?.result as Address | undefined;
-  const paused = data?.[3]?.result as boolean | undefined;
+  const fetchAll = useCallback(async () => {
+    if (!vaultAddress) {
+      setState((s) => ({ ...s, isLoading: false }));
+      return;
+    }
 
-  // Read asset + share token info (symbol, decimals)
-  const { data: tokenData } = useReadContracts({
-    contracts: [
-      { address: assetToken!, abi: erc20Abi, functionName: 'symbol', chainId },
-      { address: assetToken!, abi: erc20Abi, functionName: 'decimals', chainId },
-      { address: shareToken!, abi: erc20Abi, functionName: 'decimals', chainId },
-    ],
-    query: { enabled: !!assetToken && !!shareToken },
-  });
+    setState((s) => ({ ...s, isLoading: true, error: undefined }));
 
-  const assetSymbol = tokenData?.[0]?.result as string | undefined;
-  const assetDecimals = tokenData?.[1]?.result as number | undefined;
-  const shareDecimals = tokenData?.[2]?.result as number | undefined;
+    try {
+      // Phase 1: Vault basics
+      const vaultBasics = await publicClient.multicall({
+        contracts: [
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalAssets' },
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'asset' },
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'share' },
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'paused' },
+        ],
+      });
 
-  // Use asset decimals for convertToShares (not hardcoded 1e18)
-  const decimals = assetDecimals ?? 18;
-  const shareDec = shareDecimals ?? 18;
-  const oneAsset = BigInt(10 ** decimals);
+      const totalAssets = vaultBasics[0]?.result as bigint | undefined;
+      const assetToken = vaultBasics[1]?.result as Address | undefined;
+      const shareToken = vaultBasics[2]?.result as Address | undefined;
+      const paused = (vaultBasics[3]?.result as boolean | undefined) ?? false;
 
-  const { data: sharesPerAsset, refetch: refetchConversion } = useReadContract({
-    ...vaultContract,
-    functionName: 'convertToShares',
-    args: [oneAsset],
-    query: { enabled: !!vaultAddress && decimals > 0 },
-  });
+      if (!assetToken || !shareToken) {
+        setState((s) => ({
+          ...s,
+          totalAssets,
+          assetToken,
+          shareToken,
+          paused,
+          isLoading: false,
+        }));
+        return;
+      }
 
-  // Read share token supply
-  const { data: shareSupply, refetch: refetchSupply } = useReadContract({
-    address: shareToken,
-    abi: erc20Abi,
-    functionName: 'totalSupply',
-    chainId,
-    query: { enabled: !!shareToken },
-  });
+      // Phase 2: Token info (symbol, decimals for asset + share)
+      const tokenInfo = await publicClient.multicall({
+        contracts: [
+          { address: assetToken, abi: erc20Abi, functionName: 'symbol' },
+          { address: assetToken, abi: erc20Abi, functionName: 'decimals' },
+          { address: shareToken, abi: erc20Abi, functionName: 'decimals' },
+          { address: shareToken, abi: erc20Abi, functionName: 'totalSupply' },
+        ],
+      });
 
-  // Read user's share balance (if connected)
-  const { data: userShares, refetch: refetchUserShares } = useReadContract({
-    address: shareToken,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [userAddress!],
-    chainId,
-    query: { enabled: !!shareToken && !!userAddress },
-  });
+      const assetSymbol = (tokenInfo[0]?.result as string) ?? '???';
+      const assetDecimals = (tokenInfo[1]?.result as number) ?? 18;
+      const shareDec = (tokenInfo[2]?.result as number) ?? 18;
+      const shareSupply = tokenInfo[3]?.result as bigint | undefined;
 
-  // Read user's asset token balance
-  const { data: userAssetBalance, refetch: refetchUserBalance } = useReadContract({
-    address: assetToken,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [userAddress!],
-    chainId,
-    query: { enabled: !!assetToken && !!userAddress },
-  });
+      // Phase 3: Conversion rate
+      const oneAsset = BigInt(10 ** assetDecimals);
+      let sharesPerAsset: bigint | undefined;
+      try {
+        sharesPerAsset = await publicClient.readContract({
+          address: vaultAddress,
+          abi: tradingVaultAbi,
+          functionName: 'convertToShares',
+          args: [oneAsset],
+        }) as bigint;
+      } catch {
+        // convertToShares might revert if vault is empty
+      }
 
-  // Read user's allowance for the vault
-  const { data: userAllowance, refetch: refetchAllowance } = useReadContract({
-    address: assetToken,
-    abi: erc20Abi,
-    functionName: 'allowance',
-    args: [userAddress!, vaultAddress!],
-    chainId,
-    query: { enabled: !!assetToken && !!userAddress && !!vaultAddress },
-  });
+      // Phase 4: User balances (if connected)
+      let userShares: bigint | undefined;
+      let userAssetBalance: bigint | undefined;
+      let userAllowance: bigint | undefined;
 
-  // Combined refetch — refreshes ALL on-chain data after deposit/withdraw
-  const refetch = useCallback(() => {
-    refetchVault();
-    refetchConversion();
-    refetchSupply();
-    refetchUserShares();
-    refetchUserBalance();
-    refetchAllowance();
-  }, [refetchVault, refetchConversion, refetchSupply, refetchUserShares, refetchUserBalance, refetchAllowance]);
+      if (userAddress) {
+        try {
+          const userResults = await publicClient.multicall({
+            contracts: [
+              { address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
+              { address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
+              { address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] },
+            ],
+          });
+          userShares = userResults[0]?.result as bigint | undefined;
+          userAssetBalance = userResults[1]?.result as bigint | undefined;
+          userAllowance = userResults[2]?.result as bigint | undefined;
+        } catch {
+          // User queries failed — non-critical
+        }
+      }
 
-  // Derive effective share decimals from conversion rate.
-  // convertToShares(10^assetDec) tells us raw shares per 1 human asset.
-  // Effective share decimals = log10(sharesPerAsset).
-  // e.g. USDC vault with 1:1 raw conversion: convertToShares(1e6) = 1e6 → effectiveDec = 6
-  // e.g. properly scaled vault: convertToShares(1e6) = 1e18 → effectiveDec = 18
-  const effectiveShareDec = sharesPerAsset != null && (sharesPerAsset as bigint) > 0n
-    ? Math.round(Math.log10(Number(sharesPerAsset as bigint)))
-    : shareDec;
+      // Derive computed values
+      const effectiveShareDec = sharesPerAsset != null && sharesPerAsset > 0n
+        ? Math.round(Math.log10(Number(sharesPerAsset)))
+        : shareDec;
 
-  // Derive computed values
-  const tvl = totalAssets != null ? Number(formatUnits(totalAssets, decimals)) : undefined;
+      const tvl = totalAssets != null ? Number(formatUnits(totalAssets, assetDecimals)) : undefined;
 
-  // Share price = assets per share = assetDecimals-unit / effectiveShareDec-unit
-  // convertToShares(oneAsset) = sharesPerAsset → sharePrice = oneAsset / sharesPerAsset (scaled)
-  const sharePrice = sharesPerAsset != null && (sharesPerAsset as bigint) > 0n
-    ? Number(oneAsset) / Number(sharesPerAsset as bigint)
-    : undefined;
+      const sharePrice = sharesPerAsset != null && sharesPerAsset > 0n
+        ? Number(oneAsset) / Number(sharesPerAsset)
+        : undefined;
+
+      setState({
+        tvl,
+        totalAssets,
+        assetToken,
+        shareToken,
+        assetSymbol,
+        assetDecimals,
+        shareDecimals: effectiveShareDec,
+        sharePrice,
+        totalShares: shareSupply != null ? Number(formatUnits(shareSupply, effectiveShareDec)) : undefined,
+        paused,
+        userShares,
+        userSharesFormatted: userShares != null ? Number(formatUnits(userShares, effectiveShareDec)) : undefined,
+        userAssetBalance,
+        userAssetBalanceFormatted: userAssetBalance != null ? Number(formatUnits(userAssetBalance, assetDecimals)) : undefined,
+        userAllowance,
+        isLoading: false,
+      });
+    } catch (err) {
+      console.warn('[useVaultRead] Failed:', err);
+      setState((s) => ({
+        ...s,
+        isLoading: false,
+        error: err instanceof Error ? err : new Error(String(err)),
+      }));
+    }
+  }, [vaultAddress, userAddress]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   return {
-    tvl,
-    totalAssets,
-    assetToken,
-    shareToken,
-    assetSymbol: assetSymbol ?? '???',
-    assetDecimals: decimals,
-    shareDecimals: effectiveShareDec,
-    sharePrice,
-    totalShares: shareSupply != null ? Number(formatUnits(shareSupply as bigint, effectiveShareDec)) : undefined,
-    paused: paused ?? false,
-    userShares: userShares != null ? (userShares as bigint) : undefined,
-    userSharesFormatted: userShares != null ? Number(formatUnits(userShares as bigint, effectiveShareDec)) : undefined,
-    userAssetBalance: userAssetBalance != null ? (userAssetBalance as bigint) : undefined,
-    userAssetBalanceFormatted: userAssetBalance != null ? Number(formatUnits(userAssetBalance as bigint, decimals)) : undefined,
-    userAllowance: userAllowance != null ? (userAllowance as bigint) : undefined,
-    isLoading,
-    error,
-    refetch,
+    ...state,
+    refetch: fetchAll,
   };
 }

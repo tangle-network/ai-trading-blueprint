@@ -1,21 +1,14 @@
-import { useReadContracts } from 'wagmi';
+import { useEffect, useState, useCallback } from 'react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import type { Bot, BotStatus, StrategyType } from '~/lib/types/bot';
-import { tradingVaultAbi, tradingBlueprintAbi, tangleServicesAbi, erc20Abi } from '~/lib/contracts/abis';
+import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { publicClient } from '~/lib/contracts/publicClient';
 
-// Parse service IDs from env or default to empty
-const SERVICE_IDS: number[] = (() => {
-  const raw = import.meta.env.VITE_SERVICE_IDS;
-  if (!raw) return [];
-  return raw.split(',').map(Number).filter((n: number) => !isNaN(n) && n >= 0);
-})();
-
-// Direct vault address mapping: VITE_SERVICE_VAULTS={"0":"0x...","1":"0x..."}
-// Used when tradingBlueprint contract is not deployed (e.g. local devnet)
+// Direct vault address mapping (fallback when VaultFactory not deployed):
+// VITE_SERVICE_VAULTS={"0":"0x...","1":"0x..."}
 const SERVICE_VAULTS: Record<string, Address> = (() => {
   try {
     const raw = import.meta.env.VITE_SERVICE_VAULTS;
@@ -25,201 +18,205 @@ const SERVICE_VAULTS: Record<string, Address> = (() => {
   }
 })();
 
-interface OnChainBot {
-  serviceId: number;
-  vaultAddress: Address;
-  operators: Address[];
-  isActive: boolean;
-  tvl: number;
-  paused: boolean;
-  assetSymbol: string;
-  assetDecimals: number;
-}
-
-// Build multicall contract reads for a set of service IDs
-function buildServiceQueries(serviceIds: number[], hasBlueprintContract: boolean) {
-  const calls: Array<{
-    address: Address;
-    abi: typeof tradingBlueprintAbi | typeof tangleServicesAbi | typeof tradingVaultAbi | typeof erc20Abi;
-    functionName: string;
-    args: readonly unknown[];
-  }> = [];
-
-  for (const id of serviceIds) {
-    if (hasBlueprintContract) {
-      // Query vault from blueprint contract
-      calls.push({
-        address: addresses.tradingBlueprint,
-        abi: tradingBlueprintAbi,
-        functionName: 'instanceVault',
-        args: [BigInt(id)] as const,
-      });
-    }
-    calls.push({
-      address: addresses.tangle,
-      abi: tangleServicesAbi,
-      functionName: 'getServiceOperators',
-      args: [BigInt(id)] as const,
-    });
-    calls.push({
-      address: addresses.tangle,
-      abi: tangleServicesAbi,
-      functionName: 'isServiceActive',
-      args: [BigInt(id)] as const,
-    });
-  }
-  return calls;
-}
-
-function buildVaultQueries(vaults: Array<{ serviceId: number; address: Address }>) {
-  const calls: Array<{
-    address: Address;
-    abi: typeof tradingVaultAbi | typeof erc20Abi;
-    functionName: string;
-    args?: readonly unknown[];
-  }> = [];
-
-  for (const v of vaults) {
-    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'totalAssets' });
-    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'paused' });
-    calls.push({ address: v.address, abi: tradingVaultAbi, functionName: 'asset' });
-  }
-  return calls;
-}
+const BLUEPRINT_ID = BigInt(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
 
 /**
- * Hook that discovers bots from on-chain data.
- * When VITE_SERVICE_IDS is set, queries the chain for real bot data.
- * Uses VITE_SERVICE_VAULTS for vault addresses when no tradingBlueprint contract exists.
- * Returns empty array when no services are configured (no mock data).
+ * Hook that discovers bots by reading ServiceActivated events from the Tangle contract.
+ * Uses a standalone viem client — works regardless of wallet chain.
  */
 export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void } {
-  const hasServices = SERVICE_IDS.length > 0;
-  const hasBlueprintContract = addresses.tradingBlueprint !== zeroAddress;
-  const hasVaultMapping = Object.keys(SERVICE_VAULTS).length > 0;
+  const [bots, setBots] = useState<Bot[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Phase 1: service-level queries
-  const serviceQueries = hasServices ? buildServiceQueries(SERVICE_IDS, hasBlueprintContract) : [];
-  const { data: serviceResults, isLoading: serviceLoading, refetch: refetchServices } = useReadContracts({
-    contracts: serviceQueries as any,
-    query: {
-      enabled: hasServices,
-      // Force the chain ID so wagmi routes to the right RPC
-      ...(tangleLocal.id ? {} : {}),
-    },
-  });
-
-  // Parse vault addresses from service results or env mapping
-  const vaultsToQuery: Array<{ serviceId: number; address: Address; operators: Address[]; isActive: boolean }> = [];
-  if (serviceResults) {
-    const callsPerService = hasBlueprintContract ? 3 : 2;
-    for (let i = 0; i < SERVICE_IDS.length; i++) {
-      let vaultAddr: Address | undefined;
-      let operators: Address[];
-      let isActive: boolean;
-
-      if (hasBlueprintContract) {
-        vaultAddr = serviceResults[i * callsPerService]?.result as Address | undefined;
-        operators = (serviceResults[i * callsPerService + 1]?.result as Address[] | undefined) ?? [];
-        isActive = (serviceResults[i * callsPerService + 2]?.result as boolean | undefined) ?? false;
-      } else {
-        // Use env-based vault mapping
-        vaultAddr = SERVICE_VAULTS[String(SERVICE_IDS[i])];
-        operators = (serviceResults[i * callsPerService]?.result as Address[] | undefined) ?? [];
-        isActive = (serviceResults[i * callsPerService + 1]?.result as boolean | undefined) ?? false;
-      }
-
-      if (vaultAddr && vaultAddr !== zeroAddress) {
-        vaultsToQuery.push({ serviceId: SERVICE_IDS[i], address: vaultAddr, operators, isActive });
-      }
-    }
-  }
-
-  // Phase 2: vault-level queries
-  const vaultQueries = vaultsToQuery.length > 0 ? buildVaultQueries(vaultsToQuery) : [];
-  const { data: vaultResults, isLoading: vaultLoading, refetch: refetchVaults } = useReadContracts({
-    contracts: vaultQueries as any,
-    query: { enabled: vaultsToQuery.length > 0 },
-  });
-
-  // Phase 3: asset token symbol/decimals queries
-  const assetTokens: Address[] = [];
-  if (vaultResults) {
-    for (let i = 0; i < vaultsToQuery.length; i++) {
-      const assetResult = vaultResults[i * 3 + 2];
-      const assetAddr = assetResult?.result as Address | undefined;
-      if (assetAddr && assetAddr !== zeroAddress) {
-        assetTokens.push(assetAddr);
-      }
-    }
-  }
-
-  const assetQueries = assetTokens.length > 0 ? assetTokens.flatMap(addr => [
-    { address: addr, abi: erc20Abi, functionName: 'symbol' as const },
-    { address: addr, abi: erc20Abi, functionName: 'decimals' as const },
-  ]) : [];
-
-  const { data: assetResults, isLoading: assetLoading } = useReadContracts({
-    contracts: assetQueries as any,
-    query: { enabled: assetTokens.length > 0 },
-  });
-
-  // Build bot objects from on-chain data
-  const onChainBots: Bot[] = [];
-  if (vaultResults && vaultsToQuery.length > 0) {
-    let assetIdx = 0;
-    for (let i = 0; i < vaultsToQuery.length; i++) {
-      const v = vaultsToQuery[i];
-      const totalAssetsResult = vaultResults[i * 3];
-      const pausedResult = vaultResults[i * 3 + 1];
-      const assetResult = vaultResults[i * 3 + 2];
-
-      const totalAssets = totalAssetsResult?.result as bigint | undefined;
-      const paused = (pausedResult?.result as boolean | undefined) ?? false;
-      const assetAddr = assetResult?.result as Address | undefined;
-
-      let assetSymbol = '???';
-      let assetDecimals = 18;
-      if (assetAddr && assetAddr !== zeroAddress && assetResults) {
-        const symbolResult = assetResults[assetIdx * 2];
-        const decimalsResult = assetResults[assetIdx * 2 + 1];
-        assetSymbol = (symbolResult?.result as string) ?? '???';
-        assetDecimals = (decimalsResult?.result as number) ?? 18;
-        assetIdx++;
-      }
-
-      const tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
-
-      const meta = getBotMeta(v.serviceId);
-      const status: BotStatus = !v.isActive ? 'stopped' : paused ? 'paused' : 'active';
-
-      onChainBots.push({
-        id: `service-${v.serviceId}`,
-        name: meta?.name ?? `Bot #${v.serviceId}`,
-        operatorAddress: v.operators[0] ?? zeroAddress,
-        vaultAddress: v.address,
-        strategyType: (meta?.strategyType ?? 'momentum') as StrategyType,
-        status,
-        createdAt: meta?.createdAt ?? Date.now(),
-        pnlPercent: 0,
-        pnlAbsolute: 0,
-        sharpeRatio: 0,
-        maxDrawdown: 0,
-        winRate: 0,
-        totalTrades: 0,
-        tvl: tvlRaw,
-        avgValidatorScore: 0,
-        sparklineData: [],
+  const discover = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // Phase 0: Discover service IDs from ServiceActivated events
+      const logs = await publicClient.getLogs({
+        address: addresses.tangle,
+        event: {
+          type: 'event',
+          name: 'ServiceActivated',
+          inputs: [
+            { name: 'serviceId', type: 'uint64', indexed: true },
+            { name: 'requestId', type: 'uint64', indexed: true },
+            { name: 'blueprintId', type: 'uint64', indexed: true },
+          ],
+        },
+        args: { blueprintId: BLUEPRINT_ID },
+        fromBlock: 0n,
+        toBlock: 'latest',
       });
-    }
-  }
 
-  const isLoading = hasServices && (serviceLoading || vaultLoading || assetLoading);
+      const serviceIds = [...new Set(
+        logs.map((log) => Number(log.args.serviceId)).filter((id) => !isNaN(id)),
+      )];
+
+      if (serviceIds.length === 0) {
+        setBots([]);
+        setIsLoading(false);
+        return;
+      }
+
+      // Phase 1: Service-level queries (operators, active status)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const serviceResults: any[] = await publicClient.multicall({
+        contracts: serviceIds.flatMap((id) => [
+          { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'getServiceOperators' as const, args: [BigInt(id)] },
+          { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'isServiceActive' as const, args: [BigInt(id)] },
+        ]),
+      });
+
+      // Phase 1b: Vault factory queries (if factory is deployed)
+      const hasVaultFactory = addresses.vaultFactory !== zeroAddress;
+      let vaultFactoryResults: any[] | null = null;
+      if (hasVaultFactory) {
+        try {
+          vaultFactoryResults = await publicClient.multicall({
+            contracts: serviceIds.map((id) => ({
+              address: addresses.vaultFactory, abi: vaultFactoryAbi, functionName: 'getServiceVaults' as const, args: [BigInt(id)],
+            })),
+          });
+        } catch {
+          // VaultFactory not deployed or call failed — fall back to env mapping
+        }
+      }
+
+      // Build vault entries
+      type VaultEntry = { serviceId: number; address: Address; operators: Address[]; isActive: boolean };
+      const vaultEntries: VaultEntry[] = serviceIds.map((id, i) => {
+        const operators = (serviceResults[i * 2]?.result as Address[] | undefined) ?? [];
+        const isActive = (serviceResults[i * 2 + 1]?.result as boolean | undefined) ?? false;
+
+        let vaultAddr: Address | undefined;
+
+        // Try VaultFactory first
+        if (vaultFactoryResults) {
+          const vaults = vaultFactoryResults[i]?.result as Address[] | undefined;
+          if (vaults && vaults.length > 0 && vaults[0] !== zeroAddress) {
+            vaultAddr = vaults[0];
+          }
+        }
+
+        // Fallback to env mapping
+        if (!vaultAddr) {
+          vaultAddr = SERVICE_VAULTS[String(id)];
+        }
+
+        return { serviceId: id, address: vaultAddr ?? zeroAddress, operators, isActive };
+      });
+
+      // Phase 2: Vault-level queries (only for non-zero vault addresses)
+      const vaultsWithAddr = vaultEntries.filter((v) => v.address !== zeroAddress);
+      let vaultResults: any[] | null = null;
+      if (vaultsWithAddr.length > 0) {
+        try {
+          vaultResults = await publicClient.multicall({
+            contracts: vaultsWithAddr.flatMap((v) => [
+              { address: v.address, abi: tradingVaultAbi, functionName: 'totalAssets' as const },
+              { address: v.address, abi: tradingVaultAbi, functionName: 'paused' as const },
+              { address: v.address, abi: tradingVaultAbi, functionName: 'asset' as const },
+            ]),
+          });
+        } catch {
+          // Vault contracts not reachable
+        }
+      }
+
+      // Phase 3: Asset token symbol/decimals queries
+      const assetTokens: Address[] = [];
+      if (vaultResults) {
+        for (let i = 0; i < vaultsWithAddr.length; i++) {
+          const assetAddr = vaultResults[i * 3 + 2]?.result as Address | undefined;
+          if (assetAddr && assetAddr !== zeroAddress) {
+            assetTokens.push(assetAddr);
+          }
+        }
+      }
+
+      let assetResults: any[] | null = null;
+      if (assetTokens.length > 0) {
+        try {
+          assetResults = await publicClient.multicall({
+            contracts: assetTokens.flatMap((addr) => [
+              { address: addr, abi: erc20Abi, functionName: 'symbol' as const },
+              { address: addr, abi: erc20Abi, functionName: 'decimals' as const },
+            ]),
+          });
+        } catch {
+          // Token contracts not reachable
+        }
+      }
+
+      // Build bot objects
+      const vaultAddrIndex = new Map<number, number>();
+      vaultsWithAddr.forEach((v, i) => vaultAddrIndex.set(v.serviceId, i));
+
+      let assetIdx = 0;
+      const builtBots: Bot[] = vaultEntries.map((entry) => {
+        const meta = getBotMeta(entry.serviceId);
+
+        let tvlRaw = 0;
+        let assetSymbol = '???';
+        let assetDecimals = 18;
+        let paused = false;
+
+        const vi = vaultAddrIndex.get(entry.serviceId);
+        if (vi != null && vaultResults) {
+          const totalAssets = vaultResults[vi * 3]?.result as bigint | undefined;
+          paused = (vaultResults[vi * 3 + 1]?.result as boolean | undefined) ?? false;
+          const assetAddr = vaultResults[vi * 3 + 2]?.result as Address | undefined;
+
+          if (assetAddr && assetAddr !== zeroAddress && assetResults) {
+            const symbolResult = assetResults[assetIdx * 2];
+            const decimalsResult = assetResults[assetIdx * 2 + 1];
+            assetSymbol = (symbolResult?.result as string) ?? '???';
+            assetDecimals = (decimalsResult?.result as number) ?? 18;
+            assetIdx++;
+          }
+
+          tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
+        }
+
+        const botStatus: BotStatus = !entry.isActive ? 'stopped' : paused ? 'paused' : 'active';
+
+        return {
+          id: `service-${entry.serviceId}`,
+          name: meta?.name ?? `Bot #${entry.serviceId}`,
+          operatorAddress: entry.operators[0] ?? zeroAddress,
+          vaultAddress: entry.address !== zeroAddress ? entry.address : zeroAddress,
+          strategyType: (meta?.strategyType ?? 'momentum') as StrategyType,
+          status: botStatus,
+          createdAt: meta?.createdAt ?? Date.now(),
+          pnlPercent: 0,
+          pnlAbsolute: 0,
+          sharpeRatio: 0,
+          maxDrawdown: 0,
+          winRate: 0,
+          totalTrades: 0,
+          tvl: tvlRaw,
+          avgValidatorScore: 0,
+          sparklineData: [],
+        };
+      });
+
+      setBots(builtBots);
+    } catch (err) {
+      console.warn('[useBots] Discovery failed:', err);
+      setBots([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    discover();
+  }, [discover]);
 
   return {
-    bots: onChainBots,
+    bots,
     isLoading,
-    isOnChain: onChainBots.length > 0,
-    refetch: () => { refetchServices(); refetchVaults(); },
+    isOnChain: bots.length > 0,
+    refetch: discover,
   };
 }

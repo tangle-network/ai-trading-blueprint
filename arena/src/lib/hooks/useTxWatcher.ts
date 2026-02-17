@@ -1,26 +1,24 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
-import { usePublicClient } from 'wagmi';
 import { txListStore, updateTx } from '~/lib/stores/txHistory';
+import { publicClient } from '~/lib/contracts/publicClient';
 
 /**
  * Watches all pending transactions and updates their status when confirmed or failed.
+ * Uses standalone viem client — works regardless of wallet chain.
  * Mount once near the app root (e.g. in Header).
  */
 export function useTxWatcher() {
-  const client = usePublicClient();
   const txs = useStore(txListStore);
   const watching = useRef(new Set<string>());
 
   useEffect(() => {
-    if (!client) return;
-
     for (const tx of txs) {
       if (tx.status !== 'pending') continue;
       if (watching.current.has(tx.hash)) continue;
       watching.current.add(tx.hash);
 
-      client
+      publicClient
         .waitForTransactionReceipt({ hash: tx.hash })
         .then((receipt) => {
           updateTx(tx.hash, {
@@ -36,5 +34,5 @@ export function useTxWatcher() {
           watching.current.delete(tx.hash);
         });
     }
-  }, [txs, client]);
+  }, [txs]);
 }

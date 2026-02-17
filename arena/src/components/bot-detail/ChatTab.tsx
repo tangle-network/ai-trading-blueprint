@@ -88,7 +88,7 @@ function ChatMessage({ message, isStreaming }: { message: Message; isStreaming?:
       <div className={`max-w-[85%] ${
         isUser && message.source === 'owner'
           ? 'bg-violet-500/10 border-violet-500/20'
-          : 'bg-arena-elements-background-depth-2 border-arena-elements-borderColor'
+          : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 border-arena-elements-borderColor'
       } rounded-xl border px-4 py-3`}>
         <div className="flex items-center gap-2 mb-1.5">
           {sourceBadge}
@@ -135,7 +135,7 @@ function MessagePartView({ part }: { part: MessagePart }) {
           className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-arena-elements-background-depth-3 transition-colors cursor-pointer"
         >
           <span className={`w-1.5 h-1.5 rounded-full ${
-            status === 'completed' ? 'bg-emerald-400' : status === 'error' ? 'bg-crimson-400' : 'bg-amber-400 animate-pulse'
+            status === 'completed' ? 'bg-emerald-700 dark:bg-emerald-400' : status === 'error' ? 'bg-crimson-400' : 'bg-amber-400 animate-pulse'
           }`} />
           <span className="font-data text-arena-elements-textSecondary">{part.tool}</span>
           <Badge variant={status === 'completed' ? 'success' : status === 'error' ? 'destructive' : 'amber'} className="text-[9px] py-0 ml-auto">
@@ -188,9 +188,9 @@ function AgentStatus({ status, onAbort, isAborting }: {
   isAborting: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-t border-arena-elements-dividerColor bg-arena-elements-background-depth-2/50">
+    <div className="flex items-center gap-2 px-4 py-2 border-t border-arena-elements-dividerColor bg-arena-elements-background-depth-3/50 dark:bg-arena-elements-background-depth-4/50">
       <span className={`w-2 h-2 rounded-full ${
-        status === 'running' ? 'bg-amber-400 animate-pulse' : status === 'error' ? 'bg-crimson-400' : 'bg-emerald-400'
+        status === 'running' ? 'bg-amber-400 animate-pulse' : status === 'error' ? 'bg-crimson-400' : 'bg-emerald-700 dark:bg-emerald-400'
       }`} />
       <span className="text-xs font-data text-arena-elements-textSecondary">
         {status === 'running' ? 'Agent working...' : status === 'error' ? 'Agent error' : 'Agent idle'}
@@ -248,7 +248,7 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute top-full left-0 mt-1 w-72 rounded-xl border border-arena-elements-borderColor bg-arena-elements-background-depth-2 shadow-xl z-50 overflow-hidden"
+            className="absolute top-full left-0 mt-1 w-72 rounded-xl border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 shadow-xl z-50 overflow-hidden"
           >
             <div className="max-h-60 overflow-y-auto">
               {sessions.map(s => (

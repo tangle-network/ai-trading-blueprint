@@ -7,7 +7,7 @@ import { Input } from '~/components/ui/input';
 import { Button } from '~/components/ui/button';
 import { toast } from 'sonner';
 import { useApprove, useDeposit } from '~/lib/hooks/useVaultWrite';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { selectedChainIdStore } from '~/lib/contracts/publicClient';
 import { addTx } from '~/lib/stores/txHistory';
 
 interface DepositFormProps {
@@ -34,7 +34,7 @@ export function DepositForm({
   onSuccess,
 }: DepositFormProps) {
   const { isConnected, chainId } = useAccount();
-  const isReady = isConnected && chainId === tangleLocal.id;
+  const isReady = isConnected && chainId === selectedChainIdStore.get();
   const [amount, setAmount] = useState('');
   // Track that we just approved — skip needsApproval check until refetch completes
   const [justApproved, setJustApproved] = useState(false);
@@ -104,10 +104,10 @@ export function DepositForm({
 
   // Register txs in history store
   useEffect(() => {
-    if (approve.hash) addTx(approve.hash, `Approve ${assetSymbol}`, tangleLocal.id);
+    if (approve.hash) addTx(approve.hash, `Approve ${assetSymbol}`, selectedChainIdStore.get());
   }, [approve.hash, assetSymbol]);
   useEffect(() => {
-    if (deposit.hash) addTx(deposit.hash, `Deposit ${amount || '?'} ${assetSymbol}`, tangleLocal.id);
+    if (deposit.hash) addTx(deposit.hash, `Deposit ${amount || '?'} ${assetSymbol}`, selectedChainIdStore.get());
   }, [deposit.hash, assetSymbol]);
 
   const handleClick = () => {
@@ -139,6 +139,30 @@ export function DepositForm({
     : needsApproval
     ? `Approve & Deposit ${assetSymbol}`
     : `Deposit ${assetSymbol}`;
+
+  if (assetSymbol === '???') {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <div className="i-ph:arrow-down-right text-arena-elements-icon-success" />
+            Deposit
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="py-6 text-center">
+            <div className="i-ph:warning-circle text-2xl text-amber-600 dark:text-amber-400 mb-2 mx-auto" />
+            <p className="text-sm text-arena-elements-textSecondary">
+              Vault asset token not found on-chain.
+            </p>
+            <p className="text-xs text-arena-elements-textTertiary mt-1">
+              The vault may still be initializing or the asset token is not deployed on this network.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -176,7 +200,7 @@ export function DepositForm({
             />
           </div>
           {sharesReceived && (
-            <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+            <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-emerald-700/5 dark:bg-emerald-500/5 border border-emerald-700/10 dark:border-emerald-500/10">
               <span className="text-sm text-arena-elements-textSecondary font-data">You'll receive</span>
               <span className="text-sm font-data font-bold text-arena-elements-icon-success">~{sharesReceived} shares</span>
             </div>

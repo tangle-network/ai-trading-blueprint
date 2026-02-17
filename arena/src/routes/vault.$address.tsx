@@ -2,12 +2,14 @@ import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
 import { useAccount, useSwitchChain } from 'wagmi';
+import { useStore } from '@nanostores/react';
 import { AnimatedPage } from '~/components/motion/AnimatedPage';
 import { VaultStats } from '~/components/vault/VaultStats';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { networks } from '~/lib/contracts/chains';
+import { selectedChainIdStore } from '~/lib/contracts/publicClient';
 import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
@@ -19,11 +21,14 @@ export default function VaultPage() {
   const vaultAddress = address as Address | undefined;
   const { isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
+  const selectedChainId = useStore(selectedChainIdStore);
+  const selectedNetwork = networks[selectedChainId]!;
+  const targetChain = selectedNetwork.chain;
 
   const vault = useVaultRead(vaultAddress);
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
-  const isWrongChain = isConnected && chainId !== tangleLocal.id;
+  const isWrongChain = isConnected && chainId !== targetChain.id;
 
   if (!isValidAddress) {
     return (
@@ -82,13 +87,13 @@ export default function VaultPage() {
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
             <div className="i-ph:arrow-square-out text-3xl text-amber-500 dark:text-amber-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-4">
-              Your wallet is connected to chain {chainId}. Switch to <span className="text-violet-700 dark:text-violet-400 font-semibold">Tangle Local ({tangleLocal.id})</span> to interact with this vault.
+              Your wallet is connected to chain {chainId}. Switch to <span className="text-violet-700 dark:text-violet-400 font-semibold">{targetChain.name} ({targetChain.id})</span> to interact with this vault.
             </p>
             <Button
-              onClick={() => switchChain({ chainId: tangleLocal.id })}
+              onClick={() => switchChain({ chainId: targetChain.id })}
               className="bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
             >
-              Switch to Tangle Local
+              Switch to {targetChain.name}
             </Button>
           </div>
         ) : null}

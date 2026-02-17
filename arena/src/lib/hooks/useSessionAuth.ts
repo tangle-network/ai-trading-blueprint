@@ -19,9 +19,45 @@ interface VerifyResponse {
   expires_at: number;
 }
 
+function sessionStorageKey(botId: string, apiUrl: string): string {
+  return `arena_session_${botId}__${apiUrl}`;
+}
+
+function loadSession(botId: string, apiUrl: string): { token: string; expiresAt: number } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(sessionStorageKey(botId, apiUrl));
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { token: string; expiresAt: number };
+    // Discard if within 60s of expiry
+    if (data.expiresAt * 1000 - Date.now() < 60_000) {
+      localStorage.removeItem(sessionStorageKey(botId, apiUrl));
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(botId: string, apiUrl: string, token: string, expiresAt: number) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(sessionStorageKey(botId, apiUrl), JSON.stringify({ token, expiresAt }));
+  } catch {
+    // storage full — ignore
+  }
+}
+
+function clearSession(botId: string, apiUrl: string) {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(sessionStorageKey(botId, apiUrl));
+}
+
 export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
-  const [token, setToken] = useState<string | null>(null);
-  const [expiresAt, setExpiresAt] = useState<number>(0);
+  const cached = loadSession(botId, apiUrl);
+  const [token, setToken] = useState<string | null>(cached?.token ?? null);
+  const [expiresAt, setExpiresAt] = useState<number>(cached?.expiresAt ?? 0);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -63,10 +99,12 @@ export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
       const { token: newToken, expires_at }: VerifyResponse = await verifyRes.json();
       setToken(newToken);
       setExpiresAt(expires_at);
+      saveSession(botId, apiUrl, newToken, expires_at);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed');
       setToken(null);
       setExpiresAt(0);
+      clearSession(botId, apiUrl);
     } finally {
       setIsAuthenticating(false);
     }
@@ -84,12 +122,14 @@ export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
     if (msUntilRefresh <= 0) {
       // Already expired or about to expire
       setToken(null);
+      clearSession(botId, apiUrl);
       return;
     }
 
     refreshTimerRef.current = setTimeout(() => {
       authenticate().catch(() => {
         setToken(null);
+        clearSession(botId, apiUrl);
       });
     }, msUntilRefresh);
 

@@ -1,4 +1,5 @@
-import { atom, computed } from 'nanostores';
+import { computed } from 'nanostores';
+import { persistedAtom, serializeWithBigInt, deserializeWithBigInt } from './persistedAtom';
 
 export interface TrackedTx {
   hash: `0x${string}`;
@@ -12,7 +13,12 @@ export interface TrackedTx {
 
 const MAX_TXS = 50;
 
-export const txListStore = atom<TrackedTx[]>([]);
+export const txListStore = persistedAtom<TrackedTx[]>({
+  key: 'arena_tx_history',
+  initial: [],
+  serialize: serializeWithBigInt,
+  deserialize: deserializeWithBigInt,
+});
 
 export const pendingCount = computed(txListStore, (txs) =>
   txs.filter((tx) => tx.status === 'pending').length,

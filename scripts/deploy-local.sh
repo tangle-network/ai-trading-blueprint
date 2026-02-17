@@ -89,14 +89,27 @@ echo "  Done."
 
 # ── Fund accounts ───────────────────────────────────────────
 echo "[4/7] Funding accounts..."
-cast send "$USER_ACCOUNT" --value 100ether --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
-cast send "$USDC" "mint(address,uint256)" "$USER_ACCOUNT" 1000000000000 \
-  --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
-cast send "$WETH" "mint(address,uint256)" "$USER_ACCOUNT" 100000000000000000000 \
-  --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
+fund_account() {
+  local addr="$1"
+  local label="$2"
+  cast send "$addr" --value 100ether --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
+  cast send "$USDC" "mint(address,uint256)" "$addr" 1000000000000 \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
+  cast send "$WETH" "mint(address,uint256)" "$addr" 100000000000000000000 \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
+  echo "  $label ($addr): 100 ETH, 1M USDC, 100 WETH"
+}
+
+fund_account "$USER_ACCOUNT" "User"
 cast send "$USDC" "mint(address,uint256)" "$DEPLOYER_ADDR" 1000000000000 \
   --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
-echo "  User ($USER_ACCOUNT): 100 ETH, 1M USDC, 100 WETH"
+
+# Fund additional wallets passed via EXTRA_ACCOUNTS env var (space-separated)
+if [[ -n "${EXTRA_ACCOUNTS:-}" ]]; then
+  for acct in $EXTRA_ACCOUNTS; do
+    fund_account "$acct" "Extra"
+  done
+fi
 
 # ── Create vault (service 0) ───────────────────────────────
 echo "[5/9] Creating vault for service 0..."
@@ -168,6 +181,24 @@ if ! cast send "$TANGLE" \
 fi
 echo "  Operator 2: $OPERATOR2_ADDR → $OPERATOR2_RPC"
 
+# ── Permit callers on service 0 ───────────────────────────────
+echo "[7.5/9] Adding permitted callers to service 0..."
+add_permitted_caller() {
+  local addr="$1"
+  cast send "$TANGLE" "addPermittedCaller(uint64,address)" 0 "$addr" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1 || true
+}
+
+add_permitted_caller "$USER_ACCOUNT"
+add_permitted_caller "$DEPLOYER_ADDR"
+echo "  Permitted: $USER_ACCOUNT, $DEPLOYER_ADDR"
+if [[ -n "${EXTRA_ACCOUNTS:-}" ]]; then
+  for acct in $EXTRA_ACCOUNTS; do
+    add_permitted_caller "$acct"
+    echo "  Permitted: $acct"
+  done
+fi
+
 # ── Import operator keys into pricing engine keystores ────────
 echo "[8/9] Setting up pricing engine keystores..."
 CARGO_TANGLE="${CARGO_TANGLE_BIN:-$(command -v cargo-tangle 2>/dev/null || echo "$ROOT_DIR/../blueprint/target/release/cargo-tangle")}"
@@ -200,6 +231,7 @@ VITE_VAULT_FACTORY=$VAULT_FACTORY
 VITE_USDC_ADDRESS=$USDC
 VITE_WETH_ADDRESS=$WETH
 VITE_SERVICE_IDS=0
+VITE_SERVICE_VAULTS={"0":"$VAULT_0"}
 VITE_BOT_META={"0":{"name":"Arena Demo Bot","strategyType":"dex"}}
 EOF
 

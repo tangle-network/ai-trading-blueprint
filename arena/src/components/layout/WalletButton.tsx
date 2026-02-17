@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { ConnectKitButton } from 'connectkit';
-import { useAccount, useBalance, useDisconnect, useSwitchChain } from 'wagmi';
+import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
+import { useStore } from '@nanostores/react';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { networks } from '~/lib/contracts/chains';
+import { publicClient, selectedChainIdStore } from '~/lib/contracts/publicClient';
 import { Identicon } from '~/components/shared/Identicon';
 import { toast } from 'sonner';
 
@@ -11,13 +13,36 @@ export function WalletButton() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { address, chainId, isConnected, status } = useAccount();
-  // Only show loading spinner during page-load rehydration, not active connecting
   const isReconnecting = status === 'reconnecting';
-  const { data: balance } = useBalance({ address, chainId: tangleLocal.id });
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const selectedChainId = useStore(selectedChainIdStore);
+  const selectedNetwork = networks[selectedChainId];
 
-  const isWrongChain = isConnected && chainId !== tangleLocal.id;
+  const [ethBalance, setEthBalance] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!address) {
+      setEthBalance(null);
+      return;
+    }
+    let cancelled = false;
+
+    const fetchBalance = () => {
+      publicClient.getBalance({ address }).then((bal: bigint) => {
+        if (!cancelled) setEthBalance(parseFloat(formatUnits(bal, 18)).toFixed(3));
+      }).catch((err: unknown) => {
+        console.warn('[WalletButton] balance fetch failed:', err);
+        if (!cancelled) setEthBalance(null);
+      });
+    };
+
+    fetchBalance();
+    const interval = setInterval(fetchBalance, 15_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [address, selectedChainId]);
+
+  const isWrongChain = isConnected && chainId !== selectedChainId;
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -47,7 +72,10 @@ export function WalletButton() {
     }
   }
 
+  const targetChain = selectedNetwork?.chain;
+
   async function addChain() {
+    if (!targetChain) return;
     const ethereum = (window as any).ethereum;
     if (!ethereum) {
       toast.error('No wallet detected');
@@ -57,13 +85,13 @@ export function WalletButton() {
       await ethereum.request({
         method: 'wallet_addEthereumChain',
         params: [{
-          chainId: `0x${tangleLocal.id.toString(16)}`,
-          chainName: tangleLocal.name,
-          nativeCurrency: tangleLocal.nativeCurrency,
-          rpcUrls: tangleLocal.rpcUrls.default.http,
+          chainId: `0x${targetChain.id.toString(16)}`,
+          chainName: targetChain.name,
+          nativeCurrency: targetChain.nativeCurrency,
+          rpcUrls: targetChain.rpcUrls.default.http,
         }],
       });
-      toast.success(`${tangleLocal.name} added to wallet`);
+      toast.success(`${targetChain.name} added to wallet`);
     } catch (err: any) {
       if (err?.code === 4001) return; // user rejected
       toast.error('Failed to add chain');
@@ -71,7 +99,7 @@ export function WalletButton() {
   }
 
   function handleSwitchChain() {
-    switchChain({ chainId: tangleLocal.id });
+    if (targetChain) switchChain({ chainId: targetChain.id });
   }
 
   return (
@@ -96,9 +124,7 @@ export function WalletButton() {
         const truncated = address
           ? `${address.slice(0, 6)}...${address.slice(-4)}`
           : '';
-        const ethBalance = balance
-          ? parseFloat(formatUnits(balance.value, balance.decimals)).toFixed(3)
-          : '...';
+        const displayBalance = ethBalance ?? '...';
 
         return (
           <div ref={ref} className="relative">
@@ -114,7 +140,7 @@ export function WalletButton() {
                 {truncated}
               </span>
               <span className="text-xs font-data text-arena-elements-textSecondary">
-                {ethBalance} ETH
+                {displayBalance} ETH
               </span>
               <div className={`i-ph:caret-down text-xs text-arena-elements-textTertiary transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
@@ -136,7 +162,7 @@ export function WalletButton() {
                       <div className="i-ph:copy text-sm text-arena-elements-textTertiary group-hover:text-violet-700 dark:group-hover:text-violet-400 transition-colors shrink-0" />
                     </button>
                     <div className="text-xs font-data text-arena-elements-textSecondary">
-                      {ethBalance} ETH
+                      {displayBalance} ETH
                     </div>
                   </div>
                 </div>
@@ -145,7 +171,7 @@ export function WalletButton() {
                 <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-arena-elements-item-backgroundActive mb-3">
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isWrongChain ? 'bg-amber-500 dark:bg-amber-400 animate-pulse' : 'bg-emerald-600 dark:bg-emerald-400'}`} />
                   <span className="text-sm font-data text-arena-elements-textSecondary flex-1">
-                    {isWrongChain ? `Chain ${chainId}` : tangleLocal.name}
+                    {isWrongChain ? `Chain ${chainId}` : (targetChain?.name ?? 'Unknown')}
                   </span>
                   {isWrongChain && (
                     <span className="text-xs font-data text-amber-600 dark:text-amber-400 uppercase tracking-wider font-semibold">wrong chain</span>
@@ -161,7 +187,7 @@ export function WalletButton() {
                     >
                       <div className="i-ph:swap text-base text-violet-700 dark:text-violet-400" />
                       <span className="text-sm font-display text-arena-elements-textSecondary">
-                        Switch to {tangleLocal.name}
+                        Switch to {targetChain?.name ?? 'Unknown'}
                       </span>
                     </button>
                   )}
@@ -171,7 +197,7 @@ export function WalletButton() {
                   >
                     <div className="i-ph:plus-circle text-base text-violet-700 dark:text-violet-400" />
                     <span className="text-sm font-display text-arena-elements-textSecondary">
-                      Add {tangleLocal.name} to Wallet
+                      Add {targetChain?.name ?? 'Unknown'} to Wallet
                     </span>
                   </button>
                   <button

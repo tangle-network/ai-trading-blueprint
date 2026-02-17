@@ -1,11 +1,17 @@
 import type { Address } from 'viem';
+import { getAddresses } from './publicClient';
 
-// Contract addresses — configurable via env vars, defaults to Anvil devnet deterministic deploys.
-export const addresses = {
-  tangle: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
-  vaultFactory: (import.meta.env.VITE_VAULT_FACTORY ?? '0x0000000000000000000000000000000000000000') as Address,
-  tradingBlueprint: (import.meta.env.VITE_TRADING_BLUEPRINT ?? '0x0000000000000000000000000000000000000000') as Address,
-} as const;
+// Reactive addresses — reads from the selected chain's network config.
+// Uses a Proxy so `addresses.tangle` always returns the current chain's value.
+export const addresses = new Proxy({} as {
+  tangle: Address;
+  vaultFactory: Address;
+  tradingBlueprint: Address;
+}, {
+  get(_target, prop: string) {
+    return getAddresses()[prop as keyof ReturnType<typeof getAddresses>];
+  },
+});
 
 // Well-known token addresses (mainnet)
 export const tokens = {

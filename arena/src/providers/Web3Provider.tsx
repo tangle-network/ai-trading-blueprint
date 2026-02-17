@@ -1,17 +1,17 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
-import { mainnet } from 'wagmi/chains';
 import { ConnectKitProvider, getDefaultConfig } from 'connectkit';
 import { type ReactNode, useState } from 'react';
-import { tangleLocal, rpcUrl } from '~/lib/contracts/chains';
+import { tangleLocal, tangleTestnet, tangleMainnet, mainnet, rpcUrl } from '~/lib/contracts/chains';
 
-const chains = import.meta.env.VITE_USE_LOCAL_CHAIN === 'true'
-  ? [tangleLocal, mainnet] as const
-  : [mainnet] as const;
+const chains = [tangleLocal, tangleTestnet, tangleMainnet, mainnet] as const;
 
-const transports = import.meta.env.VITE_USE_LOCAL_CHAIN === 'true'
-  ? { [tangleLocal.id]: http(rpcUrl), [mainnet.id]: http() }
-  : { [mainnet.id]: http() };
+const transports = {
+  [tangleLocal.id]: http(rpcUrl),
+  [tangleTestnet.id]: http('https://testnet-rpc.tangle.tools'),
+  [tangleMainnet.id]: http('https://rpc.tangle.tools'),
+  [mainnet.id]: http(),
+};
 
 const config = createConfig(
   getDefaultConfig({

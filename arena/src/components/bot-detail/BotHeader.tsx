@@ -42,7 +42,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
         <div className="flex items-center gap-2">
           <Badge variant={bot.status === 'active' ? 'success' : bot.status === 'paused' ? 'amber' : 'destructive'}>
             <div className={`w-1.5 h-1.5 rounded-full ${
-              bot.status === 'active' ? 'bg-emerald-400 animate-glow-pulse' : bot.status === 'paused' ? 'bg-amber-400' : 'bg-crimson-400'
+              bot.status === 'active' ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse' : bot.status === 'paused' ? 'bg-amber-400' : 'bg-crimson-400'
             }`} />
             {bot.status}
           </Badge>

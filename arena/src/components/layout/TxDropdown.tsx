@@ -3,6 +3,7 @@ import { useStore } from '@nanostores/react';
 import { toast } from 'sonner';
 import { txListStore, pendingCount, clearTxs, type TrackedTx } from '~/lib/stores/txHistory';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
+import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
 
 function timeAgo(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000);
@@ -111,6 +112,7 @@ function TxRow({ tx }: { tx: TrackedTx }) {
 
 export function TxDropdown() {
   useTxWatcher();
+  useProvisionWatcher();
 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);

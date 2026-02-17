@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
-import { type Address, sha256 as viemSha256 } from 'viem';
+import { type Address, sha256 as viemSha256, hashTypedData, recoverAddress, toHex } from 'viem';
 import type { DiscoveredOperator } from './useOperators';
+import { selectedChainIdStore } from '~/lib/contracts/publicClient';
+import { addresses } from '~/lib/contracts/addresses';
 import {
   PricingEngine,
   GetPriceRequestSchema,
@@ -107,35 +109,83 @@ async function solvePoW(blueprintId: bigint, timestamp: bigint): Promise<Uint8Ar
 
 // ── Convert proto QuoteDetails → on-chain struct ──────────────────────────
 
-/** Cached ETH/USD price from CoinGecko (free, 30 req/min). */
-let cachedEthPrice: { price: number; fetchedAt: number } | null = null;
+/**
+ * Convert a USD cost rate to the on-chain totalCost value.
+ * Must match the pricing engine's `decimal_to_scaled_amount()`:
+ *   totalCost = costRate * 10^PRICING_SCALE_PLACES
+ * where PRICING_SCALE_PLACES = 9.
+ */
+const PRICING_SCALE = 1_000_000_000; // 10^9
 
-async function getEthPriceUsd(): Promise<number> {
-  const CACHE_TTL = 60_000; // 1 minute
-  const FALLBACK = 2600;
-  if (cachedEthPrice && Date.now() - cachedEthPrice.fetchedAt < CACHE_TTL) {
-    return cachedEthPrice.price;
-  }
-  try {
-    const res = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-    );
-    const data = await res.json();
-    const price = data?.ethereum?.usd;
-    if (typeof price === 'number' && price > 0) {
-      cachedEthPrice = { price, fetchedAt: Date.now() };
-      return price;
-    }
-  } catch { /* fall through */ }
-  return cachedEthPrice?.price ?? FALLBACK;
+function costRateToScaledAmount(costRate: number): bigint {
+  return BigInt(Math.floor(costRate * PRICING_SCALE));
 }
 
-/** Convert USD cost to wei using live ETH price. */
-async function costRateToWei(costRate: number): Promise<bigint> {
-  const ethPrice = await getEthPriceUsd();
-  const ethAmount = costRate / ethPrice;
-  const scaled = Math.floor(ethAmount * 1e18);
-  return BigInt(scaled);
+/** Recover the ECDSA v byte (27 or 28) from a 64-byte (r,s) signature.
+ *  The pricing engine's K256 signer discards the recovery ID, so we
+ *  recompute the EIP-712 digest and try both v values. */
+async function recoverSignatureV(
+  signature64: Uint8Array,
+  quoteMessage: {
+    blueprintId: bigint;
+    ttlBlocks: bigint;
+    totalCost: bigint;
+    timestamp: bigint;
+    expiry: bigint;
+    securityCommitments: readonly {
+      asset: { kind: number; token: Address };
+      exposureBps: number;
+    }[];
+  },
+  operator: Address,
+): Promise<`0x${string}`> {
+  const rawHex = Array.from(signature64).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+  const digest = hashTypedData({
+    domain: {
+      name: 'TangleQuote',
+      version: '1',
+      chainId: selectedChainIdStore.get(),
+      verifyingContract: addresses.tangle,
+    },
+    types: {
+      QuoteDetails: [
+        { name: 'blueprintId', type: 'uint64' },
+        { name: 'ttlBlocks', type: 'uint64' },
+        { name: 'totalCost', type: 'uint256' },
+        { name: 'timestamp', type: 'uint64' },
+        { name: 'expiry', type: 'uint64' },
+        { name: 'securityCommitments', type: 'AssetSecurityCommitment[]' },
+      ],
+      AssetSecurityCommitment: [
+        { name: 'asset', type: 'Asset' },
+        { name: 'exposureBps', type: 'uint16' },
+      ],
+      Asset: [
+        { name: 'kind', type: 'uint8' },
+        { name: 'token', type: 'address' },
+      ],
+    },
+    primaryType: 'QuoteDetails',
+    message: quoteMessage,
+  });
+
+  // Try v=27 then v=28
+  for (const v of [27, 28]) {
+    const sig65 = `0x${rawHex}${v.toString(16).padStart(2, '0')}` as `0x${string}`;
+    try {
+      const recovered = await recoverAddress({ hash: digest, signature: sig65 });
+      if (recovered.toLowerCase() === operator.toLowerCase()) {
+        return sig65;
+      }
+    } catch {
+      // wrong v, try next
+    }
+  }
+
+  // Fallback: return with v=27 and let the contract reject it
+  console.warn('[useQuotes] Could not recover correct v for operator', operator);
+  return `0x${rawHex}1b` as `0x${string}`;
 }
 
 async function mapQuoteDetails(
@@ -143,8 +193,33 @@ async function mapQuoteDetails(
   operator: Address,
   signature: Uint8Array,
 ): Promise<OperatorQuote> {
-  const totalCost = await costRateToWei(details.totalCostRate);
-  const sigHex = `0x${Array.from(signature).map((b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`;
+  const totalCost = costRateToScaledAmount(details.totalCostRate);
+
+  const securityCommitments = details.securityCommitments.map((sc) => ({
+    asset: {
+      kind: sc.asset?.assetType.case === 'erc20' ? 1 : 0,
+      token: (sc.asset?.assetType.case === 'erc20'
+        ? `0x${Array.from(sc.asset.assetType.value).map((b) => b.toString(16).padStart(2, '0')).join('')}`
+        : '0x0000000000000000000000000000000000000000') as Address,
+    },
+    exposureBps: sc.exposurePercent * 100, // percent → bps
+  }));
+
+  // Build the EIP-712 message matching the on-chain QuoteDetails struct
+  const quoteMessage = {
+    blueprintId: details.blueprintId,
+    ttlBlocks: details.ttlBlocks,
+    totalCost,
+    timestamp: details.timestamp,
+    expiry: details.expiry,
+    securityCommitments: securityCommitments.map((sc) => ({
+      asset: { kind: sc.asset.kind, token: sc.asset.token },
+      exposureBps: sc.exposureBps,
+    })),
+  };
+
+  // Recover 65-byte signature with correct v byte
+  const sigHex = await recoverSignatureV(signature, quoteMessage, operator);
 
   return {
     operator,
@@ -157,15 +232,7 @@ async function mapQuoteDetails(
       totalCost,
       timestamp: details.timestamp,
       expiry: details.expiry,
-      securityCommitments: details.securityCommitments.map((sc) => ({
-        asset: {
-          kind: sc.asset?.assetType.case === 'erc20' ? 1 : 0,
-          token: (sc.asset?.assetType.case === 'erc20'
-            ? `0x${Array.from(sc.asset.assetType.value).map((b) => b.toString(16).padStart(2, '0')).join('')}`
-            : '0x0000000000000000000000000000000000000000') as Address,
-        },
-        exposureBps: sc.exposurePercent * 100, // percent → bps
-      })),
+      securityCommitments,
     },
   };
 }

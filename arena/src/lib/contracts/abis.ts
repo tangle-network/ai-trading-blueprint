@@ -39,6 +39,7 @@ export const tangleJobsAbi = [
   { type: 'function', name: 'submitJob', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'jobIndex', type: 'uint8' }, { name: 'inputs', type: 'bytes' }], outputs: [{ name: 'callId', type: 'uint64' }], stateMutability: 'payable' },
   { type: 'event', name: 'JobSubmitted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'jobIndex', type: 'uint8', indexed: true }, { name: 'caller', type: 'address', indexed: false }, { name: 'inputs', type: 'bytes', indexed: false }], anonymous: false },
   { type: 'event', name: 'JobCompleted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }], anonymous: false },
+  { type: 'event', name: 'JobResultSubmitted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'operator', type: 'address', indexed: true }, { name: 'output', type: 'bytes', indexed: false }], anonymous: false },
 ] as const;
 
 export const tangleServicesAbi = [
@@ -72,7 +73,20 @@ export const tangleServicesAbi = [
     outputs: [{ name: 'serviceId', type: 'uint64' }],
     stateMutability: 'payable',
   },
-  { type: 'function', name: 'getService', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'tuple', components: [{ name: 'blueprintId', type: 'uint64' }, { name: 'owner', type: 'address' }, { name: 'permittedCallers', type: 'address[]' }, { name: 'operators', type: 'address[]' }, { name: 'ttl', type: 'uint64' }] }], stateMutability: 'view' },
+  { type: 'function', name: 'getService', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'tuple', components: [
+    { name: 'blueprintId', type: 'uint64' },
+    { name: 'owner', type: 'address' },
+    { name: 'createdAt', type: 'uint64' },
+    { name: 'ttl', type: 'uint64' },
+    { name: 'terminatedAt', type: 'uint64' },
+    { name: 'lastPaymentAt', type: 'uint64' },
+    { name: 'operatorCount', type: 'uint32' },
+    { name: 'minOperators', type: 'uint32' },
+    { name: 'maxOperators', type: 'uint32' },
+    { name: 'membership', type: 'uint8' },
+    { name: 'pricing', type: 'uint8' },
+    { name: 'status', type: 'uint8' },
+  ] }], stateMutability: 'view' },
   { type: 'function', name: 'isServiceActive', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
   { type: 'function', name: 'getServiceOperators', inputs: [{ name: 'serviceId', type: 'uint64' }], outputs: [{ name: '', type: 'address[]' }], stateMutability: 'view' },
   { type: 'function', name: 'isPermittedCaller', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'caller', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },

@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router';
+import { ChainSwitcher } from './ChainSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
@@ -41,6 +42,7 @@ export function Header() {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          <ChainSwitcher />
           <ThemeToggle />
           <TxDropdown />
           <WalletButton />
