@@ -76,7 +76,24 @@ export default function VaultPage() {
           userSharesFormatted={vault.userSharesFormatted}
         />
 
-        {!isConnected ? (
+        {vault.error ? (
+          <div className="glass-card rounded-xl p-8 mb-6 text-center">
+            <div className="i-ph:warning-circle text-3xl text-crimson-500 dark:text-crimson-400 mb-3 mx-auto" />
+            <p className="text-base text-arena-elements-textSecondary mb-2">
+              Could not read vault contract data.
+            </p>
+            <p className="text-sm text-arena-elements-textTertiary mb-4">
+              {vault.error.message}
+            </p>
+            <Button
+              onClick={vault.refetch}
+              variant="outline"
+              size="sm"
+            >
+              Retry
+            </Button>
+          </div>
+        ) : !isConnected ? (
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
             <div className="i-ph:wallet text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary">

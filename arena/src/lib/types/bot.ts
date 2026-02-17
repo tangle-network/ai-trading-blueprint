@@ -3,6 +3,7 @@ export type StrategyType = 'momentum' | 'mean-reversion' | 'arbitrage' | 'trend-
 
 export interface Bot {
   id: string;
+  serviceId: number;
   name: string;
   operatorAddress: string;
   vaultAddress: string;

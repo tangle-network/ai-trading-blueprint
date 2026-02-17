@@ -51,10 +51,11 @@ export function getBotMeta(serviceId: number): BotMeta | undefined {
 }
 
 /**
- * Get the API URL for a bot by its bot ID string (e.g. "service-0").
+ * Get the API URL for a bot by its bot ID string.
+ * Supports: "service-0-vault-0" (current) and "service-0" (legacy).
  */
 export function getApiUrlForBot(botId: string): string | undefined {
-  const match = botId.match(/^service-(\d+)$/);
+  const match = botId.match(/^service-(\d+)/);
   if (!match) return undefined;
   return getBotApiUrl(Number(match[1]));
 }

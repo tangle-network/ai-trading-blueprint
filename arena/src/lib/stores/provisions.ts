@@ -27,6 +27,10 @@ export interface TrackedProvision {
   sandboxId?: string;
   workflowId?: number;
   errorMessage?: string;
+  /** Intermediate progress phase from operator API */
+  progressPhase?: string;
+  /** Human-readable progress detail */
+  progressDetail?: string;
 }
 
 const MAX_PROVISIONS = 20;

@@ -95,7 +95,7 @@ async fn test_provision_creates_records() {
     let sandbox_id = sandbox.id.clone();
 
     let request = make_provision_request("test-bot", "dex");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     assert_eq!(output.sandbox_id, sandbox_id);
     assert!(output.workflow_id > 0);
@@ -298,7 +298,7 @@ async fn test_bot_lifecycle_transitions() {
     let sandbox = mock_sandbox("sb-lifecycle-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("lifecycle-bot", "multi");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
     assert!(find_bot_by_sandbox(&sandbox_id).unwrap().trading_active);
 
     // 2. Configure
@@ -329,7 +329,7 @@ async fn test_workflow_created_with_cron() {
 
     let sandbox = mock_sandbox("sb-cron-1");
     let request = make_provision_request("cron-bot", "dex");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let wf_key =
         ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
@@ -448,7 +448,7 @@ async fn test_bot_record_has_new_fields() {
 
     let sandbox = mock_sandbox("sb-new-fields-1");
     let request = make_provision_request("new-fields-bot", "yield");
-    let _output = provision_core(request, Some(sandbox)).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-new-fields-1").unwrap();
     // New fields should have default values (no operator context, no validator service IDs)
@@ -462,7 +462,7 @@ async fn test_provision_uses_requested_lifetime() {
 
     let sandbox = mock_sandbox("sb-lifetime-90");
     let request = make_provision_request_with_lifetime("lifetime-bot", "dex", 90);
-    let _output = provision_core(request, Some(sandbox)).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-90").unwrap();
     assert_eq!(bot.max_lifetime_days, 90);
@@ -474,7 +474,7 @@ async fn test_provision_defaults_to_30_days() {
 
     let sandbox = mock_sandbox("sb-lifetime-default");
     let request = make_provision_request_with_lifetime("default-bot", "dex", 0);
-    let _output = provision_core(request, Some(sandbox)).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-default").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -487,7 +487,7 @@ async fn test_extend_increases_lifetime() {
     // Provision with 30 days
     let sandbox = mock_sandbox("sb-extend-1");
     let request = make_provision_request_with_lifetime("extend-bot", "dex", 30);
-    let _output = provision_core(request, Some(sandbox)).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-extend-1").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -553,7 +553,7 @@ async fn test_provision_with_pack_creates_rich_workflow() {
 
     let sandbox = mock_sandbox("sb-pack-prediction");
     let request = make_provision_request("pack-bot", "prediction");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     // Verify workflow_json contains backend_profile_json with agent profile
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
@@ -621,7 +621,7 @@ async fn test_provision_without_pack_uses_generic_prompt() {
 
     let sandbox = mock_sandbox("sb-pack-unknown");
     let request = make_provision_request("generic-bot", "exotic");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
@@ -672,7 +672,7 @@ async fn test_provision_pack_uses_default_cron() {
     let mut request = make_provision_request("cron-pack-bot", "prediction");
     request.trading_loop_cron = String::new(); // Empty — should use pack default
 
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
@@ -734,7 +734,7 @@ async fn test_provision_creates_backend_profile() {
 
     let sandbox = mock_sandbox("sb-profile-1");
     let request = make_provision_request("profile-bot", "dex");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
@@ -768,7 +768,7 @@ async fn test_provision_no_system_prompt_in_workflow() {
     for strategy in &["prediction", "dex", "yield", "perp"] {
         let sandbox = mock_sandbox(&format!("sb-no-sp-{strategy}"));
         let request = make_provision_request(&format!("no-sp-{strategy}"), strategy);
-        let output = provision_core(request, Some(sandbox)).await.unwrap();
+        let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
         let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
         let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
@@ -795,7 +795,7 @@ async fn test_provision_generic_strategy_gets_profile() {
 
     let sandbox = mock_sandbox("sb-generic-profile");
     let request = make_provision_request("generic-profile-bot", "exotic");
-    let output = provision_core(request, Some(sandbox)).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()

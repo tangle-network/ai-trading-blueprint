@@ -1,7 +1,7 @@
-use blueprint_sdk::tangle::extract::{Caller, TangleArg, TangleResult};
+use blueprint_sdk::tangle::extract::{CallId, Caller, TangleArg, TangleResult};
 use serde_json::json;
 
-use crate::state::{TradingBotRecord, bot_key, bots};
+use crate::state::{TradingBotRecord, bot_key, bots, update_provision_progress};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
@@ -18,10 +18,14 @@ use sandbox_runtime::SandboxRecord;
 pub async fn provision_core(
     request: TradingProvisionRequest,
     mock_sandbox: Option<SandboxRecord>,
+    call_id: u64,
+    service_id: u64,
 ) -> Result<TradingProvisionOutput, String> {
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
     let api_token = sandbox_runtime::auth::generate_token();
+
+    update_provision_progress(call_id, service_id, "initializing", "Preparing environment", None, None);
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
@@ -105,6 +109,8 @@ pub async fn provision_core(
     let env_json = serde_json::to_string(&env).unwrap_or_default();
 
     // 6. Create sidecar sandbox (or use mock)
+    update_provision_progress(call_id, service_id, "creating_sidecar", "Launching Docker container", None, None);
+
     let record = if let Some(r) = mock_sandbox {
         r
     } else {
@@ -179,6 +185,8 @@ pub async fn provision_core(
     };
 
     // 8. Look up strategy pack and run setup commands
+    update_provision_progress(call_id, service_id, "running_setup", "Installing strategy dependencies", Some(&bot_id), Some(&record.id));
+
     let pack = crate::prompts::packs::get_pack(&request.strategy_type);
 
     if let Some(ref p) = pack {
@@ -198,6 +206,7 @@ pub async fn provision_core(
     }
 
     // 9. Create cron workflow for trading loop
+    update_provision_progress(call_id, service_id, "creating_workflow", "Configuring trading loop", Some(&bot_id), Some(&record.id));
     let (loop_prompt, backend_profile) = match &pack {
         Some(p) => (
             crate::prompts::build_pack_loop_prompt(p),
@@ -258,11 +267,15 @@ pub async fn provision_core(
         .map_err(|e| format!("Failed to store workflow: {e}"))?;
 
     // 10. Store bot record
+    update_provision_progress(call_id, service_id, "storing_record", "Finalizing bot configuration", Some(&bot_id), Some(&record.id));
+
     bots()?
         .insert(bot_key(&bot_id), bot_record)
         .map_err(|e| format!("Failed to store bot record: {e}"))?;
 
-    // 9. Return result
+    update_provision_progress(call_id, service_id, "complete", "Provision complete", Some(&bot_id), Some(&record.id));
+
+    // 11. Return result
     let vault_addr_parsed: alloy::primitives::Address = vault_address
         .parse()
         .unwrap_or(request.factory_address);
@@ -277,8 +290,12 @@ pub async fn provision_core(
 
 /// Provision a new trading bot instance (Tangle handler).
 pub async fn provision(
+    CallId(call_id): CallId,
     Caller(_caller): Caller,
     TangleArg(request): TangleArg<TradingProvisionRequest>,
 ) -> Result<TangleResult<TradingProvisionOutput>, String> {
-    Ok(TangleResult(provision_core(request, None).await?))
+    let service_id = crate::context::operator_context()
+        .map(|c| c.service_id)
+        .unwrap_or(0);
+    Ok(TangleResult(provision_core(request, None, call_id, service_id).await?))
 }

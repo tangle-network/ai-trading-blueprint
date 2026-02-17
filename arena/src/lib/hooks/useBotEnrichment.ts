@@ -27,7 +27,7 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
   // Build queries for each bot that has an API configured
   const enrichableIndices: number[] = [];
   const enrichableBots = bots.reduce<Array<{ botId: string; serviceId: number; apiUrl: string }>>((acc, bot, i) => {
-    const match = bot.id.match(/^service-(\d+)$/);
+    const match = bot.id.match(/^service-(\d+)/);
     if (!match) return acc;
     const serviceId = Number(match[1]);
     const apiUrl = getBotApiUrl(serviceId);

@@ -5,6 +5,7 @@ use sandbox_runtime::store::PersistentStore;
 
 static BOTS: OnceCell<PersistentStore<TradingBotRecord>> = OnceCell::new();
 static PAPER_TRADES: OnceCell<PersistentStore<PaperTrade>> = OnceCell::new();
+static PROVISIONS: OnceCell<PersistentStore<ProvisionProgress>> = OnceCell::new();
 
 fn default_paper_trade() -> bool {
     true
@@ -52,6 +53,80 @@ pub struct PaperTrade {
     pub validation: serde_json::Value,
     pub mock_tx_hash: String,
     pub timestamp: u64,
+}
+
+/// Tracks provision progress (written by provision_core, read by operator API).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProvisionProgress {
+    pub call_id: u64,
+    pub service_id: u64,
+    /// Phase: "creating_sidecar" | "running_setup" | "creating_workflow" | "storing_record" | "complete"
+    pub phase: String,
+    pub detail: String,
+    pub bot_id: Option<String>,
+    pub sandbox_id: Option<String>,
+    pub started_at: u64,
+    pub updated_at: u64,
+}
+
+pub fn provisions() -> Result<&'static PersistentStore<ProvisionProgress>, String> {
+    PROVISIONS
+        .get_or_try_init(|| {
+            let path = sandbox_runtime::store::state_dir().join("provision-progress.json");
+            PersistentStore::open(path).map_err(|e| e.to_string())
+        })
+        .map_err(|e: String| e)
+}
+
+pub fn provision_key(call_id: u64) -> String {
+    format!("provision:{call_id}")
+}
+
+/// Update provision progress (convenience helper).
+pub fn update_provision_progress(
+    call_id: u64,
+    service_id: u64,
+    phase: &str,
+    detail: &str,
+    bot_id: Option<&str>,
+    sandbox_id: Option<&str>,
+) {
+    let now = chrono::Utc::now().timestamp() as u64;
+    if let Ok(store) = provisions() {
+        // Preserve started_at from initial entry
+        let started_at = store
+            .get(&provision_key(call_id))
+            .ok()
+            .flatten()
+            .map(|p| p.started_at)
+            .unwrap_or(now);
+
+        let _ = store.insert(
+            provision_key(call_id),
+            ProvisionProgress {
+                call_id,
+                service_id,
+                phase: phase.to_string(),
+                detail: detail.to_string(),
+                bot_id: bot_id.map(String::from),
+                sandbox_id: sandbox_id.map(String::from),
+                started_at,
+                updated_at: now,
+            },
+        );
+    }
+}
+
+/// Get a single provision progress record.
+pub fn get_provision(call_id: u64) -> Result<Option<ProvisionProgress>, String> {
+    provisions()?.get(&provision_key(call_id)).map_err(|e| e.to_string())
+}
+
+/// List all provision progress records (newest first).
+pub fn list_provisions() -> Result<Vec<ProvisionProgress>, String> {
+    let mut all = provisions()?.values().map_err(|e| e.to_string())?;
+    all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(all)
 }
 
 pub fn bots() -> Result<&'static PersistentStore<TradingBotRecord>, String> {

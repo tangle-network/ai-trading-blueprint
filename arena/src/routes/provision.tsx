@@ -369,14 +369,12 @@ Rebalance weekly by Sharpe ratio:
 
 // ── Wizard helpers ───────────────────────────────────────────────────────
 
-type WizardStep = 'blueprint' | 'service' | 'configure' | 'deploy';
+type WizardStep = 'configure' | 'deploy';
 
-const STEP_ORDER: WizardStep[] = ['blueprint', 'service', 'configure', 'deploy'];
+const STEP_ORDER: WizardStep[] = ['configure', 'deploy'];
 const STEP_LABELS: Record<WizardStep, string> = {
-  blueprint: 'Blueprint',
-  service: 'Service',
   configure: 'Configure',
-  deploy: 'Deploy',
+  deploy: 'Provision',
 };
 
 function phaseLabel(phase: ProvisionPhase): string {
@@ -452,6 +450,15 @@ interface ServiceInfo {
   isPermitted: boolean;
 }
 
+interface DiscoveredService {
+  serviceId: number;
+  isActive: boolean;
+  isPermitted: boolean;
+  isOwner: boolean;
+  owner: Address;
+  operatorCount: number;
+}
+
 // ── Main page ────────────────────────────────────────────────────────────
 
 export default function ProvisionPage() {
@@ -516,15 +523,20 @@ export default function ProvisionPage() {
   }, [isConnected, walletChainId]);
 
   // Wizard navigation
-  const [step, setStep] = useState<WizardStep>('blueprint');
-  const [blueprintId, setBlueprintId] = useState(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
+  const [step, setStep] = useState<WizardStep>('configure');
 
-  // Step 2 — service
+  // Blueprint + service defaults (advanced)
+  const [blueprintId, setBlueprintId] = useState(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
   const [serviceMode, setServiceMode] = useState<'existing' | 'new'>('existing');
-  const [serviceId, setServiceId] = useState('0');
+  const [serviceId, setServiceId] = useState(
+    (import.meta.env.VITE_SERVICE_IDS ?? '0').split(',')[0].trim(),
+  );
   const [serviceInfo, setServiceInfo] = useState<ServiceInfo | null>(null);
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
+  const [showInfra, setShowInfra] = useState(false);
+  const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
   // New service deployment
   const [selectedOperators, setSelectedOperators] = useState<Set<Address>>(new Set());
@@ -532,7 +544,7 @@ export default function ProvisionPage() {
   const [newServiceTxHash, setNewServiceTxHash] = useState<`0x${string}` | undefined>();
   const [newServiceDeploying, setNewServiceDeploying] = useState(false);
 
-  // Step 3 — configure
+  // Configure — agent settings
   const [name, setName] = useState('');
   const [strategyType, setStrategyType] = useState('dex');
   const [customInstructions, setCustomInstructions] = useState('');
@@ -589,12 +601,12 @@ export default function ProvisionPage() {
     setCustomMaxTurns('');
   }, [strategyType]);
 
-  // Reset new service deploying state when leaving service step or switching modes
+  // Reset new service deploying state when switching modes
   useEffect(() => {
-    if (step !== 'service' || serviceMode !== 'new') {
+    if (serviceMode !== 'new') {
       setNewServiceDeploying(false);
     }
-  }, [step, serviceMode]);
+  }, [serviceMode]);
 
   // Track TX in history + create provision entry
   useEffect(() => {
@@ -672,9 +684,10 @@ export default function ProvisionPage() {
             setServiceId(activatedId);
             setServiceMode('existing');
             setNewServiceDeploying(false);
-            toast.success(`Service ${activatedId} activated!`);
-            // Trigger validation of the newly created service
-            setTimeout(() => setStep('service'), 100);
+            setShowInfra(false);
+            toast.success(`Service #${activatedId} is live! Ready to provision agents.`);
+            // Refresh discovery so the new service appears in the dropdown
+            discoverServices();
           }
         }
       },
@@ -766,12 +779,115 @@ export default function ProvisionPage() {
     }
   }, [serviceId, blueprintId, userAddress]);
 
-  // Auto-validate when entering service step (existing mode only)
+  // Auto-validate service on mount and when service ID changes
   useEffect(() => {
-    if (step === 'service' && serviceMode === 'existing') {
+    if (serviceMode === 'existing') {
       validateService();
     }
-  }, [step, serviceId, serviceMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [serviceId, serviceMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Service discovery — find services the user can deploy to ───────────
+
+  const discoverServices = useCallback(async () => {
+    if (!userAddress) return;
+    setDiscoveryLoading(true);
+    try {
+      // Scan ServiceActivated events for this blueprint
+      const logs = await publicClient.getLogs({
+        address: addresses.tangle,
+        event: {
+          type: 'event',
+          name: 'ServiceActivated',
+          inputs: [
+            { name: 'serviceId', type: 'uint64', indexed: true },
+            { name: 'requestId', type: 'uint64', indexed: true },
+            { name: 'blueprintId', type: 'uint64', indexed: true },
+          ],
+        },
+        args: { blueprintId: BigInt(blueprintId) },
+        fromBlock: 0n,
+      });
+
+      if (logs.length === 0) {
+        setDiscoveredServices([]);
+        setDiscoveryLoading(false);
+        return;
+      }
+
+      // Check each service for active + permitted + owner
+      const serviceIds = logs.map((log) => Number(log.args.serviceId!));
+      const unique = [...new Set(serviceIds)];
+
+      const results = await Promise.all(
+        unique.map(async (sid) => {
+          try {
+            const sidBig = BigInt(sid);
+            const [isActive, service, isPermitted] = await Promise.all([
+              publicClient.readContract({
+                address: addresses.tangle,
+                abi: tangleServicesAbi,
+                functionName: 'isServiceActive',
+                args: [sidBig],
+              }),
+              publicClient.readContract({
+                address: addresses.tangle,
+                abi: tangleServicesAbi,
+                functionName: 'getService',
+                args: [sidBig],
+              }),
+              publicClient.readContract({
+                address: addresses.tangle,
+                abi: tangleServicesAbi,
+                functionName: 'isPermittedCaller',
+                args: [sidBig, userAddress],
+              }),
+            ]);
+
+            const svc = service as { owner: Address; operatorCount: number };
+            const isOwner = svc.owner.toLowerCase() === userAddress.toLowerCase();
+
+            return {
+              serviceId: sid,
+              isActive,
+              isPermitted: isPermitted || isOwner, // owners can always call
+              isOwner,
+              owner: svc.owner,
+              operatorCount: svc.operatorCount,
+            } satisfies DiscoveredService;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      const valid = results.filter((r): r is DiscoveredService => r !== null);
+      // Sort: active+permitted first, then active, then rest
+      valid.sort((a, b) => {
+        const scoreA = (a.isActive && a.isPermitted ? 4 : 0) + (a.isActive ? 2 : 0) + (a.isOwner ? 1 : 0);
+        const scoreB = (b.isActive && b.isPermitted ? 4 : 0) + (b.isActive ? 2 : 0) + (b.isOwner ? 1 : 0);
+        return scoreB - scoreA;
+      });
+      setDiscoveredServices(valid);
+
+      // Auto-select the first active + permitted service
+      const best = valid.find((s) => s.isActive && s.isPermitted);
+      if (best) {
+        setServiceId(best.serviceId.toString());
+      }
+    } catch {
+      // Discovery is best-effort — don't block the user
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  }, [blueprintId, userAddress]);
+
+  // Run discovery on mount + auto-refresh every 60s
+  useEffect(() => {
+    if (!isConnected || !userAddress || serviceMode !== 'existing') return;
+    discoverServices();
+    const interval = setInterval(discoverServices, 60_000);
+    return () => clearInterval(interval);
+  }, [isConnected, userAddress, blueprintId, serviceMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Submit job ─────────────────────────────────────────────────────────
 
@@ -811,12 +927,16 @@ export default function ProvisionPage() {
       ],
     );
 
+    // Always route to service 0 — all operator instances watch service 0.
+    // The serviceId selected in the UI is stored in provision metadata only.
+    const operatorServiceId = 0n;
+
     writeContract({
       address: addresses.tangle,
       abi: tangleJobsAbi,
       functionName: 'submitJob',
       chainId: targetChain.id,
-      args: [BigInt(serviceId), 0, inputs],
+      args: [operatorServiceId, 0, inputs],
     });
   };
 
@@ -907,12 +1027,6 @@ export default function ProvisionPage() {
 
   const canNext = (() => {
     switch (step) {
-      case 'blueprint':
-        return !!blueprintId;
-      case 'service':
-        return serviceMode === 'existing'
-          ? serviceInfo != null && serviceInfo.isActive
-          : false; // new service flow handles its own navigation
       case 'configure':
         return !!name.trim();
       case 'deploy':
@@ -942,19 +1056,14 @@ export default function ProvisionPage() {
       </Link>
 
       <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">
-        Deploy Trading Agent
+        Provision Trading Agent
       </h1>
       <p className="text-base text-arena-elements-textSecondary mb-6">
-        {step === 'blueprint' && 'Select a blueprint to deploy your trading agent.'}
-        {step === 'service' &&
-          (serviceMode === 'new'
-            ? 'Deploy a new service with your chosen operators.'
-            : 'Select an existing service to submit a provision job.')}
-        {step === 'configure' && 'Configure your agent strategy and parameters.'}
-        {step === 'deploy' && 'Review and submit your provision job.'}
+        {step === 'configure' && 'Configure your autonomous trading agent, then provision it on-chain.'}
+        {step === 'deploy' && 'Your agent is being provisioned on the network.'}
       </p>
 
-      {/* Step indicator */}
+      {/* Step indicator — simple 2-step */}
       <div className="flex items-center gap-1 mb-8">
         {STEP_ORDER.map((s, i) => {
           const isCurrent = s === step;
@@ -1022,401 +1131,41 @@ export default function ProvisionPage() {
           </div>
         )}
 
-        {/* ── Step 1: Blueprint ──────────────────────────────────────── */}
-        {step === 'blueprint' && (
-          <>
-            <Card>
-              <CardContent className="pt-5 pb-5 space-y-4">
-                <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                  Select Blueprint
-                </label>
-                <div className="w-full text-left rounded-lg border border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20 px-4 py-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-base font-display font-semibold text-violet-700 dark:text-violet-400">
-                        AI Trading Blueprint
-                      </div>
-                      <div className="text-sm text-arena-elements-textSecondary mt-0.5">
-                        Autonomous trading agents with sidecar execution
-                      </div>
-                    </div>
-                    <Badge variant="success" className="text-xs shrink-0">
-                      Selected
-                    </Badge>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 pt-1">
-                  <label className="text-xs font-data text-arena-elements-textSecondary shrink-0">
-                    Blueprint ID
-                  </label>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={blueprintId}
-                    onChange={(e) => setBlueprintId(e.target.value)}
-                    className="w-24 h-9 text-sm"
-                  />
-                  {operatorCount > 0n && (
-                    <span className="text-xs text-arena-elements-textSecondary">
-                      {operatorCount.toString()} operator{operatorCount > 1n ? 's' : ''} registered
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-            <div className="flex justify-end">
-              <Button onClick={goNext} disabled={!canNext} size="lg">
-                Next: Select Service
-              </Button>
-            </div>
-          </>
-        )}
-
-        {/* ── Step 2: Service ────────────────────────────────────────── */}
-        {step === 'service' && (
-          <>
-            {/* Mode toggle */}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setServiceMode('existing')}
-                className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
-                  serviceMode === 'existing'
-                    ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
-                    : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                }`}
-              >
-                <div
-                  className={`text-sm font-display font-semibold ${serviceMode === 'existing' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}
-                >
-                  Use Existing Service
-                </div>
-                <div className="text-xs text-arena-elements-textTertiary mt-0.5">
-                  Submit a job to a service that's already running
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setServiceMode('new')}
-                className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
-                  serviceMode === 'new'
-                    ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
-                    : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                }`}
-              >
-                <div
-                  className={`text-sm font-display font-semibold ${serviceMode === 'new' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}
-                >
-                  Deploy New Service
-                </div>
-                <div className="text-xs text-arena-elements-textTertiary mt-0.5">
-                  Select operators and create your own service
-                </div>
-              </button>
-            </div>
-
-            {/* Mode A: Existing service */}
-            {serviceMode === 'existing' && (
-              <Card>
-                <CardContent className="pt-5 pb-5 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <label className="text-xs font-data text-arena-elements-textSecondary shrink-0">
-                      Service ID
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      value={serviceId}
-                      onChange={(e) => setServiceId(e.target.value)}
-                      className="w-24 h-9 text-sm"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={validateService}
-                      disabled={serviceLoading}
-                    >
-                      {serviceLoading ? 'Checking...' : 'Verify'}
-                    </Button>
-                  </div>
-
-                  {serviceError && (
-                    <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
-                      {serviceError}
-                    </div>
-                  )}
-
-                  {serviceInfo && (
-                    <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${serviceInfo.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
-                        />
-                        <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
-                          Service {serviceId} {serviceInfo.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-y-1.5 text-sm font-data">
-                        <span className="text-arena-elements-textTertiary">Blueprint</span>
-                        <span className="text-arena-elements-textPrimary">
-                          {serviceInfo.blueprintId}
-                        </span>
-                        <span className="text-arena-elements-textTertiary">Owner</span>
-                        <span className="text-arena-elements-textPrimary truncate">
-                          {serviceInfo.owner}
-                        </span>
-                        <span className="text-arena-elements-textTertiary">Operators</span>
-                        <span className="text-arena-elements-textPrimary">
-                          {serviceInfo.operators.length}
-                        </span>
-                        <span className="text-arena-elements-textTertiary">TTL</span>
-                        <span className="text-arena-elements-textPrimary">
-                          {serviceInfo.ttl > 0
-                            ? `${Math.floor(serviceInfo.ttl / 86400)}d`
-                            : 'Unlimited'}
-                        </span>
-                      </div>
-                      {serviceInfo.operators.length > 0 && (
-                        <div className="pt-2 space-y-1.5">
-                          <span className="text-xs font-data text-arena-elements-textTertiary">
-                            Service Operators
-                          </span>
-                          {serviceInfo.operators.map((addr) => (
-                            <div
-                              key={addr}
-                              className="flex items-center gap-2 px-2 py-1.5 rounded bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1"
-                            >
-                              <Identicon address={addr} size={20} />
-                              <span className="font-data text-xs text-arena-elements-textSecondary truncate">
-                                {addr}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {!serviceInfo.isPermitted && userAddress && (
-                        <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 pt-1">
-                          <span className="text-base">!</span>
-                          <span>
-                            Your address is not a permitted caller. The transaction may revert.
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Mode B: Deploy new service */}
-            {serviceMode === 'new' && (
-              <>
-                <Card>
-                  <CardContent className="pt-5 pb-4 space-y-3">
-                    <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                      Select Operators
-                    </label>
-                    {operatorCount > 0n && (
-                      <p className="text-xs text-arena-elements-textSecondary">
-                        {operatorCount.toString()} registered for blueprint {blueprintId}
-                      </p>
-                    )}
-                    {discoveredOperators.length > 0 ? (
-                      <div className="grid gap-2">
-                        {discoveredOperators.map((op) => {
-                          const sel = selectedOperators.has(op.address);
-                          return (
-                            <button
-                              key={op.address}
-                              type="button"
-                              onClick={() => toggleOperator(op.address)}
-                              className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
-                                sel
-                                  ? 'border-violet-500/40 bg-violet-500/5'
-                                  : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/30 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                              }`}
-                            >
-                              <Identicon address={op.address} size={28} />
-                              <div className="min-w-0 flex-1">
-                                <div className="font-data text-sm truncate">{op.address}</div>
-                                {op.rpcAddress && (
-                                  <div className="text-xs text-arena-elements-textTertiary truncate mt-0.5">
-                                    {op.rpcAddress}
-                                  </div>
-                                )}
-                              </div>
-                              {sel && (
-                                <Badge variant="success" className="text-xs">
-                                  Selected
-                                </Badge>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-arena-elements-textTertiary py-3">
-                        No operators found for blueprint {blueprintId}.
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="0x..."
-                        value={manualOperator}
-                        onChange={(e) => setManualOperator(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addManualOperator()}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={addManualOperator}
-                        className="text-sm shrink-0"
-                      >
-                        Add
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Quotes */}
-                {selectedOperators.size > 0 && (
-                  <Card>
-                    <CardContent className="pt-5 pb-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
-                          Operator Quotes
-                        </label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={refetchQuotes}
-                          disabled={isQuoting}
-                          className="text-xs"
-                        >
-                          {isQuoting ? 'Fetching...' : 'Refresh'}
-                        </Button>
-                      </div>
-                      {isQuoting && quotes.length === 0 && (
-                        <div className="text-sm text-arena-elements-textTertiary py-4 text-center animate-pulse">
-                          Solving PoW challenge and fetching quotes...
-                        </div>
-                      )}
-                      {quotes.length > 0 && (
-                        <div className="space-y-2">
-                          {quotes.map((q) => (
-                            <div
-                              key={q.operator}
-                              className="flex items-center gap-3 p-3 rounded-lg border border-emerald-700/30 bg-emerald-700/5 dark:border-emerald-500/30 dark:bg-emerald-500/5"
-                            >
-                              <Identicon address={q.operator} size={24} />
-                              <div className="min-w-0 flex-1">
-                                <div className="font-data text-sm truncate">{q.operator}</div>
-                                <div className="text-xs text-arena-elements-textTertiary mt-0.5">
-                                  Expires in{' '}
-                                  {Math.max(
-                                    0,
-                                    Number(q.details.expiry) - Math.floor(Date.now() / 1000),
-                                  )}
-                                  s
-                                </div>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <div className="font-data text-sm text-arena-elements-icon-success">
-                                  {formatCost(q.totalCost)}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                          <div className="flex items-center justify-between pt-1 px-1">
-                            <span className="text-xs font-data text-arena-elements-textSecondary">
-                              Total Cost
-                            </span>
-                            <span className="font-data text-sm font-semibold text-arena-elements-textPrimary">
-                              {formatCost(totalCost)}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                      {quoteErrors.size > 0 && (
-                        <div className="space-y-1">
-                          {Array.from(quoteErrors.entries()).map(([addr, msg]) => (
-                            <div key={addr} className="flex items-center gap-2 text-xs text-crimson-400">
-                              <Identicon address={addr} size={16} />
-                              <span className="truncate">
-                                {addr.slice(0, 10)}...{addr.slice(-6)}: {msg}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Deploy new service button */}
-                {quotes.length > 0 && (
-                  <Card>
-                    <CardContent className="pt-5 pb-4">
-                      <Button
-                        onClick={handleDeployNewService}
-                        className="w-full"
-                        size="lg"
-                        disabled={
-                          !isConnected || isNewServicePending || newServiceDeploying || isQuoting
-                        }
-                      >
-                        {!isConnected
-                          ? 'Connect Wallet'
-                          : isNewServicePending
-                            ? 'Confirm in Wallet...'
-                            : newServiceDeploying
-                              ? 'Waiting for Activation...'
-                              : `Deploy New Service (${formatCost(totalCost)})`}
-                      </Button>
-                      {newServiceDeploying && (
-                        <div className="text-center mt-2 space-y-2">
-                          <p className="text-xs text-arena-elements-textTertiary animate-pulse">
-                            Waiting for operators to approve and activate the service...
-                          </p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setNewServiceDeploying(false);
-                              setNewServiceTxHash(undefined);
-                            }}
-                            className="text-xs"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-              </>
-            )}
-
-            <div className="flex justify-between">
-              <Button variant="outline" onClick={goBack}>
-                Back
-              </Button>
-              {serviceMode === 'existing' && (
-                <Button onClick={goNext} disabled={!canNext} size="lg">
-                  Next: Configure Agent
-                </Button>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── Step 3: Configure ──────────────────────────────────────── */}
+        {/* ── Step 1: Configure ─────────────────────────────────────── */}
         {step === 'configure' && (
           <>
+            {/* Compact infrastructure bar at top */}
+            <button
+              type="button"
+              onClick={() => setShowInfra(true)}
+              className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg border border-arena-elements-borderColor/60 hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 transition-colors group"
+            >
+              <div className="flex items-center gap-3">
+                {serviceInfo && (
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${serviceInfo.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
+                  />
+                )}
+                {serviceLoading && (
+                  <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400 animate-pulse" />
+                )}
+                <span className="text-xs font-data text-arena-elements-textSecondary">
+                  Service {serviceId}
+                  {serviceInfo && serviceInfo.isActive && ` (Active, ${serviceInfo.operators.length} operators)`}
+                  {serviceInfo && !serviceInfo.isActive && ' (Inactive)'}
+                  {serviceError && ' (Error)'}
+                  {serviceLoading && ' (Checking...)'}
+                  {discoveryLoading && ' (Discovering...)'}
+                </span>
+                {serviceInfo && !serviceInfo.isPermitted && userAddress && (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400">Not permitted</span>
+                )}
+              </div>
+              <span className="text-xs font-data text-arena-elements-textTertiary group-hover:text-violet-600 dark:group-hover:text-violet-400 transition-colors">
+                Change
+              </span>
+            </button>
+
             <Card>
               <CardContent className="pt-5 pb-4">
                 <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
@@ -1479,62 +1228,33 @@ export default function ProvisionPage() {
               </CardContent>
             </Card>
 
-            {name.trim() && (
-              <Card>
-                <CardContent className="pt-5 pb-4">
-                  <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary mb-3 block">
-                    Summary
-                  </label>
-                  <div className="grid grid-cols-2 gap-y-1.5 text-sm font-data">
-                    <span className="text-arena-elements-textTertiary">Service</span>
-                    <span className="text-arena-elements-textPrimary">{serviceId}</span>
-                    <span className="text-arena-elements-textTertiary">Agent</span>
-                    <span className="text-arena-elements-textPrimary">{name}</span>
-                    <span className="text-arena-elements-textTertiary">Strategy</span>
-                    <span className="text-arena-elements-textPrimary">{selectedPack.name}</span>
-                    <span className="text-arena-elements-textTertiary">Frequency</span>
-                    <span className="text-arena-elements-textPrimary">
-                      Every {cronToHuman(effectiveCron)}
-                    </span>
-                    {(customExpertKnowledge || customInstructions) && (
-                      <>
-                        <span className="text-arena-elements-textTertiary">Custom</span>
-                        <span className="text-amber-600 dark:text-amber-400">Modified</span>
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            <div className="flex justify-between">
-              <Button variant="outline" onClick={goBack}>
-                Back
-              </Button>
+            <div className="flex justify-end">
               <Button onClick={goNext} disabled={!canNext} size="lg">
-                Next: Deploy
+                Next: Provision Agent
               </Button>
             </div>
           </>
         )}
 
-        {/* ── Step 4: Deploy ─────────────────────────────────────────── */}
+        {/* ── Step 4: Provision Agent ──────────────────────────────── */}
         {step === 'deploy' && (
           <>
             {!txHash && (
               <Card>
                 <CardContent className="pt-5 pb-5 space-y-4">
-                  <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                    Submit Provision Job
-                  </label>
+                  <div>
+                    <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                      Provision Agent
+                    </label>
+                    <p className="text-xs text-arena-elements-textTertiary mt-1">
+                      This submits a job to Service {serviceId}. The operator will spin up a sidecar container
+                      running your trading agent with the configuration below.
+                    </p>
+                  </div>
                   <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
-                    <div className="grid grid-cols-2 gap-y-1.5 text-sm font-data">
+                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                       <span className="text-arena-elements-textTertiary">Service</span>
-                      <span className="text-arena-elements-textPrimary">{serviceId}</span>
-                      <span className="text-arena-elements-textTertiary">Job</span>
-                      <span className="text-arena-elements-textPrimary">
-                        submitJob(serviceId={serviceId}, jobIndex=0)
-                      </span>
+                      <span className="text-arena-elements-textPrimary">#{serviceId}</span>
                       <span className="text-arena-elements-textTertiary">Agent</span>
                       <span className="text-arena-elements-textPrimary">{name}</span>
                       <span className="text-arena-elements-textTertiary">Strategy</span>
@@ -1542,6 +1262,10 @@ export default function ProvisionPage() {
                       <span className="text-arena-elements-textTertiary">Frequency</span>
                       <span className="text-arena-elements-textPrimary">
                         Every {cronToHuman(effectiveCron)}
+                      </span>
+                      <span className="text-arena-elements-textTertiary">On-chain call</span>
+                      <span className="text-arena-elements-textPrimary font-data text-xs">
+                        submitJob(serviceId={serviceId}, jobIndex=0, ...)
                       </span>
                     </div>
                   </div>
@@ -1555,7 +1279,7 @@ export default function ProvisionPage() {
                       ? 'Connect Wallet'
                       : isPending
                         ? 'Confirm in Wallet...'
-                        : 'Submit Provision Job'}
+                        : 'Provision Agent'}
                   </Button>
                 </CardContent>
               </Card>
@@ -1564,13 +1288,23 @@ export default function ProvisionPage() {
             {txHash && (
               <Card>
                 <CardContent className="pt-5 pb-5 space-y-4">
-                  <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                    Deployment Progress
-                  </label>
-                  <div className="space-y-3">
-                    <LifecycleStage
-                      label="Submitted"
-                      description="Transaction confirmed on-chain"
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                      Agent Provisioning
+                    </label>
+                    {latestDeployment && !['active', 'failed'].includes(latestDeployment.phase) && (
+                      <ElapsedTime since={latestDeployment.createdAt} />
+                    )}
+                  </div>
+
+                  {/* Vertical timeline */}
+                  <div className="relative pl-6">
+                    {/* Connecting line */}
+                    <div className="absolute left-[7px] top-[6px] bottom-[6px] w-px bg-arena-elements-borderColor" />
+
+                    <TimelineStage
+                      label="Transaction Sent"
+                      description="Waiting for your submitJob transaction to be confirmed on-chain"
                       status={
                         latestDeployment?.phase === 'pending_confirmation'
                           ? 'active'
@@ -1582,10 +1316,11 @@ export default function ProvisionPage() {
                               ? 'error'
                               : 'active'
                       }
+                      isFirst
                     />
-                    <LifecycleStage
-                      label="Processing"
-                      description="Operator provisioning sidecar + vault"
+                    <TimelineStage
+                      label="Operator Processing"
+                      description="An operator detected your job and is provisioning a sidecar container, deploying the vault, and starting your trading agent"
                       status={
                         latestDeployment?.phase === 'job_submitted' ||
                         latestDeployment?.phase === 'job_processing'
@@ -1597,9 +1332,9 @@ export default function ProvisionPage() {
                               : 'pending'
                       }
                     />
-                    <LifecycleStage
-                      label="Active"
-                      description="Agent running, vault deployed"
+                    <TimelineStage
+                      label="Agent Live"
+                      description="Your trading agent is running inside its sidecar and the vault is deployed on-chain"
                       status={
                         latestDeployment?.phase === 'active'
                           ? 'done'
@@ -1607,6 +1342,7 @@ export default function ProvisionPage() {
                             ? 'error'
                             : 'pending'
                       }
+                      isLast
                     />
                   </div>
 
@@ -1619,7 +1355,7 @@ export default function ProvisionPage() {
                   {latestDeployment?.phase === 'active' && (
                     <div className="p-3.5 rounded-lg bg-emerald-700/5 border border-emerald-700/30 dark:bg-emerald-500/5 dark:border-emerald-500/30 space-y-2">
                       <div className="text-sm font-display font-medium text-arena-elements-icon-success">
-                        Agent Deployed
+                        Agent Provisioned Successfully
                       </div>
                       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm font-data">
                         {latestDeployment.vaultAddress &&
@@ -1658,7 +1394,7 @@ export default function ProvisionPage() {
                       </div>
                       {latestDeployment.serviceId != null && (
                         <Link
-                          to={`/arena/bot/service-${latestDeployment.serviceId}`}
+                          to={`/arena/bot/service-${latestDeployment.serviceId}-vault-0`}
                           className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
                         >
                           View Bot &rarr;
@@ -1667,7 +1403,7 @@ export default function ProvisionPage() {
                     </div>
                   )}
 
-                  <div className="text-xs font-data text-arena-elements-textTertiary">
+                  <div className="text-xs font-data text-arena-elements-textTertiary truncate">
                     TX: {txHash}
                   </div>
                 </CardContent>
@@ -1692,7 +1428,7 @@ export default function ProvisionPage() {
                     setStep('configure');
                   }}
                 >
-                  Deploy Another Agent
+                  Provision Another Agent
                 </Button>
               )}
               {latestDeployment?.phase === 'failed' && (
@@ -1714,11 +1450,19 @@ export default function ProvisionPage() {
         {myProvisions.length > 0 && (
           <Card>
             <CardContent className="pt-5 pb-4 space-y-3">
-              <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                Your Deployments
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                  Recent Deployments
+                </label>
+                <Link
+                  to="/dashboard"
+                  className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
+                >
+                  View all &rarr;
+                </Link>
+              </div>
               <div className="space-y-2">
-                {myProvisions.map((prov) => (
+                {myProvisions.slice(0, 3).map((prov) => (
                   <div
                     key={prov.id}
                     className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
@@ -1766,7 +1510,7 @@ export default function ProvisionPage() {
                     </div>
                     {prov.phase === 'active' && prov.serviceId != null && (
                       <Link
-                        to={`/arena/bot/service-${prov.serviceId}`}
+                        to={`/arena/bot/service-${prov.serviceId}-vault-0`}
                         className="text-xs font-data font-medium text-violet-700 dark:text-violet-400 hover:underline shrink-0"
                       >
                         View
@@ -1779,6 +1523,204 @@ export default function ProvisionPage() {
           </Card>
         )}
       </div>
+
+      {/* ── Infrastructure Settings Dialog ────────────────────────────── */}
+      <Dialog open={showInfra} onOpenChange={setShowInfra}>
+        <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg">
+              Infrastructure Settings
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              Configure which service your agent will be provisioned on.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {/* Service mode toggle */}
+            <div className="space-y-2">
+              <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                Service
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setServiceMode('existing')}
+                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
+                    serviceMode === 'existing'
+                      ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                      : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                  }`}
+                >
+                  <div className={`text-sm font-display font-semibold ${serviceMode === 'existing' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
+                    Use Existing
+                  </div>
+                  <div className="text-xs text-arena-elements-textTertiary mt-0.5">
+                    Join a running service
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setServiceMode('new')}
+                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
+                    serviceMode === 'new'
+                      ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                      : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                  }`}
+                >
+                  <div className={`text-sm font-display font-semibold ${serviceMode === 'new' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
+                    Create New
+                  </div>
+                  <div className="text-xs text-arena-elements-textTertiary mt-0.5">
+                    Deploy new infrastructure
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Existing service config */}
+            {serviceMode === 'existing' && (
+              <ServiceDropdown
+                discoveredServices={discoveredServices}
+                discoveryLoading={discoveryLoading}
+                serviceId={serviceId}
+                serviceInfo={serviceInfo}
+                serviceLoading={serviceLoading}
+                serviceError={serviceError}
+                userAddress={userAddress}
+                onSelect={(id) => setServiceId(id)}
+              />
+            )}
+
+            {/* New service config */}
+            {serviceMode === 'new' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm font-data text-arena-elements-textSecondary block mb-2">
+                    Select Operators ({operatorCount.toString()} available)
+                  </label>
+                  {discoveredOperators.length > 0 ? (
+                    <div className="grid gap-1.5">
+                      {discoveredOperators.map((op) => {
+                        const sel = selectedOperators.has(op.address);
+                        return (
+                          <button
+                            key={op.address}
+                            type="button"
+                            onClick={() => toggleOperator(op.address)}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
+                              sel
+                                ? 'border-violet-500/40 bg-violet-500/5'
+                                : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/30 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                            }`}
+                          >
+                            <Identicon address={op.address} size={22} />
+                            <span className="font-data text-sm truncate flex-1">{op.address}</span>
+                            {sel && <Badge variant="success" className="text-xs">Selected</Badge>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-arena-elements-textTertiary py-2">
+                      No operators found for blueprint {blueprintId}.
+                    </div>
+                  )}
+                  <div className="flex gap-2 mt-2">
+                    <Input
+                      placeholder="0x... (manual address)"
+                      value={manualOperator}
+                      onChange={(e) => setManualOperator(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addManualOperator()}
+                      className="text-xs h-8"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={addManualOperator} className="text-xs h-8">
+                      Add
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Quotes */}
+                {selectedOperators.size > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-data text-arena-elements-textSecondary">Operator Quotes</span>
+                      <Button type="button" variant="outline" size="sm" onClick={refetchQuotes} disabled={isQuoting} className="text-[10px] h-6 px-2">
+                        {isQuoting ? 'Fetching...' : 'Refresh'}
+                      </Button>
+                    </div>
+                    {isQuoting && quotes.length === 0 && (
+                      <div className="text-xs text-arena-elements-textTertiary py-2 text-center animate-pulse">
+                        Solving PoW challenge...
+                      </div>
+                    )}
+                    {quotes.length > 0 && (
+                      <div className="space-y-1.5">
+                        {quotes.map((q) => (
+                          <div key={q.operator} className="flex items-center gap-2 p-2 rounded border border-emerald-700/30 bg-emerald-700/5 dark:border-emerald-500/30 dark:bg-emerald-500/5">
+                            <Identicon address={q.operator} size={18} />
+                            <span className="font-data text-xs truncate flex-1">{q.operator}</span>
+                            <span className="font-data text-xs text-arena-elements-icon-success shrink-0">{formatCost(q.totalCost)}</span>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-data text-arena-elements-textSecondary">Total</span>
+                          <span className="font-data text-xs font-semibold">{formatCost(totalCost)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {quoteErrors.size > 0 && (
+                      <div className="space-y-1">
+                        {Array.from(quoteErrors.entries()).map(([addr, msg]) => (
+                          <div key={addr} className="text-[11px] text-crimson-400 truncate">
+                            {addr.slice(0, 10)}...{addr.slice(-4)}: {msg}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Deploy new service button */}
+                {quotes.length > 0 && (
+                  <div>
+                    <Button
+                      onClick={handleDeployNewService}
+                      className="w-full"
+                      size="sm"
+                      disabled={!isConnected || isNewServicePending || newServiceDeploying || isQuoting}
+                    >
+                      {!isConnected
+                        ? 'Connect Wallet'
+                        : isNewServicePending
+                          ? 'Confirm in Wallet...'
+                          : newServiceDeploying
+                            ? 'Waiting for Activation...'
+                            : `Create Service (${formatCost(totalCost)})`}
+                    </Button>
+                    {newServiceDeploying && (
+                      <div className="text-center mt-2 space-y-1">
+                        <p className="text-[11px] text-arena-elements-textTertiary animate-pulse">
+                          Waiting for operators to activate...
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => { setNewServiceDeploying(false); setNewServiceTxHash(undefined); }}
+                          className="text-[11px] h-6"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Advanced Settings Dialog ────────────────────────────────── */}
       <Dialog open={showAdvanced} onOpenChange={setShowAdvanced}>
@@ -1927,33 +1869,49 @@ export default function ProvisionPage() {
   );
 }
 
-// ── Lifecycle Stage Component ────────────────────────────────────────────
+// ── Timeline Stage Component ─────────────────────────────────────────────
 
-function LifecycleStage({
+function TimelineStage({
   label,
   description,
   status,
+  isFirst,
+  isLast,
 }: {
   label: string;
   description: string;
   status: 'pending' | 'active' | 'done' | 'error';
+  isFirst?: boolean;
+  isLast?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className={`relative flex gap-3 ${isFirst ? '' : 'mt-4'} ${isLast ? '' : 'pb-0'}`}>
+      {/* Node dot — positioned over the connecting line */}
       <div
-        className={`w-3 h-3 rounded-full shrink-0 ${
+        className={`absolute -left-6 top-[2px] z-10 flex items-center justify-center w-[15px] h-[15px] rounded-full border-2 ${
           status === 'done'
-            ? 'bg-arena-elements-icon-success'
+            ? 'bg-arena-elements-icon-success border-arena-elements-icon-success'
             : status === 'active'
-              ? 'bg-amber-400 animate-pulse'
+              ? 'bg-amber-400 border-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.4)]'
               : status === 'error'
-                ? 'bg-crimson-400'
-                : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 border border-arena-elements-borderColor'
+                ? 'bg-crimson-400 border-crimson-400'
+                : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 border-arena-elements-borderColor'
         }`}
-      />
-      <div>
+      >
+        {status === 'done' && (
+          <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        )}
+        {status === 'active' && (
+          <div className="w-1.5 h-1.5 rounded-full bg-white" />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
         <div
-          className={`text-sm font-display font-medium ${
+          className={`text-sm font-display font-semibold ${
             status === 'done'
               ? 'text-arena-elements-icon-success'
               : status === 'active'
@@ -1965,8 +1923,220 @@ function LifecycleStage({
         >
           {label}
         </div>
-        <div className="text-xs font-data text-arena-elements-textTertiary">{description}</div>
+        <div
+          className={`text-xs font-data leading-relaxed mt-0.5 ${
+            status === 'active'
+              ? 'text-arena-elements-textSecondary'
+              : 'text-arena-elements-textTertiary'
+          }`}
+        >
+          {description}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ── Elapsed Time Counter ─────────────────────────────────────────────────
+
+// ── Service Dropdown ──────────────────────────────────────────────────────
+
+function ServiceDropdown({
+  discoveredServices,
+  discoveryLoading,
+  serviceId,
+  serviceInfo,
+  serviceLoading,
+  serviceError,
+  userAddress,
+  onSelect,
+}: {
+  discoveredServices: DiscoveredService[];
+  discoveryLoading: boolean;
+  serviceId: string;
+  serviceInfo: ServiceInfo | null;
+  serviceLoading: boolean;
+  serviceError: string | null;
+  userAddress: Address | undefined;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = discoveredServices.find((ds) => ds.serviceId.toString() === serviceId);
+
+  return (
+    <div className="space-y-3">
+      {discoveryLoading && discoveredServices.length === 0 && (
+        <div className="text-sm text-arena-elements-textTertiary py-3 text-center animate-pulse">
+          Scanning for available services...
+        </div>
+      )}
+
+      {!discoveryLoading && discoveredServices.length === 0 && userAddress && (
+        <div className="text-sm text-arena-elements-textTertiary py-3 text-center">
+          No services found. Try creating a new service instead.
+        </div>
+      )}
+
+      {discoveredServices.length > 0 && (
+        <div className="relative">
+          <label className="text-sm font-data text-arena-elements-textSecondary block mb-2">
+            Select Service
+          </label>
+
+          {/* Selected service trigger */}
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            className="w-full flex items-center gap-3 p-3 rounded-lg border border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 transition-colors text-left"
+          >
+            {selected ? (
+              <>
+                <span
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${selected.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
+                />
+                <span className="font-data text-sm text-arena-elements-textPrimary flex-1">
+                  Service #{selected.serviceId}
+                </span>
+                <span className="text-xs font-data text-arena-elements-textTertiary">
+                  {selected.operatorCount} operator{selected.operatorCount !== 1 ? 's' : ''}
+                </span>
+                {selected.isOwner && (
+                  <Badge variant="outline" className="text-xs">Owner</Badge>
+                )}
+                {selected.isPermitted && !selected.isOwner && (
+                  <Badge variant="outline" className="text-xs">Permitted</Badge>
+                )}
+              </>
+            ) : (
+              <>
+                {serviceLoading ? (
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 bg-amber-400 animate-pulse" />
+                ) : null}
+                <span className="font-data text-sm text-arena-elements-textTertiary flex-1">
+                  Service #{serviceId}
+                </span>
+              </>
+            )}
+            <svg
+              className={`w-4 h-4 text-arena-elements-textTertiary transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Dropdown options */}
+          {open && (
+            <div className="mt-1.5 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 shadow-lg overflow-hidden">
+              {discoveredServices.map((ds) => {
+                const isSelected = serviceId === ds.serviceId.toString();
+                return (
+                  <button
+                    key={ds.serviceId}
+                    type="button"
+                    onClick={() => {
+                      onSelect(ds.serviceId.toString());
+                      setOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                      isSelected
+                        ? 'bg-violet-500/10'
+                        : ds.isActive && ds.isPermitted
+                          ? 'hover:bg-arena-elements-item-backgroundHover'
+                          : 'opacity-50'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${ds.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
+                    />
+                    <span className="font-data text-sm text-arena-elements-textPrimary flex-1">
+                      Service #{ds.serviceId}
+                    </span>
+                    <span className="text-xs font-data text-arena-elements-textTertiary">
+                      {ds.operatorCount} op{ds.operatorCount !== 1 ? 's' : ''}
+                    </span>
+                    {ds.isOwner && (
+                      <Badge variant="outline" className="text-[11px]">Owner</Badge>
+                    )}
+                    {ds.isPermitted && !ds.isOwner && (
+                      <Badge variant="outline" className="text-[11px]">Permitted</Badge>
+                    )}
+                    {!ds.isPermitted && (
+                      <Badge variant="destructive" className="text-[11px]">No Access</Badge>
+                    )}
+                    {isSelected && (
+                      <svg className="w-4 h-4 text-violet-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {serviceError && (
+        <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
+          {serviceError}
+        </div>
+      )}
+
+      {/* Service details (shown below dropdown for the selected service) */}
+      {serviceInfo && (
+        <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40 space-y-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${serviceInfo.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
+            />
+            <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
+              Service {serviceId} — {serviceInfo.isActive ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-y-1.5 text-sm font-data">
+            <span className="text-arena-elements-textTertiary">Owner</span>
+            <span className="text-arena-elements-textPrimary truncate">{serviceInfo.owner}</span>
+            <span className="text-arena-elements-textTertiary">Operators</span>
+            <span className="text-arena-elements-textPrimary">{serviceInfo.operators.length}</span>
+            <span className="text-arena-elements-textTertiary">TTL</span>
+            <span className="text-arena-elements-textPrimary">
+              {serviceInfo.ttl > 0 ? `${Math.floor(serviceInfo.ttl / 86400)}d` : 'Unlimited'}
+            </span>
+          </div>
+          {serviceInfo.operators.length > 0 && (
+            <div className="pt-1 space-y-1">
+              {serviceInfo.operators.map((addr) => (
+                <div key={addr} className="flex items-center gap-2 px-2.5 py-1.5 rounded bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1">
+                  <Identicon address={addr} size={18} />
+                  <span className="font-data text-xs text-arena-elements-textSecondary truncate">{addr}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!serviceInfo.isPermitted && userAddress && (
+            <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 pt-1">
+              <span>Your address is not a permitted caller. The transaction may revert.</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ElapsedTime({ since }: { since: number }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setElapsed(Math.floor((Date.now() - since) / 1000)), 1000);
+    return () => clearInterval(interval);
+  }, [since]);
+
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return (
+    <span className="text-xs font-data text-arena-elements-textTertiary tabular-nums">
+      {mins > 0 ? `${mins}m ${secs.toString().padStart(2, '0')}s` : `${secs}s`}
+    </span>
   );
 }

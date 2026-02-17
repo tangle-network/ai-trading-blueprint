@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 
-use trading_blueprint_lib::state::{self, TradingBotRecord};
+use trading_blueprint_lib::state::{self, ProvisionProgress, TradingBotRecord};
 
 #[derive(Deserialize)]
 pub struct BotListQuery {
@@ -64,6 +64,10 @@ pub struct BotDetailResponse {
     pub paper_trade: bool,
     pub created_at: u64,
     pub max_lifetime_days: u64,
+    pub trading_api_url: String,
+    pub trading_api_token: String,
+    pub sandbox_id: String,
+    pub workflow_id: Option<u64>,
 }
 
 impl From<TradingBotRecord> for BotDetailResponse {
@@ -80,9 +84,49 @@ impl From<TradingBotRecord> for BotDetailResponse {
             paper_trade: b.paper_trade,
             created_at: b.created_at,
             max_lifetime_days: b.max_lifetime_days,
+            trading_api_url: b.trading_api_url,
+            trading_api_token: b.trading_api_token,
+            sandbox_id: b.sandbox_id,
+            workflow_id: b.workflow_id,
         }
     }
 }
+
+// ── Provision progress types ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ProvisionProgressResponse {
+    pub call_id: u64,
+    pub service_id: u64,
+    pub phase: String,
+    pub detail: String,
+    pub bot_id: Option<String>,
+    pub sandbox_id: Option<String>,
+    pub started_at: u64,
+    pub updated_at: u64,
+}
+
+impl From<ProvisionProgress> for ProvisionProgressResponse {
+    fn from(p: ProvisionProgress) -> Self {
+        Self {
+            call_id: p.call_id,
+            service_id: p.service_id,
+            phase: p.phase,
+            detail: p.detail,
+            bot_id: p.bot_id,
+            sandbox_id: p.sandbox_id,
+            started_at: p.started_at,
+            updated_at: p.updated_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ProvisionListResponse {
+    pub provisions: Vec<ProvisionProgressResponse>,
+}
+
+// ── Router ───────────────────────────────────────────────────────────────
 
 fn cors_layer() -> CorsLayer {
     let origins = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default();
@@ -104,8 +148,12 @@ pub fn build_operator_router() -> Router {
     Router::new()
         .route("/api/bots", get(list_bots))
         .route("/api/bots/{bot_id}", get(get_bot))
+        .route("/api/provisions", get(list_provisions))
+        .route("/api/provisions/{call_id}", get(get_provision))
         .layer(cors_layer())
 }
+
+// ── Bot handlers ─────────────────────────────────────────────────────────
 
 async fn list_bots(
     Query(query): Query<BotListQuery>,
@@ -147,6 +195,25 @@ async fn get_bot(
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
 
     Ok(Json(BotDetailResponse::from(record)))
+}
+
+// ── Provision handlers ───────────────────────────────────────────────────
+
+async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
+    let all = state::list_provisions().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(ProvisionListResponse {
+        provisions: all.into_iter().map(ProvisionProgressResponse::from).collect(),
+    }))
+}
+
+async fn get_provision(
+    Path(call_id): Path<u64>,
+) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
+    let progress = state::get_provision(call_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No provision for call_id {call_id}")))?;
+
+    Ok(Json(ProvisionProgressResponse::from(progress)))
 }
 
 #[cfg(test)]

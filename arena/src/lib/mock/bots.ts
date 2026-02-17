@@ -14,6 +14,7 @@ function generateSparkline(trend: 'up' | 'down' | 'flat', volatility: number): n
 export const mockBots: Bot[] = [
   {
     id: 'bot-alpha-1',
+    serviceId: 0,
     name: 'Alpha Momentum',
     operatorAddress: '0xf39Fd6e51aab88F6F4ce6aB8827279cffFb92266',
     vaultAddress: '0x1234567890abcdef1234567890abcdef12345678',
@@ -32,6 +33,7 @@ export const mockBots: Bot[] = [
   },
   {
     id: 'bot-revert-2',
+    serviceId: 1,
     name: 'Mean Revert Pro',
     operatorAddress: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
     vaultAddress: '0x2345678901abcdef2345678901abcdef23456789',
@@ -50,6 +52,7 @@ export const mockBots: Bot[] = [
   },
   {
     id: 'bot-arb-3',
+    serviceId: 2,
     name: 'Flash Arbitrage',
     operatorAddress: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
     vaultAddress: '0x3456789012abcdef3456789012abcdef34567890',
@@ -68,6 +71,7 @@ export const mockBots: Bot[] = [
   },
   {
     id: 'bot-trend-4',
+    serviceId: 3,
     name: 'Trend Surfer',
     operatorAddress: '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
     vaultAddress: '0x4567890123abcdef4567890123abcdef45678901',
@@ -86,6 +90,7 @@ export const mockBots: Bot[] = [
   },
   {
     id: 'bot-mm-5',
+    serviceId: 4,
     name: 'Liquidity Engine',
     operatorAddress: '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65',
     vaultAddress: '0x5678901234abcdef5678901234abcdef56789012',
@@ -104,6 +109,7 @@ export const mockBots: Bot[] = [
   },
   {
     id: 'bot-sent-6',
+    serviceId: 5,
     name: 'Sentiment Oracle',
     operatorAddress: '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
     vaultAddress: '0x6789012345abcdef6789012345abcdef67890123',

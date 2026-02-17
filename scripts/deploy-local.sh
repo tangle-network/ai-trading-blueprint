@@ -233,6 +233,7 @@ VITE_WETH_ADDRESS=$WETH
 VITE_SERVICE_IDS=0
 VITE_SERVICE_VAULTS={"0":"$VAULT_0"}
 VITE_BOT_META={"0":{"name":"Arena Demo Bot","strategyType":"dex"}}
+VITE_OPERATOR_API_URL=http://localhost:9200
 EOF
 
 echo ""

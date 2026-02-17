@@ -6,6 +6,8 @@ import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '~/lib/contracts/publicClient';
 
+const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+
 /**
  * Global provision watcher. Mount once near the app root.
  * Uses standalone viem client — works regardless of wallet chain.
@@ -14,8 +16,11 @@ import { publicClient } from '~/lib/contracts/publicClient';
  *   On success → parse JobSubmitted event from logs → `job_submitted` with callId.
  *   On failure → `failed`.
  *
- * Stage 2: For `job_submitted` provisions — watches JobResultSubmitted event.
+ * Stage 2: For `job_submitted`/`job_processing` — watches JobResultSubmitted event.
  *   On match → decode output as TradingProvisionOutput → `active` with vault/sandbox info.
+ *
+ * Stage 2.5: For `job_submitted`/`job_processing` — polls operator API for progress.
+ *   Shows intermediate phases like "creating_sidecar", "running_setup", etc.
  */
 export function useProvisionWatcher() {
   const provisions = useStore(provisionsStore);
@@ -155,4 +160,38 @@ export function useProvisionWatcher() {
       unwatchCompleted();
     };
   }, [pendingJobs.length]);
+
+  // Stage 2.5: Poll operator API for intermediate provision progress
+  useEffect(() => {
+    const submitted = provisions.filter(
+      (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+    );
+    if (submitted.length === 0 || !OPERATOR_API_URL) return;
+
+    const poll = async () => {
+      for (const prov of submitted) {
+        try {
+          const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
+          if (!res.ok) continue;
+          const progress = await res.json();
+          if (progress?.phase) {
+            updateProvision(prov.id, {
+              phase: 'job_processing',
+              progressPhase: progress.phase,
+              progressDetail: progress.detail,
+              // If the operator reports the bot as complete, also grab sandbox info
+              ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+            });
+          }
+        } catch {
+          // Operator API unreachable — continue with on-chain watching only
+        }
+      }
+    };
+
+    // Poll immediately, then every 2 seconds
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [provisions]);
 }
