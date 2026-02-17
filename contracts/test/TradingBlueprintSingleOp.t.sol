@@ -529,7 +529,6 @@ contract TradingBlueprintMultiOpTest is Setup {
             "",                 // strategy_type
             "",                 // strategy_config_json
             "",                 // risk_params_json
-            "",                 // env_json
             address(0),         // factory_address
             address(0),         // asset_token
             signers,            // signers

@@ -27,6 +27,13 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         snapshot_destination: None,
         tee_deployment_id: None,
         tee_metadata_json: None,
+        name: String::new(),
+        agent_identifier: String::new(),
+        metadata_json: String::new(),
+        disk_gb: 0,
+        stack: String::new(),
+        owner: String::new(),
+        secrets_configured: false,
     };
     record
 }
@@ -59,6 +66,9 @@ pub fn seed_bot_record(
         max_lifetime_days: 30,
         paper_trade: true,
         wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: true,
+        user_env_json: None,
     };
     bots()
         .expect("bots store")
@@ -98,6 +108,7 @@ pub fn seed_workflow(
         active: true,
         next_run_at: next_run,
         last_run_at: None,
+        owner: String::new(),
     };
 
     ai_agent_sandbox_blueprint_lib::workflows::workflows()

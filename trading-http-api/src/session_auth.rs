@@ -134,15 +134,17 @@ pub async fn verify(
 
     let recovered_str = format!("{recovered:#x}");
 
-    // Verify the recovered address matches the operator address
-    if !state.operator_address.is_empty()
-        && recovered_str.to_lowercase() != state.operator_address.to_lowercase()
-    {
+    // Verify the recovered address matches the operator OR submitter address
+    let is_operator = !state.operator_address.is_empty()
+        && recovered_str.to_lowercase() == state.operator_address.to_lowercase();
+    let is_submitter = !state.submitter_address.is_empty()
+        && recovered_str.to_lowercase() == state.submitter_address.to_lowercase();
+
+    if !is_operator && !is_submitter {
         return Err((
             StatusCode::FORBIDDEN,
             format!(
-                "Recovered address {recovered_str} does not match operator {}",
-                state.operator_address
+                "Recovered address {recovered_str} is not authorized for this bot",
             ),
         ));
     }

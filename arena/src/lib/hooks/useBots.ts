@@ -30,6 +30,7 @@ const SERVICE_VAULTS: Record<string, Address[]> = (() => {
 })();
 
 const BLUEPRINT_ID = BigInt(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
+const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 /** Intermediate: one entry per vault discovered on-chain */
 type VaultEntry = {
@@ -242,6 +243,54 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           sparklineData: [],
         };
       });
+
+      // Phase 4: Merge bots from operator API (catches newly provisioned bots not yet on-chain)
+      if (OPERATOR_API_URL) {
+        try {
+          const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
+          if (res.ok) {
+            const data = await res.json();
+            const operatorBots: Array<{
+              id: string;
+              operator_address: string;
+              vault_address: string;
+              strategy_type: string;
+              chain_id: number;
+              trading_active: boolean;
+              paper_trade: boolean;
+              created_at: number;
+              sandbox_id: string;
+            }> = data.bots ?? [];
+
+            const existingVaults = new Set(builtBots.map((b) => b.vaultAddress.toLowerCase()));
+
+            for (const ob of operatorBots) {
+              if (existingVaults.has(ob.vault_address.toLowerCase())) continue;
+              builtBots.push({
+                id: ob.id,
+                serviceId: 0,
+                name: `${ob.strategy_type} Agent`,
+                operatorAddress: ob.operator_address || zeroAddress,
+                vaultAddress: ob.vault_address as Address,
+                strategyType: (ob.strategy_type || 'momentum') as StrategyType,
+                status: ob.trading_active ? 'active' : 'stopped',
+                createdAt: ob.created_at * 1000,
+                pnlPercent: 0,
+                pnlAbsolute: 0,
+                sharpeRatio: 0,
+                maxDrawdown: 0,
+                winRate: 0,
+                totalTrades: 0,
+                tvl: 0,
+                avgValidatorScore: 0,
+                sparklineData: [],
+              });
+            }
+          }
+        } catch {
+          // Operator API unreachable — continue with on-chain bots only
+        }
+      }
 
       setBots(builtBots);
     } catch (err) {

@@ -116,7 +116,6 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             strategy_type: "dex".to_string(),
             strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
             risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-            env_json: String::new(),
             factory_address: vault_addr,
             asset_token: Address::from([0xCC; 20]),
             signers: val_addrs.clone(),

@@ -56,6 +56,7 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
         bot_id: "test-bot".to_string(),
         paper_trade: true,
         operator_address: String::new(),
+        submitter_address: String::new(),
         sidecar_url: String::new(),
         sidecar_token: String::new(),
     })

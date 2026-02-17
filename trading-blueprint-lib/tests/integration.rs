@@ -8,8 +8,8 @@ mod common;
 use blueprint_sdk::alloy::primitives::{Address, U256};
 use blueprint_sdk::alloy::sol_types::SolValue;
 use trading_blueprint_lib::jobs::{
-    configure_core, deprovision_core, extend_core, provision_core, start_core, status_core,
-    stop_core,
+    activate_bot_with_secrets, configure_core, deprovision_core, extend_core, provision_core,
+    start_core, status_core, stop_core, wipe_bot_secrets,
 };
 use trading_blueprint_lib::prompts::{
     build_generic_agent_profile, build_loop_prompt, build_pack_agent_profile,
@@ -40,7 +40,6 @@ fn make_provision_request_with_lifetime(
         strategy_type: strategy.to_string(),
         strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
         risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-        env_json: String::new(),
         factory_address: Address::from([0xBB; 20]),
         asset_token: Address::from([0xCC; 20]),
         signers: vec![Address::from([0x01; 20]), Address::from([0x02; 20])],
@@ -80,6 +79,13 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         snapshot_destination: None,
         tee_deployment_id: None,
         tee_metadata_json: None,
+        name: String::new(),
+        agent_identifier: String::new(),
+        metadata_json: String::new(),
+        disk_gb: 0,
+        stack: String::new(),
+        owner: String::new(),
+        secrets_configured: false,
     }
 }
 
@@ -95,31 +101,21 @@ async fn test_provision_creates_records() {
     let sandbox_id = sandbox.id.clone();
 
     let request = make_provision_request("test-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
     assert_eq!(output.sandbox_id, sandbox_id);
-    assert!(output.workflow_id > 0);
+    assert_eq!(output.workflow_id, 0, "two-phase: workflow_id should be 0 (awaiting secrets)");
     assert_eq!(output.vault_address, Address::from([0xBB; 20]));
 
-    // Verify bot record was stored
+    // Verify bot record was stored in awaiting-secrets state
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     assert_eq!(bot.sandbox_id, sandbox_id);
     assert_eq!(bot.strategy_type, "dex");
-    assert!(bot.trading_active);
+    assert!(!bot.trading_active, "two-phase: bot should be inactive until secrets are pushed");
+    assert!(!bot.secrets_configured, "two-phase: secrets_configured should be false");
+    assert_eq!(bot.submitter_address, "0xTESTCALLER");
     assert_eq!(bot.chain_id, 31337);
-    assert_eq!(bot.workflow_id, Some(output.workflow_id));
-
-    // Verify workflow was stored
-    let wf_key =
-        ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-    assert!(wf.active);
-    assert_eq!(wf.trigger_type, "cron");
-    assert_eq!(wf.trigger_config, "0 */5 * * * *");
+    assert_eq!(bot.workflow_id, None, "two-phase: no workflow until activation");
 }
 
 #[tokio::test]
@@ -294,11 +290,22 @@ async fn test_deprovision_cleans_everything() {
 async fn test_bot_lifecycle_transitions() {
     let _dir = common::init_test_env();
 
-    // 1. Provision
+    // 1. Provision (two-phase: bot starts inactive, awaiting secrets)
     let sandbox = mock_sandbox("sb-lifecycle-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("lifecycle-bot", "multi");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert!(!bot.trading_active, "two-phase: bot starts inactive");
+    assert!(!bot.secrets_configured, "two-phase: secrets not configured yet");
+
+    // Simulate activation (normally done via operator API + activate_bot_with_secrets)
+    bots().unwrap()
+        .update(&bot_key(&bot.id), |b| {
+            b.trading_active = true;
+            b.secrets_configured = true;
+        })
+        .unwrap();
     assert!(find_bot_by_sandbox(&sandbox_id).unwrap().trading_active);
 
     // 2. Configure
@@ -324,26 +331,23 @@ async fn test_bot_lifecycle_transitions() {
 }
 
 #[tokio::test]
-async fn test_workflow_created_with_cron() {
+async fn test_provision_returns_zero_workflow_id() {
     let _dir = common::init_test_env();
 
     let sandbox = mock_sandbox("sb-cron-1");
     let request = make_provision_request("cron-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
-    let wf_key =
-        ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
+    // Two-phase: provision never creates workflows — that happens in activate_bot_with_secrets
+    assert_eq!(output.workflow_id, 0, "provision should return workflow_id=0");
+
+    // No workflow should exist
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(0);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
         .unwrap()
         .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
-    assert!(wf.active);
-    assert_eq!(wf.trigger_config, "0 */5 * * * *");
-    assert!(wf.next_run_at.is_some());
-    assert!(wf.last_run_at.is_none());
-    assert!(wf.name.contains("trading-loop-"));
+        .unwrap();
+    assert!(wf.is_none(), "no workflow should be stored during provision");
 }
 
 #[tokio::test]
@@ -382,6 +386,9 @@ async fn test_system_prompt_includes_api_info() {
         max_lifetime_days: 30,
         paper_trade: true,
         wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -448,7 +455,7 @@ async fn test_bot_record_has_new_fields() {
 
     let sandbox = mock_sandbox("sb-new-fields-1");
     let request = make_provision_request("new-fields-bot", "yield");
-    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-new-fields-1").unwrap();
     // New fields should have default values (no operator context, no validator service IDs)
@@ -462,7 +469,7 @@ async fn test_provision_uses_requested_lifetime() {
 
     let sandbox = mock_sandbox("sb-lifetime-90");
     let request = make_provision_request_with_lifetime("lifetime-bot", "dex", 90);
-    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-90").unwrap();
     assert_eq!(bot.max_lifetime_days, 90);
@@ -474,7 +481,7 @@ async fn test_provision_defaults_to_30_days() {
 
     let sandbox = mock_sandbox("sb-lifetime-default");
     let request = make_provision_request_with_lifetime("default-bot", "dex", 0);
-    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-default").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -487,7 +494,7 @@ async fn test_extend_increases_lifetime() {
     // Provision with 30 days
     let sandbox = mock_sandbox("sb-extend-1");
     let request = make_provision_request_with_lifetime("extend-bot", "dex", 30);
-    let _output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-extend-1").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -548,141 +555,104 @@ async fn test_abi_round_trip_extend() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_provision_with_pack_creates_rich_workflow() {
-    let _dir = common::init_test_env();
+async fn test_pack_profile_has_rich_content() {
+    // Tests the profile/prompt building that activate_bot_with_secrets uses.
+    // (Provision no longer creates workflows — activation does, via the operator API.)
+    let pack = packs::get_pack("prediction").unwrap();
+    let config = trading_blueprint_lib::state::TradingBotRecord {
+        id: "test".to_string(),
+        sandbox_id: "sb".to_string(),
+        vault_address: "0xVAULT".to_string(),
+        share_token: String::new(),
+        strategy_type: "prediction".to_string(),
+        strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({"max_drawdown_pct": 5}),
+        chain_id: 137,
+        rpc_url: "http://polygon-rpc".to_string(),
+        trading_api_url: "http://test-api:9100".to_string(),
+        trading_api_token: "test-token".to_string(),
+        workflow_id: None,
+        trading_active: false,
+        created_at: 0,
+        operator_address: String::new(),
+        validator_service_ids: vec![],
+        max_lifetime_days: 30,
+        paper_trade: true,
+        wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
+    };
 
-    let sandbox = mock_sandbox("sb-pack-prediction");
-    let request = make_provision_request("pack-bot", "prediction");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
-
-    // Verify workflow_json contains backend_profile_json with agent profile
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
-    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
-
-    // Should NOT have legacy system_prompt
-    assert!(
-        wf_json.get("system_prompt").is_none(),
-        "workflow should not have legacy system_prompt"
-    );
-
-    // Should have backend_profile_json
-    let profile_str = wf_json["backend_profile_json"]
-        .as_str()
-        .expect("should have backend_profile_json");
-    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
+    let profile = build_pack_agent_profile(&pack, &config);
 
     // Profile uses resources.instructions, not systemPrompt
-    assert!(
-        profile.get("systemPrompt").is_none(),
-        "profile should not set systemPrompt directly"
-    );
+    assert!(profile.get("systemPrompt").is_none());
     let instructions = profile["resources"]["instructions"]["content"]
         .as_str()
         .expect("profile should have resources.instructions.content");
-    assert!(
-        instructions.contains("gamma-api.polymarket.com"),
-        "instructions should contain Polymarket Gamma API URL"
-    );
-    assert!(
-        instructions.contains("clob.polymarket.com"),
-        "instructions should contain Polymarket CLOB API URL"
-    );
-    assert!(
-        instructions.contains("/validate"),
-        "instructions should contain base Trading HTTP API endpoints"
-    );
-    assert!(
-        instructions.contains("persistent workspace"),
-        "instructions should contain workspace awareness"
-    );
+    assert!(instructions.contains("gamma-api.polymarket.com"));
+    assert!(instructions.contains("clob.polymarket.com"));
+    assert!(instructions.contains("/validate"));
+    assert!(instructions.contains("persistent workspace"));
 
     // Profile has permissions and memory
     assert_eq!(profile["permission"]["bash"], "allow");
     assert_eq!(profile["memory"]["enabled"], true);
 
-    // Loop prompt should reference the pack name
-    let loop_prompt = wf_json["prompt"].as_str().unwrap();
+    // Loop prompt references the pack name
+    let loop_prompt = build_pack_loop_prompt(&pack);
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
-
-    // Pack overrides
-    assert_eq!(wf_json["max_turns"], 20);
-    assert_eq!(wf_json["timeout_ms"], 240_000);
 }
 
 #[tokio::test]
-async fn test_provision_without_pack_uses_generic_prompt() {
-    let _dir = common::init_test_env();
+async fn test_generic_strategy_gets_profile() {
+    // Unknown strategy types still get a valid profile via the generic builder
+    let config = trading_blueprint_lib::state::TradingBotRecord {
+        id: "test".to_string(),
+        sandbox_id: "sb".to_string(),
+        vault_address: "0xVAULT".to_string(),
+        share_token: String::new(),
+        strategy_type: "exotic".to_string(),
+        strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({}),
+        chain_id: 31337,
+        rpc_url: "http://localhost:8545".to_string(),
+        trading_api_url: "http://test-api:9100".to_string(),
+        trading_api_token: "test-token".to_string(),
+        workflow_id: None,
+        trading_active: false,
+        created_at: 0,
+        operator_address: String::new(),
+        validator_service_ids: vec![],
+        max_lifetime_days: 30,
+        paper_trade: true,
+        wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
+    };
 
-    let sandbox = mock_sandbox("sb-pack-unknown");
-    let request = make_provision_request("generic-bot", "exotic");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let profile = build_generic_agent_profile("exotic", &config);
 
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
-    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
-    // No legacy system_prompt
-    assert!(
-        wf_json.get("system_prompt").is_none(),
-        "workflow should not have legacy system_prompt"
-    );
-
-    // Should still have backend_profile_json even for unknown strategy types
-    let profile_str = wf_json["backend_profile_json"]
-        .as_str()
-        .expect("generic strategy should still get a backend_profile_json");
-    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
     let instructions = profile["resources"]["instructions"]["content"]
         .as_str()
         .expect("generic profile should have instructions");
-    assert!(
-        instructions.contains("persistent workspace"),
-        "generic profile should have workspace awareness"
-    );
-    assert!(
-        instructions.contains("multi-strategy"),
-        "generic profile should contain multi-strategy fragment"
-    );
+    assert!(instructions.contains("persistent workspace"));
+    assert!(instructions.contains("multi-strategy"));
+    assert_eq!(profile["permission"]["bash"], "allow");
 
     // Generic loop prompt
-    let prompt = wf_json["prompt"].as_str().unwrap();
+    let prompt = build_loop_prompt("exotic");
     assert!(prompt.contains("exotic"));
     assert!(prompt.contains("trading loop iteration"));
-
-    // Default max_turns and timeout
-    assert_eq!(wf_json["max_turns"], 10);
-    assert_eq!(wf_json["timeout_ms"], 120_000);
 }
 
 #[tokio::test]
-async fn test_provision_pack_uses_default_cron() {
-    let _dir = common::init_test_env();
-
-    let sandbox = mock_sandbox("sb-pack-cron");
-    let mut request = make_provision_request("cron-pack-bot", "prediction");
-    request.trading_loop_cron = String::new(); // Empty — should use pack default
-
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
-
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
+async fn test_prediction_pack_has_default_cron() {
+    let pack = packs::get_pack("prediction").unwrap();
     // Polymarket pack default cron: every 3 minutes
-    assert_eq!(wf.trigger_config, "0 */3 * * * *");
+    assert_eq!(pack.default_cron, "0 */3 * * * *");
 }
 
 #[tokio::test]
@@ -708,6 +678,9 @@ async fn test_pack_system_prompt_includes_base_config() {
         max_lifetime_days: 30,
         paper_trade: true,
         wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
     };
 
     let combined = build_pack_system_prompt(&pack, &config);
@@ -729,29 +702,35 @@ async fn test_pack_system_prompt_includes_base_config() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_provision_creates_backend_profile() {
-    let _dir = common::init_test_env();
+async fn test_dex_profile_has_uniswap_content() {
+    let pack = packs::get_pack("dex").unwrap();
+    let config = trading_blueprint_lib::state::TradingBotRecord {
+        id: "test".to_string(),
+        sandbox_id: "sb".to_string(),
+        vault_address: "0xVAULT".to_string(),
+        share_token: String::new(),
+        strategy_type: "dex".to_string(),
+        strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({}),
+        chain_id: 31337,
+        rpc_url: "http://localhost:8545".to_string(),
+        trading_api_url: "http://test-api:9100".to_string(),
+        trading_api_token: "test-token".to_string(),
+        workflow_id: None,
+        trading_active: false,
+        created_at: 0,
+        operator_address: String::new(),
+        validator_service_ids: vec![],
+        max_lifetime_days: 30,
+        paper_trade: true,
+        wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
+    };
 
-    let sandbox = mock_sandbox("sb-profile-1");
-    let request = make_provision_request("profile-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+    let profile = build_pack_agent_profile(&pack, &config);
 
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
-    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
-
-    // Must have backend_profile_json
-    let profile_str = wf_json["backend_profile_json"]
-        .as_str()
-        .expect("workflow must have backend_profile_json");
-    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
-
-    // Profile has resources.instructions
     let instructions = profile["resources"]["instructions"]["content"]
         .as_str()
         .expect("profile must have resources.instructions.content");
@@ -761,61 +740,45 @@ async fn test_provision_creates_backend_profile() {
 }
 
 #[tokio::test]
-async fn test_provision_no_system_prompt_in_workflow() {
-    let _dir = common::init_test_env();
-
-    // Test all known pack types
+async fn test_all_packs_use_instructions_not_system_prompt() {
+    // Verify all known pack types use resources.instructions, not systemPrompt
     for strategy in &["prediction", "dex", "yield", "perp"] {
-        let sandbox = mock_sandbox(&format!("sb-no-sp-{strategy}"));
-        let request = make_provision_request(&format!("no-sp-{strategy}"), strategy);
-        let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
+        let pack = packs::get_pack(strategy).expect(&format!("pack {strategy} should exist"));
+        let config = trading_blueprint_lib::state::TradingBotRecord {
+            id: "test".to_string(),
+            sandbox_id: "sb".to_string(),
+            vault_address: "0xVAULT".to_string(),
+            share_token: String::new(),
+            strategy_type: strategy.to_string(),
+            strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://test-api:9100".to_string(),
+            trading_api_token: "test-token".to_string(),
+            workflow_id: None,
+            trading_active: false,
+            created_at: 0,
+            operator_address: String::new(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            secrets_configured: false,
+            user_env_json: None,
+        };
 
-        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-            .unwrap()
-            .get(&wf_key)
-            .unwrap()
-            .expect("workflow should exist");
-
-        let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+        let profile = build_pack_agent_profile(&pack, &config);
         assert!(
-            wf_json.get("system_prompt").is_none(),
-            "strategy {strategy} should not have system_prompt in workflow_json"
+            profile.get("systemPrompt").is_none(),
+            "strategy {strategy} should not set systemPrompt directly"
         );
         assert!(
-            wf_json.get("backend_profile_json").is_some(),
-            "strategy {strategy} should have backend_profile_json in workflow_json"
+            profile["resources"]["instructions"]["content"].as_str().is_some(),
+            "strategy {strategy} should have resources.instructions.content"
         );
     }
-}
-
-#[tokio::test]
-async fn test_provision_generic_strategy_gets_profile() {
-    let _dir = common::init_test_env();
-
-    let sandbox = mock_sandbox("sb-generic-profile");
-    let request = make_provision_request("generic-profile-bot", "exotic");
-    let output = provision_core(request, Some(sandbox), 0, 0).await.unwrap();
-
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(output.workflow_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .expect("workflow should exist");
-
-    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
-    let profile_str = wf_json["backend_profile_json"]
-        .as_str()
-        .expect("exotic strategy must get backend_profile_json");
-    let profile: serde_json::Value = serde_json::from_str(profile_str).unwrap();
-
-    // Generic profile has workspace awareness
-    let instructions = profile["resources"]["instructions"]["content"].as_str().unwrap();
-    assert!(instructions.contains("persistent workspace"));
-    assert!(instructions.contains("multi-strategy"));
-    // Still has permissions
-    assert_eq!(profile["permission"]["bash"], "allow");
 }
 
 #[tokio::test]
@@ -841,6 +804,9 @@ async fn test_build_pack_agent_profile_integration() {
         max_lifetime_days: 30,
         paper_trade: true,
         wind_down_started_at: None,
+        submitter_address: String::new(),
+        secrets_configured: false,
+        user_env_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -858,4 +824,159 @@ async fn test_build_pack_agent_profile_integration() {
     assert!(instructions.contains("yield-token"));
     assert!(instructions.contains("persistent workspace"));
     assert!(instructions.contains("metrics"));
+}
+
+// ---------------------------------------------------------------------------
+// Two-phase provision E2E test
+// ---------------------------------------------------------------------------
+
+/// Full two-phase provision lifecycle:
+///   provision → awaiting secrets → activate with secrets → active → wipe → awaiting secrets
+#[tokio::test]
+async fn test_two_phase_provision_e2e() {
+    let _dir = common::init_test_env();
+
+    // ── Phase 1: Provision ─────────────────────────────────────────────────
+    let sandbox = mock_sandbox("sb-2phase-1");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request("two-phase-bot", "dex");
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xSUBMITTER".to_string())
+        .await
+        .unwrap();
+
+    // Verify: workflow_id=0 signals awaiting secrets
+    assert_eq!(output.workflow_id, 0);
+
+    // Verify: bot in awaiting-secrets state
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    let bot_id = bot.id.clone();
+    assert!(!bot.trading_active);
+    assert!(!bot.secrets_configured);
+    assert_eq!(bot.workflow_id, None);
+    assert_eq!(bot.submitter_address, "0xSUBMITTER");
+    assert!(bot.user_env_json.is_none());
+
+    // Verify: no workflow exists for this bot (workflow_id=0 is sentinel)
+    let wf_key_zero = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(0);
+    assert!(
+        ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key_zero)
+            .unwrap()
+            .is_none(),
+        "no workflow should exist after provision"
+    );
+
+    // ── Phase 2: Activate with secrets ─────────────────────────────────────
+    let mut user_env = serde_json::Map::new();
+    user_env.insert(
+        "ANTHROPIC_API_KEY".into(),
+        serde_json::Value::String("sk-test-secret".to_string()),
+    );
+    user_env.insert(
+        "CUSTOM_VAR".into(),
+        serde_json::Value::String("custom-value".to_string()),
+    );
+
+    let activate_mock = mock_sandbox("sb-2phase-activated");
+    let result = activate_bot_with_secrets(&bot_id, user_env, Some(activate_mock))
+        .await
+        .unwrap();
+
+    assert_eq!(result.sandbox_id, "sb-2phase-activated");
+    assert!(result.workflow_id > 0);
+
+    // Verify: bot is now active
+    let bot = trading_blueprint_lib::state::get_bot(&bot_id)
+        .unwrap()
+        .unwrap();
+    assert!(bot.trading_active);
+    assert!(bot.secrets_configured);
+    assert_eq!(bot.sandbox_id, "sb-2phase-activated");
+    assert_eq!(bot.workflow_id, Some(result.workflow_id));
+    assert!(bot.user_env_json.is_some());
+
+    // Verify stored secrets contain user keys
+    let stored_env: serde_json::Value =
+        serde_json::from_str(bot.user_env_json.as_ref().unwrap()).unwrap();
+    assert_eq!(stored_env["ANTHROPIC_API_KEY"], "sk-test-secret");
+    assert_eq!(stored_env["CUSTOM_VAR"], "custom-value");
+
+    // Verify: workflow was created
+    let wf_key =
+        ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap()
+        .expect("workflow should exist after activation");
+    assert!(wf.active);
+    assert_eq!(wf.trigger_type, "cron");
+    assert!(wf.name.contains(&bot_id));
+
+    // Verify: workflow JSON contains sidecar info
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+    assert!(wf_json["sidecar_url"].as_str().is_some());
+    assert!(wf_json["prompt"].as_str().unwrap().contains("Trading iteration"));
+
+    // ── Phase 2b: Double-activate should fail ──────────────────────────────
+    let err = activate_bot_with_secrets(
+        &bot_id,
+        serde_json::Map::new(),
+        Some(mock_sandbox("sb-should-not-use")),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("already has secrets configured"));
+
+    // ── Phase 3: Wipe secrets ──────────────────────────────────────────────
+    let wipe_mock = mock_sandbox("sb-2phase-wiped");
+    wipe_bot_secrets(&bot_id, Some(wipe_mock)).await.unwrap();
+
+    // Verify: bot back to awaiting-secrets
+    let bot = trading_blueprint_lib::state::get_bot(&bot_id)
+        .unwrap()
+        .unwrap();
+    assert!(!bot.trading_active);
+    assert!(!bot.secrets_configured);
+    assert_eq!(bot.sandbox_id, "sb-2phase-wiped");
+    assert_eq!(bot.workflow_id, None);
+    assert!(bot.user_env_json.is_none());
+
+    // Verify: workflow was removed
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&wf_key)
+        .unwrap();
+    assert!(wf.is_none(), "workflow should be removed after wipe");
+
+    // ── Phase 3b: Double-wipe should fail ──────────────────────────────────
+    let err = wipe_bot_secrets(&bot_id, Some(mock_sandbox("sb-should-not-use")))
+        .await
+        .unwrap_err();
+    assert!(err.contains("no secrets to wipe"));
+
+    // ── Phase 4: Re-activate (round-trip) ──────────────────────────────────
+    let mut new_env = serde_json::Map::new();
+    new_env.insert(
+        "ANTHROPIC_API_KEY".into(),
+        serde_json::Value::String("sk-new-key".to_string()),
+    );
+
+    let reactivate_mock = mock_sandbox("sb-2phase-reactivated");
+    let result2 = activate_bot_with_secrets(&bot_id, new_env, Some(reactivate_mock))
+        .await
+        .unwrap();
+
+    let bot = trading_blueprint_lib::state::get_bot(&bot_id)
+        .unwrap()
+        .unwrap();
+    assert!(bot.trading_active);
+    assert!(bot.secrets_configured);
+    assert_eq!(bot.sandbox_id, "sb-2phase-reactivated");
+    assert!(result2.workflow_id > 0);
+
+    let stored_env: serde_json::Value =
+        serde_json::from_str(bot.user_env_json.as_ref().unwrap()).unwrap();
+    assert_eq!(stored_env["ANTHROPIC_API_KEY"], "sk-new-key");
 }

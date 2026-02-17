@@ -1,11 +1,12 @@
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 
-use trading_blueprint_lib::state::{self, ProvisionProgress, TradingBotRecord};
+use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 #[derive(Deserialize)]
 pub struct BotListQuery {
@@ -34,6 +35,8 @@ pub struct BotSummary {
     pub trading_active: bool,
     pub paper_trade: bool,
     pub created_at: u64,
+    pub secrets_configured: bool,
+    pub sandbox_id: String,
 }
 
 impl From<TradingBotRecord> for BotSummary {
@@ -47,6 +50,8 @@ impl From<TradingBotRecord> for BotSummary {
             trading_active: b.trading_active,
             paper_trade: b.paper_trade,
             created_at: b.created_at,
+            secrets_configured: b.secrets_configured,
+            sandbox_id: b.sandbox_id,
         }
     }
 }
@@ -55,6 +60,7 @@ impl From<TradingBotRecord> for BotSummary {
 pub struct BotDetailResponse {
     pub id: String,
     pub operator_address: String,
+    pub submitter_address: String,
     pub vault_address: String,
     pub strategy_type: String,
     pub strategy_config: serde_json::Value,
@@ -68,6 +74,7 @@ pub struct BotDetailResponse {
     pub trading_api_token: String,
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
+    pub secrets_configured: bool,
 }
 
 impl From<TradingBotRecord> for BotDetailResponse {
@@ -75,6 +82,7 @@ impl From<TradingBotRecord> for BotDetailResponse {
         Self {
             id: b.id,
             operator_address: b.operator_address,
+            submitter_address: b.submitter_address,
             vault_address: b.vault_address,
             strategy_type: b.strategy_type,
             strategy_config: b.strategy_config,
@@ -88,35 +96,39 @@ impl From<TradingBotRecord> for BotDetailResponse {
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id,
+            secrets_configured: b.secrets_configured,
         }
     }
 }
 
-// ── Provision progress types ─────────────────────────────────────────────
+// ── Provision progress types (from sandbox-runtime) ─────────────────────
 
 #[derive(Serialize)]
 pub struct ProvisionProgressResponse {
     pub call_id: u64,
-    pub service_id: u64,
     pub phase: String,
-    pub detail: String,
-    pub bot_id: Option<String>,
+    pub message: Option<String>,
     pub sandbox_id: Option<String>,
+    pub progress_pct: u8,
     pub started_at: u64,
     pub updated_at: u64,
+    pub metadata: serde_json::Value,
 }
 
-impl From<ProvisionProgress> for ProvisionProgressResponse {
-    fn from(p: ProvisionProgress) -> Self {
+impl From<sandbox_runtime::provision_progress::ProvisionStatus> for ProvisionProgressResponse {
+    fn from(p: sandbox_runtime::provision_progress::ProvisionStatus) -> Self {
         Self {
             call_id: p.call_id,
-            service_id: p.service_id,
-            phase: p.phase,
-            detail: p.detail,
-            bot_id: p.bot_id,
+            phase: serde_json::to_value(&p.phase)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| format!("{:?}", p.phase)),
+            message: p.message,
             sandbox_id: p.sandbox_id,
+            progress_pct: p.progress_pct,
             started_at: p.started_at,
             updated_at: p.updated_at,
+            metadata: p.metadata,
         }
     }
 }
@@ -124,6 +136,49 @@ impl From<ProvisionProgress> for ProvisionProgressResponse {
 #[derive(Serialize)]
 pub struct ProvisionListResponse {
     pub provisions: Vec<ProvisionProgressResponse>,
+}
+
+// ── Secrets types ────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ConfigureSecretsRequest {
+    env_json: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct SecretsResponse {
+    status: String,
+    sandbox_id: Option<String>,
+    workflow_id: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ActivationProgressResponse {
+    bot_id: String,
+    phase: String,
+    detail: String,
+    started_at: u64,
+    updated_at: u64,
+}
+
+impl From<ActivationProgress> for ActivationProgressResponse {
+    fn from(p: ActivationProgress) -> Self {
+        Self {
+            bot_id: p.bot_id,
+            phase: p.phase,
+            detail: p.detail,
+            started_at: p.started_at,
+            updated_at: p.updated_at,
+        }
+    }
+}
+
+// ── Session auth types ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SessionRequest {
+    nonce: String,
+    signature: String,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────
@@ -146,11 +201,36 @@ fn cors_layer() -> CorsLayer {
 
 pub fn build_operator_router() -> Router {
     Router::new()
+        // Session auth (delegates to sandbox-runtime's session_auth)
+        .route("/api/auth/challenge", post(create_challenge))
+        .route("/api/auth/session", post(create_session))
+        // Bot management
         .route("/api/bots", get(list_bots))
         .route("/api/bots/{bot_id}", get(get_bot))
+        .route(
+            "/api/bots/{bot_id}/secrets",
+            post(configure_secrets).delete(wipe_secrets),
+        )
+        .route("/api/bots/{bot_id}/activation-progress", get(get_activation_progress))
+        // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
         .layer(cors_layer())
+}
+
+// ── Auth handlers ────────────────────────────────────────────────────────
+
+async fn create_challenge() -> (StatusCode, Json<serde_json::Value>) {
+    let challenge = sandbox_runtime::session_auth::create_challenge();
+    (StatusCode::OK, Json(serde_json::to_value(challenge).unwrap()))
+}
+
+async fn create_session(
+    Json(req): Json<SessionRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let token = sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
+    Ok((StatusCode::OK, Json(serde_json::to_value(token).unwrap())))
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
@@ -197,10 +277,85 @@ async fn get_bot(
     Ok(Json(BotDetailResponse::from(record)))
 }
 
+// ── Secrets handlers ─────────────────────────────────────────────────────
+
+async fn configure_secrets(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<ConfigureSecretsRequest>,
+) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
+
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    // Verify caller is the bot's submitter
+    if !bot.submitter_address.is_empty()
+        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Caller {caller} is not the bot submitter"),
+        ));
+    }
+
+    let result = trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot_id, body.env_json, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(SecretsResponse {
+        status: "active".to_string(),
+        sandbox_id: Some(result.sandbox_id),
+        workflow_id: Some(result.workflow_id),
+    }))
+}
+
+async fn wipe_secrets(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
+
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    if !bot.submitter_address.is_empty()
+        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Caller {caller} is not the bot submitter"),
+        ));
+    }
+
+    trading_blueprint_lib::jobs::wipe_bot_secrets(&bot_id, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(SecretsResponse {
+        status: "awaiting_secrets".to_string(),
+        sandbox_id: None,
+        workflow_id: None,
+    }))
+}
+
+// ── Activation progress handler ──────────────────────────────────────────
+
+async fn get_activation_progress(
+    Path(bot_id): Path<String>,
+) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
+    let progress = state::get_activation(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No activation progress for bot {bot_id}")))?;
+
+    Ok(Json(ActivationProgressResponse::from(progress)))
+}
+
 // ── Provision handlers ───────────────────────────────────────────────────
 
 async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
-    let all = state::list_provisions().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let all = sandbox_runtime::provision_progress::list_all_provisions()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ProvisionListResponse {
         provisions: all.into_iter().map(ProvisionProgressResponse::from).collect(),
     }))
@@ -209,8 +364,8 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
 async fn get_provision(
     Path(call_id): Path<u64>,
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
-    let progress = state::get_provision(call_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+    let progress = sandbox_runtime::provision_progress::get_provision(call_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No provision for call_id {call_id}")))?;
 
     Ok(Json(ProvisionProgressResponse::from(progress)))
@@ -224,11 +379,16 @@ mod tests {
     use hyper::Request;
     use tower::ServiceExt;
 
+    fn test_auth_header() -> String {
+        let token = sandbox_runtime::session_auth::create_test_token(
+            "0x1234567890abcdef1234567890abcdef12345678",
+        );
+        format!("Bearer {token}")
+    }
+
     #[tokio::test]
     async fn test_list_bots_empty() {
-        // Set state dir to a temp directory so we get a clean store
         let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: called in single-threaded test setup
         unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
 
         let app = build_operator_router();
@@ -253,7 +413,6 @@ mod tests {
     #[tokio::test]
     async fn test_get_bot_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: called in single-threaded test setup
         unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
 
         let app = build_operator_router();
@@ -269,5 +428,99 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), 404);
+    }
+
+    #[tokio::test]
+    async fn test_auth_challenge_returns_nonce() {
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/challenge")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["nonce"].is_string());
+        assert!(json["message"].is_string());
+        assert!(json["expires_at"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_configure_secrets_requires_auth() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let body = serde_json::json!({
+            "env_json": { "API_KEY": "test" },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/test-bot/secrets")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_configure_secrets_bot_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let body = serde_json::json!({
+            "env_json": { "API_KEY": "test" },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/nonexistent/secrets")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_wipe_secrets_requires_auth() {
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/bots/test-bot/secrets")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -36,5 +36,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 http-body-util = "0.1"
 hyper = "1"
+sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime", features = ["test-utils"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

@@ -191,6 +191,9 @@ mod tests {
             max_lifetime_days: 30,
             paper_trade: true,
             wind_down_started_at: None,
+            submitter_address: String::new(),
+            secrets_configured: false,
+            user_env_json: None,
         }
     }
 

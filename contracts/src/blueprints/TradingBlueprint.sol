@@ -330,12 +330,12 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice Validate payment for JOB_PROVISION using dynamic pricing.
     /// @dev Decodes provision inputs to extract resource parameters and lifetime.
     function _validateProvisionPayment(bytes calldata inputs) internal view {
-        // TradingProvisionRequest layout: 14 fields, maxLifetimeDays is field index 12 (0-indexed)
-        // Fields: name, strategy_type, strategy_config_json, risk_params_json, env_json,
+        // TradingProvisionRequest layout: 15 fields, maxLifetimeDays is field index 11 (0-indexed)
+        // Fields: name, strategy_type, strategy_config_json, risk_params_json,
         //         factory_address, asset_token, signers, required_signatures, chain_id,
         //         rpc_url, trading_loop_cron, cpu_cores, memory_mb, max_lifetime_days, validator_service_ids
-        (,,,,,,,,,,,,uint64 cpuCores, uint64 memoryMb, uint64 maxLifetimeDays,) =
-            abi.decode(inputs, (string, string, string, string, string,
+        (,,,,,,,,,,,uint64 cpuCores, uint64 memoryMb, uint64 maxLifetimeDays,) =
+            abi.decode(inputs, (string, string, string, string,
                 address, address, address[], uint256, uint256,
                 string, string, uint64, uint64, uint64, uint64[]));
 

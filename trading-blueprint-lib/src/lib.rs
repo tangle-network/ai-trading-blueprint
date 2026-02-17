@@ -56,7 +56,6 @@ sol! {
         string strategy_type;
         string strategy_config_json;
         string risk_params_json;
-        string env_json;
         address factory_address;
         address asset_token;
         address[] signers;

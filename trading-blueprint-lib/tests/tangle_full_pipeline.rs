@@ -152,6 +152,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             bot_id: "e2e-test-bot".to_string(),
             paper_trade: false,
             operator_address: String::new(),
+            submitter_address: String::new(),
             sidecar_url: String::new(),
             sidecar_token: String::new(),
         });
@@ -305,7 +306,6 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             strategy_type: "dex".to_string(),
             strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
             risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-            env_json: String::new(),
             factory_address: vault_addr,
             asset_token: Address::from([0xCC; 20]),
             signers: val_addrs,

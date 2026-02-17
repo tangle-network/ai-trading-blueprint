@@ -2,37 +2,34 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSignMessage } from 'wagmi';
 
 /**
- * Sidecar session auth hook.
+ * Operator API session auth hook.
  *
- * Uses sandbox-runtime's challenge/response + PASETO token flow
- * against the sidecar's operator API:
+ * Uses sandbox-runtime's challenge/response + PASETO token flow:
  * 1. POST /api/auth/challenge → { nonce, message, expires_at }
  * 2. Wallet signs `message` via EIP-191 personal_sign
  * 3. POST /api/auth/session { nonce, signature } → { token, address, expires_at }
  * 4. All subsequent requests use `Authorization: Bearer <token>`
  */
 
-interface SessionAuth {
+interface OperatorAuth {
   token: string | null;
   isAuthenticated: boolean;
   isAuthenticating: boolean;
-  authenticate: () => Promise<void>;
+  authenticate: () => Promise<string | null>;
   error: string | null;
 }
 
-function sessionStorageKey(botId: string, apiUrl: string): string {
-  return `arena_session_${botId}__${apiUrl}`;
-}
+const STORAGE_KEY = 'arena_operator_session';
 
-function loadSession(botId: string, apiUrl: string): { token: string; expiresAt: number } | null {
+function loadCachedToken(apiUrl: string): { token: string; expiresAt: number } | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(sessionStorageKey(botId, apiUrl));
+    const raw = localStorage.getItem(`${STORAGE_KEY}__${apiUrl}`);
     if (!raw) return null;
     const data = JSON.parse(raw) as { token: string; expiresAt: number };
     // Discard if within 60s of expiry
     if (data.expiresAt * 1000 - Date.now() < 60_000) {
-      localStorage.removeItem(sessionStorageKey(botId, apiUrl));
+      localStorage.removeItem(`${STORAGE_KEY}__${apiUrl}`);
       return null;
     }
     return data;
@@ -41,22 +38,22 @@ function loadSession(botId: string, apiUrl: string): { token: string; expiresAt:
   }
 }
 
-function saveSession(botId: string, apiUrl: string, token: string, expiresAt: number) {
+function saveToken(apiUrl: string, token: string, expiresAt: number) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(sessionStorageKey(botId, apiUrl), JSON.stringify({ token, expiresAt }));
+    localStorage.setItem(`${STORAGE_KEY}__${apiUrl}`, JSON.stringify({ token, expiresAt }));
   } catch {
-    // storage full — ignore
+    // ignore
   }
 }
 
-function clearSession(botId: string, apiUrl: string) {
+function clearToken(apiUrl: string) {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(sessionStorageKey(botId, apiUrl));
+  localStorage.removeItem(`${STORAGE_KEY}__${apiUrl}`);
 }
 
-export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
-  const cached = loadSession(botId, apiUrl);
+export function useOperatorAuth(apiUrl: string): OperatorAuth {
+  const cached = loadCachedToken(apiUrl);
   const [token, setToken] = useState<string | null>(cached?.token ?? null);
   const [expiresAt, setExpiresAt] = useState<number>(cached?.expiresAt ?? 0);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -64,23 +61,22 @@ export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const { signMessageAsync } = useSignMessage();
 
-  const authenticate = useCallback(async () => {
+  const authenticate = useCallback(async (): Promise<string | null> => {
+    if (!apiUrl) return null;
     setIsAuthenticating(true);
     setError(null);
 
     try {
-      // 1. Get challenge from sandbox-runtime's operator API
+      // 1. Get challenge
       const challengeRes = await fetch(`${apiUrl}/api/auth/challenge`, {
         method: 'POST',
       });
-
       if (!challengeRes.ok) {
         throw new Error(`Challenge failed: ${challengeRes.status}`);
       }
-
       const { nonce, message } = await challengeRes.json();
 
-      // 2. Sign the challenge message with wallet
+      // 2. Sign the challenge message
       const signature = await signMessageAsync({ message });
 
       // 3. Exchange for session token
@@ -89,7 +85,6 @@ export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nonce, signature }),
       });
-
       if (!sessionRes.ok) {
         const text = await sessionRes.text();
         throw new Error(text || `Session exchange failed: ${sessionRes.status}`);
@@ -98,45 +93,43 @@ export function useSessionAuth(botId: string, apiUrl: string): SessionAuth {
       const { token: newToken, expires_at } = await sessionRes.json();
       setToken(newToken);
       setExpiresAt(expires_at);
-      saveSession(botId, apiUrl, newToken, expires_at);
+      saveToken(apiUrl, newToken, expires_at);
+      return newToken;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+      const msg = err instanceof Error ? err.message : 'Authentication failed';
+      setError(msg);
       setToken(null);
       setExpiresAt(0);
-      clearSession(botId, apiUrl);
+      clearToken(apiUrl);
+      return null;
     } finally {
       setIsAuthenticating(false);
     }
-  }, [botId, apiUrl, signMessageAsync]);
+  }, [apiUrl, signMessageAsync]);
 
-  // Auto-refresh token 5 minutes before expiry
+  // Auto-refresh 5 minutes before expiry
   useEffect(() => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-    }
-
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     if (!token || !expiresAt) return;
 
     const msUntilRefresh = (expiresAt - 300) * 1000 - Date.now();
     if (msUntilRefresh <= 0) {
       setToken(null);
-      clearSession(botId, apiUrl);
+      clearToken(apiUrl);
       return;
     }
 
     refreshTimerRef.current = setTimeout(() => {
       authenticate().catch(() => {
         setToken(null);
-        clearSession(botId, apiUrl);
+        clearToken(apiUrl);
       });
     }, msUntilRefresh);
 
     return () => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-      }
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
-  }, [token, expiresAt, authenticate]);
+  }, [token, expiresAt, authenticate, apiUrl]);
 
   return {
     token,

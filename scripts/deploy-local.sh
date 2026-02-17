@@ -234,6 +234,8 @@ VITE_SERVICE_IDS=0
 VITE_SERVICE_VAULTS={"0":"$VAULT_0"}
 VITE_BOT_META={"0":{"name":"Arena Demo Bot","strategyType":"dex"}}
 VITE_OPERATOR_API_URL=http://localhost:9200
+VITE_DEFAULT_AI_PROVIDER=zai
+VITE_DEFAULT_AI_API_KEY=${ZAI_API_KEY:-}
 EOF
 
 echo ""

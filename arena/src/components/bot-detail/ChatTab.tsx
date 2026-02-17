@@ -1,13 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ChatContainer, useSessionStream, type AgentBranding, type SessionInfo } from '@tangle/agent-ui';
 import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
-import { Input } from '~/components/ui/input';
 import { useSessionAuth } from '~/lib/hooks/useSessionAuth';
-import { useSessions, useMessages, useSendMessage, useAbortExecution, useDeleteSession, useRenameSession, useCreateSession } from '~/lib/hooks/useSessionApi';
-import { useSessionEvents, type SessionEvent } from '~/lib/hooks/useSessionEvents';
-import type { Message, MessagePart, Session } from '~/lib/types/session';
+import { useSessions, useDeleteSession, useRenameSession, useCreateSession } from '~/lib/hooks/useSessionApi';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
 
 interface ChatTabProps {
@@ -15,6 +13,18 @@ interface ChatTabProps {
   botName: string;
   operatorAddress: string;
 }
+
+// ── Branding ────────────────────────────────────────────────────────────
+
+const TRADING_BRANDING: AgentBranding = {
+  label: 'Trading Agent',
+  accentClass: 'text-emerald-400',
+  bgClass: 'bg-emerald-500/5',
+  containerBgClass: 'bg-neutral-950/60',
+  borderClass: 'border-emerald-500/20',
+  iconClass: 'i-ph:chart-line-up',
+  textClass: 'text-emerald-400',
+};
 
 // ── Auth Banner ─────────────────────────────────────────────────────────
 
@@ -60,126 +70,6 @@ function AuthBanner({ onAuth, isAuthenticating, error }: {
   );
 }
 
-// ── Chat Message ────────────────────────────────────────────────────────
-
-function ChatMessage({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
-  const isUser = message.info.role === 'user';
-  const isSystem = message.source === 'system' && message.info.role === 'user';
-  const isAssistant = message.info.role === 'assistant';
-
-  const sourceBadge = message.source === 'owner'
-    ? <Badge variant="success" className="text-[10px] py-0">You</Badge>
-    : isAssistant
-    ? <Badge variant="accent" className="text-[10px] py-0">Agent</Badge>
-    : <Badge variant="secondary" className="text-[10px] py-0">System</Badge>;
-
-  const timestamp = new Date(message.info.timestamp).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      className={`flex ${isUser && message.source === 'owner' ? 'justify-end' : 'justify-start'}`}
-    >
-      <div className={`max-w-[85%] ${
-        isUser && message.source === 'owner'
-          ? 'bg-violet-500/10 border-violet-500/20'
-          : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 border-arena-elements-borderColor'
-      } rounded-xl border px-4 py-3`}>
-        <div className="flex items-center gap-2 mb-1.5">
-          {sourceBadge}
-          <span className="text-[10px] font-data text-arena-elements-textTertiary">{timestamp}</span>
-        </div>
-        <div className="space-y-2">
-          {message.parts.map((part, i) => (
-            <MessagePartView key={i} part={part} />
-          ))}
-          {isStreaming && (
-            <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse rounded-sm ml-0.5" />
-          )}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function MessagePartView({ part }: { part: MessagePart }) {
-  const [toolExpanded, setToolExpanded] = useState(false);
-
-  if (part.type === 'text' && part.text) {
-    return (
-      <p className="text-sm text-arena-elements-textPrimary leading-relaxed whitespace-pre-wrap break-words">
-        {part.text}
-      </p>
-    );
-  }
-
-  if (part.type === 'reasoning' && part.text) {
-    return (
-      <div className="text-xs text-arena-elements-textTertiary italic border-l-2 border-violet-500/30 pl-2">
-        {part.text}
-      </div>
-    );
-  }
-
-  if (part.type === 'tool' && part.tool) {
-    const status = part.state?.status ?? 'running';
-    return (
-      <div className="rounded-lg border border-arena-elements-borderColor overflow-hidden">
-        <button
-          onClick={() => setToolExpanded(!toolExpanded)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-arena-elements-background-depth-3 transition-colors cursor-pointer"
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${
-            status === 'completed' ? 'bg-emerald-700 dark:bg-emerald-400' : status === 'error' ? 'bg-crimson-400' : 'bg-amber-400 animate-pulse'
-          }`} />
-          <span className="font-data text-arena-elements-textSecondary">{part.tool}</span>
-          <Badge variant={status === 'completed' ? 'success' : status === 'error' ? 'destructive' : 'amber'} className="text-[9px] py-0 ml-auto">
-            {status}
-          </Badge>
-          <span className={`i-ph:caret-down text-arena-elements-textTertiary transition-transform ${toolExpanded ? 'rotate-180' : ''}`} />
-        </button>
-        <AnimatePresence>
-          {toolExpanded && part.state && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="overflow-hidden"
-            >
-              <div className="px-3 pb-2 border-t border-arena-elements-dividerColor pt-2">
-                {part.state.input != null && (
-                  <div className="mb-2">
-                    <span className="text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">Input</span>
-                    <pre className="text-[11px] text-arena-elements-textSecondary mt-0.5 overflow-x-auto max-h-32 font-data">
-                      {typeof part.state.input === 'string' ? part.state.input : JSON.stringify(part.state.input, null, 2)}
-                    </pre>
-                  </div>
-                )}
-                {part.state.output != null && (
-                  <div>
-                    <span className="text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">Output</span>
-                    <pre className="text-[11px] text-arena-elements-textSecondary mt-0.5 overflow-x-auto max-h-32 font-data">
-                      {typeof part.state.output === 'string' ? part.state.output : JSON.stringify(part.state.output, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  }
-
-  return null;
-}
-
 // ── Agent Status ────────────────────────────────────────────────────────
 
 function AgentStatus({ status, onAbort, isAborting }: {
@@ -213,8 +103,13 @@ function AgentStatus({ status, onAbort, isAborting }: {
 
 // ── Session Selector ────────────────────────────────────────────────────
 
+interface SessionItem {
+  id: string;
+  title: string;
+}
+
 function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect, onDelete, onRename, onCreate }: {
-  sessions: Session[];
+  sessions: SessionItem[];
   activeSessionId: string;
   primarySessionId: string;
   onSelect: (id: string) => void;
@@ -330,92 +225,34 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(primarySessionId);
-  const [showSystemMessages, setShowSystemMessages] = useState(true);
-  const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'error'>('idle');
-  const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
-  const [inputValue, setInputValue] = useState('');
+  const [isAborting, setIsAborting] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const userScrolledUpRef = useRef(false);
-
-  // API hooks
+  // Session CRUD hooks
   const { data: sessions = [] } = useSessions(apiUrl, token);
-  const { data: messages = [], refetch: refetchMessages } = useMessages(apiUrl, token, activeSessionId);
-  const sendMutation = useSendMessage(apiUrl, token, activeSessionId);
-  const abortMutation = useAbortExecution(apiUrl, token, activeSessionId);
   const deleteMutation = useDeleteSession(apiUrl, token);
   const renameMutation = useRenameSession(apiUrl, token);
   const createMutation = useCreateSession(apiUrl, token);
 
-  // SSE event handler
-  const handleEvent = useCallback((event: SessionEvent) => {
-    const props = event.properties;
+  // agent-ui streaming hook — replaces manual SSE + message state
+  const stream = useSessionStream({
+    apiUrl,
+    token,
+    sessionId: activeSessionId,
+    enabled: isAuthenticated && !!apiUrl,
+  });
 
-    if (event.type === 'message.part.updated' || event.type === 'message.updated') {
-      // Streaming text delta — update or create streaming message
-      setStreamingMessage(prev => {
-        const role = (props.role as string) ?? 'assistant';
-        const text = (props.text as string) ?? (props.content as string) ?? '';
-        if (!prev) {
-          return {
-            info: { id: 'streaming', role: role as 'assistant', timestamp: new Date().toISOString() },
-            parts: [{ type: 'text', text }],
-            source: 'system',
-          };
-        }
-        const parts = [...prev.parts];
-        if (parts.length > 0 && parts[parts.length - 1].type === 'text') {
-          parts[parts.length - 1] = { ...parts[parts.length - 1], text };
-        }
-        return { ...prev, parts };
-      });
-      setAgentStatus('running');
-    } else if (event.type === 'session.idle') {
-      setStreamingMessage(null);
-      setAgentStatus('idle');
-      refetchMessages();
-    } else if (event.type === 'session.error') {
-      setStreamingMessage(null);
-      setAgentStatus('error');
-      refetchMessages();
-    }
-  }, [refetchMessages]);
+  const agentStatus = stream.isStreaming ? 'running' : stream.error ? 'error' : 'idle';
 
-  useSessionEvents(apiUrl, token, activeSessionId, handleEvent);
+  const handleAbort = useCallback(async () => {
+    setIsAborting(true);
+    await stream.abort();
+    setIsAborting(false);
+  }, [stream]);
 
-  // Auto-scroll
-  const scrollToBottom = useCallback(() => {
-    if (!userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, []);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, streamingMessage, scrollToBottom]);
-
-  // Track scroll position
-  const handleScroll = useCallback(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 100;
-  }, []);
-
-  // Send message
-  const handleSend = useCallback(async () => {
-    const text = inputValue.trim();
-    if (!text || sendMutation.isPending) return;
-    setInputValue('');
-    await sendMutation.mutateAsync(text);
-    setAgentStatus('running');
-  }, [inputValue, sendMutation]);
-
-  // Filter messages
-  const displayMessages = showSystemMessages
-    ? messages
-    : messages.filter(m => m.source === 'owner' || m.info.role === 'assistant');
+  // Map session data to simple items for the selector
+  const sessionItems: SessionItem[] = sessions.length > 0
+    ? sessions.map((s: SessionInfo) => ({ id: s.id, title: s.title }))
+    : [{ id: primarySessionId, title: 'Main Session' }];
 
   if (!apiUrl) {
     return (
@@ -441,7 +278,7 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor">
         <SessionSelector
-          sessions={sessions.length > 0 ? sessions : [{ id: primarySessionId, title: 'Main Session' }]}
+          sessions={sessionItems}
           activeSessionId={activeSessionId}
           primarySessionId={primarySessionId}
           onSelect={setActiveSessionId}
@@ -458,76 +295,25 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
             });
           }}
         />
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowSystemMessages(!showSystemMessages)}
-            className={`text-xs font-data px-2 py-1 rounded-md transition-colors cursor-pointer ${
-              showSystemMessages
-                ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
-                : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'
-            }`}
-          >
-            {showSystemMessages ? 'Hide System' : 'Show System'}
-          </button>
-        </div>
       </div>
 
-      {/* Message thread */}
-      <div
-        ref={messagesContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
-      >
-        {displayMessages.length === 0 && !streamingMessage && (
-          <div className="text-center text-arena-elements-textTertiary text-sm py-12">
-            <div className="i-ph:chat-circle-dots text-3xl mb-3 mx-auto" />
-            <p>No messages yet. Send a message to start chatting with the agent.</p>
-          </div>
-        )}
-        {displayMessages.map((msg) => (
-          <ChatMessage key={msg.info.id} message={msg} />
-        ))}
-        {streamingMessage && (
-          <ChatMessage message={streamingMessage} isStreaming />
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+      {/* Message area — @tangle/agent-ui ChatContainer */}
+      <ChatContainer
+        messages={stream.messages}
+        partMap={stream.partMap}
+        isStreaming={stream.isStreaming}
+        onSend={stream.send}
+        branding={TRADING_BRANDING}
+        placeholder={stream.isStreaming ? 'Agent is working...' : `Message ${botName}...`}
+        className="flex-1 min-h-0"
+      />
 
       {/* Agent status bar */}
       <AgentStatus
         status={agentStatus}
-        onAbort={() => abortMutation.mutate()}
-        isAborting={abortMutation.isPending}
+        onAbort={handleAbort}
+        isAborting={isAborting}
       />
-
-      {/* Input bar */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-arena-elements-dividerColor">
-        <Input
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          placeholder={agentStatus === 'running' ? 'Agent is working...' : `Message ${botName}...`}
-          disabled={agentStatus === 'running'}
-          className="flex-1 h-10"
-        />
-        <Button
-          onClick={handleSend}
-          disabled={!inputValue.trim() || sendMutation.isPending || agentStatus === 'running'}
-          size="sm"
-          className="h-10 px-4"
-        >
-          {sendMutation.isPending ? (
-            <span className="i-ph:arrow-clockwise text-sm animate-spin" />
-          ) : (
-            <span className="i-ph:paper-plane-right text-sm" />
-          )}
-        </Button>
-      </div>
     </div>
   );
 }

@@ -149,6 +149,20 @@ const SHADCN_COLORS = {
 } as const;
 
 export default defineConfig({
+  preflights: [
+    {
+      getCSS: () => `
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+          }
+        }
+      `,
+    },
+  ],
   shortcuts: {
     'arena-ease': 'ease-[cubic-bezier(0.4,0,0.2,1)]',
     'transition-theme': 'transition-[background-color,border-color,color] duration-150 arena-ease',
@@ -272,6 +286,7 @@ export default defineConfig({
     }),
   ],
   safelist: [
+    // Arena icons
     'i-ph:trophy',
     'i-ph:robot',
     'i-ph:chart-line-up',
@@ -303,6 +318,22 @@ export default defineConfig({
     'i-ph:user',
     'i-ph:plus',
     'i-ph:gear',
+    // @tangle/agent-ui icons
+    'i-ph:check-circle',
+    'i-ph:terminal-window',
+    'i-ph:copy',
+    'i-ph:check',
+    'i-ph:code',
+    'i-ph:arrow-down',
+    'i-ph:paper-plane-tilt',
+    'i-ph:spinner',
+    'i-ph:git-diff',
+    'i-ph:list-bullets',
+    'i-ph:warning-circle',
+    'i-ph:pencil-simple-line',
+    'i-ph:globe',
+    'i-ph:caret-right',
+    'i-ph:file-text',
   ],
 });
 

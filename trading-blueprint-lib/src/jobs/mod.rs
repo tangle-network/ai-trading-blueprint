@@ -1,3 +1,4 @@
+mod activate;
 mod provision;
 mod configure;
 mod start;
@@ -11,6 +12,7 @@ mod exec;
 mod webhook_event;
 mod workflow_tick;
 
+pub use activate::{activate_bot_with_secrets, wipe_bot_secrets};
 pub use provision::provision;
 pub use provision::provision_core;
 pub use configure::configure;

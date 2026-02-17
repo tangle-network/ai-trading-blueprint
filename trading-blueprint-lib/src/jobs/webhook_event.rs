@@ -144,16 +144,17 @@ async fn run_task_in_bot(bot: &TradingBotRecord, prompt: &str) -> Result<(), Str
         sidecar_url: sandbox.sidecar_url.clone(),
         prompt: prompt.to_string(),
         // Same session as cron ticks — agent sees its existing tools, DB, and phase state
-        session_id: format!("trading-{}", bot.id),
+        // Session-per-tick: each webhook event gets its own session
+        session_id: format!("trading-{}-{}", bot.id, chrono::Utc::now().timestamp()),
         max_turns: 10,
         model: String::new(),
         context_json: String::new(),
         timeout_ms: 120_000,
-        sidecar_token: sandbox.token.clone(),
     };
 
     match ai_agent_sandbox_blueprint_lib::run_task_request_with_profile(
         &task_req,
+        &sandbox.token,
         backend_profile.as_ref(),
     )
     .await
@@ -187,9 +188,8 @@ async fn run_task_in_bot(bot: &TradingBotRecord, prompt: &str) -> Result<(), Str
                 cwd: String::new(),
                 env_json: String::new(),
                 timeout_ms: 30_000,
-                sidecar_token: sandbox.token.clone(),
             };
-            ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req)
+            ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &sandbox.token)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string())
@@ -234,6 +234,9 @@ mod tests {
             max_lifetime_days: 30,
             paper_trade: true,
             wind_down_started_at: None,
+            submitter_address: String::new(),
+            secrets_configured: false,
+            user_env_json: None,
         }
     }
 

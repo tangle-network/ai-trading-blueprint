@@ -176,7 +176,7 @@ export function DepositForm({
         <div className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2.5">
-              <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
+              <label htmlFor="deposit-amount" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
                 Amount ({assetSymbol})
               </label>
               {userAssetBalanceFormatted != null && (
@@ -190,6 +190,7 @@ export function DepositForm({
               )}
             </div>
             <Input
+              id="deposit-amount"
               type="number"
               placeholder="0.00"
               value={amount}

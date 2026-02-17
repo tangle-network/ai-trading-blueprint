@@ -5,7 +5,6 @@ use sandbox_runtime::store::PersistentStore;
 
 static BOTS: OnceCell<PersistentStore<TradingBotRecord>> = OnceCell::new();
 static PAPER_TRADES: OnceCell<PersistentStore<PaperTrade>> = OnceCell::new();
-static PROVISIONS: OnceCell<PersistentStore<ProvisionProgress>> = OnceCell::new();
 
 fn default_paper_trade() -> bool {
     true
@@ -42,6 +41,15 @@ pub struct TradingBotRecord {
     /// Timestamp when wind-down mode was initiated (None = normal operation).
     #[serde(default)]
     pub wind_down_started_at: Option<u64>,
+    /// Address of the wallet that submitted the provision job (for off-chain auth).
+    #[serde(default)]
+    pub submitter_address: String,
+    /// Whether the user has pushed secrets via the off-chain API.
+    #[serde(default)]
+    pub secrets_configured: bool,
+    /// User-provided environment variables, stored locally only — NEVER on-chain.
+    #[serde(default)]
+    pub user_env_json: Option<String>,
 }
 
 /// A recorded paper trade (simulated execution).
@@ -55,61 +63,48 @@ pub struct PaperTrade {
     pub timestamp: u64,
 }
 
-/// Tracks provision progress (written by provision_core, read by operator API).
+// ── Activation progress (two-phase provisioning: secrets config) ─────────
+
+static ACTIVATIONS: OnceCell<PersistentStore<ActivationProgress>> = OnceCell::new();
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProvisionProgress {
-    pub call_id: u64,
-    pub service_id: u64,
-    /// Phase: "creating_sidecar" | "running_setup" | "creating_workflow" | "storing_record" | "complete"
+pub struct ActivationProgress {
+    pub bot_id: String,
     pub phase: String,
     pub detail: String,
-    pub bot_id: Option<String>,
-    pub sandbox_id: Option<String>,
     pub started_at: u64,
     pub updated_at: u64,
 }
 
-pub fn provisions() -> Result<&'static PersistentStore<ProvisionProgress>, String> {
-    PROVISIONS
+pub fn activations() -> Result<&'static PersistentStore<ActivationProgress>, String> {
+    ACTIVATIONS
         .get_or_try_init(|| {
-            let path = sandbox_runtime::store::state_dir().join("provision-progress.json");
+            let path = sandbox_runtime::store::state_dir().join("activation-progress.json");
             PersistentStore::open(path).map_err(|e| e.to_string())
         })
         .map_err(|e: String| e)
 }
 
-pub fn provision_key(call_id: u64) -> String {
-    format!("provision:{call_id}")
+pub fn activation_key(bot_id: &str) -> String {
+    format!("activation:{bot_id}")
 }
 
-/// Update provision progress (convenience helper).
-pub fn update_provision_progress(
-    call_id: u64,
-    service_id: u64,
-    phase: &str,
-    detail: &str,
-    bot_id: Option<&str>,
-    sandbox_id: Option<&str>,
-) {
+pub fn update_activation_progress(bot_id: &str, phase: &str, detail: &str) {
     let now = chrono::Utc::now().timestamp() as u64;
-    if let Ok(store) = provisions() {
-        // Preserve started_at from initial entry
+    if let Ok(store) = activations() {
         let started_at = store
-            .get(&provision_key(call_id))
+            .get(&activation_key(bot_id))
             .ok()
             .flatten()
             .map(|p| p.started_at)
             .unwrap_or(now);
 
         let _ = store.insert(
-            provision_key(call_id),
-            ProvisionProgress {
-                call_id,
-                service_id,
+            activation_key(bot_id),
+            ActivationProgress {
+                bot_id: bot_id.to_string(),
                 phase: phase.to_string(),
                 detail: detail.to_string(),
-                bot_id: bot_id.map(String::from),
-                sandbox_id: sandbox_id.map(String::from),
                 started_at,
                 updated_at: now,
             },
@@ -117,16 +112,14 @@ pub fn update_provision_progress(
     }
 }
 
-/// Get a single provision progress record.
-pub fn get_provision(call_id: u64) -> Result<Option<ProvisionProgress>, String> {
-    provisions()?.get(&provision_key(call_id)).map_err(|e| e.to_string())
+pub fn get_activation(bot_id: &str) -> Result<Option<ActivationProgress>, String> {
+    activations()?.get(&activation_key(bot_id)).map_err(|e| e.to_string())
 }
 
-/// List all provision progress records (newest first).
-pub fn list_provisions() -> Result<Vec<ProvisionProgress>, String> {
-    let mut all = provisions()?.values().map_err(|e| e.to_string())?;
-    all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(all)
+pub fn clear_activation(bot_id: &str) {
+    if let Ok(store) = activations() {
+        let _ = store.remove(&activation_key(bot_id));
+    }
 }
 
 pub fn bots() -> Result<&'static PersistentStore<TradingBotRecord>, String> {
@@ -270,6 +263,9 @@ mod tests {
             max_lifetime_days: 30,
             paper_trade: true,
             wind_down_started_at: None,
+            submitter_address: String::new(),
+            secrets_configured: false,
+            user_env_json: None,
         }
     }
 

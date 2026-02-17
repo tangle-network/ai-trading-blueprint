@@ -29,6 +29,9 @@ pub struct TradingApiState {
     pub paper_trade: bool,
     /// Wallet address of the bot owner (for session auth verification).
     pub operator_address: String,
+    /// Address of the user who provisioned this bot (for session auth).
+    #[allow(dead_code)]
+    pub submitter_address: String,
     /// Sidecar container base URL (e.g. "http://localhost:8080").
     pub sidecar_url: String,
     /// Bearer token for authenticating with the sidecar API.

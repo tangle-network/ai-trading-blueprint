@@ -113,11 +113,12 @@ export function useProvisionWatcher() {
                   parseAbiParameters('address, address, string, uint64'),
                   output,
                 );
+                const workflowId = Number(decoded[3]);
                 updateProvision(prov.id, {
-                  phase: 'active',
+                  phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
                   vaultAddress: decoded[0] as string,
                   sandboxId: decoded[2] as string,
-                  workflowId: Number(decoded[3]),
+                  workflowId,
                 });
               } catch {
                 updateProvision(prov.id, { phase: 'active' });
@@ -178,7 +179,7 @@ export function useProvisionWatcher() {
             updateProvision(prov.id, {
               phase: 'job_processing',
               progressPhase: progress.phase,
-              progressDetail: progress.detail,
+              progressDetail: progress.message,
               // If the operator reports the bot as complete, also grab sandbox info
               ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
             });

@@ -4,13 +4,17 @@ const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 export interface ProvisionProgress {
   call_id: number;
-  service_id: number;
   phase: string;
-  detail: string;
-  bot_id: string | null;
+  message: string | null;
   sandbox_id: string | null;
+  progress_pct: number;
   started_at: number;
   updated_at: number;
+  metadata: {
+    service_id?: number;
+    bot_id?: string;
+    sandbox_id?: string;
+  } | null;
 }
 
 /**

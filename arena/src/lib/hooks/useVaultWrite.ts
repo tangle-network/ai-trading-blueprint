@@ -43,22 +43,38 @@ export function useDeposit() {
   return { deposit, hash, isPending, isConfirming, isSuccess, error, reset };
 }
 
-/** Redeem shares from the vault (shares → assets). */
+interface RedeemCallbacks {
+  onHash?: (hash: `0x${string}`) => void;
+  onError?: (error: Error) => void;
+}
+
+/** Redeem shares from the vault (shares -> assets). */
 export function useRedeem() {
   const { address: userAddress } = useAccount();
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  function redeem(vaultAddress: Address, shares: string, shareDecimals: number) {
+  function redeem(
+    vaultAddress: Address,
+    shares: string,
+    shareDecimals: number,
+    callbacks?: RedeemCallbacks,
+  ) {
     if (!userAddress) return;
     const parsed = parseUnits(shares, shareDecimals);
-    writeContract({
-      chainId: selectedChainIdStore.get(),
-      address: vaultAddress,
-      abi: tradingVaultAbi,
-      functionName: 'redeem',
-      args: [parsed, userAddress, userAddress],
-    });
+    writeContract(
+      {
+        chainId: selectedChainIdStore.get(),
+        address: vaultAddress,
+        abi: tradingVaultAbi,
+        functionName: 'redeem',
+        args: [parsed, userAddress, userAddress],
+      },
+      {
+        onSuccess(h) { callbacks?.onHash?.(h); },
+        onError(e) { callbacks?.onError?.(e); },
+      },
+    );
   }
 
   return { redeem, hash, isPending, isConfirming, isSuccess, error, reset };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import {
@@ -377,6 +377,16 @@ const STEP_LABELS: Record<WizardStep, string> = {
   deploy: 'Provision',
 };
 
+/** Maps Rust provision progress phases to human-readable labels */
+const PROVISION_PROGRESS_LABELS: Record<string, string> = {
+  queued: 'Preparing environment...',
+  image_pull: 'Pulling container image...',
+  container_create: 'Launching container (this may take 10-30s)...',
+  container_start: 'Container ready, finalizing configuration...',
+  health_check: 'Saving bot configuration...',
+  ready: 'Submitting on-chain result...',
+};
+
 function phaseLabel(phase: ProvisionPhase): string {
   switch (phase) {
     case 'pending_confirmation':
@@ -385,6 +395,8 @@ function phaseLabel(phase: ProvisionPhase): string {
       return 'Submitted';
     case 'job_processing':
       return 'Processing';
+    case 'awaiting_secrets':
+      return 'Needs Config';
     case 'active':
       return 'Active';
     case 'failed':
@@ -400,6 +412,8 @@ function phaseDotClass(phase: ProvisionPhase): string {
       return 'bg-amber-400 animate-pulse';
     case 'job_processing':
       return 'bg-amber-400 animate-pulse';
+    case 'awaiting_secrets':
+      return 'bg-amber-400';
     case 'active':
       return 'bg-arena-elements-icon-success';
     case 'failed':
@@ -554,7 +568,7 @@ export default function ProvisionPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Step 4 — deploy
-  const { writeContract, data: txHash, isPending, error: txError, reset: resetTx } =
+  const { writeContract, data: txHash, isPending, reset: resetTx } =
     useWriteContract();
 
   // Provisions store
@@ -583,9 +597,7 @@ export default function ProvisionPage() {
   // Second writeContract for new service (separate from job submission)
   const {
     writeContract: writeNewService,
-    data: newServiceWriteHash,
     isPending: isNewServicePending,
-    error: newServiceError,
   } = useWriteContract();
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
@@ -593,13 +605,15 @@ export default function ProvisionPage() {
   const effectiveCron = customCron || selectedPack.cron;
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
 
-  // Reset customizations when strategy changes
-  useEffect(() => {
+  // Reset customizations when strategy changes (computed during render)
+  const prevStrategyRef = useRef(strategyType);
+  if (prevStrategyRef.current !== strategyType) {
+    prevStrategyRef.current = strategyType;
     setCustomExpertKnowledge('');
     setCustomInstructions('');
     setCustomCron('');
     setCustomMaxTurns('');
-  }, [strategyType]);
+  }
 
   // Reset new service deploying state when switching modes
   useEffect(() => {
@@ -629,24 +643,6 @@ export default function ProvisionPage() {
     });
   }, [txHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (txError) toast.error(`Transaction failed: ${txError.message.slice(0, 120)}`);
-  }, [txError]);
-
-  // Track new service TX hash — wallet confirmed, now we're deploying
-  useEffect(() => {
-    if (newServiceWriteHash) {
-      setNewServiceTxHash(newServiceWriteHash);
-      setNewServiceDeploying(true);
-    }
-  }, [newServiceWriteHash]);
-
-  useEffect(() => {
-    if (newServiceError) {
-      toast.error(`New service failed: ${newServiceError.message.slice(0, 120)}`);
-      setNewServiceDeploying(false);
-    }
-  }, [newServiceError]);
 
   // Wait for new service TX receipt
   useEffect(() => {
@@ -904,13 +900,12 @@ export default function ProvisionPage() {
 
     const inputs = encodeAbiParameters(
       parseAbiParameters(
-        'string, string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
+        'string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
       ),
       [
         name,
         strategyType,
         JSON.stringify(strategyConfig),
-        '{}',
         '{}',
         zeroAddress,
         (import.meta.env.VITE_USDC_ADDRESS ??
@@ -931,13 +926,20 @@ export default function ProvisionPage() {
     // The serviceId selected in the UI is stored in provision metadata only.
     const operatorServiceId = 0n;
 
-    writeContract({
-      address: addresses.tangle,
-      abi: tangleJobsAbi,
-      functionName: 'submitJob',
-      chainId: targetChain.id,
-      args: [operatorServiceId, 0, inputs],
-    });
+    writeContract(
+      {
+        address: addresses.tangle,
+        abi: tangleJobsAbi,
+        functionName: 'submitJob',
+        chainId: targetChain.id,
+        args: [operatorServiceId, 0, inputs],
+      },
+      {
+        onError(err) {
+          toast.error(`Transaction failed: ${err.message.slice(0, 120)}`);
+        },
+      },
+    );
   };
 
   // ── New service deployment ────────────────────────────────────────────
@@ -971,12 +973,11 @@ export default function ProvisionPage() {
     // Encode a minimal config for the service
     const config = encodeAbiParameters(
       parseAbiParameters(
-        'string, string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
+        'string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
       ),
       [
         '',
         '',
-        '{}',
         '{}',
         '{}',
         zeroAddress,
@@ -1011,14 +1012,26 @@ export default function ProvisionPage() {
       operator: q.operator,
     }));
 
-    writeNewService({
-      address: addresses.tangle,
-      abi: tangleServicesAbi,
-      functionName: 'createServiceFromQuotes',
-      chainId: targetChain.id,
-      args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
-      value: totalCost,
-    });
+    writeNewService(
+      {
+        address: addresses.tangle,
+        abi: tangleServicesAbi,
+        functionName: 'createServiceFromQuotes',
+        chainId: targetChain.id,
+        args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
+        value: totalCost,
+      },
+      {
+        onSuccess(hash) {
+          setNewServiceTxHash(hash);
+          setNewServiceDeploying(true);
+        },
+        onError(err) {
+          toast.error(`New service failed: ${err.message.slice(0, 120)}`);
+          setNewServiceDeploying(false);
+        },
+      },
+    );
   };
 
   // ── Step navigation ────────────────────────────────────────────────────
@@ -1168,10 +1181,11 @@ export default function ProvisionPage() {
 
             <Card>
               <CardContent className="pt-5 pb-4">
-                <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                <label htmlFor="agent-name" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                   Agent Name
                 </label>
                 <Input
+                  id="agent-name"
                   placeholder="e.g. Alpha DEX Bot"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -1181,9 +1195,9 @@ export default function ProvisionPage() {
 
             <Card>
               <CardContent className="pt-5 pb-5 space-y-4">
-                <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                   Strategy Profile
-                </label>
+                </span>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                   {strategyPacks.map((p) => {
                     const active = strategyType === p.id;
@@ -1243,9 +1257,9 @@ export default function ProvisionPage() {
               <Card>
                 <CardContent className="pt-5 pb-5 space-y-4">
                   <div>
-                    <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                    <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                       Provision Agent
-                    </label>
+                    </span>
                     <p className="text-xs text-arena-elements-textTertiary mt-1">
                       This submits a job to Service {serviceId}. The operator will spin up a sidecar container
                       running your trading agent with the configuration below.
@@ -1289,10 +1303,10 @@ export default function ProvisionPage() {
               <Card>
                 <CardContent className="pt-5 pb-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                    <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                       Agent Provisioning
-                    </label>
-                    {latestDeployment && !['active', 'failed'].includes(latestDeployment.phase) && (
+                    </span>
+                    {latestDeployment && !['active', 'awaiting_secrets', 'failed'].includes(latestDeployment.phase) && (
                       <ElapsedTime since={latestDeployment.createdAt} />
                     )}
                   </div>
@@ -1300,7 +1314,11 @@ export default function ProvisionPage() {
                   {/* Vertical timeline */}
                   <div className="relative pl-6">
                     {/* Connecting line */}
-                    <div className="absolute left-[7px] top-[6px] bottom-[6px] w-px bg-arena-elements-borderColor" />
+                    <div className="absolute left-[7px] top-[6px] bottom-[6px] w-px bg-arena-elements-borderColor overflow-hidden">
+                      {latestDeployment && ['job_submitted', 'job_processing'].includes(latestDeployment.phase) && (
+                        <div className="absolute inset-0 w-full bg-gradient-to-b from-transparent via-amber-400/60 to-transparent animate-pulse" />
+                      )}
+                    </div>
 
                     <TimelineStage
                       label="Transaction Sent"
@@ -1310,6 +1328,7 @@ export default function ProvisionPage() {
                           ? 'active'
                           : latestDeployment?.phase === 'job_submitted' ||
                               latestDeployment?.phase === 'job_processing' ||
+                              latestDeployment?.phase === 'awaiting_secrets' ||
                               latestDeployment?.phase === 'active'
                             ? 'done'
                             : latestDeployment?.phase === 'failed'
@@ -1320,10 +1339,30 @@ export default function ProvisionPage() {
                     />
                     <TimelineStage
                       label="Operator Processing"
-                      description="An operator detected your job and is provisioning a sidecar container, deploying the vault, and starting your trading agent"
+                      description={
+                        latestDeployment?.phase === 'job_submitted' || latestDeployment?.phase === 'job_processing'
+                          ? (PROVISION_PROGRESS_LABELS[latestDeployment?.progressPhase ?? ''] ?? 'Waiting for an operator to pick up your job...')
+                          : latestDeployment?.phase === 'awaiting_secrets' || latestDeployment?.phase === 'active'
+                            ? 'Infrastructure provisioned successfully'
+                            : 'An operator will detect your job and provision a sidecar container'
+                      }
                       status={
                         latestDeployment?.phase === 'job_submitted' ||
                         latestDeployment?.phase === 'job_processing'
+                          ? 'active'
+                          : latestDeployment?.phase === 'awaiting_secrets' ||
+                              latestDeployment?.phase === 'active'
+                            ? 'done'
+                            : latestDeployment?.phase === 'failed'
+                              ? 'error'
+                              : 'pending'
+                      }
+                    />
+                    <TimelineStage
+                      label="Configure API Keys"
+                      description="Infrastructure deployed. Provide your API keys on the dashboard to activate the agent."
+                      status={
+                        latestDeployment?.phase === 'awaiting_secrets'
                           ? 'active'
                           : latestDeployment?.phase === 'active'
                             ? 'done'
@@ -1349,6 +1388,23 @@ export default function ProvisionPage() {
                   {latestDeployment?.phase === 'failed' && latestDeployment.errorMessage && (
                     <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
                       {latestDeployment.errorMessage}
+                    </div>
+                  )}
+
+                  {latestDeployment?.phase === 'awaiting_secrets' && (
+                    <div className="p-3.5 rounded-lg bg-amber-500/5 border border-amber-500/30 space-y-2">
+                      <div className="text-sm font-display font-medium text-amber-600 dark:text-amber-400">
+                        Infrastructure Deployed — API Keys Required
+                      </div>
+                      <p className="text-sm text-arena-elements-textSecondary">
+                        Your sidecar and vault are ready. Configure your API keys on the dashboard to start trading.
+                      </p>
+                      <Link
+                        to="/dashboard"
+                        className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
+                      >
+                        Configure API Keys &rarr;
+                      </Link>
                     </div>
                   )}
 
@@ -1414,12 +1470,12 @@ export default function ProvisionPage() {
               <Button variant="outline" onClick={goBack} disabled={!!txHash}>
                 Back
               </Button>
-              {txHash && !latestDeployment?.phase?.match(/active|failed/) && (
+              {txHash && !latestDeployment?.phase?.match(/active|awaiting_secrets|failed/) && (
                 <span className="text-sm text-arena-elements-textTertiary animate-pulse self-center">
                   Waiting for operator...
                 </span>
               )}
-              {latestDeployment?.phase === 'active' && (
+              {(latestDeployment?.phase === 'active' || latestDeployment?.phase === 'awaiting_secrets') && (
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1451,9 +1507,9 @@ export default function ProvisionPage() {
           <Card>
             <CardContent className="pt-5 pb-4 space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                   Recent Deployments
-                </label>
+                </span>
                 <Link
                   to="/dashboard"
                   className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
@@ -1539,9 +1595,9 @@ export default function ProvisionPage() {
           <div className="space-y-5 py-2">
             {/* Service mode toggle */}
             <div className="space-y-2">
-              <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+              <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                 Service
-              </label>
+              </span>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -1596,9 +1652,9 @@ export default function ProvisionPage() {
             {serviceMode === 'new' && (
               <div className="space-y-3">
                 <div>
-                  <label className="text-sm font-data text-arena-elements-textSecondary block mb-2">
+                  <span className="text-sm font-data text-arena-elements-textSecondary block mb-2">
                     Select Operators ({operatorCount.toString()} available)
-                  </label>
+                  </span>
                   {discoveredOperators.length > 0 ? (
                     <div className="grid gap-1.5">
                       {discoveredOperators.map((op) => {
@@ -1797,10 +1853,11 @@ export default function ProvisionPage() {
             <TabsContent value="settings" className="flex-1 mt-3">
               <div className="space-y-5 p-px">
                 <div>
-                  <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  <label htmlFor="cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                     Cron Schedule
                   </label>
                   <Input
+                    id="cron-schedule"
                     value={customCron || selectedPack.cron}
                     onChange={(e) => setCustomCron(e.target.value)}
                     className="font-data"
@@ -1811,10 +1868,11 @@ export default function ProvisionPage() {
                   </p>
                 </div>
                 <div>
-                  <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  <label htmlFor="max-turns" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                     Max Turns Per Iteration
                   </label>
                   <Input
+                    id="max-turns"
                     type="number"
                     min="1"
                     max="50"
@@ -1824,17 +1882,17 @@ export default function ProvisionPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                     Timeout
-                  </label>
+                  </span>
                   <span className="text-sm font-data text-arena-elements-textPrimary">
                     {selectedPack.timeoutMs / 1000}s per iteration
                   </span>
                 </div>
                 <div>
-                  <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                     Providers
-                  </label>
+                  </span>
                   <div className="flex flex-wrap gap-1.5">
                     {selectedPack.providers.map((p) => (
                       <span
@@ -1924,7 +1982,7 @@ function TimelineStage({
           {label}
         </div>
         <div
-          className={`text-xs font-data leading-relaxed mt-0.5 ${
+          className={`text-xs font-data leading-relaxed mt-0.5 transition-opacity duration-300 ${
             status === 'active'
               ? 'text-arena-elements-textSecondary'
               : 'text-arena-elements-textTertiary'
@@ -1979,9 +2037,9 @@ function ServiceDropdown({
 
       {discoveredServices.length > 0 && (
         <div className="relative">
-          <label className="text-sm font-data text-arena-elements-textSecondary block mb-2">
+          <span className="text-sm font-data text-arena-elements-textSecondary block mb-2">
             Select Service
-          </label>
+          </span>
 
           {/* Selected service trigger */}
           <button

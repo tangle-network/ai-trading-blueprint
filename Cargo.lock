@@ -2162,7 +2162,7 @@ dependencies = [
  "jsonwebtoken",
  "k256",
  "once_cell",
- "pasetors",
+ "pasetors 0.7.7",
  "pem 1.1.1",
  "prost",
  "protobuf-src",
@@ -6934,6 +6934,23 @@ dependencies = [
 
 [[package]]
 name = "pasetors"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b36d47c66f2230dd1b7143d9afb2b4891879020210eddf2ccb624e529b96dba"
+dependencies = [
+ "ct-codecs",
+ "ed25519-compact",
+ "getrandom 0.2.17",
+ "orion",
+ "regex",
+ "serde_json",
+ "subtle",
+ "time",
+ "zeroize",
+]
+
+[[package]]
+name = "pasetors"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03e1ed71dcdf863d9f66d9de86de714db38aedc2fcabc1a60207d1fde603e2d5"
@@ -8173,7 +8190,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8262,17 +8279,23 @@ name = "sandbox-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "blueprint-sdk",
  "chrono",
  "docktopus",
  "hex",
+ "k256",
  "once_cell",
+ "pasetors 0.6.8",
  "rand 0.8.5",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "subtle",
+ "time",
+ "tiny-keccak",
  "tokio",
+ "tower-http",
  "uuid 1.21.0",
 ]
 

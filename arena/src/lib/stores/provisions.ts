@@ -2,7 +2,7 @@ import { computed } from 'nanostores';
 import type { Address } from 'viem';
 import { persistedAtom } from './persistedAtom';
 
-export type ProvisionPhase = 'pending_confirmation' | 'job_submitted' | 'job_processing' | 'active' | 'failed';
+export type ProvisionPhase = 'pending_confirmation' | 'job_submitted' | 'job_processing' | 'awaiting_secrets' | 'active' | 'failed';
 
 export interface TrackedProvision {
   /** txHash once available, used as stable ID */

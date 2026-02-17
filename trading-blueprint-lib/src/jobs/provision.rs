@@ -1,7 +1,7 @@
 use blueprint_sdk::tangle::extract::{CallId, Caller, TangleArg, TangleResult};
-use serde_json::json;
+use sandbox_runtime::provision_progress::{self, ProvisionPhase};
 
-use crate::state::{TradingBotRecord, bot_key, bots, update_provision_progress};
+use crate::state::{TradingBotRecord, bot_key, bots};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
@@ -15,23 +15,37 @@ use sandbox_runtime::SandboxRecord;
 /// Note: Vault creation happens on-chain in Solidity `onServiceInitialized`,
 /// NOT here.  The `factory_address` field is used as the pre-deployed vault
 /// address (set by the BSM contract before the operator receives the job).
+///
+/// Two-phase provisioning (always):
+///   1. Sidecar created with base env only (no secrets)
+///   2. Bot record stored with `secrets_configured=false`, `trading_active=false`
+///   3. Returns `workflow_id: 0` to signal "awaiting secrets"
+///   4. User pushes secrets via operator API → sidecar recreated → workflow created
+///
+/// Any `env_json` in the on-chain request is **ignored** to prevent secrets
+/// from leaking into on-chain calldata.
 pub async fn provision_core(
     request: TradingProvisionRequest,
     mock_sandbox: Option<SandboxRecord>,
     call_id: u64,
     service_id: u64,
+    caller: String,
 ) -> Result<TradingProvisionOutput, String> {
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
     let api_token = sandbox_runtime::auth::generate_token();
 
-    update_provision_progress(call_id, service_id, "initializing", "Preparing environment", None, None);
+    // Start tracking provision progress via sandbox-runtime
+    let _ = provision_progress::start_provision(call_id);
+    let _ = provision_progress::update_provision_metadata(
+        call_id,
+        serde_json::json!({ "service_id": service_id }),
+    );
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
 
     // 3. Resolve validator endpoints via discovery module
-    //    Tries on-chain discovery (per-service env vars) then VALIDATOR_ENDPOINTS fallback.
     let validator_service_ids_slice: Vec<u64> = request
         .validator_service_ids
         .iter()
@@ -58,7 +72,12 @@ pub async fn provision_core(
     let trading_api_url = std::env::var("TRADING_API_URL")
         .unwrap_or_else(|_| "http://host.docker.internal:9100".to_string());
 
-    // 5. Build env_json for sidecar
+    // 5. Resolve operator address early (needed in both env and bot record)
+    let operator_address = op_ctx
+        .map(|c| c.operator_address.clone())
+        .unwrap_or_default();
+
+    // 6. Build base env_json for sidecar (no secrets — never from on-chain data)
     let mut env = serde_json::Map::new();
     env.insert(
         "TRADING_HTTP_API_URL".into(),
@@ -88,6 +107,14 @@ pub async fn provision_core(
         "CHAIN_ID".into(),
         serde_json::Value::String(chain_id.to_string()),
     );
+    env.insert(
+        "OPERATOR_ADDRESS".into(),
+        serde_json::Value::String(operator_address.clone()),
+    );
+    env.insert(
+        "SUBMITTER_ADDRESS".into(),
+        serde_json::Value::String(caller.clone()),
+    );
 
     // Pass discovered validator endpoints to sidecar
     if !validator_endpoints.is_empty() {
@@ -97,19 +124,15 @@ pub async fn provision_core(
         );
     }
 
-    // Merge user-provided env vars
-    if !request.env_json.trim().is_empty() {
-        if let Ok(user_env) =
-            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&request.env_json)
-        {
-            env.extend(user_env);
-        }
-    }
-
     let env_json = serde_json::to_string(&env).unwrap_or_default();
 
     // 6. Create sidecar sandbox (or use mock)
-    update_provision_progress(call_id, service_id, "creating_sidecar", "Launching Docker container", None, None);
+    let _ = provision_progress::update_provision(
+        call_id,
+        ProvisionPhase::ContainerCreate,
+        Some("Launching Docker container".into()),
+        None,
+    );
 
     let record = if let Some(r) = mock_sandbox {
         r
@@ -133,8 +156,9 @@ pub async fn provision_core(
             cpu_cores: request.cpu_cores,
             memory_mb: request.memory_mb,
             disk_gb: 10,
-            sidecar_token: String::new(), // Auto-generated
             tee_config: None,
+            owner: String::new(),
+            secrets_pending: true, // Two-phase: secrets arrive via operator API
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, None)
@@ -143,11 +167,14 @@ pub async fn provision_core(
         r
     };
 
-    // 7. Build TradingBotRecord (before workflow so pack can reference it)
-    let operator_address = op_ctx
-        .map(|c| c.operator_address.clone())
-        .unwrap_or_default();
+    let _ = provision_progress::update_provision(
+        call_id,
+        ProvisionPhase::ContainerStart,
+        Some("Container launched successfully".into()),
+        Some(record.id.clone()),
+    );
 
+    // 8. Build TradingBotRecord — always awaiting secrets
     let validator_service_ids: Vec<u64> = request
         .validator_service_ids
         .iter()
@@ -155,12 +182,6 @@ pub async fn provision_core(
         .collect();
 
     let max_lifetime_days = if request.max_lifetime_days == 0 { 30 } else { request.max_lifetime_days };
-    // Use timestamp_millis + random bits to avoid collisions in parallel tests
-    let workflow_id = {
-        let ts = chrono::Utc::now().timestamp_millis() as u64;
-        let rand_bits = (uuid::Uuid::new_v4().as_u128() & 0xFFFF) as u64;
-        ts.wrapping_mul(100_000).wrapping_add(rand_bits)
-    };
 
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
@@ -174,108 +195,45 @@ pub async fn provision_core(
         rpc_url,
         trading_api_url,
         trading_api_token: api_token,
-        workflow_id: Some(workflow_id),
-        trading_active: true,
+        workflow_id: None,
+        trading_active: false,
         created_at: chrono::Utc::now().timestamp() as u64,
         operator_address,
         validator_service_ids,
         max_lifetime_days,
         paper_trade: true,
         wind_down_started_at: None,
+        submitter_address: caller,
+        secrets_configured: false,
+        user_env_json: None,
     };
 
-    // 8. Look up strategy pack and run setup commands
-    update_provision_progress(call_id, service_id, "running_setup", "Installing strategy dependencies", Some(&bot_id), Some(&record.id));
-
-    let pack = crate::prompts::packs::get_pack(&request.strategy_type);
-
-    if let Some(ref p) = pack {
-        for cmd in &p.setup_commands {
-            let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
-                sidecar_url: record.sidecar_url.clone(),
-                command: cmd.clone(),
-                cwd: String::new(),
-                env_json: String::new(),
-                timeout_ms: 300_000, // 5 min for pip installs
-                sidecar_token: record.token.clone(),
-            };
-            if let Err(e) = ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req).await {
-                tracing::warn!("Pack setup command failed (non-fatal): {cmd}: {e}");
-            }
-        }
-    }
-
-    // 9. Create cron workflow for trading loop
-    update_provision_progress(call_id, service_id, "creating_workflow", "Configuring trading loop", Some(&bot_id), Some(&record.id));
-    let (loop_prompt, backend_profile) = match &pack {
-        Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p),
-            crate::prompts::build_pack_agent_profile(p, &bot_record),
-        ),
-        None => (
-            crate::prompts::build_loop_prompt(&request.strategy_type),
-            crate::prompts::build_generic_agent_profile(
-                &request.strategy_type,
-                &bot_record,
-            ),
-        ),
-    };
-
-    let wf = json!({
-        "sidecar_url": record.sidecar_url,
-        "prompt": loop_prompt,
-        "session_id": format!("trading-{bot_id}"),
-        "max_turns": pack.as_ref().map(|p| p.max_turns).filter(|&t| t > 0).unwrap_or(10),
-        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(120_000),
-        "sidecar_token": record.token,
-        "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
-    });
-    let workflow_json = wf.to_string();
-
-    let cron_config = if request.trading_loop_cron.is_empty() {
-        pack.as_ref()
-            .map(|p| p.default_cron.clone())
-            .unwrap_or_else(|| "0 */5 * * * *".to_string())
-    } else {
-        request.trading_loop_cron.clone()
-    };
-
-    let next_run = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
-        "cron",
-        &cron_config,
+    // 8. Store bot record
+    let _ = provision_progress::update_provision(
+        call_id,
+        ProvisionPhase::HealthCheck,
+        Some("Finalizing bot configuration".into()),
         None,
-    )
-    .unwrap_or(None);
-
-    let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
-        id: workflow_id,
-        name: format!("trading-loop-{bot_id}"),
-        workflow_json,
-        trigger_type: "cron".to_string(),
-        trigger_config: cron_config,
-        sandbox_config_json: String::new(),
-        active: true,
-        next_run_at: next_run,
-        last_run_at: None,
-    };
-
-    ai_agent_sandbox_blueprint_lib::workflows::workflows()?
-        .insert(
-            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id),
-            entry,
-        )
-        .map_err(|e| format!("Failed to store workflow: {e}"))?;
-
-    // 10. Store bot record
-    update_provision_progress(call_id, service_id, "storing_record", "Finalizing bot configuration", Some(&bot_id), Some(&record.id));
+    );
+    let _ = provision_progress::update_provision_metadata(
+        call_id,
+        serde_json::json!({ "service_id": service_id, "bot_id": &bot_id, "sandbox_id": &record.id }),
+    );
 
     bots()?
         .insert(bot_key(&bot_id), bot_record)
         .map_err(|e| format!("Failed to store bot record: {e}"))?;
 
-    update_provision_progress(call_id, service_id, "complete", "Provision complete", Some(&bot_id), Some(&record.id));
+    let _ = provision_progress::update_provision(
+        call_id,
+        ProvisionPhase::Ready,
+        Some("Provision complete — awaiting API key configuration".into()),
+        None,
+    );
 
-    // 11. Return result
+    tracing::info!("Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}, Vault: {vault_address}", record.id);
+
+    // 9. Return result — workflow_id=0 signals "awaiting secrets" to the frontend
     let vault_addr_parsed: alloy::primitives::Address = vault_address
         .parse()
         .unwrap_or(request.factory_address);
@@ -284,18 +242,20 @@ pub async fn provision_core(
         vault_address: vault_addr_parsed,
         share_token: alloy::primitives::Address::ZERO,
         sandbox_id: record.id,
-        workflow_id,
+        workflow_id: 0,
     })
 }
 
 /// Provision a new trading bot instance (Tangle handler).
 pub async fn provision(
     CallId(call_id): CallId,
-    Caller(_caller): Caller,
+    Caller(caller): Caller,
     TangleArg(request): TangleArg<TradingProvisionRequest>,
 ) -> Result<TangleResult<TradingProvisionOutput>, String> {
     let service_id = crate::context::operator_context()
         .map(|c| c.service_id)
         .unwrap_or(0);
-    Ok(TangleResult(provision_core(request, None, call_id, service_id).await?))
+    let caller_addr = alloy::primitives::Address::from(caller);
+    let caller_str = format!("{caller_addr:#x}");
+    Ok(TangleResult(provision_core(request, None, call_id, service_id, caller_str).await?))
 }

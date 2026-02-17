@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { parseUnits, formatUnits } from 'viem';
 import type { Address } from 'viem';
@@ -44,26 +44,21 @@ export function WithdrawForm({
     ? (parseFloat(shares) * sharePrice).toFixed(4)
     : null;
 
+  // Track confirmation (isSuccess from useWaitForTransactionReceipt) via ref
+  // to avoid firing the callback multiple times during re-renders.
+  const confirmedRef = useRef(false);
   useEffect(() => {
-    if (redeem.isSuccess) {
+    if (redeem.isSuccess && !confirmedRef.current) {
+      confirmedRef.current = true;
       toast.success('Withdrawal confirmed!');
       redeem.reset();
       setShares('');
       onSuccess();
     }
-  }, [redeem.isSuccess]);
-
-  useEffect(() => {
-    if (redeem.error) {
-      toast.error(`Withdrawal failed: ${redeem.error.message.slice(0, 100)}`);
-      redeem.reset();
+    if (!redeem.isSuccess) {
+      confirmedRef.current = false;
     }
-  }, [redeem.error]);
-
-  // Register tx in history store
-  useEffect(() => {
-    if (redeem.hash) addTx(redeem.hash, `Withdraw ${shares || '?'} shares`, selectedChainIdStore.get());
-  }, [redeem.hash]);
+  }, [redeem.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClick = () => {
     if (!shares || parseFloat(shares) <= 0) {
@@ -74,7 +69,15 @@ export function WithdrawForm({
       toast.error('Insufficient shares');
       return;
     }
-    redeem.redeem(vaultAddress, shares, shareDecimals);
+    redeem.redeem(vaultAddress, shares, shareDecimals, {
+      onHash(h) {
+        addTx(h, `Withdraw ${shares || '?'} shares`, selectedChainIdStore.get());
+      },
+      onError(e) {
+        toast.error(`Withdrawal failed: ${e.message.slice(0, 100)}`);
+        redeem.reset();
+      },
+    });
   };
 
   const isPending = redeem.isPending || redeem.isConfirming;
@@ -122,7 +125,7 @@ export function WithdrawForm({
         <div className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2.5">
-              <label className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
+              <label htmlFor="withdraw-shares" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
                 Shares
               </label>
               {userSharesFormatted != null && (
@@ -136,6 +139,7 @@ export function WithdrawForm({
               )}
             </div>
             <Input
+              id="withdraw-shares"
               type="number"
               placeholder="0.00"
               value={shares}

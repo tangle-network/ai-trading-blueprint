@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Session, Message } from '~/lib/types/session';
+import type { Session } from '~/lib/types/session';
 
 async function sessionFetch<T>(
   apiUrl: string,
@@ -28,53 +28,6 @@ export function useSessions(apiUrl: string, token: string | null) {
     queryFn: () => sessionFetch<Session[]>(apiUrl, token!, '/session/sessions'),
     enabled: !!token,
     staleTime: 30_000,
-  });
-}
-
-export function useMessages(apiUrl: string, token: string | null, sessionId: string) {
-  return useQuery<Message[]>({
-    queryKey: ['session-messages', apiUrl, token, sessionId],
-    queryFn: async () => {
-      const data = await sessionFetch<Message[] | { messages: Message[] }>(
-        apiUrl,
-        token!,
-        `/session/sessions/${encodeURIComponent(sessionId)}/messages`,
-      );
-      return Array.isArray(data) ? data : data.messages ?? [];
-    },
-    enabled: !!token && !!sessionId,
-    staleTime: 5_000,
-    refetchInterval: 10_000,
-  });
-}
-
-export function useSendMessage(apiUrl: string, token: string | null, sessionId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (text: string) => {
-      return sessionFetch<Message>(apiUrl, token!, `/session/sessions/${encodeURIComponent(sessionId)}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({
-          parts: [{ type: 'text', text }],
-        }),
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['session-messages', apiUrl, token, sessionId],
-      });
-    },
-  });
-}
-
-export function useAbortExecution(apiUrl: string, token: string | null, sessionId: string) {
-  return useMutation({
-    mutationFn: async () => {
-      return sessionFetch<unknown>(apiUrl, token!, `/session/sessions/${encodeURIComponent(sessionId)}/abort`, {
-        method: 'POST',
-      });
-    },
   });
 }
 
