@@ -1,21 +1,21 @@
 import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
-import { parseUnits, maxUint256 } from 'viem';
+import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
 import { selectedChainIdStore } from '~/lib/contracts/publicClient';
 
-/** Approve the vault to spend the asset token. */
+/** Approve the vault to spend exactly the requested amount of the asset token. */
 export function useApprove() {
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  function approve(tokenAddress: Address, spender: Address) {
+  function approve(tokenAddress: Address, spender: Address, amount: bigint) {
     writeContract({
       chainId: selectedChainIdStore.get(),
       address: tokenAddress,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [spender, maxUint256],
+      args: [spender, amount],
     });
   }
 

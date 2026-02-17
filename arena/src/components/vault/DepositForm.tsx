@@ -46,7 +46,7 @@ export function DepositForm({
     ? parseUnits(amount, assetDecimals)
     : 0n;
 
-  // If we just approved (maxUint256), skip the allowance check
+  // If we just approved, skip the allowance check until refetch completes
   const needsApproval = !justApproved && parsedAmount > 0n && (userAllowance ?? 0n) < parsedAmount;
 
   const sharesReceived = amount && parseFloat(amount) > 0 && sharePrice && sharePrice > 0
@@ -120,7 +120,7 @@ export function DepositForm({
       return;
     }
     if (needsApproval && assetToken) {
-      approve.approve(assetToken, vaultAddress);
+      approve.approve(assetToken, vaultAddress, parsedAmount);
     } else {
       deposit.deposit(vaultAddress, amount, assetDecimals);
     }
