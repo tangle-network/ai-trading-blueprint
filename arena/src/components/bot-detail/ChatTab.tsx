@@ -1,11 +1,13 @@
 import { useState, useCallback } from 'react';
-import { useAccount } from 'wagmi';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChatContainer, useSessionStream, type AgentBranding, type SessionInfo } from '@tangle/agent-ui';
-import { Badge } from '~/components/ui/badge';
+import {
+  ChatContainer, useSessionStream,
+  useSessions, useCreateSession, useDeleteSession, useRenameSession,
+  type AgentBranding, type SessionInfo, type Session,
+} from '@tangle/agent-ui';
 import { Button } from '~/components/ui/button';
-import { useSessionAuth } from '~/lib/hooks/useSessionAuth';
-import { useSessions, useDeleteSession, useRenameSession, useCreateSession } from '~/lib/hooks/useSessionApi';
+import { AuthBanner } from '~/components/bot-detail/AuthBanner';
+import { useWagmiSidecarAuth } from '~/lib/hooks/useWagmiSidecarAuth';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
 
 interface ChatTabProps {
@@ -25,50 +27,6 @@ const TRADING_BRANDING: AgentBranding = {
   iconClass: 'i-ph:chart-line-up',
   textClass: 'text-emerald-400',
 };
-
-// ── Auth Banner ─────────────────────────────────────────────────────────
-
-function AuthBanner({ onAuth, isAuthenticating, error }: {
-  onAuth: () => void;
-  isAuthenticating: boolean;
-  error: string | null;
-}) {
-  const { isConnected } = useAccount();
-
-  return (
-    <div className="glass-card rounded-xl p-6 text-center">
-      <div className="i-ph:lock-key text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
-      <h3 className="font-display font-semibold text-lg mb-2">Chat with your agent</h3>
-      <p className="text-sm text-arena-elements-textSecondary mb-4">
-        {isConnected
-          ? 'Sign a message to verify you own this bot and start chatting.'
-          : 'Connect your wallet to chat with this bot\'s AI agent.'}
-      </p>
-      {error && (
-        <p className="text-sm text-crimson-400 mb-3">{error}</p>
-      )}
-      <Button
-        onClick={onAuth}
-        disabled={!isConnected || isAuthenticating}
-        variant="default"
-      >
-        {isAuthenticating ? (
-          <>
-            <span className="i-ph:arrow-clockwise text-sm animate-spin mr-1.5" />
-            Signing...
-          </>
-        ) : isConnected ? (
-          <>
-            <span className="i-ph:signature text-sm mr-1.5" />
-            Connect &amp; Sign
-          </>
-        ) : (
-          'Connect Wallet First'
-        )}
-      </Button>
-    </div>
-  );
-}
 
 // ── Agent Status ────────────────────────────────────────────────────────
 
@@ -221,7 +179,7 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
 
 export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
   const apiUrl = getApiUrlForBot(botId) ?? '';
-  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useSessionAuth(botId, apiUrl);
+  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useWagmiSidecarAuth(botId, apiUrl);
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(primarySessionId);
@@ -251,7 +209,7 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
 
   // Map session data to simple items for the selector
   const sessionItems: SessionItem[] = sessions.length > 0
-    ? sessions.map((s: SessionInfo) => ({ id: s.id, title: s.title }))
+    ? sessions.map((s: Session) => ({ id: s.id, title: s.title }))
     : [{ id: primarySessionId, title: 'Main Session' }];
 
   if (!apiUrl) {

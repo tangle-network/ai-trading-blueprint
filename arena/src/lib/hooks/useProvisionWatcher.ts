@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useStore } from '@nanostores/react';
-import { decodeAbiParameters, parseAbiParameters, decodeEventLog } from 'viem';
+import { decodeAbiParameters, decodeEventLog, zeroAddress } from 'viem';
 import { provisionsStore, updateProvision } from '~/lib/stores/provisions';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
@@ -9,190 +8,340 @@ import { publicClient } from '~/lib/contracts/publicClient';
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 /**
+ * ABI for decoding TradingProvisionOutput struct.
+ *
+ * CRITICAL: The Rust `abi_encode()` produces TUPLE-WRAPPED encoding:
+ *   [32-byte tuple offset][vault_address][share_token][string offset][workflow_id][string data]
+ *
+ * We MUST decode as a tuple, NOT as flat parameters.
+ */
+const PROVISION_OUTPUT_ABI = [{
+  type: 'tuple' as const,
+  components: [
+    { name: 'vault_address', type: 'address' as const },
+    { name: 'share_token', type: 'address' as const },
+    { name: 'sandbox_id', type: 'string' as const },
+    { name: 'workflow_id', type: 'uint64' as const },
+  ],
+}];
+
+/** Decode the output bytes from a TradingProvisionOutput struct. */
+function decodeProvisionOutput(output: `0x${string}`) {
+  const decoded = decodeAbiParameters(PROVISION_OUTPUT_ABI, output);
+  const result = decoded[0] as {
+    vault_address: string;
+    share_token: string;
+    sandbox_id: string;
+    workflow_id: bigint;
+  };
+  return {
+    vaultAddress: result.vault_address as string,
+    sandboxId: result.sandbox_id as string,
+    workflowId: Number(result.workflow_id),
+  };
+}
+
+/**
  * Global provision watcher. Mount once near the app root.
- * Uses standalone viem client — works regardless of wallet chain.
  *
- * Stage 1: For `pending_confirmation` provisions — waits for tx receipt.
- *   On success → parse JobSubmitted event from logs → `job_submitted` with callId.
- *   On failure → `failed`.
- *
- * Stage 2: For `job_submitted`/`job_processing` — watches JobResultSubmitted event.
- *   On match → decode output as TradingProvisionOutput → `active` with vault/sandbox info.
- *
- * Stage 2.5: For `job_submitted`/`job_processing` — polls operator API for progress.
- *   Shows intermediate phases like "creating_sidecar", "running_setup", etc.
+ * PERF: Uses nanostores `.subscribe()` instead of `useStore()` to avoid
+ * re-rendering the host component on every provision update. All effects
+ * run via refs and direct store reads, not React state.
  */
 export function useProvisionWatcher() {
-  const provisions = useStore(provisionsStore);
   const watchingTxs = useRef(new Set<string>());
+  const repairRan = useRef(false);
+  const eventWatcherActive = useRef(false);
+  const unwatchRef = useRef<(() => void) | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Stage 1: Watch pending TX confirmations → extract callId from JobSubmitted
+  // Stage 1 + 2 + 2.5: Single subscription drives all logic without re-rendering
   useEffect(() => {
-    for (const prov of provisions) {
-      if (prov.phase !== 'pending_confirmation') continue;
-      if (!prov.txHash) continue;
-      if (watchingTxs.current.has(prov.id)) continue;
-      watchingTxs.current.add(prov.id);
+    function processProvisions() {
+      const provisions = provisionsStore.get();
 
-      publicClient
-        .waitForTransactionReceipt({ hash: prov.txHash })
-        .then((receipt) => {
-          if (receipt.status !== 'success') {
-            updateProvision(prov.id, { phase: 'failed', errorMessage: 'Transaction reverted' });
+      // ── Stage 1: Watch pending TX confirmations ──
+      for (const prov of provisions) {
+        if (prov.phase !== 'pending_confirmation') continue;
+        if (!prov.txHash) continue;
+        if (watchingTxs.current.has(prov.id)) continue;
+        watchingTxs.current.add(prov.id);
+
+        publicClient
+          .waitForTransactionReceipt({ hash: prov.txHash })
+          .then((receipt) => {
+            if (receipt.status !== 'success') {
+              updateProvision(prov.id, { phase: 'failed', errorMessage: 'Transaction reverted' });
+              return;
+            }
+
+            let callId: number | undefined;
+            let serviceId: number | undefined;
+            for (const log of receipt.logs) {
+              try {
+                const decoded = decodeEventLog({
+                  abi: tangleJobsAbi,
+                  data: log.data,
+                  topics: log.topics,
+                });
+                if (decoded.eventName === 'JobSubmitted') {
+                  const args = decoded.args as { serviceId: bigint; callId: bigint; jobIndex: number };
+                  callId = Number(args.callId);
+                  serviceId = Number(args.serviceId);
+                  break;
+                }
+              } catch {
+                // Not a matching event
+              }
+            }
+
+            console.log('[provision-watcher] TX confirmed, callId=', callId, 'serviceId=', serviceId);
+            updateProvision(prov.id, {
+              phase: 'job_submitted',
+              callId,
+              ...(serviceId != null ? { serviceId } : {}),
+            });
+          })
+          .catch((err) => {
+            updateProvision(prov.id, {
+              phase: 'failed',
+              errorMessage: err instanceof Error ? err.message.slice(0, 200) : 'Transaction failed',
+            });
+          })
+          .finally(() => {
+            watchingTxs.current.delete(prov.id);
+          });
+      }
+
+      // ── Stage 2: Contract event watchers ──
+      const hasPending = provisions.some(
+        (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+      );
+
+      if (hasPending && !eventWatcherActive.current) {
+        eventWatcherActive.current = true;
+
+        // Historical check first
+        (async () => {
+          try {
+            const logs = await publicClient.getLogs({
+              address: addresses.tangle,
+              event: {
+                type: 'event',
+                name: 'JobResultSubmitted',
+                inputs: [
+                  { name: 'serviceId', type: 'uint64', indexed: true },
+                  { name: 'callId', type: 'uint64', indexed: true },
+                  { name: 'operator', type: 'address', indexed: true },
+                  { name: 'output', type: 'bytes', indexed: false },
+                ],
+              },
+              fromBlock: 0n,
+            });
+            const waiting = provisionsStore.get().filter(
+              (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+            );
+            for (const log of logs) {
+              const sid = log.args.serviceId;
+              const cid = log.args.callId;
+              const output = log.args.output;
+              if (sid == null || cid == null) continue;
+              for (const prov of waiting) {
+                if (prov.callId !== Number(cid)) continue;
+                if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
+                applyResultToProvision(prov.id, output, Number(sid));
+              }
+            }
+          } catch (err) {
+            console.error('[provision-watcher] Historical check failed:', err);
+          }
+        })();
+
+        const unwatchResult = publicClient.watchContractEvent({
+          address: addresses.tangle,
+          abi: tangleJobsAbi,
+          eventName: 'JobResultSubmitted',
+          onLogs(logs) {
+            const waiting = provisionsStore.get().filter(
+              (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+            );
+            if (waiting.length === 0) return;
+            for (const log of logs) {
+              const sid = log.args.serviceId;
+              const cid = log.args.callId;
+              const output = log.args.output;
+              if (sid == null || cid == null) continue;
+              for (const prov of waiting) {
+                if (prov.callId !== Number(cid)) continue;
+                if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
+                applyResultToProvision(prov.id, output, Number(sid));
+              }
+            }
+          },
+        });
+
+        const unwatchCompleted = publicClient.watchContractEvent({
+          address: addresses.tangle,
+          abi: tangleJobsAbi,
+          eventName: 'JobCompleted',
+          onLogs(logs) {
+            for (const log of logs) {
+              const cid = log.args.callId;
+              if (cid == null) continue;
+              for (const prov of provisionsStore.get()) {
+                if (prov.callId !== Number(cid)) continue;
+                if (prov.phase === 'job_submitted') {
+                  updateProvision(prov.id, { phase: 'job_processing' });
+                }
+              }
+            }
+          },
+        });
+
+        unwatchRef.current = () => {
+          unwatchResult();
+          unwatchCompleted();
+          eventWatcherActive.current = false;
+        };
+      } else if (!hasPending && eventWatcherActive.current) {
+        unwatchRef.current?.();
+        unwatchRef.current = null;
+      }
+
+      // ── Stage 2.5: Operator API polling ──
+      const hasSubmitted = provisions.some(
+        (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+      );
+
+      if (hasSubmitted && OPERATOR_API_URL && !pollingRef.current) {
+        const poll = async () => {
+          const submitted = provisionsStore.get().filter(
+            (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+          );
+          if (submitted.length === 0) {
+            // No more pending — stop polling
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current);
+              pollingRef.current = null;
+            }
             return;
           }
-
-          // Parse JobSubmitted event from receipt logs to extract callId
-          let callId: number | undefined;
-          for (const log of receipt.logs) {
+          for (const prov of submitted) {
             try {
-              const decoded = decodeEventLog({
-                abi: tangleJobsAbi,
-                data: log.data,
-                topics: log.topics,
-              });
-              if (decoded.eventName === 'JobSubmitted') {
-                const args = decoded.args as { serviceId: bigint; callId: bigint; jobIndex: number };
-                callId = Number(args.callId);
-                break;
+              const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
+              if (!res.ok) continue;
+              const progress = await res.json();
+              if (progress?.phase) {
+                updateProvision(prov.id, {
+                  phase: 'job_processing',
+                  progressPhase: progress.phase,
+                  progressDetail: progress.message,
+                  ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+                });
               }
             } catch {
-              // Not a matching event — skip
+              // Operator API unreachable
             }
           }
-
-          updateProvision(prov.id, {
-            phase: 'job_submitted',
-            callId,
-          });
-        })
-        .catch((err) => {
-          updateProvision(prov.id, {
-            phase: 'failed',
-            errorMessage: err instanceof Error ? err.message.slice(0, 200) : 'Transaction failed',
-          });
-        })
-        .finally(() => {
-          watchingTxs.current.delete(prov.id);
-        });
+        };
+        poll();
+        pollingRef.current = setInterval(poll, 5000); // 5s instead of 2s
+      } else if (!hasSubmitted && pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     }
-  }, [provisions]);
 
-  // Stage 2: Watch contract events for job_submitted/job_processing provisions
-  const pendingJobs = provisions.filter(
-    (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
-  );
-
-  useEffect(() => {
-    if (pendingJobs.length === 0) return;
-
-    // Watch JobResultSubmitted
-    const unwatchResult = publicClient.watchContractEvent({
-      address: addresses.tangle,
-      abi: tangleJobsAbi,
-      eventName: 'JobResultSubmitted',
-      onLogs(logs) {
-        const waiting = provisionsStore.get().filter(
-          (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
-        );
-        if (waiting.length === 0) return;
-
-        for (const log of logs) {
-          const serviceId = log.args.serviceId;
-          const callId = log.args.callId;
-          const output = log.args.output;
-          if (serviceId == null || callId == null) continue;
-
-          for (const prov of waiting) {
-            if (prov.callId !== Number(callId)) continue;
-            if (prov.serviceId != null && prov.serviceId !== Number(serviceId)) continue;
-
-            if (output) {
-              try {
-                const decoded = decodeAbiParameters(
-                  parseAbiParameters('address, address, string, uint64'),
-                  output,
-                );
-                const workflowId = Number(decoded[3]);
-                updateProvision(prov.id, {
-                  phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
-                  vaultAddress: decoded[0] as string,
-                  sandboxId: decoded[2] as string,
-                  workflowId,
-                });
-              } catch {
-                updateProvision(prov.id, { phase: 'active' });
-              }
-            } else {
-              updateProvision(prov.id, { phase: 'active' });
-            }
-          }
-        }
-      },
-    });
-
-    // Also watch JobCompleted as backup
-    const unwatchCompleted = publicClient.watchContractEvent({
-      address: addresses.tangle,
-      abi: tangleJobsAbi,
-      eventName: 'JobCompleted',
-      onLogs(logs) {
-        const waiting = provisionsStore.get().filter(
-          (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
-        );
-        if (waiting.length === 0) return;
-
-        for (const log of logs) {
-          const callId = log.args.callId;
-          if (callId == null) continue;
-
-          for (const prov of waiting) {
-            if (prov.callId !== Number(callId)) continue;
-            if (prov.phase !== 'active') {
-              updateProvision(prov.id, { phase: 'active' });
-            }
-          }
-        }
-      },
-    });
+    // Run once immediately, then subscribe to store changes
+    processProvisions();
+    const unsub = provisionsStore.subscribe(processProvisions);
 
     return () => {
-      unwatchResult();
-      unwatchCompleted();
-    };
-  }, [pendingJobs.length]);
-
-  // Stage 2.5: Poll operator API for intermediate provision progress
-  useEffect(() => {
-    const submitted = provisions.filter(
-      (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
-    );
-    if (submitted.length === 0 || !OPERATOR_API_URL) return;
-
-    const poll = async () => {
-      for (const prov of submitted) {
-        try {
-          const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
-          if (!res.ok) continue;
-          const progress = await res.json();
-          if (progress?.phase) {
-            updateProvision(prov.id, {
-              phase: 'job_processing',
-              progressPhase: progress.phase,
-              progressDetail: progress.message,
-              // If the operator reports the bot as complete, also grab sandbox info
-              ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
-            });
-          }
-        } catch {
-          // Operator API unreachable — continue with on-chain watching only
-        }
+      unsub();
+      unwatchRef.current?.();
+      unwatchRef.current = null;
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
       }
+      eventWatcherActive.current = false;
     };
+  }, []); // Runs once — all logic driven by store subscription, not React re-renders
 
-    // Poll immediately, then every 2 seconds
-    poll();
-    const interval = setInterval(poll, 2000);
-    return () => clearInterval(interval);
-  }, [provisions]);
+  // Stage 3: One-time repair pass
+  useEffect(() => {
+    if (repairRan.current) return;
+    repairRan.current = true;
+
+    const needsRepair = provisionsStore.get().filter(
+      (p) =>
+        ['active', 'awaiting_secrets'].includes(p.phase) &&
+        p.callId != null &&
+        (!p.vaultAddress || p.vaultAddress === zeroAddress || p.vaultAddress === '0x0000000000000000000000000000000000000020'),
+    );
+    if (needsRepair.length === 0) return;
+
+    console.log('[provision-watcher] Repairing', needsRepair.length, 'provisions with missing/bad vault addresses');
+
+    (async () => {
+      try {
+        const logs = await publicClient.getLogs({
+          address: addresses.tangle,
+          event: {
+            type: 'event',
+            name: 'JobResultSubmitted',
+            inputs: [
+              { name: 'serviceId', type: 'uint64', indexed: true },
+              { name: 'callId', type: 'uint64', indexed: true },
+              { name: 'operator', type: 'address', indexed: true },
+              { name: 'output', type: 'bytes', indexed: false },
+            ],
+          },
+          fromBlock: 0n,
+        });
+
+        for (const log of logs) {
+          const cid = log.args.callId;
+          const output = log.args.output;
+          if (cid == null) continue;
+
+          for (const prov of needsRepair) {
+            if (prov.callId !== Number(cid)) continue;
+            applyResultToProvision(prov.id, output, Number(log.args.serviceId ?? 0));
+          }
+        }
+      } catch (err) {
+        console.error('[provision-watcher] Repair failed:', err);
+      }
+    })();
+  }, []);
+}
+
+/** Decode output and update a provision with vault/sandbox data. */
+function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number) {
+  if (output) {
+    try {
+      const { vaultAddress, sandboxId, workflowId } = decodeProvisionOutput(output);
+      updateProvision(provId, {
+        phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+        vaultAddress,
+        sandboxId,
+        workflowId,
+        ...(serviceId > 0 ? { serviceId } : {}),
+      });
+    } catch (decodeErr) {
+      console.warn('[provision-watcher] Decode failed:', decodeErr);
+      // Job completed but decode failed — mark as awaiting_secrets so user can see it
+      updateProvision(provId, {
+        phase: 'awaiting_secrets',
+        ...(serviceId > 0 ? { serviceId } : {}),
+      });
+    }
+  } else {
+    // No output data — mark as awaiting_secrets
+    updateProvision(provId, {
+      phase: 'awaiting_secrets',
+      ...(serviceId > 0 ? { serviceId } : {}),
+    });
+  }
 }

@@ -3,7 +3,8 @@ import { useBots } from '~/lib/hooks/useBots';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 
 export function StatsBar() {
-  const { bots } = useBots();
+  const { bots: allBots } = useBots();
+  const bots = allBots.filter((b) => !b.id.startsWith('provision:'));
 
   const totalBots = bots.length;
   const totalTvl = bots.reduce((sum, b) => sum + b.tvl, 0);

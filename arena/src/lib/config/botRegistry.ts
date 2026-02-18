@@ -52,12 +52,12 @@ export function getBotMeta(serviceId: number): BotMeta | undefined {
 
 /**
  * Get the API URL for a bot by its bot ID string.
- * Supports: "service-0-vault-0" (current) and "service-0" (legacy).
+ * Bot IDs are now vault addresses; use getBotApiUrl(serviceId) directly when possible.
  */
-export function getApiUrlForBot(botId: string): string | undefined {
-  const match = botId.match(/^service-(\d+)/);
-  if (!match) return undefined;
-  return getBotApiUrl(Number(match[1]));
+export function getApiUrlForBot(_botId: string): string | undefined {
+  // Bot IDs are vault addresses — can't derive service ID from them.
+  // Callers should use getBotApiUrl(bot.serviceId) instead.
+  return undefined;
 }
 
 /**

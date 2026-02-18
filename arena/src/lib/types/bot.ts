@@ -1,4 +1,4 @@
-export type BotStatus = 'active' | 'paused' | 'stopped';
+export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config';
 export type StrategyType = 'momentum' | 'mean-reversion' | 'arbitrage' | 'trend-following' | 'market-making' | 'sentiment';
 
 export interface Bot {

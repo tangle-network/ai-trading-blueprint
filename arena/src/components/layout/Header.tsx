@@ -8,7 +8,7 @@ import { cn } from '~/lib/utils';
 
 const navItems = [
   { label: 'Leaderboard', href: '/' },
-  { label: 'My Bots', href: '/dashboard' },
+  { label: 'Home', href: '/dashboard' },
   { label: 'Deploy', href: '/provision' },
 ];
 
@@ -17,20 +17,20 @@ export function Header() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 h-[var(--header-height)] glass-card-strong border-t-0 border-x-0 rounded-none">
-      <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
+      <div className="relative mx-auto flex h-full max-w-7xl items-center px-4 sm:px-6">
         {/* Logo */}
-        <Link to="/" className="flex items-center group">
+        <Link to="/" className="flex items-center group shrink-0">
           <TangleLogo />
         </Link>
 
-        {/* Nav */}
-        <nav className="hidden sm:flex items-center gap-1">
+        {/* Nav — absolutely centered so right-side actions don't shift it */}
+        <nav className="hidden sm:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
           {navItems.map((item) => (
             <Link
               key={item.href}
               to={item.href}
               className={cn(
-                'px-4 py-2 rounded-lg text-sm font-display font-medium transition-all duration-200',
+                'px-4 py-2 rounded-lg text-sm font-display font-medium transition-all duration-200 whitespace-nowrap',
                 (item.href === '/' ? location.pathname === '/' : location.pathname.startsWith(item.href))
                   ? 'text-violet-700 dark:text-violet-400 bg-violet-500/10'
                   : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary hover:bg-arena-elements-item-backgroundHover',
@@ -41,8 +41,8 @@ export function Header() {
           ))}
         </nav>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2">
+        {/* Actions — pushed to the right */}
+        <div className="flex items-center gap-2 ml-auto shrink-0">
           <ChainSwitcher />
           <ThemeToggle />
           <TxDropdown />

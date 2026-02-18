@@ -129,8 +129,8 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
               )}
             </TableCell>
             <TableCell className="hidden lg:table-cell">
-              <Badge variant={bot.status === 'active' ? 'success' : bot.status === 'paused' ? 'amber' : 'destructive'}>
-                {bot.status}
+              <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'}>
+                {bot.status === 'needs_config' ? 'needs config' : bot.status}
               </Badge>
             </TableCell>
           </motion.tr>

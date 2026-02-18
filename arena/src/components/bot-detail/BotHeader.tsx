@@ -40,11 +40,11 @@ export function BotHeader({ bot }: BotHeaderProps) {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-2">
         <h1 className="font-display font-bold text-3xl tracking-tight">{bot.name}</h1>
         <div className="flex items-center gap-2">
-          <Badge variant={bot.status === 'active' ? 'success' : bot.status === 'paused' ? 'amber' : 'destructive'}>
+          <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'}>
             <div className={`w-1.5 h-1.5 rounded-full ${
-              bot.status === 'active' ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse' : bot.status === 'paused' ? 'bg-amber-400' : 'bg-crimson-400'
+              bot.status === 'active' ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'bg-amber-400' : 'bg-arena-elements-textTertiary'
             }`} />
-            {bot.status}
+            {bot.status === 'needs_config' ? 'Needs Config' : bot.status}
           </Badge>
           <Badge variant="accent">{bot.strategyType}</Badge>
         </div>

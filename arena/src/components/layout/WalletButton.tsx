@@ -130,19 +130,13 @@ export function WalletButton() {
           <div ref={ref} className="relative">
             <button
               onClick={() => setOpen(!open)}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg glass-card hover:border-violet-500/20 transition-all"
+              className="relative rounded-full hover:ring-2 hover:ring-violet-500/30 transition-all"
+              title={truncated}
             >
+              {address && <Identicon address={address as Address} size={32} />}
               {isWrongChain && (
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse shrink-0" title="Wrong chain" />
+                <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse ring-2 ring-arena-elements-background-depth-1" title="Wrong chain" />
               )}
-              {address && <Identicon address={address as Address} size={22} />}
-              <span className="text-sm font-data text-arena-elements-textPrimary">
-                {truncated}
-              </span>
-              <span className="text-xs font-data text-arena-elements-textSecondary">
-                {displayBalance} ETH
-              </span>
-              <div className={`i-ph:caret-down text-xs text-arena-elements-textTertiary transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
 
             {open && (

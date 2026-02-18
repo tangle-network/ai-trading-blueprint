@@ -47,8 +47,18 @@ export function addProvision(provision: TrackedProvision) {
 }
 
 export function updateProvision(id: string, update: Partial<TrackedProvision>) {
+  const current = provisionsStore.get();
+  const target = current.find((p) => p.id === id);
+  if (!target) return;
+
+  // Skip no-op updates to avoid triggering subscriber cascades
+  const dominated = Object.keys(update).every(
+    (k) => (target as any)[k] === (update as any)[k],
+  );
+  if (dominated) return;
+
   provisionsStore.set(
-    provisionsStore.get().map((p) =>
+    current.map((p) =>
       p.id === id ? { ...p, ...update, updatedAt: Date.now() } : p,
     ),
   );
@@ -58,9 +68,18 @@ export function removeProvision(id: string) {
   provisionsStore.set(provisionsStore.get().filter((p) => p.id !== id));
 }
 
-/** Computed store filtered to provisions owned by a specific address. */
+/** Computed store filtered to provisions owned by a specific address. Cached per address. */
+const ownerComputedCache = new Map<string, ReturnType<typeof computed>>();
+
 export function provisionsForOwner(address: Address | undefined) {
-  return computed(provisionsStore, (all) =>
-    address ? all.filter((p) => p.owner.toLowerCase() === address.toLowerCase()) : [],
-  );
+  if (!address) return computed(provisionsStore, (): TrackedProvision[] => []);
+  const key = address.toLowerCase();
+  let cached = ownerComputedCache.get(key);
+  if (!cached) {
+    cached = computed(provisionsStore, (all: TrackedProvision[]): TrackedProvision[] =>
+      all.filter((p) => p.owner.toLowerCase() === key),
+    );
+    ownerComputedCache.set(key, cached);
+  }
+  return cached;
 }

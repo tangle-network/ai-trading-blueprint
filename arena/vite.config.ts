@@ -42,4 +42,14 @@ export default defineConfig({
       events: 'events',
     },
   },
+  server: {
+    proxy: {
+      // Proxy operator API calls to avoid CORS issues in development
+      '/operator-api': {
+        target: 'http://localhost:9200',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/operator-api/, ''),
+      },
+    },
+  },
 });

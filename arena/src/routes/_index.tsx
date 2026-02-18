@@ -50,8 +50,8 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
             </div>
           </div>
         </div>
-        <Badge variant={bot.status === 'active' ? 'success' : bot.status === 'paused' ? 'amber' : 'destructive'} className="text-xs shrink-0">
-          {bot.status}
+        <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'} className="text-xs shrink-0">
+          {bot.status === 'needs_config' ? 'needs config' : bot.status}
         </Badge>
       </div>
 
@@ -104,7 +104,10 @@ export default function IndexPage() {
   const { bots: rawBots, isLoading, isOnChain } = useBots();
   const bots = useBotEnrichment(rawBots);
 
-  const filteredBots = bots.filter(
+  // Exclude provision-only bots (still being set up, no vault yet)
+  const realBots = bots.filter((b) => !b.id.startsWith('provision:'));
+
+  const filteredBots = realBots.filter(
     (bot) =>
       bot.name.toLowerCase().includes(search.toLowerCase()) ||
       bot.strategyType.toLowerCase().includes(search.toLowerCase()) ||
@@ -114,10 +117,10 @@ export default function IndexPage() {
 
   const sorted = [...filteredBots].sort((a, b) => b.pnlPercent - a.pnlPercent);
 
-  const totalTvl = bots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalTrades = bots.reduce((sum, b) => sum + b.totalTrades, 0);
-  const avgScore = bots.length > 0
-    ? Math.round(bots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / bots.length)
+  const totalTvl = realBots.reduce((sum, b) => sum + b.tvl, 0);
+  const totalTrades = realBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const avgScore = realBots.length > 0
+    ? Math.round(realBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / realBots.length)
     : 0;
 
   return (
@@ -135,7 +138,7 @@ export default function IndexPage() {
             </div>
           </div>
           <div className="flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
-            <span><span className="text-arena-elements-textPrimary font-semibold">{bots.length}</span> agents</span>
+            <span><span className="text-arena-elements-textPrimary font-semibold">{realBots.length}</span> agents</span>
             {totalTvl > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">${totalTvl >= 1000 ? `${(totalTvl / 1000).toFixed(0)}K` : totalTvl.toFixed(0)}</span> TVL</span>}
             {totalTrades > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{totalTrades.toLocaleString()}</span> trades</span>}
             {avgScore > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{avgScore}</span>/100</span>}

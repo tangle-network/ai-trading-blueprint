@@ -10,6 +10,7 @@ import { TradeHistoryTab } from '~/components/bot-detail/TradeHistoryTab';
 import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
 import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { ControlsTab } from '~/components/bot-detail/ControlsTab';
+import { TerminalTab } from '~/components/bot-detail/TerminalTab';
 import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
@@ -19,7 +20,9 @@ export const meta: MetaFunction = () => [
 export default function BotDetailPage() {
   const { id } = useParams();
   const { bots, isLoading } = useBots();
-  const bot = bots.find((b) => b.id === id);
+  // Match by ID (vault address) or by vault address directly (handles case-mismatch)
+  const bot = bots.find((b) => b.id === id)
+    ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
 
   if (isLoading) {
     return (
@@ -68,6 +71,7 @@ export default function BotDetailPage() {
             <TabsTrigger value="trades">Trade History</TabsTrigger>
             <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
+            <TabsTrigger value="terminal">Terminal</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
@@ -89,6 +93,10 @@ export default function BotDetailPage() {
 
           <TabsContent value="chat" className="mt-6">
             <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+          </TabsContent>
+
+          <TabsContent value="terminal" className="mt-6">
+            <TerminalTab botId={bot.id} />
           </TabsContent>
 
           <TabsContent value="controls" className="mt-6">

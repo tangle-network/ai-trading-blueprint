@@ -23,7 +23,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
 import { Identicon } from '~/components/shared/Identicon';
 import { toast } from 'sonner';
-import { tangleJobsAbi, tangleServicesAbi } from '~/lib/contracts/abis';
+import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
 import { publicClient, selectedChainIdStore } from '~/lib/contracts/publicClient';
@@ -33,8 +33,21 @@ import { addTx } from '~/lib/stores/txHistory';
 import {
   provisionsForOwner,
   addProvision,
+  updateProvision,
   type ProvisionPhase,
+  type TrackedProvision,
 } from '~/lib/stores/provisions';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import {
+  AI_PROVIDERS,
+  buildEnvForProvider,
+  ACTIVATION_LABELS,
+  DEFAULT_AI_PROVIDER,
+  DEFAULT_AI_API_KEY,
+  type AiProvider,
+} from '~/lib/config/aiProviders';
+
+const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 export const meta: MetaFunction = () => [
   { title: 'Deploy Agent — AI Trading Arena' },
@@ -369,12 +382,13 @@ Rebalance weekly by Sharpe ratio:
 
 // ── Wizard helpers ───────────────────────────────────────────────────────
 
-type WizardStep = 'configure' | 'deploy';
+type WizardStep = 'configure' | 'deploy' | 'secrets';
 
-const STEP_ORDER: WizardStep[] = ['configure', 'deploy'];
+const STEP_ORDER: WizardStep[] = ['configure', 'deploy', 'secrets'];
 const STEP_LABELS: Record<WizardStep, string> = {
   configure: 'Configure',
   deploy: 'Provision',
+  secrets: 'Activate',
 };
 
 /** Maps Rust provision progress phases to human-readable labels */
@@ -573,7 +587,7 @@ export default function ProvisionPage() {
 
   // Provisions store
   const ownerProvisions = useMemo(() => provisionsForOwner(userAddress), [userAddress]);
-  const myProvisions = useStore(ownerProvisions);
+  const myProvisions = useStore(ownerProvisions) as TrackedProvision[];
 
   // Operator discovery for blueprint step + new service mode
   const blueprintIdBig = useMemo(() => BigInt(blueprintId || '0'), [blueprintId]);
@@ -599,6 +613,17 @@ export default function ProvisionPage() {
     writeContract: writeNewService,
     isPending: isNewServicePending,
   } = useWriteContract();
+
+  // Secrets step state
+  const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
+  const [aiProvider, setAiProvider] = useState<AiProvider>(defaultProvider);
+  const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
+  const [extraEnvs, setExtraEnvs] = useState<{ id: number; key: string; value: string }[]>([]);
+  const envIdRef = useRef(0);
+  const [isSubmittingSecrets, setIsSubmittingSecrets] = useState(false);
+  const [activationPhase, setActivationPhase] = useState<string | null>(null);
+  const [secretsLookupError, setSecretsLookupError] = useState<string | null>(null);
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
   const effectiveExpert = customExpertKnowledge || selectedPack.expertKnowledge;
@@ -898,33 +923,71 @@ export default function ProvisionPage() {
     if (customExpertKnowledge) strategyConfig.expert_knowledge_override = customExpertKnowledge;
     if (customInstructions) strategyConfig.custom_instructions = customInstructions;
 
+    // Read the vault address for this service.
+    // Try TradingBlueprint.instanceVault first (set by onServiceInitialized),
+    // then fall back to VaultFactory.getServiceVaults (works with manual deploys).
+    let vaultAddress: Address = zeroAddress;
+    // 1. Try TradingBlueprint.instanceVault(serviceId)
+    if (addresses.tradingBlueprint !== zeroAddress) {
+      try {
+        const result = await publicClient.readContract({
+          address: addresses.tradingBlueprint,
+          abi: tradingBlueprintAbi,
+          functionName: 'instanceVault',
+          args: [BigInt(serviceId)],
+        });
+        vaultAddress = (result as Address) ?? zeroAddress;
+      } catch (err) {
+        console.warn('[provision] Failed to read instanceVault:', err);
+      }
+    }
+    // 2. Fallback: VaultFactory.getServiceVaults(serviceId)
+    if (vaultAddress === zeroAddress && addresses.vaultFactory !== zeroAddress) {
+      try {
+        const vaults = await publicClient.readContract({
+          address: addresses.vaultFactory,
+          abi: vaultFactoryAbi,
+          functionName: 'getServiceVaults',
+          args: [BigInt(serviceId)],
+        }) as Address[];
+        if (vaults && vaults.length > 0 && vaults[0] !== zeroAddress) {
+          vaultAddress = vaults[0];
+        }
+      } catch (err) {
+        console.warn('[provision] Failed to read VaultFactory:', err);
+      }
+    }
+    if (vaultAddress === zeroAddress) {
+      console.warn('[provision] No vault found for service', serviceId, '— operator will receive zero address');
+    }
+
+    // Encode as a tuple (struct) — alloy's SolValue::abi_decode expects
+    // tuple-wrapped encoding (offset 0x20 prefix), not flat params.
     const inputs = encodeAbiParameters(
       parseAbiParameters(
-        'string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[])',
       ),
       [
-        name,
-        strategyType,
-        JSON.stringify(strategyConfig),
-        '{}',
-        zeroAddress,
-        (import.meta.env.VITE_USDC_ADDRESS ??
-          '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
-        [userAddress],
-        1n,
-        BigInt(targetChain.id),
-        '',
-        effectiveCron,
-        2n,
-        2048n,
-        30n,
-        [],
+        [
+          name,
+          strategyType,
+          JSON.stringify(strategyConfig),
+          '{}',
+          vaultAddress,
+          (import.meta.env.VITE_USDC_ADDRESS ??
+            '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+          [userAddress],
+          1n,
+          BigInt(targetChain.id),
+          '',
+          effectiveCron,
+          2n,
+          2048n,
+          30n,
+          [],
+        ],
       ],
     );
-
-    // Always route to service 0 — all operator instances watch service 0.
-    // The serviceId selected in the UI is stored in provision metadata only.
-    const operatorServiceId = 0n;
 
     writeContract(
       {
@@ -932,7 +995,7 @@ export default function ProvisionPage() {
         abi: tangleJobsAbi,
         functionName: 'submitJob',
         chainId: targetChain.id,
-        args: [operatorServiceId, 0, inputs],
+        args: [BigInt(serviceId), 0, inputs],
       },
       {
         onError(err) {
@@ -970,28 +1033,30 @@ export default function ProvisionPage() {
       return;
     }
 
-    // Encode a minimal config for the service
+    // Encode a minimal config for the service (tuple-wrapped for alloy compat)
     const config = encodeAbiParameters(
       parseAbiParameters(
-        'string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[]',
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[])',
       ),
       [
-        '',
-        '',
-        '{}',
-        '{}',
-        zeroAddress,
-        (import.meta.env.VITE_USDC_ADDRESS ??
-          '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
-        [userAddress],
-        1n,
-        BigInt(targetChain.id),
-        '',
-        '',
-        2n,
-        2048n,
-        30n,
-        [],
+        [
+          '',
+          '',
+          '{}',
+          '{}',
+          zeroAddress,
+          (import.meta.env.VITE_USDC_ADDRESS ??
+            '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+          [userAddress],
+          1n,
+          BigInt(targetChain.id),
+          '',
+          '',
+          2n,
+          2048n,
+          30n,
+          [],
+        ],
       ],
     );
 
@@ -1059,8 +1124,126 @@ export default function ProvisionPage() {
 
   const latestDeployment = myProvisions.find((p) => p.txHash === txHash);
 
+  // Auto-advance to secrets step when provisioning completes with awaiting_secrets
+  useEffect(() => {
+    if (latestDeployment?.phase === 'awaiting_secrets' && step === 'deploy') {
+      setStep('secrets');
+    }
+  }, [latestDeployment?.phase, step]);
+
+  /** Resolve operator bot ID from the sandbox ID. */
+  const resolveBotId = useCallback(async (sandboxId: string): Promise<string | null> => {
+    if (!OPERATOR_API_URL) {
+      setSecretsLookupError('Operator API URL not configured');
+      return null;
+    }
+    try {
+      const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
+      if (!res.ok) {
+        setSecretsLookupError('Failed to fetch bots from operator API');
+        return null;
+      }
+      const data = await res.json();
+      const match = data.bots?.find(
+        (b: { sandbox_id: string }) => b.sandbox_id === sandboxId,
+      );
+      if (match) {
+        setSecretsLookupError(null);
+        return match.id as string;
+      }
+      setSecretsLookupError('Bot not found on operator. It may still be registering.');
+      return null;
+    } catch {
+      setSecretsLookupError('Could not reach operator API');
+      return null;
+    }
+  }, []);
+
+  const [useOperatorKey, setUseOperatorKey] = useState(false);
+
+  const handleSubmitSecrets = async () => {
+    if (!latestDeployment || !latestDeployment.sandboxId) return;
+    if (!useOperatorKey && !apiKey.trim()) return;
+
+    setIsSubmittingSecrets(true);
+    setActivationPhase(null);
+    setSecretsLookupError(null);
+
+    const botId = await resolveBotId(latestDeployment.sandboxId);
+    if (!botId) {
+      setIsSubmittingSecrets(false);
+      return;
+    }
+
+    // Poll activation progress
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
+        if (res.ok) {
+          const data = await res.json();
+          setActivationPhase(data.phase ?? null);
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 1000);
+
+    try {
+      const envJson: Record<string, string> = useOperatorKey
+        ? {} // Empty — tells the operator to use its own pre-configured keys
+        : buildEnvForProvider(aiProvider, apiKey.trim());
+      if (!useOperatorKey) {
+        for (const e of extraEnvs) {
+          if (e.key.trim() && e.value.trim()) {
+            envJson[e.key.trim()] = e.value.trim();
+          }
+        }
+      }
+
+      let authToken = operatorAuth.token;
+      if (!authToken) {
+        authToken = await operatorAuth.authenticate();
+        if (!authToken) throw new Error('Wallet authentication failed');
+      }
+
+      const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ env_json: envJson }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `HTTP ${res.status}`);
+      }
+
+      const result = await res.json();
+
+      updateProvision(latestDeployment.id, {
+        phase: 'active',
+        workflowId: result.workflow_id,
+        sandboxId: result.sandbox_id ?? latestDeployment.sandboxId,
+      });
+
+      toast.success('API keys configured — agent is now active!');
+      setApiKey('');
+      setExtraEnvs([]);
+    } catch (err) {
+      toast.error(
+        `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`,
+      );
+    } finally {
+      clearInterval(pollInterval);
+      setIsSubmittingSecrets(false);
+      setActivationPhase(null);
+    }
+  };
+
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
       <Link
         to="/"
         className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 font-display font-medium transition-colors"
@@ -1074,22 +1257,23 @@ export default function ProvisionPage() {
       <p className="text-base text-arena-elements-textSecondary mb-6">
         {step === 'configure' && 'Configure your autonomous trading agent, then provision it on-chain.'}
         {step === 'deploy' && 'Your agent is being provisioned on the network.'}
+        {step === 'secrets' && 'Provide your API keys to activate the trading agent.'}
       </p>
 
-      {/* Step indicator — simple 2-step */}
-      <div className="flex items-center gap-1 mb-8">
+      {/* Step indicator — 3-step wizard */}
+      <div className="flex items-center gap-2 mb-8">
         {STEP_ORDER.map((s, i) => {
           const isCurrent = s === step;
           const isDone = i < stepIndex;
           return (
-            <div key={s} className="flex items-center gap-1 flex-1">
+            <div key={s} className="flex items-center gap-2 flex-1">
               <button
                 type="button"
                 onClick={() => {
                   if (isDone) setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
-                className={`flex items-center gap-2 text-sm font-display font-medium transition-colors ${
+                className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap ${
                   isCurrent
                     ? 'text-violet-700 dark:text-violet-400'
                     : isDone
@@ -1098,21 +1282,21 @@ export default function ProvisionPage() {
                 }`}
               >
                 <span
-                  className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-data font-bold shrink-0 ${
+                  className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-data font-bold shrink-0 transition-all duration-300 ${
                     isCurrent
-                      ? 'bg-violet-500 text-white'
+                      ? 'bg-violet-500 text-white shadow-[0_0_10px_rgba(139,92,246,0.3)]'
                       : isDone
-                        ? 'bg-arena-elements-icon-success text-white'
+                        ? 'bg-emerald-400 text-white shadow-[0_0_8px_rgba(0,255,136,0.2)]'
                         : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textTertiary border border-arena-elements-borderColor'
                   }`}
                 >
                   {isDone ? '\u2713' : i + 1}
                 </span>
-                <span className="hidden sm:inline">{STEP_LABELS[s]}</span>
+                {STEP_LABELS[s]}
               </button>
               {i < STEP_ORDER.length - 1 && (
                 <div
-                  className={`flex-1 h-px mx-1 ${i < stepIndex ? 'bg-arena-elements-icon-success' : 'bg-arena-elements-borderColor'}`}
+                  className={`flex-1 h-px mx-1 transition-colors duration-300 ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
                 />
               )}
             </div>
@@ -1300,23 +1484,40 @@ export default function ProvisionPage() {
             )}
 
             {txHash && (
-              <Card>
-                <CardContent className="pt-5 pb-5 space-y-4">
+              <Card className="border-arena-elements-borderColor/60 overflow-hidden">
+                <CardContent className="pt-5 pb-5 space-y-5">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                      Agent Provisioning
-                    </span>
+                    <div className="flex items-center gap-2.5">
+                      {latestDeployment && !['active', 'awaiting_secrets', 'failed'].includes(latestDeployment.phase) && (
+                        <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                      )}
+                      {latestDeployment?.phase === 'awaiting_secrets' && (
+                        <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                      )}
+                      {latestDeployment?.phase === 'active' && (
+                        <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                      )}
+                      {latestDeployment?.phase === 'failed' && (
+                        <div className="w-2 h-2 rounded-full bg-crimson-400" />
+                      )}
+                      <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                        Agent Provisioning
+                      </span>
+                    </div>
                     {latestDeployment && !['active', 'awaiting_secrets', 'failed'].includes(latestDeployment.phase) && (
                       <ElapsedTime since={latestDeployment.createdAt} />
                     )}
                   </div>
 
                   {/* Vertical timeline */}
-                  <div className="relative pl-6">
+                  <div className="relative pl-7">
                     {/* Connecting line */}
-                    <div className="absolute left-[7px] top-[6px] bottom-[6px] w-px bg-arena-elements-borderColor overflow-hidden">
-                      {latestDeployment && ['job_submitted', 'job_processing'].includes(latestDeployment.phase) && (
-                        <div className="absolute inset-0 w-full bg-gradient-to-b from-transparent via-amber-400/60 to-transparent animate-pulse" />
+                    <div className="absolute left-[8px] top-[8px] bottom-[8px] w-px bg-arena-elements-borderColor/60 overflow-hidden">
+                      {latestDeployment && ['pending_confirmation', 'job_submitted', 'job_processing'].includes(latestDeployment.phase) && (
+                        <div className="absolute inset-0 w-full animate-shimmer bg-gradient-to-b from-transparent via-amber-400/50 to-transparent" style={{ backgroundSize: '100% 200%' }} />
+                      )}
+                      {latestDeployment && ['awaiting_secrets', 'active'].includes(latestDeployment.phase) && (
+                        <div className="absolute inset-0 w-full bg-gradient-to-b from-emerald-400/40 to-emerald-400/10" />
                       )}
                     </div>
 
@@ -1392,19 +1593,20 @@ export default function ProvisionPage() {
                   )}
 
                   {latestDeployment?.phase === 'awaiting_secrets' && (
-                    <div className="p-3.5 rounded-lg bg-amber-500/5 border border-amber-500/30 space-y-2">
-                      <div className="text-sm font-display font-medium text-amber-600 dark:text-amber-400">
-                        Infrastructure Deployed — API Keys Required
+                    <div className="p-3.5 rounded-lg bg-emerald-500/5 border border-emerald-500/30 space-y-2">
+                      <div className="text-sm font-display font-medium text-emerald-400">
+                        Infrastructure Deployed — Ready for Activation
                       </div>
                       <p className="text-sm text-arena-elements-textSecondary">
-                        Your sidecar and vault are ready. Configure your API keys on the dashboard to start trading.
+                        Your sidecar and vault are ready. Provide your API keys to start trading.
                       </p>
-                      <Link
-                        to="/dashboard"
-                        className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
+                      <Button
+                        size="sm"
+                        onClick={() => setStep('secrets')}
+                        className="mt-1"
                       >
-                        Configure API Keys &rarr;
-                      </Link>
+                        Next: Activate Agent &rarr;
+                      </Button>
                     </div>
                   )}
 
@@ -1448,9 +1650,9 @@ export default function ProvisionPage() {
                           </>
                         )}
                       </div>
-                      {latestDeployment.serviceId != null && (
+                      {latestDeployment.vaultAddress && latestDeployment.vaultAddress !== zeroAddress && (
                         <Link
-                          to={`/arena/bot/service-${latestDeployment.serviceId}-vault-0`}
+                          to={`/arena/bot/${latestDeployment.vaultAddress.toLowerCase()}`}
                           className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
                         >
                           View Bot &rarr;
@@ -1475,7 +1677,14 @@ export default function ProvisionPage() {
                   Waiting for operator...
                 </span>
               )}
-              {(latestDeployment?.phase === 'active' || latestDeployment?.phase === 'awaiting_secrets') && (
+              {latestDeployment?.phase === 'awaiting_secrets' && (
+                <Button
+                  onClick={() => setStep('secrets')}
+                >
+                  Next: Activate &rarr;
+                </Button>
+              )}
+              {latestDeployment?.phase === 'active' && (
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1502,82 +1711,253 @@ export default function ProvisionPage() {
           </>
         )}
 
-        {/* ── Your Deployments (all steps) ───────────────────────────── */}
-        {myProvisions.length > 0 && (
-          <Card>
-            <CardContent className="pt-5 pb-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                  Recent Deployments
+        {/* ── Step 3: Activate (Set Secrets) ────────────────────────── */}
+        {step === 'secrets' && latestDeployment && (
+          <>
+            {/* Deployment success summary */}
+            <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                <span className="text-sm font-display font-semibold text-emerald-400">
+                  Infrastructure Deployed
                 </span>
-                <Link
-                  to="/dashboard"
-                  className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
-                >
-                  View all &rarr;
-                </Link>
               </div>
-              <div className="space-y-2">
-                {myProvisions.slice(0, 3).map((prov) => (
-                  <div
-                    key={prov.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
-                      prov.phase === 'active'
-                        ? 'border-emerald-700/30 bg-emerald-700/5 dark:border-emerald-500/30 dark:bg-emerald-500/5'
-                        : prov.phase === 'failed'
-                          ? 'border-crimson-500/30 bg-crimson-500/5'
-                          : 'border-violet-500/20 bg-violet-500/5'
-                    }`}
-                  >
-                    <div
-                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${phaseDotClass(prov.phase)}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-display font-medium text-arena-elements-textPrimary truncate">
-                          {prov.name}
-                        </span>
-                        <Badge
-                          variant={
-                            prov.phase === 'active'
-                              ? 'success'
-                              : prov.phase === 'failed'
-                                ? 'destructive'
-                                : 'outline'
-                          }
-                          className="text-[10px] shrink-0"
-                        >
-                          {phaseLabel(prov.phase)}
-                        </Badge>
-                      </div>
-                      <div className="text-xs font-data text-arena-elements-textTertiary mt-0.5 flex items-center gap-2 flex-wrap">
-                        <span>
-                          {strategyPacks.find((p) => p.id === prov.strategyType)?.name ??
-                            prov.strategyType}
-                        </span>
-                        <span>{timeAgo(prov.createdAt)}</span>
-                        {prov.callId != null && <span>call #{prov.callId}</span>}
-                        {prov.txHash && (
-                          <span className="truncate">
-                            {prov.txHash.slice(0, 10)}...{prov.txHash.slice(-4)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {prov.phase === 'active' && prov.serviceId != null && (
-                      <Link
-                        to={`/arena/bot/service-${prov.serviceId}-vault-0`}
-                        className="text-xs font-data font-medium text-violet-700 dark:text-violet-400 hover:underline shrink-0"
-                      >
-                        View
-                      </Link>
+              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm font-data">
+                {latestDeployment.sandboxId && (
+                  <>
+                    <span className="text-arena-elements-textTertiary">Sandbox</span>
+                    <span className="text-arena-elements-textPrimary truncate">{latestDeployment.sandboxId}</span>
+                  </>
+                )}
+                {latestDeployment.vaultAddress && latestDeployment.vaultAddress !== zeroAddress && (
+                  <>
+                    <span className="text-arena-elements-textTertiary">Vault</span>
+                    <span className="text-arena-elements-textPrimary truncate">{latestDeployment.vaultAddress}</span>
+                  </>
+                )}
+                {latestDeployment.callId != null && (
+                  <>
+                    <span className="text-arena-elements-textTertiary">Call ID</span>
+                    <span className="text-arena-elements-textPrimary">{latestDeployment.callId}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Secrets form */}
+            <Card>
+              <CardContent className="pt-5 pb-5 space-y-4">
+                <div>
+                  <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                    Configure API Keys
+                  </span>
+                  <p className="text-xs text-arena-elements-textTertiary mt-1">
+                    Your agent needs an AI provider key to operate. Keys are sent directly to the operator over HTTPS — never stored on-chain.
+                  </p>
+                </div>
+
+                {secretsLookupError && (
+                  <div className="text-sm text-amber-500 p-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                    {secretsLookupError}
+                  </div>
+                )}
+
+                {/* Use operator key toggle */}
+                <button
+                  type="button"
+                  onClick={() => setUseOperatorKey(!useOperatorKey)}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
+                    useOperatorKey
+                      ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/20'
+                      : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 hover:border-arena-elements-borderColorActive'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    useOperatorKey ? 'border-violet-500 bg-violet-500' : 'border-arena-elements-textTertiary'
+                  }`}>
+                    {useOperatorKey && (
+                      <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
                     )}
                   </div>
+                  <div>
+                    <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
+                      Use operator-provided key
+                    </span>
+                    <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                      Skip API key entry — the operator has pre-configured keys for this agent.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Provider selector */}
+                {!useOperatorKey && <>
+                <div role="group" aria-label="AI Provider">
+                  <span className="text-sm font-display font-medium text-arena-elements-textPrimary block mb-1.5">
+                    AI Provider
+                  </span>
+                  <div className="flex gap-2">
+                    {AI_PROVIDERS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setAiProvider(p.id);
+                          if (p.id === defaultProvider && DEFAULT_AI_API_KEY) {
+                            setApiKey(DEFAULT_AI_API_KEY);
+                          } else {
+                            setApiKey('');
+                          }
+                        }}
+                        className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-data border transition-all ${
+                          aiProvider === p.id
+                            ? 'border-violet-500/50 bg-violet-500/10 text-arena-elements-textPrimary ring-1 ring-violet-500/20'
+                            : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textSecondary hover:border-arena-elements-borderColorActive'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-arena-elements-textTertiary mt-1">
+                    Model: {(AI_PROVIDERS.find((p) => p.id === aiProvider) ?? AI_PROVIDERS[0]).modelName}
+                  </p>
+                </div>
+
+                {/* API Key input */}
+                <div>
+                  <label htmlFor="secrets-api-key" className="text-sm font-display font-medium text-arena-elements-textPrimary block mb-1.5">
+                    API Key <span className="text-crimson-400">*</span>
+                  </label>
+                  <Input
+                    id="secrets-api-key"
+                    type="password"
+                    placeholder={(AI_PROVIDERS.find((p) => p.id === aiProvider) ?? AI_PROVIDERS[0]).placeholder}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  {apiKey && DEFAULT_AI_API_KEY && apiKey === DEFAULT_AI_API_KEY && (
+                    <p className="text-xs text-emerald-500 mt-1">Pre-filled from local config</p>
+                  )}
+                </div>
+
+                {/* Extra env vars */}
+                {extraEnvs.map((env, i) => (
+                  <div key={env.id} className="flex gap-2">
+                    <Input
+                      placeholder="KEY"
+                      value={env.key}
+                      onChange={(e) => {
+                        const updated = [...extraEnvs];
+                        updated[i] = { ...env, key: e.target.value };
+                        setExtraEnvs(updated);
+                      }}
+                      className="flex-1"
+                    />
+                    <Input
+                      type="password"
+                      placeholder="value"
+                      value={env.value}
+                      onChange={(e) => {
+                        const updated = [...extraEnvs];
+                        updated[i] = { ...env, value: e.target.value };
+                        setExtraEnvs(updated);
+                      }}
+                      className="flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setExtraEnvs(extraEnvs.filter((_, j) => j !== i))}
+                      className="text-arena-elements-textTertiary hover:text-crimson-400 transition-colors px-1"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    envIdRef.current += 1;
+                    setExtraEnvs([...extraEnvs, { id: envIdRef.current, key: '', value: '' }]);
+                  }}
+                  className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
+                >
+                  + Add environment variable
+                </button>
+                </>}
+
+                {/* Activation progress */}
+                {isSubmittingSecrets && activationPhase && (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                    <div className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />
+                    <span className="text-sm font-data text-amber-400">
+                      {ACTIVATION_LABELS[activationPhase] ?? activationPhase}
+                    </span>
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleSubmitSecrets}
+                  className="w-full"
+                  size="lg"
+                  disabled={(!useOperatorKey && !apiKey.trim()) || isSubmittingSecrets}
+                >
+                  {isSubmittingSecrets ? 'Signing & Configuring...' : useOperatorKey ? 'Sign & Activate (Operator Key)' : 'Sign & Activate Agent'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {latestDeployment.phase === 'active' && (
+              <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-sm font-display font-semibold text-emerald-400">
+                    Agent Activated Successfully
+                  </span>
+                </div>
+                {latestDeployment.vaultAddress && latestDeployment.vaultAddress !== zeroAddress && (
+                  <Link
+                    to={`/arena/bot/${latestDeployment.vaultAddress.toLowerCase()}`}
+                    className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                  >
+                    View Bot &rarr;
+                  </Link>
+                )}
               </div>
-            </CardContent>
-          </Card>
+            )}
+
+            <div className="flex justify-between">
+              <Button
+                variant="outline"
+                onClick={() => setStep('deploy')}
+                disabled={isSubmittingSecrets}
+              >
+                Back
+              </Button>
+              {latestDeployment.phase === 'active' && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    resetTx();
+                    setName('');
+                    setApiKey(DEFAULT_AI_API_KEY);
+                    setExtraEnvs([]);
+                    setStep('configure');
+                  }}
+                >
+                  Provision Another Agent
+                </Button>
+              )}
+            </div>
+          </>
         )}
+
       </div>
 
       {/* ── Infrastructure Settings Dialog ────────────────────────────── */}
@@ -1775,6 +2155,18 @@ export default function ProvisionPage() {
               </div>
             )}
           </div>
+
+          <div className="pt-3 border-t border-arena-elements-dividerColor">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              size="sm"
+              onClick={() => setShowInfra(false)}
+            >
+              Done
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1921,6 +2313,18 @@ export default function ProvisionPage() {
               </div>
             </TabsContent>
           </Tabs>
+
+          <div className="pt-3 border-t border-arena-elements-dividerColor">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              size="sm"
+              onClick={() => setShowAdvanced(false)}
+            >
+              Done
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
@@ -1943,37 +2347,46 @@ function TimelineStage({
   isLast?: boolean;
 }) {
   return (
-    <div className={`relative flex gap-3 ${isFirst ? '' : 'mt-4'} ${isLast ? '' : 'pb-0'}`}>
+    <div className={`relative flex gap-3 ${isFirst ? '' : 'mt-5'} ${isLast ? '' : 'pb-0'}`}>
       {/* Node dot — positioned over the connecting line */}
       <div
-        className={`absolute -left-6 top-[2px] z-10 flex items-center justify-center w-[15px] h-[15px] rounded-full border-2 ${
+        className={`absolute -left-6 top-[2px] z-10 flex items-center justify-center w-[17px] h-[17px] rounded-full border-2 transition-all duration-500 ${
           status === 'done'
-            ? 'bg-arena-elements-icon-success border-arena-elements-icon-success'
+            ? 'bg-emerald-400 border-emerald-400 shadow-[0_0_12px_rgba(0,255,136,0.3)]'
             : status === 'active'
-              ? 'bg-amber-400 border-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.4)]'
+              ? 'bg-amber-400 border-amber-400 shadow-[0_0_12px_rgba(255,184,0,0.4),0_0_24px_rgba(255,184,0,0.15)]'
               : status === 'error'
-                ? 'bg-crimson-400 border-crimson-400'
+                ? 'bg-crimson-400 border-crimson-400 shadow-[0_0_10px_rgba(255,59,92,0.3)]'
                 : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 border-arena-elements-borderColor'
         }`}
       >
         {status === 'done' && (
-          <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         )}
         {status === 'active' && (
-          <div className="w-1.5 h-1.5 rounded-full bg-white" />
+          <>
+            <div className="w-1.5 h-1.5 rounded-full bg-white" />
+            {/* Pulsing ring */}
+            <div className="absolute inset-0 rounded-full border-2 border-amber-400/50 animate-ping" />
+          </>
+        )}
+        {status === 'error' && (
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
         )}
       </div>
 
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div
-          className={`text-sm font-display font-semibold ${
+          className={`text-sm font-display font-semibold transition-colors duration-300 ${
             status === 'done'
-              ? 'text-arena-elements-icon-success'
+              ? 'text-emerald-400'
               : status === 'active'
-                ? 'text-amber-600 dark:text-amber-400'
+                ? 'text-amber-400'
                 : status === 'error'
                   ? 'text-crimson-400'
                   : 'text-arena-elements-textTertiary'
@@ -1982,10 +2395,12 @@ function TimelineStage({
           {label}
         </div>
         <div
-          className={`text-xs font-data leading-relaxed mt-0.5 transition-opacity duration-300 ${
+          className={`text-xs font-data leading-relaxed mt-0.5 transition-all duration-300 ${
             status === 'active'
-              ? 'text-arena-elements-textSecondary'
-              : 'text-arena-elements-textTertiary'
+              ? 'text-arena-elements-textSecondary opacity-100'
+              : status === 'done'
+                ? 'text-arena-elements-textTertiary opacity-70'
+                : 'text-arena-elements-textTertiary opacity-50'
           }`}
         >
           {description}

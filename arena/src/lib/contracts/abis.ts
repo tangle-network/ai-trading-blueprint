@@ -37,7 +37,7 @@ export const vaultFactoryAbi = [
 
 export const tangleJobsAbi = [
   { type: 'function', name: 'submitJob', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'jobIndex', type: 'uint8' }, { name: 'inputs', type: 'bytes' }], outputs: [{ name: 'callId', type: 'uint64' }], stateMutability: 'payable' },
-  { type: 'event', name: 'JobSubmitted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'jobIndex', type: 'uint8', indexed: true }, { name: 'caller', type: 'address', indexed: false }, { name: 'inputs', type: 'bytes', indexed: false }], anonymous: false },
+  { type: 'event', name: 'JobSubmitted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'jobIndex', type: 'uint8', indexed: false }, { name: 'caller', type: 'address', indexed: false }, { name: 'inputs', type: 'bytes', indexed: false }], anonymous: false },
   { type: 'event', name: 'JobCompleted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }], anonymous: false },
   { type: 'event', name: 'JobResultSubmitted', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'operator', type: 'address', indexed: true }, { name: 'output', type: 'bytes', indexed: false }], anonymous: false },
 ] as const;
