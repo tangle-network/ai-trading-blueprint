@@ -2,7 +2,7 @@ import { useRef, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Chart, registerables } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
-import { Card, CardHeader, CardTitle, CardContent } from '~/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@tangle/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { useBotMetrics } from '~/lib/hooks/useBotApi';
 

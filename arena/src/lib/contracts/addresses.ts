@@ -1,15 +1,11 @@
 import type { Address } from 'viem';
-import { getAddresses } from './publicClient';
+import { getAddresses } from '@tangle/blueprint-ui';
+import type { ArenaAddresses } from './chains';
 
-// Reactive addresses — reads from the selected chain's network config.
-// Uses a Proxy so `addresses.tangle` always returns the current chain's value.
-export const addresses = new Proxy({} as {
-  tangle: Address;
-  vaultFactory: Address;
-  tradingBlueprint: Address;
-}, {
+// Reactive addresses — reads from the selected chain's network config via blueprint-ui.
+export const addresses = new Proxy({} as ArenaAddresses, {
   get(_target, prop: string) {
-    return getAddresses()[prop as keyof ReturnType<typeof getAddresses>];
+    return getAddresses<ArenaAddresses>()[prop as keyof ArenaAddresses];
   },
 });
 

@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct CoinGeckoProvider;
 
@@ -19,14 +19,6 @@ impl TradingProvider for CoinGeckoProvider {
         COINGECKO_EXPERT_PROMPT
     }
 
-    fn strategy_fragment(&self) -> &'static str {
-        "Use CoinGecko for crypto price discovery, historical data, and volatility calculation."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &COINGECKO_ENDPOINTS
-    }
-
     fn setup_commands(&self) -> Vec<String> {
         vec![]
     }
@@ -43,21 +35,6 @@ impl TradingProvider for CoinGeckoProvider {
         None
     }
 }
-
-static COINGECKO_ENDPOINTS: [DataEndpoint; 2] = [
-    DataEndpoint {
-        name: "Simple Price",
-        url: "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin&vs_currencies=usd",
-        description: "Current crypto prices",
-        auth: "None (30 req/min)",
-    },
-    DataEndpoint {
-        name: "Market Chart",
-        url: "https://api.coingecko.com/api/v3/coins/{id}/market_chart?vs_currency=usd&days=30",
-        description: "Historical price data for volatility calculation",
-        auth: "None (30 req/min)",
-    },
-];
 
 pub(crate) const COINGECKO_EXPERT_PROMPT: &str = r#"## CoinGecko Market Data
 
@@ -87,12 +64,6 @@ mod tests {
     }
 
     #[test]
-    fn test_coingecko_strategy_fragment() {
-        let p = CoinGeckoProvider;
-        assert!(p.strategy_fragment().contains("CoinGecko"));
-    }
-
-    #[test]
     fn test_coingecko_is_data_only() {
         let p = CoinGeckoProvider;
         assert!(p.protocol_adapters().is_empty());
@@ -112,11 +83,4 @@ mod tests {
         assert!(p.build_event_prompt(&ctx).is_none());
     }
 
-    #[test]
-    fn test_coingecko_data_endpoints() {
-        let p = CoinGeckoProvider;
-        let endpoints = p.data_endpoints();
-        assert!(!endpoints.is_empty());
-        assert!(endpoints.iter().any(|e| e.url.contains("coingecko")));
-    }
 }

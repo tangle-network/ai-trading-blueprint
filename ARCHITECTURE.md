@@ -258,6 +258,72 @@ Every trade passes through **3 independent validation layers**:
 2. **3 Validator nodes** — is this trade safe? (policy checks + AI scoring + EIP-712 signatures, 2-of-3 must approve)
 3. **On-chain PolicyEngine + TradeValidator** — hard limits (whitelists, position caps, leverage, rate limiting) + cryptographic signature verification
 
+## Session Management & Auth
+
+- **Operator API auth**: EIP-191 challenge-response → PASETO v4.local tokens (1hr TTL)
+- **Per-tick session isolation**: Each cron tick creates a fresh session (`trading-{bot_id}-{timestamp}`). No conversation context preserved between ticks.
+- **Persistent state**: Filesystem survives across ticks — SQLite DB, phase.json, insights.jsonl, tools/
+- **Submitter verification**: `verify_submitter()` ensures API caller == bot.submitter_address
+
+## Agent Iteration Protocol (4-Phase)
+
+```
+bootstrap → research → trading → reflect → research → ...
+```
+
+Each tick, the loop prompt instructs the agent to:
+1. Read `phase.json` for current phase/iteration
+2. Review learning history (memory table, insights.jsonl, signal accuracy)
+3. Execute the current phase protocol
+4. Update phase.json, write metrics
+
+### Agent Workspace (per sandbox)
+
+```
+/home/agent/
+├── data/trading.db        # SQLite: markets, trades, signals, performance, memory
+├── tools/                 # Agent-built Python scripts (scanners, analyzers)
+├── memory/insights.jsonl  # Append-only learning log
+├── metrics/latest.json    # Current metrics (read by /metrics endpoint)
+├── logs/decisions.jsonl   # Trade decision log with reasoning
+└── state/phase.json       # Current phase + iteration counter
+```
+
+### Feedback Loop
+
+The reflect phase writes insights to the `memory` table and `insights.jsonl`. The loop prompt instructs the agent to read these before acting — past signal accuracy directly weights future decisions. The `memory` table tracks `times_confirmed` to reinforce reliable patterns.
+
+## Scheduling
+
+- **Cron engine**: `tokio_cron_scheduler`, per-bot cron expressions
+- **Global tick**: `workflow_tick` (job 30) checks which bots are due each minute
+- **Wind-down**: 24h before TTL expiry, loop prompt switches to close-all-positions mode
+- **Reaper**: Kills containers after TTL expiry + grace period
+
+## Strategy Packs
+
+| Pack | Providers | Default Cron | Max Turns |
+|------|-----------|-------------|-----------|
+| prediction | polymarket, coingecko | */15 min | 20 |
+| dex | uniswap_v3, coingecko | */5 min | 12 |
+| yield | aave_v3, morpho, coingecko | */15 min | 10 |
+| perp | gmx_v2, hyperliquid, vertex, coingecko | */2 min | 15 |
+| volatility | 6 providers | */10 min | 12 |
+| mm | polymarket, hyperliquid, uniswap_v3, coingecko | */1 min | 15 |
+| multi | all 8 providers | */5 min | 20 |
+
+## Local Development
+
+```bash
+anvil --load-state scripts/data/anvil-state.json --host 0.0.0.0
+./scripts/deploy-local.sh
+./scripts/start-pricing-engines.sh
+cargo run --release -p trading-blueprint-bin
+cd arena && pnpm dev
+```
+
+State directory: `BLUEPRINT_STATE_DIR` (default `./blueprint-state/`). Wipe this + `scripts/data/operator*/trading/` for a full reset.
+
 ## Crate Map
 
 | Crate | Role |

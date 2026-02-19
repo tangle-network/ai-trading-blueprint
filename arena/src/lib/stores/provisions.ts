@@ -1,6 +1,6 @@
 import { computed } from 'nanostores';
 import type { Address } from 'viem';
-import { persistedAtom } from './persistedAtom';
+import { persistedAtom } from '@tangle/blueprint-ui';
 
 export type ProvisionPhase = 'pending_confirmation' | 'job_submitted' | 'job_processing' | 'awaiting_secrets' | 'active' | 'failed';
 

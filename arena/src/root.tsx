@@ -3,14 +3,14 @@ import './styles/global.scss';
 
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from 'react-router';
 import { Toaster } from 'sonner';
-import { useThemeValue } from '~/lib/hooks/useThemeValue';
+import { useThemeValue } from '@tangle/blueprint-ui';
 import { Web3Provider } from '~/providers/Web3Provider';
 import { Header } from '~/components/layout/Header';
 import { Footer } from '~/components/layout/Footer';
 
 const inlineThemeCode = `
   (function() {
-    var theme = localStorage.getItem('arena_theme');
+    var theme = localStorage.getItem('bp_theme') || localStorage.getItem('arena_theme');
     if (!theme) {
       theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
-import { Skeleton } from '~/components/ui/skeleton';
+import { Skeleton } from '@tangle/blueprint-ui/components';
 
 interface VaultStatsProps {
   tvl?: number;

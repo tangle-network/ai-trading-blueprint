@@ -9,27 +9,17 @@ import {
 import { useStore } from '@nanostores/react';
 import { encodeAbiParameters, parseAbiParameters, zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Card, CardContent } from '~/components/ui/card';
-import { Input } from '~/components/ui/input';
-import { Button } from '~/components/ui/button';
-import { Badge } from '~/components/ui/badge';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '~/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
-import { Identicon } from '~/components/shared/Identicon';
+  Badge, Button, Card, CardContent, Dialog, DialogContent, DialogHeader,
+  DialogTitle, DialogDescription, Identicon, Input, Tabs, TabsList, TabsTrigger, TabsContent,
+} from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
 import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
-import { publicClient, selectedChainIdStore } from '~/lib/contracts/publicClient';
-import { useOperators } from '~/lib/hooks/useOperators';
+import { publicClient, selectedChainIdStore, useOperators } from '@tangle/blueprint-ui';
 import { useQuotes } from '~/lib/hooks/useQuotes';
-import { addTx } from '~/lib/stores/txHistory';
+import { addTx } from '@tangle/blueprint-ui';
 import {
   provisionsForOwner,
   addProvision,
@@ -205,7 +195,7 @@ Build tools for:
     name: 'Prediction Market Trading',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Trades event outcomes on Polymarket using the CLOB API.',
-    cron: '0 */3 * * * *',
+    cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Polymarket Expert Knowledge
@@ -226,6 +216,76 @@ CLOB Order Flow:
 3. POST /order → place limit order (needs API key + L1/L2 headers)
 
 Build probability estimation tools from news analysis and market data cross-referencing.`,
+  },
+  {
+    id: 'prediction_politics',
+    name: 'Politics',
+    providers: ['Polymarket', 'CoinGecko'],
+    description: 'Elections, governance, and policy prediction markets with polling-based analysis.',
+    cron: '0 */15 * * * *',
+    maxTurns: 20,
+    timeoutMs: 240_000,
+    expertKnowledge: `### Politics Prediction Markets
+Filter: GET /markets?tag=politics&closed=false&limit=50&order=volume
+Research: FiveThirtyEight polls, Metaculus forecasts, AP/Reuters political news
+Framework: Anchor on base rates (incumbent win ~65%), adjust for recent polling direction.
+Edge: Markets anchor on single polls, overweight recency, neglect base rates.`,
+  },
+  {
+    id: 'prediction_crypto',
+    name: 'Crypto Events',
+    providers: ['Polymarket', 'CoinGecko'],
+    description: 'Cryptocurrency price and event markets using quantitative volatility models.',
+    cron: '0 */15 * * * *',
+    maxTurns: 20,
+    timeoutMs: 240_000,
+    expertKnowledge: `### Crypto Prediction Markets
+Filter: GET /markets?tag=crypto&closed=false&limit=50&order=volume
+Quantitative: Use CoinGecko 30-day price history to compute log-normal price probabilities.
+Cross-reference: Hyperliquid funding rates signal directional pressure.
+Formula: prob = 1 - Φ((ln(target) - ln(current)) / (σ_daily * sqrt(days_to_expiry)))`,
+  },
+  {
+    id: 'prediction_war',
+    name: 'Geopolitics',
+    providers: ['Polymarket', 'CoinGecko'],
+    description: 'Conflict and international relations markets with qualitative research frameworks.',
+    cron: '0 */15 * * * *',
+    maxTurns: 20,
+    timeoutMs: 240_000,
+    expertKnowledge: `### Geopolitics Prediction Markets
+Filter: GET /markets?tag=geopolitics&closed=false&limit=50&order=volume
+Research: Reuters World, BBC, ACLED conflict data, International Crisis Group analysis
+Framework: Reference class forecasting — find historical analog, anchor on base rate, adjust.
+Caution: High tail risk — max 5% position size per market.`,
+  },
+  {
+    id: 'prediction_trending',
+    name: 'Trending',
+    providers: ['Polymarket', 'CoinGecko'],
+    description: 'Viral and rapidly-growing markets across all categories. Early-mover edge.',
+    cron: '0 */15 * * * *',
+    maxTurns: 20,
+    timeoutMs: 240_000,
+    expertKnowledge: `### Trending Prediction Markets
+Discovery: Sort by created_at desc AND volume growth rate (recent vol / total vol)
+Research: Google News last 24h for market keywords to understand why it's trending
+Edge: Being 2-3 hours early in a fast-moving market is worth 10-20% edge.
+Caution: New markets have thin liquidity and sometimes ambiguous resolution criteria.`,
+  },
+  {
+    id: 'prediction_celebrity',
+    name: 'Celebrity',
+    providers: ['Polymarket', 'CoinGecko'],
+    description: 'Celebrity, entertainment, and awards markets. Expert aggregator arbitrage.',
+    cron: '0 */15 * * * *',
+    maxTurns: 20,
+    timeoutMs: 240_000,
+    expertKnowledge: `### Celebrity & Entertainment Markets
+Filter: GET /markets?tag=pop-culture&closed=false&limit=50&order=volume
+Awards edge: GoldDerby expert consensus consistently leads Polymarket by 10-15%.
+Research: variety.com, deadline.com, goldderby.com for frontrunner consensus.
+Best timing: Enter 7-30 days before resolution when consensus is forming but odds still move.`,
   },
   {
     id: 'yield',
@@ -578,7 +638,6 @@ export default function ProvisionPage() {
   const [customInstructions, setCustomInstructions] = useState('');
   const [customExpertKnowledge, setCustomExpertKnowledge] = useState('');
   const [customCron, setCustomCron] = useState('');
-  const [customMaxTurns, setCustomMaxTurns] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Step 4 — deploy
@@ -637,7 +696,6 @@ export default function ProvisionPage() {
     setCustomExpertKnowledge('');
     setCustomInstructions('');
     setCustomCron('');
-    setCustomMaxTurns('');
   }
 
   // Reset new service deploying state when switching modes
@@ -994,7 +1052,6 @@ export default function ProvisionPage() {
         address: addresses.tangle,
         abi: tangleJobsAbi,
         functionName: 'submitJob',
-        chainId: targetChain.id,
         args: [BigInt(serviceId), 0, inputs],
       },
       {
@@ -1082,7 +1139,6 @@ export default function ProvisionPage() {
         address: addresses.tangle,
         abi: tangleServicesAbi,
         functionName: 'createServiceFromQuotes',
-        chainId: targetChain.id,
         args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
         value: totalCost,
       },
@@ -1382,32 +1438,66 @@ export default function ProvisionPage() {
                 <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                   Strategy Profile
                 </span>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {strategyPacks.map((p) => {
-                    const active = strategyType === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setStrategyType(p.id)}
-                        className={`text-left rounded-lg border px-3.5 py-3 transition-all duration-150 ${
-                          active
-                            ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
-                            : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                        }`}
-                      >
-                        <div
-                          className={`text-sm font-display font-semibold mb-0.5 ${active ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-2">
+                    {strategyPacks.filter((p) => !p.id.startsWith('prediction')).map((p) => {
+                      const active = strategyType === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setStrategyType(p.id)}
+                          className={`text-left rounded-lg border px-3.5 py-3 transition-all duration-150 ${
+                            active
+                              ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                              : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                          }`}
                         >
-                          {p.name}
-                        </div>
-                        <div className="text-xs font-data text-arena-elements-textTertiary leading-snug line-clamp-2">
-                          {p.providers.slice(0, 3).join(', ')}
-                          {p.providers.length > 3 ? ` +${p.providers.length - 3}` : ''}
-                        </div>
-                      </button>
-                    );
-                  })}
+                          <div
+                            className={`text-sm font-display font-semibold mb-0.5 ${active ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}
+                          >
+                            {p.name}
+                          </div>
+                          <div className="text-xs font-data text-arena-elements-textTertiary leading-snug line-clamp-2">
+                            {p.providers.slice(0, 3).join(', ')}
+                            {p.providers.length > 3 ? ` +${p.providers.length - 3}` : ''}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div>
+                    <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block mb-1.5">
+                      Prediction Markets
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                      {strategyPacks.filter((p) => p.id.startsWith('prediction')).map((p) => {
+                        const active = strategyType === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setStrategyType(p.id)}
+                            className={`text-left rounded-lg border px-3.5 py-3 transition-all duration-150 ${
+                              active
+                                ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                                : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                            }`}
+                          >
+                            <div
+                              className={`text-sm font-display font-semibold mb-0.5 ${active ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}
+                            >
+                              {p.name}
+                            </div>
+                            <div className="text-xs font-data text-arena-elements-textTertiary leading-snug line-clamp-2">
+                              {p.providers.slice(0, 3).join(', ')}
+                              {p.providers.length > 3 ? ` +${p.providers.length - 3}` : ''}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <p className="text-sm text-arena-elements-textSecondary leading-relaxed max-w-lg">
@@ -2260,18 +2350,12 @@ export default function ProvisionPage() {
                   </p>
                 </div>
                 <div>
-                  <label htmlFor="max-turns" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
-                    Max Turns Per Iteration
-                  </label>
-                  <Input
-                    id="max-turns"
-                    type="number"
-                    min="1"
-                    max="50"
-                    value={customMaxTurns || String(selectedPack.maxTurns)}
-                    onChange={(e) => setCustomMaxTurns(e.target.value)}
-                    className="font-data max-w-28"
-                  />
+                  <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                    Max Turns
+                  </span>
+                  <span className="text-sm font-data text-arena-elements-textPrimary">
+                    {selectedPack.maxTurns} per iteration
+                  </span>
                 </div>
                 <div>
                   <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
@@ -2296,15 +2380,12 @@ export default function ProvisionPage() {
                     ))}
                   </div>
                 </div>
-                {(customCron || customMaxTurns) && (
+                {customCron && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setCustomCron('');
-                      setCustomMaxTurns('');
-                    }}
+                    onClick={() => setCustomCron('')}
                     className="text-xs"
                   >
                     Reset to Defaults

@@ -17,15 +17,6 @@ pub mod vertex;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// A data endpoint that a provider uses.
-#[derive(Debug, Clone)]
-pub struct DataEndpoint {
-    pub name: &'static str,
-    pub url: &'static str,
-    pub description: &'static str,
-    pub auth: &'static str,
-}
-
 /// Context passed to [`TradingProvider::build_event_prompt`].
 pub struct EventContext<'a> {
     pub event_type: &'a str,
@@ -51,12 +42,6 @@ pub trait TradingProvider: Send + Sync {
 
     /// Full expert prompt with API URLs, contract addresses, methodology.
     fn expert_prompt(&self) -> &'static str;
-
-    /// 1-4 line summary for generic profile strategy fragments.
-    fn strategy_fragment(&self) -> &'static str;
-
-    /// Data API endpoints this provider uses.
-    fn data_endpoints(&self) -> &[DataEndpoint];
 
     /// Provider-specific setup commands (e.g. `pip install py-clob-client`).
     fn setup_commands(&self) -> Vec<String>;
@@ -181,18 +166,6 @@ mod tests {
             assert!(
                 !p.expert_prompt().is_empty(),
                 "provider {} has empty expert_prompt",
-                p.id()
-            );
-        }
-    }
-
-    #[test]
-    fn test_each_provider_has_strategy_fragment() {
-        let reg = registry();
-        for p in reg.all() {
-            assert!(
-                !p.strategy_fragment().is_empty(),
-                "provider {} has empty strategy_fragment",
                 p.id()
             );
         }

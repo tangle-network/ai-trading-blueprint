@@ -4,9 +4,9 @@ import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
+import { Identicon } from '@tangle/blueprint-ui/components';
+import { publicClient, selectedChainIdStore } from '@tangle/blueprint-ui';
 import { networks } from '~/lib/contracts/chains';
-import { publicClient, selectedChainIdStore } from '~/lib/contracts/publicClient';
-import { Identicon } from '~/components/shared/Identicon';
 import { toast } from 'sonner';
 
 export function WalletButton() {
@@ -20,20 +20,25 @@ export function WalletButton() {
   const selectedNetwork = networks[selectedChainId];
 
   const [ethBalance, setEthBalance] = useState<string | null>(null);
+  const [balanceError, setBalanceError] = useState(false);
 
   useEffect(() => {
     if (!address) {
       setEthBalance(null);
+      setBalanceError(false);
       return;
     }
     let cancelled = false;
 
     const fetchBalance = () => {
       publicClient.getBalance({ address }).then((bal: bigint) => {
-        if (!cancelled) setEthBalance(parseFloat(formatUnits(bal, 18)).toFixed(3));
+        if (!cancelled) {
+          setEthBalance(parseFloat(formatUnits(bal, 18)).toFixed(3));
+          setBalanceError(false);
+        }
       }).catch((err: unknown) => {
         console.warn('[WalletButton] balance fetch failed:', err);
-        if (!cancelled) setEthBalance(null);
+        if (!cancelled) setBalanceError(true);
       });
     };
 
@@ -124,7 +129,7 @@ export function WalletButton() {
         const truncated = address
           ? `${address.slice(0, 6)}...${address.slice(-4)}`
           : '';
-        const displayBalance = ethBalance ?? '...';
+        const displayBalance = ethBalance ?? (balanceError ? '—' : '...');
 
         return (
           <div ref={ref} className="relative">

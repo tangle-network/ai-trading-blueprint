@@ -3,7 +3,7 @@ import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '~/lib/contracts/publicClient';
+import { publicClient } from '@tangle/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
 
 const BLUEPRINT_ID = BigInt(import.meta.env.VITE_BLUEPRINT_ID ?? '0');

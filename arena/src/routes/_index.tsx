@@ -6,8 +6,7 @@ import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
-import { Badge } from '~/components/ui/badge';
-import { Identicon } from '~/components/shared/Identicon';
+import { Badge, Identicon } from '@tangle/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import type { Bot } from '~/lib/types/bot';
 
@@ -24,6 +23,11 @@ const strategyColors: Record<string, 'accent' | 'success' | 'amber' | 'default' 
   sentiment: 'accent',
   dex: 'success',
   prediction: 'accent',
+  prediction_politics: 'accent',
+  prediction_crypto: 'accent',
+  prediction_war: 'accent',
+  prediction_trending: 'accent',
+  prediction_celebrity: 'accent',
   yield: 'amber',
   perp: 'default',
   volatility: 'secondary',

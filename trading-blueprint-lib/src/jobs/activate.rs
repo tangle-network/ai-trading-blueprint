@@ -65,6 +65,7 @@ pub async fn activate_bot_with_secrets(
         sandbox_runtime::secret_provisioning::inject_secrets(
             &bot.sandbox_id,
             user_env,
+            None,
         )
         .await
         .map_err(|e| format!("Failed to inject secrets: {e}"))?
@@ -119,10 +120,13 @@ pub async fn activate_bot_with_secrets(
         "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
     });
 
-    let cron_config = pack
-        .as_ref()
-        .map(|p| p.default_cron.clone())
-        .unwrap_or_else(|| "0 */5 * * * *".to_string());
+    let cron_config = if !bot.trading_loop_cron.is_empty() {
+        bot.trading_loop_cron.clone()
+    } else {
+        pack.as_ref()
+            .map(|p| p.default_cron.clone())
+            .unwrap_or_else(|| "0 */5 * * * *".to_string())
+    };
 
     let next_run = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
         "cron",
@@ -215,7 +219,7 @@ pub async fn wipe_bot_secrets(
             .map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {
-        sandbox_runtime::secret_provisioning::wipe_secrets(&bot.sandbox_id)
+        sandbox_runtime::secret_provisioning::wipe_secrets(&bot.sandbox_id, None)
             .await
             .map_err(|e| format!("Failed to wipe secrets: {e}"))?
     };

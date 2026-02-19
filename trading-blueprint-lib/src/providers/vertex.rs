@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct VertexProvider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for VertexProvider {
 
     fn expert_prompt(&self) -> &'static str {
         VERTEX_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on Vertex Protocol's combined spot + perps order book on Arbitrum. \
-         Use subaccount margining for capital-efficient positions."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &[]
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -83,12 +74,6 @@ mod tests {
     fn test_vertex_expert_prompt_has_address() {
         let p = VertexProvider;
         assert!(p.expert_prompt().contains("0xbbEE07B3e8121227AfCFe1E2B82772571571571"));
-    }
-
-    #[test]
-    fn test_vertex_strategy_fragment() {
-        let p = VertexProvider;
-        assert!(p.strategy_fragment().contains("Vertex"));
     }
 
     #[test]

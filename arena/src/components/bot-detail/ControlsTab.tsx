@@ -5,8 +5,7 @@ import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
-import { Button } from '~/components/ui/button';
-import { Badge } from '~/components/ui/badge';
+import { Badge, Button } from '@tangle/blueprint-ui/components';
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 

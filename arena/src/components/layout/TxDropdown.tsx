@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'sonner';
-import { txListStore, pendingCount, clearTxs, type TrackedTx } from '~/lib/stores/txHistory';
+import { txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle/blueprint-ui';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
 import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
 

@@ -1,8 +1,7 @@
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useBots } from '~/lib/hooks/useBots';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
-import { AnimatedPage } from '~/components/motion/AnimatedPage';
+import { AnimatedPage, Button, Tabs, TabsList, TabsTrigger, TabsContent } from '@tangle/blueprint-ui/components';
 import { BotHeader } from '~/components/bot-detail/BotHeader';
 import { PerformanceTab } from '~/components/bot-detail/PerformanceTab';
 import { PositionsTab } from '~/components/bot-detail/PositionsTab';
@@ -11,7 +10,6 @@ import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
 import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { TerminalTab } from '~/components/bot-detail/TerminalTab';
-import { Button } from '~/components/ui/button';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },

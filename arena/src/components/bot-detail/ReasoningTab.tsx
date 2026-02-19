@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
-import { Card, CardContent } from '~/components/ui/card';
-import { Badge } from '~/components/ui/badge';
-import { useThemeValue } from '~/lib/hooks/useThemeValue';
+import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { useThemeValue } from '@tangle/blueprint-ui';
 import type { Trade, ValidatorResponseDetail } from '~/lib/types/trade';
 
 interface ReasoningTabProps {

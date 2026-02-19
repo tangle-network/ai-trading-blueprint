@@ -44,6 +44,9 @@ importers:
       '@tangle/agent-ui':
         specifier: link:../../ai-agent-sandbox-blueprint/packages/agent-ui
         version: link:../../ai-agent-sandbox-blueprint/packages/agent-ui
+      '@tangle/blueprint-ui':
+        specifier: link:../../blueprint-ui
+        version: link:../../blueprint-ui
       '@tanstack/react-query':
         specifier: ^5.90.16
         version: 5.90.21(react@19.0.0)

@@ -55,8 +55,10 @@ export function getBotMeta(serviceId: number): BotMeta | undefined {
  * Bot IDs are now vault addresses; use getBotApiUrl(serviceId) directly when possible.
  */
 export function getApiUrlForBot(_botId: string): string | undefined {
-  // Bot IDs are vault addresses — can't derive service ID from them.
-  // Callers should use getBotApiUrl(bot.serviceId) instead.
+  // When only one bot API is configured, use it for any bot lookup.
+  // With multiple bots, callers should use getBotApiUrl(bot.serviceId) instead.
+  const urls = Object.values(BOT_APIS);
+  if (urls.length === 1) return urls[0];
   return undefined;
 }
 

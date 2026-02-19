@@ -1,10 +1,8 @@
 import { Link, useLocation } from 'react-router';
-import { ChainSwitcher } from './ChainSwitcher';
-import { ThemeToggle } from './ThemeToggle';
+import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle/blueprint-ui/components';
+import { cn } from '@tangle/blueprint-ui';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
-import { TangleLogo } from '~/components/shared/TangleLogo';
-import { cn } from '~/lib/utils';
 
 const navItems = [
   { label: 'Leaderboard', href: '/' },
@@ -20,7 +18,7 @@ export function Header() {
       <div className="relative mx-auto flex h-full max-w-7xl items-center px-4 sm:px-6">
         {/* Logo */}
         <Link to="/" className="flex items-center group shrink-0">
-          <TangleLogo />
+          <TangleLogo label="Trading Arena" />
         </Link>
 
         {/* Nav — absolutely centered so right-side actions don't shift it */}

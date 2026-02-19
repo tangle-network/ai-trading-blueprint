@@ -41,14 +41,40 @@ export default defineConfig({
     alias: {
       events: 'events',
     },
+    dedupe: [
+      '@nanostores/react',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-separator',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-tabs',
+      '@tangle/agent-ui',
+      'blo',
+      'class-variance-authority',
+      'clsx',
+      'framer-motion',
+      'nanostores',
+      'react',
+      'react-dom',
+      'tailwind-merge',
+      'viem',
+      'wagmi',
+    ],
   },
   server: {
+    port: 1337,
+    host: '0.0.0.0',
     proxy: {
       // Proxy operator API calls to avoid CORS issues in development
       '/operator-api': {
         target: 'http://localhost:9200',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/operator-api/, ''),
+      },
+      // Proxy RPC calls so browsers on non-localhost (Tailscale, LAN) can reach Anvil
+      '/rpc-proxy': {
+        target: 'http://127.0.0.1:8545',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rpc-proxy/, ''),
       },
     },
   },

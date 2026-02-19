@@ -96,6 +96,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid 1.21.0",
 ]
 
@@ -995,6 +996,18 @@ name = "anyhow"
 version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
+
+[[package]]
+name = "argon2"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
+dependencies = [
+ "base64ct",
+ "blake2",
+ "cpufeatures",
+ "password-hash",
+]
 
 [[package]]
 name = "ark-bls12-377"
@@ -2441,8 +2454,10 @@ dependencies = [
 name = "blueprint-crypto-hashing"
 version = "0.1.0-alpha.5"
 dependencies = [
+ "argon2",
  "blake3",
  "blueprint-std",
+ "hkdf",
  "sha2 0.10.9",
  "sha3",
 ]
@@ -8284,6 +8299,7 @@ dependencies = [
  "chrono",
  "docktopus",
  "hex",
+ "hkdf",
  "k256",
  "once_cell",
  "pasetors 0.6.8",
@@ -8291,6 +8307,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "time",
  "tiny-keccak",
@@ -9676,6 +9693,7 @@ dependencies = [
  "blueprint-qos",
  "blueprint-sdk",
  "blueprint-webhooks",
+ "chrono",
  "futures-util",
  "http-body-util",
  "hyper 1.8.1",

@@ -2,7 +2,6 @@ import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagm
 import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
-import { selectedChainIdStore } from '~/lib/contracts/publicClient';
 
 /** Approve the vault to spend exactly the requested amount of the asset token. */
 export function useApprove() {
@@ -11,7 +10,6 @@ export function useApprove() {
 
   function approve(tokenAddress: Address, spender: Address, amount: bigint) {
     writeContract({
-      chainId: selectedChainIdStore.get(),
       address: tokenAddress,
       abi: erc20Abi,
       functionName: 'approve',
@@ -32,7 +30,6 @@ export function useDeposit() {
     if (!userAddress) return;
     const parsed = parseUnits(amount, decimals);
     writeContract({
-      chainId: selectedChainIdStore.get(),
       address: vaultAddress,
       abi: tradingVaultAbi,
       functionName: 'deposit',
@@ -64,7 +61,6 @@ export function useRedeem() {
     const parsed = parseUnits(shares, shareDecimals);
     writeContract(
       {
-        chainId: selectedChainIdStore.get(),
         address: vaultAddress,
         abi: tradingVaultAbi,
         functionName: 'redeem',

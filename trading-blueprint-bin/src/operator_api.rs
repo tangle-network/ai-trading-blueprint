@@ -207,6 +207,76 @@ struct ConfigResponse {
     status: String,
 }
 
+// ── Metrics / trades response types ─────────────────────────────────────
+
+#[derive(Serialize)]
+struct MetricsSnapshotResponse {
+    timestamp: String,
+    bot_id: String,
+    account_value_usd: f64,
+    unrealized_pnl: f64,
+    realized_pnl: f64,
+    high_water_mark: f64,
+    drawdown_pct: f64,
+    positions_count: u32,
+    trade_count: u32,
+}
+
+#[derive(Serialize)]
+struct BotMetricsResponse {
+    portfolio_value_usd: f64,
+    total_pnl: f64,
+    trade_count: u32,
+}
+
+#[derive(Serialize)]
+struct TradeEntryResponse {
+    id: String,
+    bot_id: String,
+    timestamp: String,
+    action: String,
+    token_in: String,
+    token_out: String,
+    amount_in: String,
+    min_amount_out: String,
+    target_protocol: String,
+    tx_hash: String,
+    paper_trade: bool,
+    status: String,
+    pnl: f64,
+    entry_price: f64,
+    current_price: f64,
+}
+
+#[derive(Serialize)]
+struct PortfolioPosition {
+    token: String,
+    symbol: String,
+    amount: f64,
+    value_usd: f64,
+    entry_price: f64,
+    current_price: f64,
+    pnl_percent: f64,
+    weight: f64,
+}
+
+#[derive(Serialize)]
+struct PortfolioStateResponse {
+    total_value_usd: f64,
+    cash_balance: f64,
+    positions: Vec<PortfolioPosition>,
+}
+
+#[derive(Deserialize)]
+struct MetricsHistoryQuery {
+    #[allow(dead_code)]
+    from: Option<String>,
+    #[allow(dead_code)]
+    to: Option<String>,
+    #[allow(dead_code)]
+    limit: Option<usize>,
+}
+
 // ── Session auth types ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -249,6 +319,10 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/stop", post(stop_bot))
         .route("/api/bots/{bot_id}/run-now", post(run_now))
         .route("/api/bots/{bot_id}/config", patch(update_config))
+        .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
+        .route("/api/bots/{bot_id}/metrics/history", get(get_bot_metrics_history))
+        .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
+        .route("/api/bots/{bot_id}/portfolio/state", get(get_bot_portfolio))
         .route("/api/bots/{bot_id}/activation-progress", get(get_activation_progress))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
@@ -308,10 +382,7 @@ async fn list_bots(
 async fn get_bot(
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
-    let record = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
-
+    let record = resolve_bot(&bot_id)?;
     Ok(Json(BotDetailResponse::from_record(record)))
 }
 
@@ -499,6 +570,305 @@ async fn update_config(
 
     Ok(Json(ConfigResponse {
         status: "configured".to_string(),
+    }))
+}
+
+// ── Bot data resolution ─────────────────────────────────────────────────
+
+/// Resolve a bot by trading ID or vault address.
+fn resolve_bot(bot_id: &str) -> Result<TradingBotRecord, (StatusCode, String)> {
+    state::resolve_bot(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))
+}
+
+/// Synthesize metrics history from per-bot trade data.
+/// Returns a time series of account value snapshots.
+fn synthesize_metrics(bot: &TradingBotRecord, trades: &[serde_json::Value]) -> Vec<MetricsSnapshotResponse> {
+    const INITIAL_VALUE: f64 = 10_000.0;
+    let mut snapshots = Vec::new();
+
+    let start_ts = chrono::DateTime::from_timestamp(bot.created_at as i64, 0)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+    // Initial snapshot
+    snapshots.push(MetricsSnapshotResponse {
+        timestamp: start_ts,
+        bot_id: bot.id.clone(),
+        account_value_usd: INITIAL_VALUE,
+        unrealized_pnl: 0.0,
+        realized_pnl: 0.0,
+        high_water_mark: INITIAL_VALUE,
+        drawdown_pct: 0.0,
+        positions_count: 0,
+        trade_count: 0,
+    });
+
+    if trades.is_empty() {
+        snapshots.push(MetricsSnapshotResponse {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            bot_id: bot.id.clone(),
+            account_value_usd: INITIAL_VALUE,
+            unrealized_pnl: 0.0,
+            realized_pnl: 0.0,
+            high_water_mark: INITIAL_VALUE,
+            drawdown_pct: 0.0,
+            positions_count: 0,
+            trade_count: 0,
+        });
+        return snapshots;
+    }
+
+    // Sort trades by created_at
+    let mut sorted: Vec<&serde_json::Value> = trades.iter().collect();
+    sorted.sort_by(|a, b| {
+        let ta = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+        let tb = b.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+        ta.cmp(tb)
+    });
+
+    let mut running_pnl = 0.0;
+    let mut hwm = INITIAL_VALUE;
+
+    for (i, trade) in sorted.iter().enumerate() {
+        let pnl = trade.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        running_pnl += pnl;
+        let val = INITIAL_VALUE + running_pnl;
+        if val > hwm {
+            hwm = val;
+        }
+
+        // Emit a snapshot every ~5 trades + last trade
+        if (i + 1) % 5 == 0 || i == sorted.len() - 1 {
+            let open_count = sorted[..=i]
+                .iter()
+                .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+                .count() as u32;
+
+            let realized: f64 = sorted[..=i]
+                .iter()
+                .filter(|t| t.get("status").and_then(|v| v.as_str()) != Some("open"))
+                .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+                .sum();
+
+            let unrealized: f64 = sorted[..=i]
+                .iter()
+                .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+                .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+                .sum();
+
+            let ts = trade
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let dd = if hwm > 0.0 { ((hwm - val) / hwm) * 100.0 } else { 0.0 };
+
+            snapshots.push(MetricsSnapshotResponse {
+                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                bot_id: bot.id.clone(),
+                account_value_usd: val,
+                unrealized_pnl: unrealized,
+                realized_pnl: realized,
+                high_water_mark: hwm,
+                drawdown_pct: dd,
+                positions_count: open_count,
+                trade_count: (i + 1) as u32,
+            });
+        }
+    }
+
+    snapshots
+}
+
+// ── Metrics / trades handlers ───────────────────────────────────────────
+
+async fn get_bot_metrics(
+    Path(bot_id): Path<String>,
+) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let trades = state::load_bot_trades(&bot.id);
+
+    let total_pnl: f64 = trades
+        .iter()
+        .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+        .sum();
+
+    Ok(Json(BotMetricsResponse {
+        portfolio_value_usd: 10_000.0 + total_pnl,
+        total_pnl,
+        trade_count: trades.len() as u32,
+    }))
+}
+
+async fn get_bot_metrics_history(
+    Path(bot_id): Path<String>,
+    Query(_query): Query<MetricsHistoryQuery>,
+) -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let trades = state::load_bot_trades(&bot.id);
+    let snapshots = synthesize_metrics(&bot, &trades);
+    Ok(Json(snapshots))
+}
+
+async fn get_bot_trades(
+    Path(bot_id): Path<String>,
+) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let trades = state::load_bot_trades(&bot.id);
+    let protocol = if bot.strategy_type == "prediction" {
+        "polymarket"
+    } else {
+        &bot.strategy_type
+    };
+
+    let entries: Vec<TradeEntryResponse> = trades
+        .iter()
+        .map(|t| {
+            let mid = t.get("market_id")
+                .or_else(|| t.get("symbol"))
+                .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+                .unwrap_or("");
+            let mid_str = if mid.is_empty() {
+                t.get("market_id")
+                    .or_else(|| t.get("symbol"))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default()
+            } else {
+                mid.to_string()
+            };
+
+            let tid = t.get("id")
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => v.to_string(),
+                })
+                .unwrap_or_else(|| mid_str.clone());
+
+            let question = t.get("question")
+                .or_else(|| t.get("symbol"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+
+            let side = t.get("side")
+                .or_else(|| t.get("action"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("buy");
+
+            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
+                "buy"
+            } else {
+                "sell"
+            };
+
+            let amount = t.get("amount_usd")
+                .or_else(|| t.get("size"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+
+            let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+            let ts = t.get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            TradeEntryResponse {
+                id: tid.clone(),
+                bot_id: bot.id.clone(),
+                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                action: action.to_string(),
+                token_in: "USDC".to_string(),
+                token_out: question.chars().take(40).collect(),
+                amount_in: amount.to_string(),
+                min_amount_out: entry_price.to_string(),
+                target_protocol: protocol.to_string(),
+                tx_hash: format!("0xpaper_{}", &tid[..tid.len().min(16)]),
+                paper_trade: true,
+                status: status.to_string(),
+                pnl,
+                entry_price,
+                current_price,
+            }
+        })
+        .collect();
+
+    Ok(Json(entries))
+}
+
+async fn get_bot_portfolio(
+    Path(bot_id): Path<String>,
+) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let trades = state::load_bot_trades(&bot.id);
+
+    let open_trades: Vec<&serde_json::Value> = trades
+        .iter()
+        .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+        .collect();
+
+    let total_pnl: f64 = trades
+        .iter()
+        .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+        .sum();
+    let total_value = 10_000.0 + total_pnl;
+
+    let position_value: f64 = open_trades
+        .iter()
+        .map(|t| {
+            t.get("amount_usd")
+                .or_else(|| t.get("size"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+        })
+        .sum();
+
+    let positions: Vec<PortfolioPosition> = open_trades
+        .iter()
+        .map(|t| {
+            let mid = t.get("market_id")
+                .or_else(|| t.get("symbol"))
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let question = t.get("question")
+                .or_else(|| t.get("symbol"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let amount = t.get("amount_usd")
+                .or_else(|| t.get("size"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let pnl_pct = if entry_price > 0.0 {
+                ((current_price - entry_price) / entry_price) * 100.0
+            } else {
+                0.0
+            };
+
+            PortfolioPosition {
+                token: mid.chars().take(10).collect(),
+                symbol: question.chars().take(30).collect(),
+                amount,
+                value_usd: amount * current_price.max(entry_price),
+                entry_price,
+                current_price,
+                pnl_percent: pnl_pct,
+                weight: if total_value > 0.0 { (amount / total_value) * 100.0 } else { 0.0 },
+            }
+        })
+        .collect();
+
+    Ok(Json(PortfolioStateResponse {
+        total_value_usd: total_value,
+        cash_balance: total_value - position_value,
+        positions,
     }))
 }
 

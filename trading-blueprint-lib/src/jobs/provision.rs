@@ -207,6 +207,7 @@ pub async fn provision_core(
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: caller,
+        trading_loop_cron: request.trading_loop_cron.clone(),
     };
 
     // 8. Store bot record

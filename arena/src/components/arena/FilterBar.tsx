@@ -1,4 +1,4 @@
-import { Input } from '~/components/ui/input';
+import { Input } from '@tangle/blueprint-ui/components';
 
 interface FilterBarProps {
   search: string;

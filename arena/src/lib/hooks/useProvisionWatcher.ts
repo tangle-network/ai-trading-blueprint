@@ -3,7 +3,7 @@ import { decodeAbiParameters, decodeEventLog, zeroAddress } from 'viem';
 import { provisionsStore, updateProvision } from '~/lib/stores/provisions';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '~/lib/contracts/publicClient';
+import { publicClient } from '@tangle/blueprint-ui';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 

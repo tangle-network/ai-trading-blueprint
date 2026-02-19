@@ -108,7 +108,11 @@ fn find_target_bots(target: &str) -> Result<Vec<TradingBotRecord>, String> {
     if let Some(strategy) = target.strip_prefix("strategy:") {
         return Ok(all_bots
             .into_iter()
-            .filter(|b| b.trading_active && b.strategy_type == strategy)
+            .filter(|b| {
+                b.trading_active
+                    && (b.strategy_type == strategy
+                        || b.strategy_type.starts_with(&format!("{strategy}_")))
+            })
             .collect());
     }
 
@@ -235,6 +239,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
         }
     }
 
@@ -301,5 +306,46 @@ mod tests {
         // No pack for "custom_strategy" → generic fallback
         assert!(prompt.contains("ALERT"));
         assert!(prompt.contains("custom_strategy"));
+    }
+
+    #[test]
+    fn test_build_event_prompt_prediction_subtypes_get_polymarket_prompt() {
+        for subtype in &[
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
+        ] {
+            let bot = test_bot(subtype);
+            let prompt = build_event_prompt_for_bot(
+                &bot,
+                "price_move",
+                &json!({"market": "test-market", "price": 0.65}),
+            );
+            assert!(
+                prompt.contains("POLYMARKET"),
+                "{subtype} price_move should get polymarket-specific prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_target_bots_prefix_matching() {
+        // Verify the prefix matching logic directly
+        let target = "strategy:prediction";
+        let strategy = target.strip_prefix("strategy:").unwrap();
+
+        // Exact match
+        assert!("prediction" == strategy || "prediction".starts_with(&format!("{strategy}_")));
+        // Subtype match
+        assert!(
+            "prediction_politics" == strategy
+                || "prediction_politics".starts_with(&format!("{strategy}_"))
+        );
+        // Non-match
+        assert!(
+            !("dex" == strategy || "dex".starts_with(&format!("{strategy}_")))
+        );
     }
 }

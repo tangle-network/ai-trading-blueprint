@@ -1,13 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
-import { Button } from '~/components/ui/button';
-import { Input } from '~/components/ui/input';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '~/components/ui/dialog';
+  Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Input,
+} from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
 import { updateProvision, type TrackedProvision } from '~/lib/stores/provisions';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';

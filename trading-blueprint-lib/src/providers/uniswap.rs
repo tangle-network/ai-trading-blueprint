@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct UniswapV3Provider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for UniswapV3Provider {
 
     fn expert_prompt(&self) -> &'static str {
         UNISWAP_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on Uniswap V3 swaps, liquidity analysis, and cross-fee-tier arbitrage. \
-         Use DexScreener for pair discovery, Quoter V2 for slippage simulation."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &UNISWAP_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -65,21 +56,6 @@ impl TradingProvider for UniswapV3Provider {
         }
     }
 }
-
-static UNISWAP_ENDPOINTS: [DataEndpoint; 2] = [
-    DataEndpoint {
-        name: "DexScreener Token",
-        url: "https://api.dexscreener.com/latest/dex/tokens/{address}",
-        description: "All DEX pairs for a token",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "DexScreener Pair",
-        url: "https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_address}",
-        description: "Specific pair details with volume and liquidity",
-        auth: "None",
-    },
-];
 
 pub(crate) const UNISWAP_EXPERT_PROMPT: &str = r#"## Uniswap V3 Protocol Knowledge
 
@@ -153,12 +129,6 @@ mod tests {
         assert!(prompt.contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")); // WETH
         assert!(prompt.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")); // USDC
         assert!(prompt.contains("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")); // Router
-    }
-
-    #[test]
-    fn test_uniswap_strategy_fragment() {
-        let p = UniswapV3Provider;
-        assert!(p.strategy_fragment().contains("Uniswap V3"));
     }
 
     #[test]

@@ -44,6 +44,9 @@ pub struct TradingBotRecord {
     /// Address of the wallet that submitted the provision job (for off-chain auth).
     #[serde(default)]
     pub submitter_address: String,
+    /// Custom cron schedule from user (empty = use pack default).
+    #[serde(default)]
+    pub trading_loop_cron: String,
 }
 
 /// A recorded paper trade (simulated execution).
@@ -221,6 +224,33 @@ pub fn get_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
     bots()?.get(&bot_key(id)).map_err(|e| e.to_string())
 }
 
+/// Find a bot by vault address (case-insensitive).
+pub fn find_bot_by_vault_address(vault: &str) -> Result<Option<TradingBotRecord>, String> {
+    let v = vault.to_lowercase();
+    bots()?
+        .find(|b| b.vault_address.to_lowercase() == v)
+        .map_err(|e| e.to_string())
+}
+
+/// Get a bot by either its trading ID or vault address.
+pub fn resolve_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
+    if let Some(b) = get_bot(id)? {
+        return Ok(Some(b));
+    }
+    find_bot_by_vault_address(id)
+}
+
+/// Load per-bot trade data from `{state_dir}/bot-trades/{bot_id}.json`.
+pub fn load_bot_trades(bot_id: &str) -> Vec<serde_json::Value> {
+    let path = sandbox_runtime::store::state_dir()
+        .join("bot-trades")
+        .join(format!("{bot_id}.json"));
+    match std::fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +288,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
         }
     }
 

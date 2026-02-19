@@ -6,6 +6,11 @@ import { networks } from '~/lib/contracts/chains';
 export const STRATEGY_NAMES: Record<string, string> = {
   dex: 'DEX Spot Trading',
   prediction: 'Prediction Markets',
+  prediction_politics: 'Prediction — Politics',
+  prediction_crypto: 'Prediction — Crypto',
+  prediction_war: 'Prediction — Geopolitics',
+  prediction_trending: 'Prediction — Trending',
+  prediction_celebrity: 'Prediction — Celebrity',
   yield: 'Yield Optimization',
   perp: 'Perpetual Futures',
   volatility: 'Volatility Trading',
@@ -16,6 +21,11 @@ export const STRATEGY_NAMES: Record<string, string> = {
 export const STRATEGY_SHORT: Record<string, string> = {
   dex: 'DEX',
   prediction: 'Pred',
+  prediction_politics: 'Politics',
+  prediction_crypto: 'Crypto',
+  prediction_war: 'Geopol',
+  prediction_trending: 'Trending',
+  prediction_celebrity: 'Celeb',
   yield: 'Yield',
   perp: 'Perps',
   volatility: 'Vol',

@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct AaveV3Provider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for AaveV3Provider {
 
     fn expert_prompt(&self) -> &'static str {
         AAVE_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on Aave V3 lending and borrowing optimization. \
-         Monitor supply/borrow APYs, health factors, and utilization rates."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &AAVE_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -66,21 +57,6 @@ impl TradingProvider for AaveV3Provider {
         }
     }
 }
-
-static AAVE_ENDPOINTS: [DataEndpoint; 2] = [
-    DataEndpoint {
-        name: "DeFiLlama Pools",
-        url: "https://yields.llama.fi/pools",
-        description: "All DeFi pools with APY, TVL, chain, protocol",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "DeFiLlama Protocol",
-        url: "https://api.llama.fi/protocol/aave-v3",
-        description: "Aave V3 TVL and protocol data",
-        auth: "None",
-    },
-];
 
 pub(crate) const AAVE_EXPERT_PROMPT: &str = r#"## Aave V3 Protocol Knowledge
 
@@ -153,12 +129,6 @@ mod tests {
     fn test_aave_expert_prompt_has_addresses() {
         let p = AaveV3Provider;
         assert!(p.expert_prompt().contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"));
-    }
-
-    #[test]
-    fn test_aave_strategy_fragment() {
-        let p = AaveV3Provider;
-        assert!(p.strategy_fragment().contains("Aave V3"));
     }
 
     #[test]

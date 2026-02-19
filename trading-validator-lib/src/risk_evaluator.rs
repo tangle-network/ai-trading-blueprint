@@ -38,7 +38,12 @@ impl AiProvider {
 /// Injected into the AI scoring prompt to give the evaluator protocol awareness.
 pub fn strategy_context_for(strategy_type: &str) -> Option<String> {
     match strategy_type {
-        "prediction" => Some(
+        "prediction"
+        | "prediction_politics"
+        | "prediction_crypto"
+        | "prediction_war"
+        | "prediction_trending"
+        | "prediction_celebrity" => Some(
             "Polymarket prediction market. Token should be USDC on Polygon. \
              Valid protocols: polymarket. Check condition_id and outcome_index in metadata."
                 .to_string(),
@@ -262,6 +267,20 @@ mod tests {
         let ctx = strategy_context_for("perp").unwrap();
         assert!(ctx.contains("gmx_v2"));
         assert!(ctx.contains("3x leverage"));
+    }
+
+    #[test]
+    fn test_strategy_context_for_prediction_subtypes() {
+        for subtype in &[
+            "prediction_politics", "prediction_crypto", "prediction_war",
+            "prediction_trending", "prediction_celebrity",
+        ] {
+            let ctx = strategy_context_for(subtype);
+            assert!(ctx.is_some(), "{subtype} must return Some context");
+            let ctx = ctx.unwrap();
+            assert!(ctx.contains("Polymarket"), "{subtype} context must mention Polymarket");
+            assert!(ctx.contains("USDC"), "{subtype} context must mention USDC");
+        }
     }
 
     #[test]

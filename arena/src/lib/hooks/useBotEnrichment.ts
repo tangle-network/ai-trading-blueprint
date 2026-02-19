@@ -61,17 +61,17 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     })),
   });
 
-  // No enrichable bots? Return input as-is (stable ref)
   const prevRef = useRef<Bot[]>(bots);
-
-  if (enrichable.entries.length === 0) return bots;
 
   // Build fingerprint of enrichment results to avoid new array on every render
   const dataFingerprint = results.map((r) =>
     r.data ? `${r.data.length}:${r.data[r.data.length - 1]?.trade_count}` : 'x',
   ).join(',');
 
+  // useMemo must always be called (Rules of Hooks) — handle empty case inside
   return useMemo(() => {
+    if (enrichable.entries.length === 0) return bots;
+
     const enrichedBots = [...bots];
     for (let qi = 0; qi < results.length; qi++) {
       const result = results[qi];

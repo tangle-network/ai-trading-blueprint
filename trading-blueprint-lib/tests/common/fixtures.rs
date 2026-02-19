@@ -34,6 +34,7 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        tee_config: None,
     };
     record
 }
@@ -67,6 +68,7 @@ pub fn seed_bot_record(
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
     bots()
         .expect("bots store")

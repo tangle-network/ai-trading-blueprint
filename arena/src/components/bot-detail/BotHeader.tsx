@@ -2,9 +2,7 @@ import { Link } from 'react-router';
 import { motion } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
-import { Badge } from '~/components/ui/badge';
-import { Button } from '~/components/ui/button';
-import { Identicon } from '~/components/shared/Identicon';
+import { Badge, Button, Identicon } from '@tangle/blueprint-ui/components';
 
 interface BotHeaderProps {
   bot: Bot;

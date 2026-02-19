@@ -3,7 +3,7 @@ import { createClient } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
 import { type Address, sha256 as viemSha256, toHex } from 'viem';
-import type { DiscoveredOperator } from './useOperators';
+import type { DiscoveredOperator } from '@tangle/blueprint-ui';
 import {
   PricingEngine,
   GetPriceRequestSchema,

@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Badge } from '~/components/ui/badge';
-import { Identicon } from '~/components/shared/Identicon';
+import { Badge, Identicon } from '@tangle/blueprint-ui/components';
 import type { UserService } from '~/lib/hooks/useUserServices';
 import type { Bot } from '~/lib/types/bot';
 import { formatDuration, truncateAddress } from '~/lib/format';

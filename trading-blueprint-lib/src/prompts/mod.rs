@@ -10,27 +10,21 @@ pub fn build_pack_agent_profile(
     pack.build_agent_profile(config)
 }
 
-/// Combine the base system prompt (API endpoints, vault, risk params) with
-/// a pack's expert protocol knowledge.
-pub fn build_pack_system_prompt(
-    pack: &packs::StrategyPack,
-    config: &crate::state::TradingBotRecord,
-) -> String {
-    let base = build_system_prompt(&pack.strategy_type, config);
-    format!("{base}\n\n## Expert Strategy Instructions\n\n{}", pack.system_prompt)
-}
-
 /// Phase-aware loop prompt that drives the agent's iteration cycle.
 pub fn build_pack_loop_prompt(pack: &packs::StrategyPack) -> String {
     let timeout_secs = pack.timeout_ms / 1000;
     format!(
         "Trading iteration tick. Strategy: {name}.\n\n\
-         Read /home/agent/state/phase.json for current phase and iteration.\n\n\
+         1. Read /home/agent/state/phase.json for current phase and iteration.\n\
+         2. Review your learning history before acting:\n\
+            - `sqlite3 /home/agent/data/trading.db \"SELECT category, insight, confidence, times_confirmed FROM memory ORDER BY updated_at DESC LIMIT 10\"`\n\
+            - Read /home/agent/memory/insights.jsonl (last 20 lines) for recent insights.\n\
+            - Check recent signal accuracy: `sqlite3 /home/agent/data/trading.db \"SELECT type, direction, outcome, confidence FROM signals ORDER BY created_at DESC LIMIT 10\"`\n\n\
          Phase protocol:\n\
          - bootstrap (iteration 0): Build tools, discover markets, populate DB → set \"research\"\n\
-         - research: Run scanners, update data, generate signals → \"trading\" if found\n\
+         - research: Run scanners, update data, generate signals. Use past signal accuracy to weight new signals. → \"trading\" if actionable signals found\n\
          - trading: Circuit breaker → validate → execute → log → \"reflect\"\n\
-         - reflect: P&L calc, compare predictions vs outcomes, insights → \"research\"\n\n\
+         - reflect: P&L calc, compare predictions vs outcomes, update signal outcomes in DB, write insights to memory table + insights.jsonl → \"research\"\n\n\
          Update phase.json after. Write metrics to /home/agent/metrics/latest.json.\n\
          You have {max_turns} turns and {timeout}s. Run existing tools, don't rebuild.",
         name = pack.name,
@@ -90,15 +84,21 @@ Authorization: Bearer {token}
 /// Build the loop iteration prompt sent by cron workflow.
 pub fn build_loop_prompt(strategy_type: &str) -> String {
     format!(
-        "Execute one trading loop iteration for your {strategy_type} strategy. \
-         Follow your system instructions: \
-         1. Fetch current market prices \
-         2. Check portfolio state \
-         3. Check circuit breaker \
-         4. Analyze market conditions \
-         5. Generate and validate trade intents if conditions warrant \
-         6. Execute approved trades \
-         7. Report results as JSON"
+        "Execute one trading loop iteration for your {strategy_type} strategy.\n\n\
+         Before acting, review your learning history:\n\
+         - Read /home/agent/state/phase.json for current phase\n\
+         - `sqlite3 /home/agent/data/trading.db \"SELECT category, insight, confidence FROM memory ORDER BY updated_at DESC LIMIT 10\"`\n\
+         - Read /home/agent/memory/insights.jsonl (last 20 lines)\n\n\
+         Then follow your system instructions:\n\
+         1. Fetch current market prices\n\
+         2. Check portfolio state\n\
+         3. Check circuit breaker\n\
+         4. Analyze market conditions (weight signals by past accuracy)\n\
+         5. Generate and validate trade intents if conditions warrant\n\
+         6. Execute approved trades\n\
+         7. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
+         8. Write metrics to /home/agent/metrics/latest.json\n\
+         9. Report results as JSON"
     )
 }
 
@@ -192,6 +192,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
         }
     }
 
@@ -206,6 +207,9 @@ mod tests {
         assert!(prompt.contains("trading"), "loop prompt must mention trading phase");
         assert!(prompt.contains("reflect"), "loop prompt must mention reflect phase");
         assert!(prompt.contains("20 turns"), "loop prompt must include max_turns");
+        assert!(prompt.contains("insights.jsonl"), "loop prompt must reference insights");
+        assert!(prompt.contains("memory"), "loop prompt must reference memory table");
+        assert!(prompt.contains("signal accuracy"), "loop prompt must reference signal accuracy");
     }
 
     #[test]

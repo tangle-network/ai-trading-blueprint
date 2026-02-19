@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useThemeValue } from './useThemeValue';
+import { useThemeValue } from '@tangle/blueprint-ui';
 
 export function useChartTheme() {
   const theme = useThemeValue();

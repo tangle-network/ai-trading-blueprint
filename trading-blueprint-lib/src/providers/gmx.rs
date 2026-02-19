@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct GmxV2Provider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for GmxV2Provider {
 
     fn expert_prompt(&self) -> &'static str {
         GMX_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on GMX V2 perpetual futures on Arbitrum. \
-         Monitor funding rates, open interest, and technical signals for position management."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &GMX_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -66,13 +57,6 @@ impl TradingProvider for GmxV2Provider {
         }
     }
 }
-
-static GMX_ENDPOINTS: [DataEndpoint; 1] = [DataEndpoint {
-    name: "GMX Prices",
-    url: "https://arbitrum-api.gmxinfra.io/prices/tickers",
-    description: "All GMX V2 market prices with min/max",
-    auth: "None",
-}];
 
 pub(crate) const GMX_EXPERT_PROMPT: &str = r#"## GMX V2 Protocol Knowledge
 
@@ -130,12 +114,6 @@ mod tests {
     fn test_gmx_expert_prompt_has_addresses() {
         let p = GmxV2Provider;
         assert!(p.expert_prompt().contains("0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8"));
-    }
-
-    #[test]
-    fn test_gmx_strategy_fragment() {
-        let p = GmxV2Provider;
-        assert!(p.strategy_fragment().contains("GMX V2"));
     }
 
     #[test]

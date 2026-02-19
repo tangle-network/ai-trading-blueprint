@@ -36,6 +36,8 @@ pub struct StrategyPack {
     pub provider_ids: Vec<&'static str>,
     /// Cross-protocol strategy logic that doesn't belong to any single provider.
     pub strategy_methodology: String,
+    /// Composable instruction blocks injected into the agent profile.
+    pub prompt_blocks: Vec<&'static str>,
 }
 
 /// Look up a strategy pack by type.  Returns `None` for unknown types, which
@@ -43,6 +45,11 @@ pub struct StrategyPack {
 pub fn get_pack(strategy_type: &str) -> Option<StrategyPack> {
     match strategy_type {
         "prediction" => Some(polymarket_pack()),
+        "prediction_politics" => Some(polymarket_politics_pack()),
+        "prediction_crypto" => Some(polymarket_crypto_pack()),
+        "prediction_war" => Some(polymarket_war_pack()),
+        "prediction_trending" => Some(polymarket_trending_pack()),
+        "prediction_celebrity" => Some(polymarket_celebrity_pack()),
         "dex" => Some(dex_pack()),
         "yield" => Some(yield_pack()),
         "perp" => Some(perp_pack()),
@@ -148,6 +155,7 @@ impl StrategyPack {
             &self.strategy_type,
             &self.system_prompt,
             config,
+            &self.prompt_blocks,
         );
         json!({
             "name": format!("trading-{}", self.strategy_type),
@@ -177,8 +185,8 @@ impl StrategyPack {
 /// SQLite database with shared schema, and phase tracker.
 fn common_setup_commands() -> Vec<String> {
     vec![
-        "pip install requests pandas sqlite-utils 2>/dev/null".to_string(),
-        "mkdir -p /home/agent/{tools,data,memory,metrics,logs,state}".to_string(),
+        "pip install requests pandas numpy sqlite-utils 2>/dev/null".to_string(),
+        "mkdir -p /home/agent/{tools,tools/data,data,data/raw,memory,metrics,logs,state}".to_string(),
         concat!(
             "python3 -c \"",
             "import sqlite3, os; ",
@@ -213,7 +221,7 @@ fn common_setup_commands() -> Vec<String> {
 
 fn polymarket_pack() -> StrategyPack {
     let providers = vec!["polymarket", "coingecko"];
-    let methodology = "";
+    let methodology = PREDICTION_GENERAL_METHODOLOGY;
     StrategyPack {
         strategy_type: "prediction".into(),
         name: "Polymarket Prediction Trading".into(),
@@ -224,7 +232,98 @@ fn polymarket_pack() -> StrategyPack {
         required_env_vars: compose_required_env_vars(&providers),
         max_turns: 20,
         timeout_ms: 240_000,
-        default_cron: "0 */3 * * * *".into(),
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+    }
+}
+
+fn polymarket_politics_pack() -> StrategyPack {
+    let providers = vec!["polymarket", "coingecko"];
+    let methodology = PREDICTION_POLITICS_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "prediction_politics".into(),
+        name: "Prediction Markets — Politics".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 20,
+        timeout_ms: 240_000,
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+    }
+}
+
+fn polymarket_crypto_pack() -> StrategyPack {
+    let providers = vec!["polymarket", "coingecko"];
+    let methodology = PREDICTION_CRYPTO_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "prediction_crypto".into(),
+        name: "Prediction Markets — Crypto".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 20,
+        timeout_ms: 240_000,
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+    }
+}
+
+fn polymarket_war_pack() -> StrategyPack {
+    let providers = vec!["polymarket", "coingecko"];
+    let methodology = PREDICTION_WAR_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "prediction_war".into(),
+        name: "Prediction Markets — Geopolitics".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 20,
+        timeout_ms: 240_000,
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+    }
+}
+
+fn polymarket_trending_pack() -> StrategyPack {
+    let providers = vec!["polymarket", "coingecko"];
+    let methodology = PREDICTION_TRENDING_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "prediction_trending".into(),
+        name: "Prediction Markets — Trending".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 20,
+        timeout_ms: 240_000,
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+    }
+}
+
+fn polymarket_celebrity_pack() -> StrategyPack {
+    let providers = vec!["polymarket", "coingecko"];
+    let methodology = PREDICTION_CELEBRITY_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "prediction_celebrity".into(),
+        name: "Prediction Markets — Celebrity & Entertainment".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 20,
+        timeout_ms: 240_000,
+        default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
     }
 }
 
@@ -242,6 +341,7 @@ fn dex_pack() -> StrategyPack {
         max_turns: 12,
         timeout_ms: 150_000,
         default_cron: "0 */5 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_TA_INDICATORS, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
     }
 }
 
@@ -259,6 +359,7 @@ fn yield_pack() -> StrategyPack {
         max_turns: 10,
         timeout_ms: 120_000,
         default_cron: "0 */15 * * * *".into(),
+        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE],
     }
 }
 
@@ -276,6 +377,14 @@ fn perp_pack() -> StrategyPack {
         max_turns: 15,
         timeout_ms: 180_000,
         default_cron: "0 */2 * * * *".into(),
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_TA_INDICATORS,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_RISK_REGIME,
+            BLOCK_POSITION_SIZING,
+            BLOCK_CIRCUIT_BREAKER,
+        ],
     }
 }
 
@@ -300,6 +409,14 @@ fn volatility_pack() -> StrategyPack {
         max_turns: 12,
         timeout_ms: 150_000,
         default_cron: "0 */10 * * * *".into(),
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_TA_INDICATORS,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_RISK_REGIME,
+            BLOCK_POSITION_SIZING,
+            BLOCK_CIRCUIT_BREAKER,
+        ],
     }
 }
 
@@ -317,6 +434,13 @@ fn mm_pack() -> StrategyPack {
         max_turns: 15,
         timeout_ms: 180_000,
         default_cron: "0 */1 * * * *".into(),
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_RISK_REGIME,
+            BLOCK_POSITION_SIZING,
+            BLOCK_CIRCUIT_BREAKER,
+        ],
     }
 }
 
@@ -343,6 +467,14 @@ fn multi_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 300_000,
         default_cron: "0 */5 * * * *".into(),
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_TA_INDICATORS,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_RISK_REGIME,
+            BLOCK_POSITION_SIZING,
+            BLOCK_CIRCUIT_BREAKER,
+        ],
     }
 }
 
@@ -353,13 +485,63 @@ fn multi_pack() -> StrategyPack {
 
 const PERP_STRATEGY_METHODOLOGY: &str = r#"## Cross-Venue Perpetual Futures Strategy
 
-### Cross-Venue Funding Rate Arbitrage
+### Market Selection
 
-When funding rates diverge between GMX and Hyperliquid:
-1. Long on the venue with negative funding (you get paid)
-2. Short on the venue with positive funding (you get paid)
-3. Net delta-neutral, collect funding from both sides
-4. Minimum spread: 0.03%/8h to cover execution costs
+Focus on majors first — ETH and BTC have the deepest liquidity and tightest spreads across all venues. Secondary markets (ARB, SOL, LINK on GMX; broader menu on Hyperliquid) are viable for smaller positions but require wider stops due to thinner books.
+
+Scan funding rates across GMX, Hyperliquid, and Vertex every iteration. Store them in the signals table for cross-venue comparison.
+
+### Signal Framework
+
+#### 1. Funding Rate Arbitrage (Delta-Neutral)
+
+When 8h funding rates diverge between venues:
+- Long on the venue with negative funding (you get paid to hold)
+- Short on the venue with positive funding (you get paid to hold)
+- Net exposure is delta-neutral — you collect funding from both sides
+- Minimum spread to enter: 0.03%/8h (covers execution costs + slippage)
+- Exit when spread compresses below 0.01%/8h
+
+#### 2. Momentum / Trend Following
+
+Use 4h candles from Hyperliquid:
+- Enter long when EMA(12) crosses above EMA(26) AND RSI(14) < 70
+- Enter short when EMA(12) crosses below EMA(26) AND RSI(14) > 30
+- Confirm with volume: entry only if volume exceeds 20-period average
+- Stop-loss: 3% from entry (mandatory)
+- Take-profit: 2:1 reward-to-risk minimum
+
+#### 3. Mean Reversion
+
+After a >5% move in 4 hours:
+- If price touched lower Bollinger Band and RSI < 30 → mean-reversion long
+- If price touched upper Bollinger Band and RSI > 70 → mean-reversion short
+- Tighter stops for mean reversion: 2% (these are counter-trend, more risk)
+- Target: return to 20-period SMA
+
+#### 4. Liquidation Cascade
+
+Monitor Hyperliquid for liquidation events:
+- After a cascade, wait for volatility to settle (at least one iteration)
+- Then look for mean-reversion entries at key support/resistance levels
+- Smaller position size (1% max) — cascades can extend further than expected
+
+### Execution Across Venues
+
+Route orders to the venue offering best execution:
+- **GMX V2**: Deeper liquidity, use for larger positions (accept ~0.1% price impact)
+- **Hyperliquid**: Faster entries, real-time order book, tighter spreads for majors
+- **Vertex**: Secondary venue — use when its funding rate creates arb opportunity with the others
+
+Always compare execution cost (fees + expected slippage) across venues before routing.
+
+### Position Management
+
+- Maximum 3 concurrent positions
+- Maximum 3x leverage (conservative — higher leverage = wider liquidation risk)
+- Every position must have a stop-loss set at entry time
+- Trailing stop: move stop to breakeven after achieving 1.5x risk in unrealized profit
+- Close positions that have been open >48h without hitting target (stale thesis)
 "#;
 
 const VOLATILITY_STRATEGY_METHODOLOGY: &str = r#"## Volatility Trading Strategy
@@ -491,6 +673,475 @@ Signals from one strategy should inform others:
 "#;
 
 // ---------------------------------------------------------------------------
+// Prediction market sub-strategy methodologies
+// ---------------------------------------------------------------------------
+
+const PREDICTION_GENERAL_METHODOLOGY: &str = r#"## Prediction Markets — General Strategy (Top 50 by Volume)
+
+### Market Universe
+
+Scan the top 50 markets by volume across all categories:
+```
+GET https://gamma-api.polymarket.com/events?closed=false&limit=50&order=volume
+```
+This is the most liquid cohort — tightest spreads, fastest resolution, most news coverage.
+
+### Information Gathering Priority
+
+Focus research effort on markets where:
+1. Resolution is within 7 days (time-sensitive alpha)
+2. Price is between 15% and 85% (maximum uncertainty = maximum edge potential)
+3. Volume spiked >50% in the last 24h (new information being priced in)
+
+For each candidate: fetch the `resolutionSource`, read recent news via webfetch,
+and form a calibrated probability estimate before comparing to market price.
+
+### Edge Thesis
+
+General prediction markets reward calibration and speed. The crowd is slow to update
+on breaking news and tends to anchor on round numbers (50%, 25%, 75%). Your edge:
+- React faster to news than retail participants
+- Avoid anchoring bias — derive probabilities from evidence, not round numbers
+- Identify markets where the resolution source has already published relevant data
+  that hasn't been priced in yet
+
+### Position Management
+
+- Maximum 5 concurrent positions across all categories
+- Prefer markets with >$100k volume (better liquidity, tighter spreads)
+- Exit when probability reaches >90% or <10% (diminishing marginal return)
+"#;
+
+const PREDICTION_POLITICS_METHODOLOGY: &str = r#"## Prediction Markets — Politics Strategy
+
+### Market Discovery
+
+Filter for politics markets specifically:
+```
+GET https://gamma-api.polymarket.com/markets?tag=politics&closed=false&limit=50&order=volume
+```
+
+### Information Sources for Political Markets
+
+Before estimating any political probability, gather from:
+1. **Polling aggregators**: webfetch https://projects.fivethirtyeight.com/polls/ for the
+   most recent polling average for the relevant race or question
+2. **Prediction market consensus**: webfetch https://www.metaculus.com/questions/ — search
+   for the question to find expert forecasters' estimates
+3. **Official sources**: fetch the `resolutionSource` from the Gamma market — for elections
+   this is often an official government results page or news outlet
+4. **News**: Reuters, AP News, BBC for recent political developments
+
+### Political Probability Framework
+
+Political events have known base rates. Apply these as your prior before evidence:
+- **Incumbent re-election**: ~65% historically (adjust for approval ratings)
+- **Senate/House incumbent**: ~85% (incumbency advantage is strong)
+- **Legislation passing**: ~15% for major bills (most fail)
+- **Candidate winning primary with 20%+ polling lead**: ~85%
+
+Adjust your prior based on:
+- Recent polling direction (momentum matters more than level)
+- Endorsements from key political figures
+- Fundraising numbers (early indicator of organization strength)
+- Prediction market consensus from Metaculus/Manifold
+
+### Edge Thesis
+
+Political prediction markets often misprice because:
+1. **Overconfidence in polls**: Markets anchor on polls even when sample sizes are small
+2. **Recency bias**: A single bad news cycle moves markets too much
+3. **Base rate neglect**: Markets underweight how rarely incumbents lose
+4. **Resolution ambiguity**: Some political markets resolve on media calls, not official
+   results — read resolution criteria carefully
+
+### Risk Management
+
+- Never hold through an election night if you can exit profitably before
+- Reduce position sizes 24h before resolution events (vol spike risk)
+- Political markets often have correlated moves — avoid holding multiple
+  positions in the same election
+"#;
+
+const PREDICTION_CRYPTO_METHODOLOGY: &str = r#"## Prediction Markets — Crypto Markets Strategy
+
+### Market Discovery
+
+Filter for crypto prediction markets:
+```
+GET https://gamma-api.polymarket.com/markets?tag=crypto&closed=false&limit=50&order=volume
+```
+
+### Information Gathering for Crypto Markets
+
+Crypto prediction markets are uniquely quantifiable — use hard data:
+1. **Current price**: CoinGecko `GET /api/v3/simple/price?ids={coin_id}&vs_currencies=usd`
+2. **Price history**: CoinGecko `GET /api/v3/coins/{id}/market_chart?vs_currency=usd&days=30`
+3. **Volatility calculation**: From the 30-day price series, compute daily log returns and
+   annualized vol
+4. **Funding rates**: Hyperliquid `POST https://api.hyperliquid.xyz/info` with
+   `{"type": "metaAndAssetCtxs"}` — extreme positive funding = crowded longs = reversion pressure
+
+### Quantitative Probability Framework
+
+For "Will [TOKEN] be above $X by [DATE]?" markets:
+1. Fetch current price `P` from CoinGecko
+2. Fetch 30-day price history, compute daily log return std dev `σ_daily`
+3. Compute time to expiry `T` in days
+4. Use log-normal approximation:
+   - `μ = ln(P)` (assume zero drift as conservative prior)
+   - `σ_T = σ_daily * sqrt(T)`
+   - `prob = 1 - Φ((ln(X) - μ) / σ_T)` where Φ is the standard normal CDF
+   - This gives probability price exceeds target X at expiry
+5. Build a Python tool in `/home/agent/tools/crypto_prob.py` implementing this calculation
+
+### Edge Thesis
+
+Crypto prediction markets misprice because:
+- **Stale volatility**: Markets use trailing 7-day vol when regimes have shifted
+- **Correlation blindness**: BTC/ETH correlation means a BTC dump predicts ETH markets too
+- **Event timing**: Protocol upgrades, ETF decisions, exchange listings cause jumps
+  the vol model doesn't capture — check crypto news before using pure quant estimate
+- **Funding rate signal**: Extreme funding rates predict directional pressure in the
+  underlying, which directly affects price prediction markets
+
+### Risk Management
+
+- Cap total crypto prediction exposure at 30% of portfolio
+- Never take positions directional on crypto AND hold crypto perps simultaneously
+- Reduce size when 30-day vol > 80% annualized (wide error bars on your model)
+"#;
+
+const PREDICTION_WAR_METHODOLOGY: &str = r#"## Prediction Markets — Geopolitics & Conflict Strategy
+
+### Market Discovery
+
+Filter for geopolitics markets:
+```
+GET https://gamma-api.polymarket.com/markets?tag=geopolitics&closed=false&limit=50&order=volume
+```
+Also check `tag=world` for broader coverage.
+
+### Information Sources for Geopolitical Markets
+
+Geopolitical events require qualitative research from authoritative sources:
+1. **Reuters World News**: webfetch https://www.reuters.com/world/ — most balanced breaking news
+2. **BBC World**: webfetch https://www.bbc.com/news/world — strong on international conflict
+3. **AP News**: webfetch https://apnews.com/hub/world-news
+4. **Think tanks**: webfetch https://www.crisisgroup.org/ (International Crisis Group)
+
+Always fetch the market's `resolutionSource` — geopolitical markets often resolve on
+specific news sources (e.g. "Reuters reports X") that you should monitor directly.
+
+### Geopolitical Probability Framework
+
+Geopolitical events resist quantification, but these heuristics help:
+- **Ceasefire/peace talks**: Base rate of success ~20% (most fail). Adjust up if both
+  parties have economic incentives.
+- **Escalation within 30 days**: If conflict is ongoing and neither side has clear
+  advantage, 40-60% default
+- **Sanctions passing**: ~70% if US + EU aligned. ~30% if only one major power
+- **Leadership change via coup**: Historically rare (<5% per year) unless military is
+  already mobilized
+
+Apply **reference class forecasting**: find the closest historical analog, anchor on that
+base rate, then adjust for current-specific factors.
+
+### Edge Thesis
+
+Geopolitical markets are the most mispriced category because:
+1. Most retail participants have poor calibration on international events
+2. Breaking developments take hours to be priced in — news monitoring is the edge
+3. Markets often anchor on the status quo (overweight things staying the same)
+4. Resolution criteria are often ambiguous — read them carefully for markets where
+   resolution is clearer than the market price implies
+
+### Risk Management
+
+- Maximum position size: 5% of portfolio per market (high tail risk)
+- Geopolitical events can resolve suddenly — don't hold oversized positions overnight
+- Monitor news feeds between iterations for breaking developments
+- Correlated risk: multiple conflict markets in the same region often move together
+"#;
+
+const PREDICTION_TRENDING_METHODOLOGY: &str = r#"## Prediction Markets — Trending Markets Strategy
+
+### Market Discovery
+
+Trending markets = highest recent volume growth, not just absolute volume:
+```
+GET https://gamma-api.polymarket.com/events?closed=false&limit=100&order=volume
+```
+Then filter for markets where volume in the last 24h is a large fraction of total
+volume — this indicates rapid attention growth.
+
+Also check for recently created markets:
+```
+GET https://gamma-api.polymarket.com/markets?closed=false&limit=50&order=created&ascending=false
+```
+New markets with high liquidity but low volume = market makers have provisioned
+liquidity but retail hasn't discovered it yet — often represents early-stage opportunity.
+
+### What Makes a Market "Trending"
+
+A market is trending when:
+- Volume > $10k AND the market is <7 days old
+- OR volume spiked >200% in the last 24h compared to 7-day average
+- OR a related event is actively in the news cycle
+
+Build a tool to track volume changes across iterations and flag spikes.
+
+### Information Gathering for Trending Markets
+
+Trending markets correspond to viral news events. Research accordingly:
+1. **Google News last 24h**: webfetch
+   `https://news.google.com/search?q={market_keywords}&hl=en-US&tbs=qdr:d`
+2. **Resolution source**: Critical for trending markets — many are created quickly and
+   have loose resolution criteria. Read the criteria before trading.
+
+### Edge Thesis
+
+Trending markets are the highest-variance category:
+- **Early movers win**: Being 2-3 hours early in a fast-moving market is worth 10-20% edge
+- **Overreaction is common**: Viral events cause prices to overshoot — fading extreme
+  moves (>85% or <15%) is often profitable after the initial reaction
+- **Resolution ambiguity risk**: Quickly-created markets sometimes have unclear resolution
+  criteria — read them carefully before trading
+
+### Tactical Approach
+
+1. Scan every iteration for new markets (sort by created desc)
+2. When a new market appears: immediately research the underlying event
+3. Form probability estimate within the first few turns
+4. If edge > 8% (higher threshold due to liquidity risk), size in at 3% max
+5. Re-evaluate every iteration — trending markets resolve faster and move more
+
+### Risk Management
+
+- Maximum 3% per trending market position (thin liquidity = more slippage)
+- Be prepared for sudden resolution — set mental stop-losses
+- Don't chase markets that have already moved 20%+ from initial listing price
+"#;
+
+const PREDICTION_CELEBRITY_METHODOLOGY: &str = r#"## Prediction Markets — Celebrity & Entertainment Strategy
+
+### Market Discovery
+
+```
+GET https://gamma-api.polymarket.com/markets?tag=pop-culture&closed=false&limit=50&order=volume
+```
+Also check `tag=entertainment`, `tag=sports` for adjacent categories.
+
+### Information Sources for Celebrity Markets
+
+Celebrity and entertainment markets resolve on public events with good data coverage:
+1. **Awards prediction sites**: webfetch https://www.goldderby.com — Oscars, Emmys,
+   Grammys expert predictions. GoldDerby aggregates expert forecasters and their
+   consensus consistently leads Polymarket prices by 10-15%.
+2. **Entertainment news**: webfetch https://variety.com or https://deadline.com for
+   awards season, release dates, casting announcements
+3. **Sports reference**: webfetch https://www.basketball-reference.com or
+   https://www.baseball-reference.com for player statistics and records
+4. **Wikipedia**: for current status, recent events, career timeline of the person
+
+### Celebrity Market Probability Framework
+
+Unlike political or crypto markets, celebrity markets often have strong consensus signals:
+- **Awards shows**: GoldDerby aggregates expert predictions — use their consensus as
+  your prior, then compare with Polymarket price for edge
+- **Album/movie release**: Check official announcements; delays are predictable from
+  production schedules
+- **Sports milestones**: Use statistical reference sites to compute probability from
+  current stats and historical rates
+
+For awards markets specifically:
+1. Fetch GoldDerby predictions for the category
+2. Note the consensus pick's probability (often 60-80% for frontrunners)
+3. Compare with Polymarket price — markets often lag expert consensus by 10-15%
+4. This lag is a consistent edge source during awards season
+
+### Edge Thesis
+
+Celebrity markets are uniquely exploitable because:
+1. **Expert aggregators exist**: GoldDerby and similar sites do the research; you can
+   free-ride on their consensus
+2. **Predictable calendars**: Awards seasons, sports playoffs, album release cycles are
+   known well in advance — position early
+3. **Resolution source is always clear**: Oscars, Emmys, Grammys have definitive results
+4. **Thin but reliable liquidity**: These markets have less competition from sophisticated
+   traders
+
+### Risk Management
+
+- Maximum 3% per celebrity market position (thinner liquidity)
+- Avoid markets depending on a single individual's private decision (unpredictable)
+- Best entries: 7-30 days before resolution when odds are still volatile but consensus
+  is forming
+- Exit when position reaches >85% (last 15% takes too long, carries event risk)
+"#;
+
+// ---------------------------------------------------------------------------
+// Composable prompt blocks — mix and match across strategy packs
+// ---------------------------------------------------------------------------
+
+pub(crate) const BLOCK_DATA_PIPELINE: &str = r#"## Data Pipeline
+
+Build persistent data collection scripts in `/home/agent/tools/data/`. Each script fetches from one source, updates SQLite rows, and records its `last_run` timestamp.
+
+### Pipeline Pattern
+
+1. **Bootstrap**: Create one script per data source (e.g. `tools/data/fetch_prices.py`, `tools/data/fetch_funding.py`)
+2. **Orchestrate**: Create `tools/data/refresh_all.sh` that runs all collectors in sequence
+3. **Every iteration**: Run `bash tools/data/refresh_all.sh` before any analysis
+4. **Staleness check**: If a collector's `last_run` is older than 2x the cron interval, log a warning and investigate
+
+### Collector Script Convention
+
+Each script should:
+- Fetch data from its API with exponential backoff on rate limits
+- Upsert rows into the appropriate SQLite table (markets, signals, or a custom table)
+- Store raw JSON responses in `/home/agent/data/raw/` for debugging
+- Print `{"source": "...", "rows_updated": N, "last_run": "ISO8601"}` to stdout
+- Exit 0 on success, exit 1 on failure (so `refresh_all.sh` can detect problems)
+
+### Iteration-Start Data Refresh
+
+Since your container cannot run background daemons, treat each iteration start as your "wake-up" moment:
+1. Run `refresh_all.sh` to pull latest data
+2. Check all collectors succeeded (parse their JSON output)
+3. Only proceed to analysis if data is fresh
+"#;
+
+pub(crate) const BLOCK_TA_INDICATORS: &str = r#"## Technical Analysis Indicators
+
+Build a single tool (`tools/indicators.py` or similar) that computes indicators from price history in SQLite. Accept a symbol and timeframe as arguments, output JSON with all indicator values.
+
+### Core Indicators
+
+- **SMA(20) / SMA(50)**: Simple moving averages for trend identification. Price above both = bullish, below both = bearish, between = neutral.
+- **EMA(12) / EMA(26)**: Exponential moving averages — more responsive to recent price action. EMA crossovers signal trend changes.
+- **RSI(14)**: Relative Strength Index. Overbought > 70, oversold < 30. Look for divergences (price makes new high but RSI doesn't).
+- **Bollinger Bands** (20-period SMA ± 2σ): Band width indicates volatility regime. Price touching bands signals potential reversal or breakout.
+- **MACD** (EMA(12) - EMA(26), signal = EMA(9) of MACD): Histogram crossing zero = momentum shift. MACD above signal line = bullish.
+- **VWAP**: Volume-weighted average price from candle data. Price above VWAP = bullish intraday bias, below = bearish.
+
+### Signal Confluence
+
+Never act on a single indicator. Require **2+ indicators** confirming the same direction before generating a signal. Record which indicator combination led to each signal so you can track which combinations have the best hit rate over time.
+
+### Regime-Aware Usage
+
+- **Trending market** (SMA(20) > SMA(50), wide Bollinger bands): Use EMA crossovers and MACD for entry timing
+- **Range-bound market** (SMA(20) ≈ SMA(50), narrow Bollinger bands): Use RSI extremes and Bollinger band touches for mean reversion
+- Assess the regime before choosing which signals to weight
+"#;
+
+pub(crate) const BLOCK_SELF_CRITIQUE: &str = r#"## Self-Critique Protocol
+
+Before making any trading decision, validate your data pipeline and analysis.
+
+### Data Freshness
+
+- Check `updated_at` on every table you read. If data is older than 3x your cron interval, **do not trade** — stay in research phase and diagnose the pipeline.
+- Log stale data warnings to `/home/agent/logs/validation.jsonl`.
+
+### Calculation Validation
+
+- RSI must be between 0 and 100. If not, your computation is wrong.
+- Prices must be positive. Zero or negative prices mean a data fetch failed silently.
+- Volumes must be non-negative.
+- Moving averages must be between the min and max of their input window.
+
+### Cross-Source Verification
+
+- If you pull prices from multiple sources (CoinGecko, DexScreener, protocol APIs), compare them. A disagreement > 1% means one source is stale or wrong — flag it and prefer the most recent.
+
+### Decision Audit
+
+- Before each trade, write a brief rationale to `logs/decisions.jsonl`: what data you used, which indicators fired, why you sized this way, what could invalidate the thesis.
+- After each trade resolves, compare your rationale to what actually happened. Update the memory table with what you learned.
+"#;
+
+pub(crate) const BLOCK_RISK_REGIME: &str = r#"## Risk Regime Detection
+
+Operate in one of two regimes. Assess the regime at the start of every iteration and store it in `/home/agent/state/regime.json`.
+
+### RISK_ON (Normal)
+
+Criteria (all must hold):
+- 30-day realized volatility ≤ 90-day average volatility
+- No active portfolio drawdown > 2%
+- Funding rates across venues are moderate (|rate| < 0.05%/8h)
+
+Behavior: Normal position sizes, actively seek new entries, standard stop-losses.
+
+### RISK_OFF (Defensive)
+
+Triggers (any one is sufficient):
+- 30-day vol spike > 1.5× the 90-day average
+- Portfolio drawdown exceeds 3% from peak
+- 3+ correlated liquidation events detected in recent data
+- Extreme funding rates (|rate| > 0.1%/8h) across multiple venues
+
+Behavior: Halve all position sizes, widen stops by 50%, do NOT open new positions (only manage existing), increase cash buffer.
+
+### Regime Transitions
+
+- Log every regime change as a high-importance insight in the memory table
+- When transitioning RISK_ON → RISK_OFF: immediately review all open positions for stop-loss tightening
+- When transitioning RISK_OFF → RISK_ON: wait one full iteration before resuming new entries (avoid whipsaw)
+"#;
+
+pub(crate) const BLOCK_POSITION_SIZING: &str = r#"## Position Sizing Framework
+
+### Half-Kelly Criterion
+
+Estimate optimal position size using the Kelly formula, then halve it for safety:
+- `f* = (b * p - q) / b` where b = reward/risk ratio, p = win probability, q = 1-p
+- Use `f*/2` as your position size fraction (half-Kelly)
+- Compute rolling win rate and average win/loss ratio from the last 20 trades in the trades table
+- If you have fewer than 5 historical trades, use conservative defaults: p=0.5, b=1.5 → f*/2 ≈ 8%
+
+### Hard Limits
+
+- **Per-trade risk**: Never risk more than 2% of portfolio value on a single trade
+- **Total exposure**: Never exceed 50% of portfolio in active positions (sum of all position values)
+- **Leverage**: For leveraged positions, use notional value (not margin) when computing exposure
+- **Correlation**: Positions in correlated assets (e.g. ETH + ARB) count as a single larger position for sizing purposes
+
+### Sizing Formula
+
+`position_size = min(half_kelly * portfolio_value, 0.02 * portfolio_value)`
+
+This ensures you never exceed 2% risk even if Kelly suggests more.
+"#;
+
+pub(crate) const BLOCK_CIRCUIT_BREAKER: &str = r#"## Circuit Breaker Rules
+
+In addition to calling POST `/circuit-breaker/check` on the Trading API, apply these local checks:
+
+### Session Drawdown
+
+If your session P&L drops below -3%, halt all trading for the remainder of this iteration. Log the event and enter reflect phase.
+
+### Daily Aggregate
+
+Track cumulative P&L across iterations within a 24-hour window (use the trades table). If aggregate daily loss exceeds 5%, enter RISK_OFF regime and skip trading for the next 3 iterations.
+
+### Consecutive Losses
+
+If 3 consecutive trades are losses, pause trading and enter reflect phase. Analyze what went wrong before resuming. Update your signal weights based on which signals led to the losses.
+
+### Correlation Breaker
+
+If 3+ open positions are all moving against you simultaneously (all showing negative unrealized P&L), reduce all positions by 50%. This indicates a correlated market move your signals didn't anticipate.
+
+### Cooldown
+
+After any circuit breaker triggers, wait at least 1 full iteration (skip trading, stay in research/reflect) before resuming trades. Use the cooldown to diagnose what happened and adjust your approach.
+"#;
+
+// ---------------------------------------------------------------------------
 // Profile building
 // ---------------------------------------------------------------------------
 
@@ -501,6 +1152,7 @@ fn build_profile_instructions(
     strategy_type: &str,
     expert_prompt: &str,
     config: &crate::state::TradingBotRecord,
+    prompt_blocks: &[&str],
 ) -> String {
     let risk_params = serde_json::to_string_pretty(&config.risk_params).unwrap_or_default();
 
@@ -512,12 +1164,53 @@ fn build_profile_instructions(
          Exercise maximum caution and always verify before executing."
     };
 
+    // Extract user-provided overrides from strategy_config
+    let expert_override = config
+        .strategy_config
+        .get("expert_knowledge_override")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let custom_instructions = config
+        .strategy_config
+        .get("custom_instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Use override if provided, otherwise use pack expert prompt
+    let effective_expert = if expert_override.is_empty() {
+        expert_prompt.to_string()
+    } else {
+        format!("{expert_prompt}\n\n## Operator Strategy Override\n\n{expert_override}")
+    };
+
+    // Append custom instructions section if provided
+    let custom_section = if custom_instructions.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n## Custom Instructions\n\n{custom_instructions}")
+    };
+
+    // Build blocks section if any blocks are provided
+    let blocks_section = if prompt_blocks.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", prompt_blocks.join("\n\n"))
+    };
+
     format!(
         r#"# Trading Agent Instructions
 
 ## Identity & Autonomy
 
-You are an autonomous trading agent — a coding agent that writes Python scripts, manages its own SQLite database, and iterates on its tools. You are NOT a chatbot. You act.
+You are an autonomous trading agent — a coding agent that builds tools, manages its own SQLite database, and iterates on its approach. You are NOT a chatbot. You act.
+
+Your container has Python, Node.js, Go, and Rust available via `mise`. Choose the best language for each task:
+- **Python** (pandas, numpy, requests, sqlite3): data analysis, API calls, indicators
+- **Node.js**: complex async workflows, websocket integration
+- **Shell scripts**: orchestration, running multiple tools in sequence
+- **Go / Rust**: performance-critical tools if needed (rarely)
+
+Prefer Python for most tasks unless you have a specific reason to use another language.
 
 You have a persistent workspace at /home/agent/ that survives across iterations. You build tools, discover markets, track performance, and improve your approach over time. Every iteration should leave your workspace in a better state than you found it.
 
@@ -525,7 +1218,8 @@ Workspace layout:
 ```
 /home/agent/
 ├── data/trading.db        # SQLite — all persistent data
-├── tools/                 # Your Python scripts (scanner, analyzer, tracker)
+├── tools/                 # Your tools (scanners, analyzers, indicators)
+│   └── data/              # Data collection scripts (run at iteration start)
 ├── memory/insights.jsonl  # Append-only learning log
 ├── metrics/latest.json    # Current metrics (read by /metrics endpoint)
 ├── logs/decisions.jsonl   # Trade decision log
@@ -537,7 +1231,7 @@ Workspace layout:
 Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **bootstrap** (iteration 0): Install packages, build core tools (market scanner, signal analyzer, trade tracker), discover initial markets, populate the DB. Then set phase to "research".
-- **research**: Run your scanner tools, update market data in the DB, generate signals. If actionable signals found, set phase to "trading". Otherwise increment iteration and stay in "research".
+- **research**: Run your data collection and scanner tools, update market data in the DB, generate signals. If actionable signals found, set phase to "trading". Otherwise increment iteration and stay in "research".
 - **trading**: Check circuit breaker first. Validate trade intents, execute approved trades, log results to the DB. Then set phase to "reflect".
 - **reflect**: Calculate P&L from recent trades. Compare your signal predictions vs actual outcomes. Write insights to memory table and insights.jsonl. Set phase to "research".
 
@@ -545,13 +1239,14 @@ After each iteration, update `phase.json` with the new phase and incremented ite
 
 ## Tool Building Guidelines
 
-Build standalone Python scripts in `/home/agent/tools/`. Each tool should:
+Build standalone tools in `/home/agent/tools/`. Each tool should:
 - Accept command-line arguments (e.g. `python3 tools/scanner.py --source coingecko --limit 50`)
 - Output JSON to stdout for easy parsing
 - Use SQLite (`/home/agent/data/trading.db`) for persistence
 - Handle errors gracefully — print error JSON, don't crash
 - Be idempotent — safe to re-run
 
+Prefer Python for most tools. Use shell scripts for orchestrating multiple tools.
 On subsequent iterations, run existing tools rather than rebuilding them. Only modify tools when you identify a concrete improvement.
 
 ## Common Data APIs
@@ -596,7 +1291,8 @@ Endpoints:
 
 ## Expert Strategy Knowledge
 
-{expert_prompt}
+{effective_expert}
+{blocks_section}
 
 ## Operational Mandates
 
@@ -609,7 +1305,7 @@ Endpoints:
 
 4. **Mode**: {paper_mode_note}
 
-5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition."#,
+5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition.{custom_section}"#,
         api_url = config.trading_api_url,
         token = config.trading_api_token,
         vault = config.vault_address,
@@ -633,7 +1329,7 @@ pub fn build_generic_agent_profile(
         "mm" => super::MM_FRAGMENT,
         _ => super::MULTI_FRAGMENT,
     };
-    let instructions = build_profile_instructions(strategy_type, strategy_fragment, config);
+    let instructions = build_profile_instructions(strategy_type, strategy_fragment, config, &[]);
     json!({
         "name": format!("trading-{}", strategy_type),
         "description": format!("{} trading agent", strategy_type),
@@ -660,6 +1356,11 @@ mod tests {
     #[test]
     fn test_get_pack_known_types() {
         assert!(get_pack("prediction").is_some());
+        assert!(get_pack("prediction_politics").is_some());
+        assert!(get_pack("prediction_crypto").is_some());
+        assert!(get_pack("prediction_war").is_some());
+        assert!(get_pack("prediction_trending").is_some());
+        assert!(get_pack("prediction_celebrity").is_some());
         assert!(get_pack("dex").is_some());
         assert!(get_pack("yield").is_some());
         assert!(get_pack("perp").is_some());
@@ -744,7 +1445,11 @@ mod tests {
 
     #[test]
     fn test_all_packs_have_common_setup() {
-        for pack_type in &["prediction", "dex", "yield", "perp", "volatility", "mm", "multi"] {
+        for pack_type in &[
+            "prediction", "prediction_politics", "prediction_crypto",
+            "prediction_war", "prediction_trending", "prediction_celebrity",
+            "dex", "yield", "perp", "volatility", "mm", "multi",
+        ] {
             let pack = get_pack(pack_type).unwrap();
             let joined = pack.setup_commands.join(" ");
             assert!(
@@ -780,6 +1485,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
         }
     }
 
@@ -858,7 +1564,7 @@ mod tests {
         let poly = get_pack("prediction").unwrap();
         assert_eq!(poly.max_turns, 20);
         assert_eq!(poly.timeout_ms, 240_000);
-        assert_eq!(poly.default_cron, "0 */3 * * * *");
+        assert_eq!(poly.default_cron, "0 */15 * * * *");
 
         let dex = get_pack("dex").unwrap();
         assert_eq!(dex.max_turns, 12);
@@ -906,9 +1612,103 @@ mod tests {
 
     // ── New tests for provider composition ──────────────────────────────
 
+    // ── Prediction sub-pack tests ──────────────────────────────────────
+
+    #[test]
+    fn test_prediction_subpacks_use_polymarket_provider() {
+        for pack_type in &[
+            "prediction_politics", "prediction_crypto", "prediction_war",
+            "prediction_trending", "prediction_celebrity",
+        ] {
+            let pack = get_pack(pack_type).unwrap();
+            assert!(
+                pack.provider_ids.contains(&"polymarket"),
+                "{pack_type} must include polymarket provider"
+            );
+            assert!(
+                pack.provider_ids.contains(&"coingecko"),
+                "{pack_type} must include coingecko provider"
+            );
+        }
+    }
+
+    #[test]
+    fn test_prediction_subpacks_have_polymarket_api_urls() {
+        for pack_type in &[
+            "prediction_politics", "prediction_crypto", "prediction_war",
+            "prediction_trending", "prediction_celebrity",
+        ] {
+            let pack = get_pack(pack_type).unwrap();
+            assert!(
+                pack.system_prompt.contains("gamma-api.polymarket.com"),
+                "{pack_type} prompt must contain Gamma API URL"
+            );
+            assert!(
+                pack.system_prompt.contains("clob.polymarket.com"),
+                "{pack_type} prompt must contain CLOB API URL"
+            );
+        }
+    }
+
+    #[test]
+    fn test_prediction_subpacks_have_methodology() {
+        let politics = get_pack("prediction_politics").unwrap();
+        assert!(!politics.strategy_methodology.is_empty());
+        assert!(politics.system_prompt.contains("polling"));
+
+        let crypto = get_pack("prediction_crypto").unwrap();
+        assert!(!crypto.strategy_methodology.is_empty());
+        assert!(crypto.system_prompt.contains("log-normal"));
+
+        let war = get_pack("prediction_war").unwrap();
+        assert!(!war.strategy_methodology.is_empty());
+        assert!(war.system_prompt.contains("geopolit") || war.system_prompt.contains("Geopolit"));
+
+        let trending = get_pack("prediction_trending").unwrap();
+        assert!(!trending.strategy_methodology.is_empty());
+        assert!(trending.system_prompt.contains("trending") || trending.system_prompt.contains("Trending"));
+
+        let celebrity = get_pack("prediction_celebrity").unwrap();
+        assert!(!celebrity.strategy_methodology.is_empty());
+        assert!(celebrity.system_prompt.contains("GoldDerby") || celebrity.system_prompt.contains("goldderby"));
+    }
+
+    #[test]
+    fn test_prediction_general_has_methodology() {
+        let pack = get_pack("prediction").unwrap();
+        assert!(!pack.strategy_methodology.is_empty(), "prediction pack must have non-empty methodology");
+        assert!(pack.system_prompt.contains("Top 50") || pack.system_prompt.contains("top 50"));
+    }
+
+    #[test]
+    fn test_prediction_subpacks_handle_price_move_event() {
+        let config = test_config();
+        for pack_type in &[
+            "prediction_politics", "prediction_crypto", "prediction_war",
+            "prediction_trending", "prediction_celebrity",
+        ] {
+            let pack = get_pack(pack_type).unwrap();
+            let prompt = pack.build_event_prompt(
+                "price_move",
+                &serde_json::json!({"market": "test"}),
+                &config,
+            );
+            assert!(
+                prompt.is_some(),
+                "{pack_type} must handle price_move event via polymarket provider"
+            );
+        }
+    }
+
+    // ── Provider composition tests ──────────────────────────────────────
+
     #[test]
     fn test_packs_have_provider_ids() {
-        for pack_type in &["prediction", "dex", "yield", "perp", "volatility", "mm", "multi"] {
+        for pack_type in &[
+            "prediction", "prediction_politics", "prediction_crypto",
+            "prediction_war", "prediction_trending", "prediction_celebrity",
+            "dex", "yield", "perp", "volatility", "mm", "multi",
+        ] {
             let pack = get_pack(pack_type).unwrap();
             assert!(
                 !pack.provider_ids.is_empty(),
@@ -1015,5 +1815,80 @@ mod tests {
         let pack = get_pack("multi").unwrap();
         assert!(pack.system_prompt.contains("Capital Allocation Model"));
         assert!(pack.system_prompt.contains("Cross-Strategy Signal Integration"));
+    }
+
+    #[test]
+    fn test_strategy_config_expert_override_appears_in_profile() {
+        let pack = get_pack("prediction").unwrap();
+        let mut config = test_config();
+        config.strategy_config = serde_json::json!({
+            "expert_knowledge_override": "Focus exclusively on US election markets."
+        });
+        let profile = pack.build_agent_profile(&config);
+        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+
+        assert!(
+            content.contains("Focus exclusively on US election markets"),
+            "expert_knowledge_override must appear in instructions"
+        );
+        assert!(
+            content.contains("Operator Strategy Override"),
+            "override section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_strategy_config_custom_instructions_appear_in_profile() {
+        let pack = get_pack("dex").unwrap();
+        let mut config = test_config();
+        config.strategy_config = serde_json::json!({
+            "custom_instructions": "Always check ETH/USDC pair first."
+        });
+        let profile = pack.build_agent_profile(&config);
+        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+
+        assert!(
+            content.contains("Always check ETH/USDC pair first"),
+            "custom_instructions must appear in instructions"
+        );
+        assert!(
+            content.contains("Custom Instructions"),
+            "custom instructions section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_empty_strategy_config_no_extra_sections() {
+        let pack = get_pack("prediction").unwrap();
+        let config = test_config(); // strategy_config = {}
+        let profile = pack.build_agent_profile(&config);
+        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+
+        assert!(
+            !content.contains("Operator Strategy Override"),
+            "no override section when strategy_config is empty"
+        );
+        assert!(
+            !content.contains("Custom Instructions"),
+            "no custom instructions section when strategy_config is empty"
+        );
+    }
+
+    #[test]
+    fn test_prompt_blocks_compose_into_profile() {
+        let perp = get_pack("perp").unwrap();
+        assert!(!perp.prompt_blocks.is_empty());
+        let config = test_config();
+        let content = perp.build_agent_profile(&config)["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for block in &perp.prompt_blocks {
+            assert!(content.contains(block));
+        }
+        // Generic profile gets no blocks
+        let generic = build_generic_agent_profile("perp", &config);
+        let g = generic["resources"]["instructions"]["content"].as_str().unwrap();
+        assert!(!g.contains(BLOCK_DATA_PIPELINE));
     }
 }

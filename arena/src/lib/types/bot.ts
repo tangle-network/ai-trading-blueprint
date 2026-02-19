@@ -1,5 +1,8 @@
 export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config';
-export type StrategyType = 'momentum' | 'mean-reversion' | 'arbitrage' | 'trend-following' | 'market-making' | 'sentiment';
+export type StrategyType =
+  | 'prediction' | 'prediction_politics' | 'prediction_crypto'
+  | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
+  | 'dex' | 'yield' | 'perp' | 'volatility' | 'mm' | 'multi';
 
 export interface Bot {
   id: string;

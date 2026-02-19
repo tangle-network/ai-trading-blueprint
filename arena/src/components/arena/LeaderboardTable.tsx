@@ -2,9 +2,7 @@ import { Link } from 'react-router';
 import { motion } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '~/components/ui/table';
-import { Badge } from '~/components/ui/badge';
-import { Identicon } from '~/components/shared/Identicon';
+import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
 import { SparklineChart } from './SparklineChart';
 
 interface LeaderboardTableProps {
@@ -18,6 +16,18 @@ const strategyColors: Record<string, 'accent' | 'success' | 'amber' | 'default' 
   'trend-following': 'secondary',
   'market-making': 'default',
   sentiment: 'accent',
+  dex: 'success',
+  prediction: 'accent',
+  prediction_politics: 'accent',
+  prediction_crypto: 'accent',
+  prediction_war: 'accent',
+  prediction_trending: 'accent',
+  prediction_celebrity: 'accent',
+  yield: 'amber',
+  perp: 'default',
+  volatility: 'secondary',
+  mm: 'default',
+  multi: 'accent',
 };
 
 function RankCell({ rank }: { rank: number }) {

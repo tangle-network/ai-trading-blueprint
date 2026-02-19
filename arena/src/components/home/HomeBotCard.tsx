@@ -1,11 +1,8 @@
 import { Link } from 'react-router';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Card, CardContent } from '~/components/ui/card';
-import { Badge } from '~/components/ui/badge';
-import { Button } from '~/components/ui/button';
+import { Badge, Button, Card, CardContent, Identicon } from '@tangle/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
-import { Identicon } from '~/components/shared/Identicon';
 import type { Bot } from '~/lib/types/bot';
 import { STRATEGY_SHORT } from '~/lib/format';
 

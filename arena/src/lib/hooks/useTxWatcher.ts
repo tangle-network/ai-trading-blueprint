@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
-import { txListStore, updateTx } from '~/lib/stores/txHistory';
-import { publicClient } from '~/lib/contracts/publicClient';
+import { publicClient, txListStore, updateTx } from '@tangle/blueprint-ui';
 
 /**
  * Watches all pending transactions and updates their status when confirmed or failed.

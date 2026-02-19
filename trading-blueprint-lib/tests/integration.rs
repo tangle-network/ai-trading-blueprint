@@ -13,7 +13,7 @@ use trading_blueprint_lib::jobs::{
 };
 use trading_blueprint_lib::prompts::{
     build_generic_agent_profile, build_loop_prompt, build_pack_agent_profile,
-    build_pack_loop_prompt, build_pack_system_prompt, build_system_prompt, packs,
+    build_pack_loop_prompt, build_system_prompt, packs,
 };
 use trading_blueprint_lib::state::{bot_key, bots, find_bot_by_sandbox};
 use trading_blueprint_lib::{
@@ -86,6 +86,7 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        tee_config: None,
     }
 }
 
@@ -384,6 +385,7 @@ async fn test_system_prompt_includes_api_info() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -575,6 +577,7 @@ async fn test_pack_profile_has_rich_content() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -622,6 +625,7 @@ async fn test_generic_strategy_gets_profile() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -642,48 +646,8 @@ async fn test_generic_strategy_gets_profile() {
 #[tokio::test]
 async fn test_prediction_pack_has_default_cron() {
     let pack = packs::get_pack("prediction").unwrap();
-    // Polymarket pack default cron: every 3 minutes
-    assert_eq!(pack.default_cron, "0 */3 * * * *");
-}
-
-#[tokio::test]
-async fn test_pack_system_prompt_includes_base_config() {
-    let pack = packs::get_pack("prediction").unwrap();
-    let config = trading_blueprint_lib::state::TradingBotRecord {
-        id: "test".to_string(),
-        sandbox_id: "sb".to_string(),
-        vault_address: "0xTEST_VAULT".to_string(),
-        share_token: String::new(),
-        strategy_type: "prediction".to_string(),
-        strategy_config: serde_json::json!({}),
-        risk_params: serde_json::json!({"max_drawdown_pct": 10}),
-        chain_id: 137,
-        rpc_url: "http://polygon-rpc".to_string(),
-        trading_api_url: "http://my-api:9100".to_string(),
-        trading_api_token: "bearer-xyz".to_string(),
-        workflow_id: None,
-        trading_active: true,
-        created_at: 0,
-        operator_address: String::new(),
-        validator_service_ids: vec![],
-        max_lifetime_days: 30,
-        paper_trade: true,
-        wind_down_started_at: None,
-        submitter_address: String::new(),
-    };
-
-    let combined = build_pack_system_prompt(&pack, &config);
-
-    // Should contain base Trading HTTP API config
-    assert!(combined.contains("http://my-api:9100"), "Should contain trading API URL");
-    assert!(combined.contains("bearer-xyz"), "Should contain bearer token");
-    assert!(combined.contains("0xTEST_VAULT"), "Should contain vault address");
-    assert!(combined.contains("137"), "Should contain chain ID");
-
-    // Should contain expert Polymarket knowledge
-    assert!(combined.contains("gamma-api.polymarket.com"), "Should contain Gamma API");
-    assert!(combined.contains("half-Kelly"), "Should contain Kelly criterion");
-    assert!(combined.contains("Expert Strategy Instructions"), "Should have section header");
+    // Polymarket pack default cron: every 15 minutes
+    assert_eq!(pack.default_cron, "0 */15 * * * *");
 }
 
 // ---------------------------------------------------------------------------
@@ -714,6 +678,7 @@ async fn test_dex_profile_has_uniswap_content() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -752,6 +717,7 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -790,6 +756,7 @@ async fn test_build_pack_agent_profile_integration() {
         paper_trade: true,
         wind_down_started_at: None,
         submitter_address: String::new(),
+        trading_loop_cron: String::new(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);

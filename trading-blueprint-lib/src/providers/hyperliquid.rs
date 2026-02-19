@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct HyperliquidProvider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for HyperliquidProvider {
 
     fn expert_prompt(&self) -> &'static str {
         HYPERLIQUID_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on Hyperliquid perpetual futures. Use the REST API for funding rates, \
-         open interest, and candle data for technical analysis."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &HYPERLIQUID_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -76,27 +67,6 @@ impl TradingProvider for HyperliquidProvider {
     }
 }
 
-static HYPERLIQUID_ENDPOINTS: [DataEndpoint; 3] = [
-    DataEndpoint {
-        name: "All Midpoints",
-        url: "https://api.hyperliquid.xyz/info",
-        description: "POST with {\"type\": \"allMids\"} — all perpetual midpoint prices",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "Meta & Asset Contexts",
-        url: "https://api.hyperliquid.xyz/info",
-        description: "POST with {\"type\": \"metaAndAssetCtxs\"} — funding rates, OI, metadata",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "Candle Snapshot",
-        url: "https://api.hyperliquid.xyz/info",
-        description: "POST with {\"type\": \"candleSnapshot\", \"req\": {\"coin\": \"ETH\", \"interval\": \"1h\", \"startTime\": <unix_ms>}}",
-        auth: "None",
-    },
-];
-
 pub(crate) const HYPERLIQUID_EXPERT_PROMPT: &str = r#"## Hyperliquid Protocol Knowledge
 
 ### Hyperliquid API
@@ -133,12 +103,6 @@ mod tests {
     fn test_hyperliquid_expert_prompt_has_api() {
         let p = HyperliquidProvider;
         assert!(p.expert_prompt().contains("api.hyperliquid.xyz"));
-    }
-
-    #[test]
-    fn test_hyperliquid_strategy_fragment() {
-        let p = HyperliquidProvider;
-        assert!(p.strategy_fragment().contains("Hyperliquid"));
     }
 
     #[test]

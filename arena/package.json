@@ -22,6 +22,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-router/node": "^7.13.0",
     "@tangle/agent-ui": "link:../../ai-agent-sandbox-blueprint/packages/agent-ui",
+    "@tangle/blueprint-ui": "link:../../blueprint-ui",
     "@tanstack/react-query": "^5.90.16",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",

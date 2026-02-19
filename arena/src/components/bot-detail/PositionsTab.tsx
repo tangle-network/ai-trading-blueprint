@@ -1,5 +1,5 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '~/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
 
 interface PositionsTabProps {
   botId: string;

@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct PolymarketProvider;
 
@@ -17,16 +17,6 @@ impl TradingProvider for PolymarketProvider {
 
     fn expert_prompt(&self) -> &'static str {
         POLYMARKET_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on event-based trading on Polymarket prediction markets. \
-         Use Gamma API for market discovery, CLOB API for order books, \
-         and cross-reference with crypto prices for edge detection."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &POLYMARKET_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -84,33 +74,6 @@ impl TradingProvider for PolymarketProvider {
     }
 }
 
-static POLYMARKET_ENDPOINTS: [DataEndpoint; 4] = [
-    DataEndpoint {
-        name: "Gamma Events",
-        url: "https://gamma-api.polymarket.com/events?closed=false&limit=50&order=volume",
-        description: "Top prediction market events by volume",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "Gamma Markets",
-        url: "https://gamma-api.polymarket.com/markets",
-        description: "Active markets with metadata",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "CLOB Book",
-        url: "https://clob.polymarket.com/book?token_id={token_id}",
-        description: "Full order book (bids, asks, spread)",
-        auth: "None",
-    },
-    DataEndpoint {
-        name: "CLOB Midpoint",
-        url: "https://clob.polymarket.com/midpoint?token_id={token_id}",
-        description: "Current midpoint price",
-        auth: "None",
-    },
-];
-
 pub(crate) const POLYMARKET_EXPERT_PROMPT: &str = r#"## Polymarket Protocol Knowledge
 
 ### Market Discovery — Gamma API
@@ -160,6 +123,48 @@ For crypto-related prediction markets (e.g. "Will ETH be above $X by date?"):
 
 Markets have a `resolutionSource` field — fetch it periodically to check for early resolution signals. Markets that resolve early offer risk-free exits if you're on the right side.
 
+### Information Gathering Before Probability Estimation
+
+Before estimating the probability of any event, use webfetch to research it.
+This is the core alpha source for prediction markets — the market price reflects
+crowd knowledge; your edge comes from faster or deeper research.
+
+**For every market you are evaluating, gather at minimum:**
+
+1. **Resolution source** — every Gamma market has a `resolutionSource` field.
+   Fetch it directly with webfetch. This is where the market will be resolved —
+   reading it often reveals information the crowd hasn't priced in yet.
+
+2. **Current news** — webfetch recent articles about the event:
+   - `https://news.google.com/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en`
+   - `https://www.reuters.com/search/news?blob={encoded_query}`
+   - `https://apnews.com/search?q={encoded_query}`
+
+3. **Base rates** — look up historical frequency of similar events:
+   - Elections: incumbent win rates, polling averages
+   - Crypto prices: historical volatility from CoinGecko price chart
+   - Geopolitical: similar historical precedents
+
+4. **Cross-reference other forecasters** — check prediction aggregators:
+   - `https://www.metaculus.com/questions/` (search for the topic)
+   - `https://manifold.markets/` (community prediction market)
+   These provide independent probability estimates you can triangulate against.
+
+**Probability Estimation Protocol:**
+
+After gathering information, form your estimate using this structure:
+1. State the base rate (prior probability from historical data or reference class)
+2. List the 2-3 strongest pieces of evidence and how each shifts the prior
+3. State your adjusted probability estimate
+4. Compare with the current market price
+5. Calculate edge: `EV = (your_prob - market_price)` for YES side
+6. Only proceed if |EV| > 0.05 (5% edge) AND you found at least 2 independent sources
+
+**Speed vs. depth tradeoff:** On bootstrap and first research iterations, spend
+extra turns gathering information and building research tools. On subsequent
+iterations, use cached data and only re-fetch for markets where resolution is
+imminent (<48h) or where price has moved >5% since last check.
+
 ### Trading Methodology
 
 1. **Market Scanning**: Query Gamma API for high-volume, high-liquidity markets. Filter for markets ending >24h from now with volume >$50k.
@@ -203,9 +208,14 @@ mod tests {
     }
 
     #[test]
-    fn test_polymarket_strategy_fragment_mentions_adapter() {
+    fn test_polymarket_expert_prompt_has_information_gathering() {
         let p = PolymarketProvider;
-        assert!(p.strategy_fragment().contains("Polymarket"));
+        let prompt = p.expert_prompt();
+        assert!(prompt.contains("Information Gathering"));
+        assert!(prompt.contains("webfetch"));
+        assert!(prompt.contains("resolutionSource"));
+        assert!(prompt.contains("metaculus.com"));
+        assert!(prompt.contains("base rate"));
     }
 
     #[test]
@@ -249,12 +259,4 @@ mod tests {
         assert!(p.setup_commands()[0].contains("py-clob-client"));
     }
 
-    #[test]
-    fn test_polymarket_data_endpoints() {
-        let p = PolymarketProvider;
-        let endpoints = p.data_endpoints();
-        assert!(!endpoints.is_empty());
-        assert!(endpoints.iter().any(|e| e.url.contains("gamma-api")));
-        assert!(endpoints.iter().any(|e| e.url.contains("clob.polymarket")));
-    }
 }

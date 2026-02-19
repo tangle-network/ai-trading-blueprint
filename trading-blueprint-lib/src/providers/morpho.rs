@@ -1,4 +1,4 @@
-use super::{DataEndpoint, EventContext, TradingProvider};
+use super::{EventContext, TradingProvider};
 
 pub struct MorphoProvider;
 
@@ -17,15 +17,6 @@ impl TradingProvider for MorphoProvider {
 
     fn expert_prompt(&self) -> &'static str {
         MORPHO_EXPERT_PROMPT
-    }
-
-    fn strategy_fragment(&self) -> &'static str {
-        "Focus on Morpho Blue aggregated lending/borrowing. \
-         Compare vault APYs across isolated markets for optimal yield."
-    }
-
-    fn data_endpoints(&self) -> &[DataEndpoint] {
-        &MORPHO_ENDPOINTS
     }
 
     fn setup_commands(&self) -> Vec<String> {
@@ -57,13 +48,6 @@ impl TradingProvider for MorphoProvider {
     }
 }
 
-static MORPHO_ENDPOINTS: [DataEndpoint; 1] = [DataEndpoint {
-    name: "DeFiLlama Morpho",
-    url: "https://api.llama.fi/protocol/morpho",
-    description: "Morpho protocol TVL and data",
-    auth: "None",
-}];
-
 pub(crate) const MORPHO_EXPERT_PROMPT: &str = r#"## Morpho Protocol Knowledge
 
 ### Morpho Blue (Ethereum Mainnet)
@@ -94,12 +78,6 @@ mod tests {
     fn test_morpho_expert_prompt_has_address() {
         let p = MorphoProvider;
         assert!(p.expert_prompt().contains("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"));
-    }
-
-    #[test]
-    fn test_morpho_strategy_fragment() {
-        let p = MorphoProvider;
-        assert!(p.strategy_fragment().contains("Morpho"));
     }
 
     #[test]

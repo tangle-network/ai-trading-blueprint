@@ -2,6 +2,7 @@ import { icons as phIcons } from '@iconify-json/ph';
 import { defineConfig, presetIcons, transformerDirectives } from 'unocss';
 import { presetAnimations } from 'unocss-preset-animations';
 import { presetWind4 } from 'unocss/preset-wind4';
+import { bpThemeTokens } from '@tangle/blueprint-ui/preset';
 
 /*
  * OBSIDIAN TERMINAL — Design System
@@ -221,6 +222,7 @@ export default defineConfig({
     colors: {
       ...COLOR_PRIMITIVES,
       ...SHADCN_COLORS,
+      bp: bpThemeTokens('arena'),
       arena: {
         elements: {
           borderColor: 'var(--arena-elements-borderColor)',
@@ -285,6 +287,14 @@ export default defineConfig({
       },
     }),
   ],
+  content: {
+    pipeline: {
+      include: [
+        /\.(tsx?|jsx?)$/,
+        '../../blueprint-ui/src/**/*.{ts,tsx}',
+      ],
+    },
+  },
   safelist: [
     // Arena icons
     'i-ph:trophy',

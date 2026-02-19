@@ -3,10 +3,7 @@ import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { Card, CardContent } from '~/components/ui/card';
-import { Badge } from '~/components/ui/badge';
-import { Button } from '~/components/ui/button';
-import { Skeleton } from '~/components/ui/skeleton';
+import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
 import {
   provisionsForOwner,
@@ -14,13 +11,12 @@ import {
   removeProvision,
   type TrackedProvision,
 } from '~/lib/stores/provisions';
-import { publicClient } from '~/lib/contracts/publicClient';
+import { publicClient } from '@tangle/blueprint-ui';
 import { addresses } from '~/lib/contracts/addresses';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useUserServices } from '~/lib/hooks/useUserServices';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
-import { StaggerContainer, StaggerItem } from '~/components/motion/AnimatedPage';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';

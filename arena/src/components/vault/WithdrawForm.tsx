@@ -2,13 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { parseUnits, formatUnits } from 'viem';
 import type { Address } from 'viem';
-import { Card, CardHeader, CardTitle, CardContent } from '~/components/ui/card';
-import { Input } from '~/components/ui/input';
-import { Button } from '~/components/ui/button';
+import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
 import { useRedeem } from '~/lib/hooks/useVaultWrite';
-import { selectedChainIdStore } from '~/lib/contracts/publicClient';
-import { addTx } from '~/lib/stores/txHistory';
+import { addTx, selectedChainIdStore } from '@tangle/blueprint-ui';
 
 interface WithdrawFormProps {
   vaultAddress: Address;

@@ -77,15 +77,8 @@ contract DeployLocal is Script {
         // The factory's createVault calls policyEngine.configureVault (onlyOwner).
         // Since ownership was transferred but not yet accepted, we'll need to do that separately.
 
-        vm.stopBroadcast();
-
-        // Accept ownership using impersonation (Anvil only)
-        vm.startPrank(address(vaultFactory));
-        policyEngine.acceptOwnership();
-        tradeValidator.acceptOwnership();
-        vm.stopPrank();
-
-        vm.startBroadcast(deployerKey);
+        // Accept ownership via VaultFactory's helper (works in broadcast mode)
+        vaultFactory.acceptDependencyOwnership();
 
         // Create vault for service 0
         address[] memory signers = new address[](1);

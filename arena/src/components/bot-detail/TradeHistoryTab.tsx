@@ -1,6 +1,5 @@
 import { useBotTrades } from '~/lib/hooks/useBotApi';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '~/components/ui/table';
-import { Badge } from '~/components/ui/badge';
+import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
 
 interface TradeHistoryTabProps {
   botId: string;

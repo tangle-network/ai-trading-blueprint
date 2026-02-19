@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { motion } from 'framer-motion';
-import { Button } from '~/components/ui/button';
+import { Button } from '@tangle/blueprint-ui/components';
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 24 },

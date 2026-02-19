@@ -2,13 +2,13 @@ import { useEffect, useState, useCallback } from 'react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import type { Bot, BotStatus, StrategyType } from '~/lib/types/bot';
-import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
+import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
-import { publicClient } from '~/lib/contracts/publicClient';
+import { publicClient } from '@tangle/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
 
-// Direct vault address mapping (fallback when VaultFactory not deployed):
+// Direct vault address mapping (fallback when neither Blueprint nor VaultFactory deployed):
 // VITE_SERVICE_VAULTS={"0":["0x..."],"1":["0x...","0x..."]}
 // Also supports legacy single-address format: {"0":"0x..."}
 const SERVICE_VAULTS: Record<string, Address[]> = (() => {
@@ -40,13 +40,19 @@ type VaultEntry = {
   vaultIndex: number;
   operators: Address[];
   isActive: boolean;
+  isProvisioned: boolean;
 };
 
 /**
  * Discovers bots from on-chain data.
  *
- * Model: Service (Tangle) → N vaults (VaultFactory) → N bots on the leaderboard.
- * Each vault is a separate trading bot that shares operators with its service siblings.
+ * Discovery priority:
+ *   1. Service IDs from Tangle ServiceActivated events (+ env/provisions fallback)
+ *   2. TradingBlueprint.instanceVault(serviceId) — primary source of truth
+ *   3. VaultFactory.getServiceVaults — fallback when Blueprint not deployed
+ *   4. VITE_SERVICE_VAULTS env — fallback for local dev
+ *   5. Operator API — enriches with off-chain state (sandbox, secrets, trading status)
+ *   6. Provisions store — catches in-progress provisions
  */
 export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void } {
   const [bots, setBots] = useState<Bot[]>([]);
@@ -93,7 +99,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
       // Phase 1: Service-level queries (operators, active status)
       let serviceResults: any[] = [];
+      let blueprintResults: any[] | null = null;
       let vaultFactoryResults: any[] | null = null;
+
+      const hasBlueprint = addresses.tradingBlueprint !== zeroAddress;
+      const hasVaultFactory = addresses.vaultFactory !== zeroAddress;
 
       if (serviceIds.length > 0) {
         serviceResults = await publicClient.multicall({
@@ -103,9 +113,23 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           ]),
         });
 
-        // Phase 1b: Vault factory queries — get ALL vaults per service
-        const hasVaultFactory = addresses.vaultFactory !== zeroAddress;
-        if (hasVaultFactory) {
+        // Phase 1b: Blueprint is the primary source of truth for vault addresses.
+        // Query instanceVault(serviceId) and instanceProvisioned(serviceId) per service.
+        if (hasBlueprint) {
+          try {
+            blueprintResults = await publicClient.multicall({
+              contracts: serviceIds.flatMap((id) => [
+                { address: addresses.tradingBlueprint, abi: tradingBlueprintAbi, functionName: 'instanceVault' as const, args: [BigInt(id)] },
+                { address: addresses.tradingBlueprint, abi: tradingBlueprintAbi, functionName: 'instanceProvisioned' as const, args: [BigInt(id)] },
+              ]),
+            });
+          } catch (err) {
+            console.warn('[useBots] Blueprint multicall failed:', err);
+          }
+        }
+
+        // Phase 1c: VaultFactory fallback — only when Blueprint is not deployed
+        if (!hasBlueprint && hasVaultFactory) {
           try {
             vaultFactoryResults = await publicClient.multicall({
               contracts: serviceIds.map((id) => ({
@@ -126,25 +150,39 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
         const operators = (serviceResults[i * 2]?.result as Address[] | undefined) ?? [];
         const isActive = (serviceResults[i * 2 + 1]?.result as boolean | undefined) ?? false;
 
-        // Collect all vault addresses for this service
+        // Collect vault addresses for this service
         const vaultAddrs: Address[] = [];
+        let isProvisioned = false;
 
-        // From VaultFactory
-        if (vaultFactoryResults) {
+        // Primary: Blueprint — one vault per service from instanceVault[serviceId]
+        if (blueprintResults) {
+          const vault = blueprintResults[i * 2]?.result as Address | undefined;
+          isProvisioned = (blueprintResults[i * 2 + 1]?.result as boolean | undefined) ?? false;
+          if (vault && vault !== zeroAddress) {
+            vaultAddrs.push(vault);
+          }
+        }
+
+        // Fallback: VaultFactory (only used when Blueprint not deployed)
+        if (vaultAddrs.length === 0 && vaultFactoryResults) {
           const factoryVaults = vaultFactoryResults[i]?.result as Address[] | undefined;
           if (factoryVaults) {
             for (const addr of factoryVaults) {
               if (addr !== zeroAddress) vaultAddrs.push(addr);
             }
+            if (vaultAddrs.length > 0) isProvisioned = true;
           }
         }
 
-        // From env fallback (merge, dedupe)
-        const envVaults = SERVICE_VAULTS[String(id)] ?? [];
-        for (const addr of envVaults) {
-          if (addr !== zeroAddress && !vaultAddrs.some((a) => a.toLowerCase() === addr.toLowerCase())) {
-            vaultAddrs.push(addr);
+        // Fallback: env config (for local dev when neither Blueprint nor VaultFactory available)
+        if (vaultAddrs.length === 0) {
+          const envVaults = SERVICE_VAULTS[String(id)] ?? [];
+          for (const addr of envVaults) {
+            if (addr !== zeroAddress && !vaultAddrs.some((a) => a.toLowerCase() === addr.toLowerCase())) {
+              vaultAddrs.push(addr);
+            }
           }
+          if (vaultAddrs.length > 0) isProvisioned = true;
         }
 
         // From provisions store (catches vaults deployed by recent provisions)
@@ -159,7 +197,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
         // One entry per vault
         vaultAddrs.forEach((addr, vi) => {
-          vaultEntries.push({ serviceId: id, vaultAddress: addr, vaultIndex: vi, operators, isActive });
+          vaultEntries.push({ serviceId: id, vaultAddress: addr, vaultIndex: vi, operators, isActive, isProvisioned });
         });
       }
 
@@ -237,7 +275,10 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
           }
 
-          const botStatus: BotStatus = !entry.isActive ? 'stopped' : paused ? 'paused' : 'active';
+          const botStatus: BotStatus = !entry.isProvisioned ? 'stopped'
+            : !entry.isActive ? 'stopped'
+            : paused ? 'paused'
+            : 'active';
 
           let name = meta?.name ?? `Bot #${entry.serviceId}`;
           if (numVaults > 1 && assetSymbol !== '???') {
@@ -286,10 +327,12 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             }> = data.bots ?? [];
 
             // Merge operator API data into existing on-chain bots (by vault address)
-            const existingVaults = new Map(builtBots.map((b) => [b.vaultAddress.toLowerCase(), b]));
+            // Track all seen vault addresses to avoid duplicates from operator API
+            const seenVaults = new Set(builtBots.map((b) => b.vaultAddress.toLowerCase()));
 
             for (const ob of operatorBots) {
-              const existing = existingVaults.get(ob.vault_address.toLowerCase());
+              const vaultLower = ob.vault_address?.toLowerCase() ?? '';
+              const existing = builtBots.find((b) => b.vaultAddress.toLowerCase() === vaultLower);
               if (existing) {
                 // Enrich existing bot with operator API fields
                 existing.sandboxId = ob.sandbox_id;
@@ -302,6 +345,13 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 }
                 continue;
               }
+              // Skip if we've already added a bot with this vault address
+              if (seenVaults.has(vaultLower)) continue;
+              // Skip bots with invalid vault addresses (zero, VaultFactory, or other known contracts)
+              if (!vaultLower || vaultLower === zeroAddress ||
+                  vaultLower === addresses.vaultFactory.toLowerCase() ||
+                  vaultLower === addresses.tangle.toLowerCase()) continue;
+              seenVaults.add(vaultLower);
               // Try to find the correct service ID from provisions
               // Match by vault address first, then sandbox_id as fallback
               const matchingProv = provisionsStore.get().find(
@@ -357,13 +407,19 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
         // Skip failed provisions — they're shown in ProvisionsBanner
         if (prov.phase === 'failed') continue;
 
-        const hasVault = prov.vaultAddress && prov.vaultAddress.toLowerCase() !== zeroAddress;
-        const botId = hasVault ? prov.vaultAddress!.toLowerCase() : `provision:${prov.id}`;
+        const vaultLower = prov.vaultAddress?.toLowerCase() ?? '';
+        const hasVault = vaultLower && vaultLower !== zeroAddress;
+        // Skip provisions whose vault is a known contract (VaultFactory, Tangle) — not a real vault
+        if (hasVault && (
+          vaultLower === addresses.vaultFactory.toLowerCase() ||
+          vaultLower === addresses.tangle.toLowerCase()
+        )) continue;
+        const botId = hasVault ? vaultLower : `provision:${prov.id}`;
 
         // Skip if already represented by ID
         if (builtBots.some((b) => b.id === botId)) continue;
         // Skip if vault already exists from an earlier phase
-        if (hasVault && builtBots.some((b) => b.vaultAddress.toLowerCase() === prov.vaultAddress!.toLowerCase())) continue;
+        if (hasVault && builtBots.some((b) => b.vaultAddress.toLowerCase() === vaultLower)) continue;
 
         builtBots.push({
           id: botId,
@@ -397,8 +453,14 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
       for (const prov of provisionsStore.get()) {
         if (prov.phase === 'failed') continue;
 
-        const hasVault = prov.vaultAddress && prov.vaultAddress.toLowerCase() !== zeroAddress;
-        const botId = hasVault ? prov.vaultAddress!.toLowerCase() : `provision:${prov.id}`;
+        const fbVaultLower = prov.vaultAddress?.toLowerCase() ?? '';
+        const hasVault = fbVaultLower && fbVaultLower !== zeroAddress;
+        // Skip provisions whose vault is a known contract
+        if (hasVault && (
+          fbVaultLower === (import.meta.env.VITE_VAULT_FACTORY ?? '').toLowerCase() ||
+          fbVaultLower === (import.meta.env.VITE_TANGLE_CONTRACT ?? '').toLowerCase()
+        )) continue;
+        const botId = hasVault ? fbVaultLower : `provision:${prov.id}`;
 
         fallbackBots.push({
           id: botId,
