@@ -19,8 +19,11 @@ use blueprint_sdk::tangle::extract::TangleResult;
 ///
 /// After the tick completes, runs fee settlement for winding-down bots.
 pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, String> {
+    tracing::info!("=== WORKFLOW TICK HANDLER ENTERED ===");
+
     // 1. Check all active bots for wind-down eligibility
     let all_bots = bots()?.values().map_err(|e| e.to_string())?;
+    tracing::info!("Found {} bots", all_bots.len());
 
     for bot in &all_bots {
         if !should_initiate_wind_down(bot) {
@@ -76,7 +79,17 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     }
 
     // 2. Run the normal workflow tick
-    let response = ai_agent_sandbox_blueprint_lib::workflows::workflow_tick().await?;
+    tracing::info!("Running inner workflow_tick()...");
+    let response = match ai_agent_sandbox_blueprint_lib::workflows::workflow_tick().await {
+        Ok(v) => {
+            tracing::info!("workflow_tick() returned: {}", v);
+            v
+        }
+        Err(e) => {
+            tracing::error!("workflow_tick() failed (non-fatal): {e}");
+            serde_json::json!({"error": e, "count": 0, "executed": []})
+        }
+    };
 
     // 3. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?

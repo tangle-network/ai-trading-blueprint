@@ -327,6 +327,13 @@ pub fn build_operator_router() -> Router {
         // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
+        // Pricing (RFQ) endpoints — operators serve these for service creation + job pricing
+        .route("/pricing/quote", post(pricing_quote))
+        .route("/pricing/job-quote", post(pricing_job_quote))
+        // Debug endpoints (no auth — test mode only)
+        .route("/api/debug/sandboxes", get(debug_sandboxes))
+        .route("/api/debug/workflows", get(debug_workflows))
+        .route("/api/debug/run-now/{bot_id}", post(debug_run_now))
         .layer(cors_layer())
 }
 
@@ -882,6 +889,185 @@ async fn get_activation_progress(
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No activation progress for bot {bot_id}")))?;
 
     Ok(Json(ActivationProgressResponse::from(progress)))
+}
+
+// ── Debug handlers ───────────────────────────────────────────────────────
+
+async fn debug_sandboxes() -> Json<serde_json::Value> {
+    match sandbox_runtime::runtime::sandboxes() {
+        Ok(store) => match store.values() {
+            Ok(records) => {
+                let list: Vec<serde_json::Value> = records
+                    .iter()
+                    .map(|r| serde_json::json!({
+                        "id": r.id,
+                        "container_id": &r.container_id[..r.container_id.len().min(12)],
+                        "sidecar_url": r.sidecar_url,
+                        "token_len": r.token.len(),
+                        "state": format!("{:?}", r.state),
+                    }))
+                    .collect();
+                Json(serde_json::json!({ "count": list.len(), "sandboxes": list }))
+            }
+            Err(e) => Json(serde_json::json!({ "error": format!("values() failed: {e}") })),
+        },
+        Err(e) => Json(serde_json::json!({ "error": format!("sandboxes() failed: {e}") })),
+    }
+}
+
+async fn debug_workflows() -> Json<serde_json::Value> {
+    match ai_agent_sandbox_blueprint_lib::workflows::workflows() {
+        Ok(store) => match store.values() {
+            Ok(entries) => {
+                let list: Vec<serde_json::Value> = entries
+                    .iter()
+                    .map(|e| {
+                        let spec: Result<serde_json::Value, _> = serde_json::from_str(&e.workflow_json);
+                        let sidecar_url = spec
+                            .as_ref()
+                            .ok()
+                            .and_then(|v| v["sidecar_url"].as_str())
+                            .unwrap_or("unknown");
+                        serde_json::json!({
+                            "id": e.id,
+                            "name": e.name,
+                            "active": e.active,
+                            "trigger_type": e.trigger_type,
+                            "trigger_config": e.trigger_config,
+                            "next_run_at": e.next_run_at,
+                            "last_run_at": e.last_run_at,
+                            "sidecar_url": sidecar_url,
+                        })
+                    })
+                    .collect();
+                Json(serde_json::json!({ "count": list.len(), "workflows": list }))
+            }
+            Err(e) => Json(serde_json::json!({ "error": format!("values() failed: {e}") })),
+        },
+        Err(e) => Json(serde_json::json!({ "error": format!("workflows() failed: {e}") })),
+    }
+}
+
+async fn debug_run_now(
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = state::get_bot(&bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+
+    let workflow_id = bot
+        .workflow_id
+        .ok_or_else(|| (StatusCode::CONFLICT, "Bot has no workflow".to_string()))?;
+
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .get(&wf_key)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+
+    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let last_run_at = execution.last_run_at;
+    let next_run_at = execution.next_run_at;
+    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&wf_key, |e| {
+            e.last_run_at = Some(last_run_at);
+            e.next_run_at = next_run_at;
+        });
+
+    Ok(Json(serde_json::json!({
+        "status": "executed",
+        "workflow_id": workflow_id,
+        "response": execution.response,
+    })))
+}
+
+// ── Pricing handlers (RFQ for service creation + per-job quotes) ─────────
+
+#[derive(Deserialize)]
+struct PricingQuoteRequest {
+    blueprint_id: Option<String>,
+    ttl_blocks: Option<String>,
+    #[allow(dead_code)]
+    proof_of_work: Option<String>,
+    challenge_timestamp: Option<String>,
+    #[allow(dead_code)]
+    resource_requirements: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct JobQuoteRequest {
+    service_id: Option<String>,
+    job_index: Option<u32>,
+    #[allow(dead_code)]
+    proof_of_work: Option<String>,
+    challenge_timestamp: Option<String>,
+}
+
+/// Returns a zero-cost signed quote for local development.
+/// In production, this would compute resource pricing and sign with the operator key.
+async fn pricing_quote(
+    Json(body): Json<PricingQuoteRequest>,
+) -> Json<serde_json::Value> {
+    let blueprint_id = body.blueprint_id.as_deref().unwrap_or("0");
+    let ttl_blocks = body.ttl_blocks.as_deref().unwrap_or("100");
+    let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let expiry = now + 3600;
+
+    let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
+
+    Json(serde_json::json!({
+        "operator": operator_address,
+        "total_cost": "0",
+        "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "cost_rate": 0.0,
+        "details": {
+            "blueprint_id": blueprint_id,
+            "ttl_blocks": ttl_blocks,
+            "total_cost": "0",
+            "timestamp": timestamp,
+            "expiry": expiry.to_string(),
+            "security_commitments": [],
+        },
+    }))
+}
+
+/// Returns a zero-cost per-job quote for local development.
+async fn pricing_job_quote(
+    Json(body): Json<JobQuoteRequest>,
+) -> Json<serde_json::Value> {
+    let service_id = body.service_id.as_deref().unwrap_or("0");
+    let job_index = body.job_index.unwrap_or(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let expiry = now + 3600;
+    let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
+
+    let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
+
+    Json(serde_json::json!({
+        "operator": operator_address,
+        "total_cost": "0",
+        "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "cost_rate": 0.0,
+        "details": {
+            "service_id": service_id,
+            "job_index": job_index,
+            "price": "0",
+            "timestamp": timestamp,
+            "expiry": expiry.to_string(),
+        },
+    }))
 }
 
 // ── Provision handlers ───────────────────────────────────────────────────
