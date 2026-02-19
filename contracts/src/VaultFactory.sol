@@ -145,6 +145,62 @@ contract VaultFactory is Ownable2Step {
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }
 
+    /// @notice Create an independent vault for a specific bot (per-bot isolation).
+    /// @dev Unlike createVault(), this allows multiple vaults per service — each bot
+    ///      gets its own VaultShare + TradingVault. Called by the BSM in onJobResult
+    ///      when a provision job completes.
+    /// @param serviceId The Tangle service ID
+    /// @param assetToken The deposit asset for this vault
+    /// @param admin The vault admin address (typically the BSM contract)
+    /// @param operator Initial operator (address(0) if granted later via onOperatorJoined)
+    /// @param signers Array of validator signer addresses
+    /// @param requiredSigs Minimum signatures required (m in m-of-n)
+    /// @param name Share token name (e.g., bot name)
+    /// @param symbol Share token symbol
+    /// @param salt Unique salt (typically keccak256(serviceId, callId))
+    /// @return vault The deployed vault address
+    /// @return shareAddr The VaultShare token address
+    function createBotVault(
+        uint64 serviceId,
+        address assetToken,
+        address admin,
+        address operator,
+        address[] calldata signers,
+        uint256 requiredSigs,
+        string calldata name,
+        string calldata symbol,
+        bytes32 salt
+    ) external returns (address vault, address shareAddr) {
+        if (assetToken == address(0) || admin == address(0)) revert ZeroAddress();
+        // NOTE: No ServiceAlreadyInitialized check — multiple bot vaults per service allowed
+        if (signers.length == 0 || requiredSigs == 0 || requiredSigs > signers.length) {
+            revert InvalidSignerConfig();
+        }
+
+        // 1. Deploy VaultShare via CREATE2 (unique per bot via salt)
+        bytes32 shareSalt = keccak256(abi.encodePacked(serviceId, "bot-share", salt));
+        VaultShare shareToken = new VaultShare{salt: shareSalt}(name, symbol, address(this));
+        shareAddr = address(shareToken);
+        emit ShareTokenCreated(serviceId, shareAddr);
+
+        // 2. Deploy TradingVault via CREATE2
+        vault = _deployVault(serviceId, assetToken, shareToken, admin, operator, salt);
+
+        // 3. Grant MINTER_ROLE to vault on VaultShare
+        shareToken.grantRole(shareToken.MINTER_ROLE(), vault);
+
+        // 4. Link vault in VaultShare
+        shareToken.linkVault(vault);
+
+        // 5. Configure TradeValidator for this vault
+        tradeValidator.configureVault(vault, signers, requiredSigs);
+
+        // 6. Initialize PolicyEngine with sensible defaults
+        policyEngine.initializeVault(vault, 50000, 100, 500);
+
+        emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
+    }
+
     /// @notice Add another asset vault to an existing service (multi-asset ERC-7575)
     /// @param serviceId The existing service ID (must already have a VaultShare)
     /// @param assetToken The new deposit asset

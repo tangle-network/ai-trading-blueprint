@@ -3,7 +3,7 @@ import {
   Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Input,
 } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
-import { updateProvision, type TrackedProvision } from '~/lib/stores/provisions';
+import { updateProvision } from '~/lib/stores/provisions';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
   AI_PROVIDERS,
@@ -16,11 +16,17 @@ import {
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
+/** Generic target for secrets configuration — works from provisions or bot detail. */
+export type SecretsTarget = {
+  sandboxId: string;
+  provisionId?: string; // If from a provision, to update provision store on success
+};
+
 export function SecretsModal({
-  prov,
+  target,
   onClose,
 }: {
-  prov: TrackedProvision | null;
+  target: SecretsTarget | null;
   onClose: () => void;
 }) {
   const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
@@ -64,13 +70,13 @@ export function SecretsModal({
   }, []);
 
   const handleSubmit = async () => {
-    if (!prov || !apiKey.trim() || !prov.sandboxId) return;
+    if (!target || !apiKey.trim() || !target.sandboxId) return;
 
     setIsSubmitting(true);
     setActivationPhase(null);
     setLookupError(null);
 
-    const botId = await resolveBotId(prov.sandboxId);
+    const botId = await resolveBotId(target.sandboxId);
     if (!botId) {
       setIsSubmitting(false);
       return;
@@ -118,11 +124,13 @@ export function SecretsModal({
 
       const result = await res.json();
 
-      updateProvision(prov.id, {
-        phase: 'active',
-        workflowId: result.workflow_id,
-        sandboxId: result.sandbox_id ?? prov.sandboxId,
-      });
+      if (target.provisionId) {
+        updateProvision(target.provisionId, {
+          phase: 'active',
+          workflowId: result.workflow_id,
+          sandboxId: result.sandbox_id ?? target.sandboxId,
+        });
+      }
 
       toast.success('API keys configured — agent is now active!');
       setApiKey('');
@@ -140,7 +148,7 @@ export function SecretsModal({
   };
 
   return (
-    <Dialog open={prov !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Configure API Keys</DialogTitle>

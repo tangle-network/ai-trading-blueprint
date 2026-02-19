@@ -14,7 +14,7 @@ import {
   DialogTitle, DialogDescription, Identicon, Input, Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
-import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
+import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
 import { publicClient, selectedChainIdStore, useOperators } from '@tangle/blueprint-ui';
@@ -981,44 +981,8 @@ export default function ProvisionPage() {
     if (customExpertKnowledge) strategyConfig.expert_knowledge_override = customExpertKnowledge;
     if (customInstructions) strategyConfig.custom_instructions = customInstructions;
 
-    // Read the vault address for this service.
-    // Try TradingBlueprint.instanceVault first (set by onServiceInitialized),
-    // then fall back to VaultFactory.getServiceVaults (works with manual deploys).
-    let vaultAddress: Address = zeroAddress;
-    // 1. Try TradingBlueprint.instanceVault(serviceId)
-    if (addresses.tradingBlueprint !== zeroAddress) {
-      try {
-        const result = await publicClient.readContract({
-          address: addresses.tradingBlueprint,
-          abi: tradingBlueprintAbi,
-          functionName: 'instanceVault',
-          args: [BigInt(serviceId)],
-        });
-        vaultAddress = (result as Address) ?? zeroAddress;
-      } catch (err) {
-        console.warn('[provision] Failed to read instanceVault:', err);
-      }
-    }
-    // 2. Fallback: VaultFactory.getServiceVaults(serviceId)
-    if (vaultAddress === zeroAddress && addresses.vaultFactory !== zeroAddress) {
-      try {
-        const vaults = await publicClient.readContract({
-          address: addresses.vaultFactory,
-          abi: vaultFactoryAbi,
-          functionName: 'getServiceVaults',
-          args: [BigInt(serviceId)],
-        }) as Address[];
-        if (vaults && vaults.length > 0 && vaults[0] !== zeroAddress) {
-          vaultAddress = vaults[0];
-        }
-      } catch (err) {
-        console.warn('[provision] Failed to read VaultFactory:', err);
-      }
-    }
-    if (vaultAddress === zeroAddress) {
-      console.warn('[provision] No vault found for service', serviceId, '— operator will receive zero address');
-    }
-
+    // Per-bot vaults: pass zeroAddress as factory_address — the vault will be
+    // created on-chain in _handleProvisionResult when the job result arrives.
     // Encode as a tuple (struct) — alloy's SolValue::abi_decode expects
     // tuple-wrapped encoding (offset 0x20 prefix), not flat params.
     const inputs = encodeAbiParameters(
@@ -1031,7 +995,7 @@ export default function ProvisionPage() {
           strategyType,
           JSON.stringify(strategyConfig),
           '{}',
-          vaultAddress,
+          zeroAddress,
           (import.meta.env.VITE_USDC_ADDRESS ??
             '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
           [userAddress],

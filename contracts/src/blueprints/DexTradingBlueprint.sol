@@ -59,7 +59,7 @@ contract DexTradingBlueprint is TradingBlueprint {
     ) external payable override onlyFromTangle {
         if (job <= JOB_EXTEND) {
             // Delegate common jobs to base
-            _handleCommonJobResult(serviceId, job, jobCallId, operator, outputs);
+            _handleCommonJobResult(serviceId, job, jobCallId, operator, inputs, outputs);
         } else if (job == JOB_EXECUTE_TWAP) {
             emit TwapCompleted(serviceId, jobCallId, operator);
         } else if (job == JOB_CONFIGURE_ARB) {

@@ -14,11 +14,12 @@ import "@openzeppelin/contracts/access/IAccessControl.sol";
 ///
 ///   Lifecycle:
 ///     1. Consumer calls requestService() → onRequest() stores vault config
-///     2. Operators approve → service initialized → onServiceInitialized() deploys vault
-///     3. Each operator joins → onOperatorJoined() grants OPERATOR_ROLE on vault
+///     2. Operators approve → service initialized → onServiceInitialized() stores config + operators
+///     3. Each operator joins → onOperatorJoined() grants OPERATOR_ROLE on all bot vaults
 ///     4. Consumer submits JOB_PROVISION → operators bootstrap off-chain infra (sidecars)
-///     5. Trading begins — multiple operators independently generate trade intents
-///     6. Validator network scores intents, vault executes approved ones (deduped by intentHash)
+///     5. onJobResult(PROVISION) → creates per-bot vault via VaultFactory.createBotVault()
+///     6. Trading begins — multiple operators independently generate trade intents
+///     7. Validator network scores intents, vault executes approved ones (deduped by intentHash)
 abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
     // COMMON JOB IDS
@@ -47,14 +48,20 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     // STATE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Whether the service has been initialized (vault deployed)
+    /// @notice Whether the service has been initialized
     mapping(uint64 => bool) public instanceProvisioned;
 
-    /// @notice The vault address associated with a service ID
+    /// @notice Legacy: single vault per service (kept for backwards compat reads)
     mapping(uint64 => address) public instanceVault;
 
-    /// @notice Share token address per service
+    /// @notice Legacy: share token per service
     mapping(uint64 => address) public instanceShare;
+
+    /// @notice Per-bot vault address, keyed by (serviceId, callId)
+    mapping(uint64 serviceId => mapping(uint64 callId => address)) public botVaults;
+
+    /// @notice Per-bot share token, keyed by (serviceId, callId)
+    mapping(uint64 serviceId => mapping(uint64 callId => address)) public botShares;
 
     /// @notice VaultFactory address — set via setVaultFactory()
     address public vaultFactory;
@@ -84,6 +91,14 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
 
     mapping(uint64 => ServiceRequestConfig) internal _pendingRequests;
 
+    // ─── Per-service persistent storage ────────────────────────────────────
+
+    /// @dev Service config persisted beyond request lifecycle (for per-bot vault defaults)
+    mapping(uint64 serviceId => ServiceRequestConfig) internal _serviceConfigs;
+
+    /// @dev Operators for each service (used to grant roles on new bot vaults)
+    mapping(uint64 serviceId => address[]) internal _serviceOperators;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -97,6 +112,7 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
 
     event VaultDeployed(uint64 indexed serviceId, address indexed vault, address indexed shareToken);
+    event BotVaultDeployed(uint64 indexed serviceId, uint64 indexed callId, address vault, address shareToken);
     event OperatorGranted(uint64 indexed serviceId, address indexed operator, address vault);
     event ServiceTerminated(uint64 indexed serviceId);
     event TradingStarted(uint64 indexed serviceId);
@@ -196,62 +212,54 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     }
 
     /// @notice Called when the service is activated (all operators approved).
-    /// @dev Deploys vault via VaultFactory if configured.  The BSM contract
-    ///      becomes the vault admin so it can grant OPERATOR_ROLE to operators.
+    /// @dev Stores config and operators for per-bot vault creation in onJobResult.
+    ///      Vaults are NOT created here — they are created per-bot when JOB_PROVISION
+    ///      results arrive via _handleProvisionResult.
     function onServiceInitialized(
         uint64,
         uint64 requestId,
         uint64 serviceId,
         address,
-        address[] calldata,
+        address[] calldata operators,
         uint64
     ) external override onlyFromTangle {
         ServiceRequestConfig memory req = _pendingRequests[requestId];
 
-        if (vaultFactory != address(0) && req.assetToken != address(0)) {
-            bytes32 salt = keccak256(abi.encodePacked(serviceId, requestId));
-
-            // Deploy vault — BSM (address(this)) is admin, no initial operator
-            (address vault, address shareToken) = IVaultFactory(vaultFactory).createVault(
-                serviceId,
-                req.assetToken,
-                address(this),      // admin = this BSM contract
-                address(0),         // no initial operator — granted via onOperatorJoined
-                req.signers,
-                req.requiredSignatures,
-                req.name,
-                req.symbol,
-                salt
-            );
-
-            instanceVault[serviceId] = vault;
-            instanceShare[serviceId] = shareToken;
-            instanceProvisioned[serviceId] = true;
-
-            // Grant CREATOR_ROLE to the service requester so they can
-            // activate wind-down and perform admin unwinds.
-            if (req.requester != address(0)) {
-                IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, req.requester);
-            }
-
-            emit VaultDeployed(serviceId, vault, shareToken);
-        }
+        // Persist config for per-bot vault defaults
+        _serviceConfigs[serviceId] = req;
+        _serviceOperators[serviceId] = operators;
+        instanceProvisioned[serviceId] = true;
 
         delete _pendingRequests[requestId];
     }
 
     /// @notice Called when an operator joins the service.
-    /// @dev Grants OPERATOR_ROLE on the vault so the operator can call execute().
+    /// @dev Grants OPERATOR_ROLE on ALL vaults for this service (legacy + per-bot).
     function onOperatorJoined(
         uint64 serviceId,
         address operator,
         uint16
     ) external override onlyFromTangle {
-        address vault = instanceVault[serviceId];
-        if (vault != address(0)) {
-            IAccessControl(vault).grantRole(VAULT_OPERATOR_ROLE, operator);
-            emit OperatorGranted(serviceId, operator, vault);
+        // Grant on legacy service-level vault (if exists)
+        address legacyVault = instanceVault[serviceId];
+        if (legacyVault != address(0)) {
+            IAccessControl(legacyVault).grantRole(VAULT_OPERATOR_ROLE, operator);
+            emit OperatorGranted(serviceId, operator, legacyVault);
         }
+
+        // Grant on ALL bot vaults via VaultFactory enumeration
+        if (vaultFactory != address(0)) {
+            address[] memory vaults = IVaultFactory(vaultFactory).getServiceVaults(serviceId);
+            for (uint256 i = 0; i < vaults.length; i++) {
+                if (vaults[i] != legacyVault) {
+                    IAccessControl(vaults[i]).grantRole(VAULT_OPERATOR_ROLE, operator);
+                    emit OperatorGranted(serviceId, operator, vaults[i]);
+                }
+            }
+        }
+
+        // Track operator for future bot vault grants
+        _serviceOperators[serviceId].push(operator);
     }
 
     /// @notice Called when the service is terminated.
@@ -382,7 +390,7 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
         bytes calldata inputs,
         bytes calldata outputs
     ) external payable virtual override onlyFromTangle {
-        _handleCommonJobResult(serviceId, job, jobCallId, operator, outputs);
+        _handleCommonJobResult(serviceId, job, jobCallId, operator, inputs, outputs);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -390,28 +398,116 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Handles common job results.
-    /// @dev JOB_PROVISION/JOB_DEPROVISION are lightweight events.
-    ///      Vault deployment is handled by onServiceInitialized, not here.
+    /// @dev JOB_PROVISION creates a per-bot vault via VaultFactory.
     function _handleCommonJobResult(
         uint64 serviceId,
         uint8 job,
-        uint64,
+        uint64 jobCallId,
         address operator,
-        bytes calldata
+        bytes calldata inputs,
+        bytes calldata outputs
     ) internal {
-        if (job == JOB_START_TRADING) {
+        if (job == JOB_PROVISION) {
+            _handleProvisionResult(serviceId, jobCallId, inputs);
+        } else if (job == JOB_START_TRADING) {
             emit TradingStarted(serviceId);
         } else if (job == JOB_STOP_TRADING) {
             emit TradingStopped(serviceId);
         }
     }
+
+    /// @notice Creates a per-bot vault when a provision job completes.
+    /// @dev Decodes the provision request inputs to extract vault config,
+    ///      falls back to service-level config for missing fields.
+    function _handleProvisionResult(
+        uint64 serviceId,
+        uint64 jobCallId,
+        bytes calldata inputs
+    ) internal {
+        if (vaultFactory == address(0)) return;
+
+        // Decode TradingProvisionRequest to extract vault config fields
+        // Layout: (name, strategy_type, strategy_config_json, risk_params_json,
+        //          factory_address, asset_token, signers, required_signatures, ...)
+        (string memory botName,,,,, address assetToken, address[] memory signers,
+            uint256 requiredSigs,,,,,,,) =
+            abi.decode(inputs, (string, string, string, string,
+                address, address, address[], uint256, uint256,
+                string, string, uint64, uint64, uint64, uint64[]));
+
+        // Fall back to service-level config for missing fields
+        ServiceRequestConfig memory svcCfg = _serviceConfigs[serviceId];
+        if (assetToken == address(0)) assetToken = svcCfg.assetToken;
+        if (signers.length == 0) {
+            signers = svcCfg.signers;
+            requiredSigs = svcCfg.requiredSignatures;
+        }
+
+        // Require valid config
+        if (assetToken == address(0)) return;
+        if (signers.length == 0 || requiredSigs == 0) return;
+
+        bytes32 salt = keccak256(abi.encodePacked(serviceId, jobCallId));
+        string memory symbol = string(abi.encodePacked("bot", _uint64ToString(jobCallId)));
+
+        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
+            serviceId,
+            assetToken,
+            address(this),  // admin = this BSM contract
+            address(0),     // no initial operator — granted below
+            signers,
+            requiredSigs,
+            botName,
+            symbol,
+            salt
+        );
+
+        botVaults[serviceId][jobCallId] = vault;
+        botShares[serviceId][jobCallId] = shareToken;
+
+        // Grant OPERATOR_ROLE to all service operators
+        address[] memory ops = _serviceOperators[serviceId];
+        for (uint256 i = 0; i < ops.length; i++) {
+            IAccessControl(vault).grantRole(VAULT_OPERATOR_ROLE, ops[i]);
+        }
+
+        // Grant CREATOR_ROLE to the service requester
+        if (svcCfg.requester != address(0)) {
+            IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, svcCfg.requester);
+        }
+
+        emit BotVaultDeployed(serviceId, jobCallId, vault, shareToken);
+    }
+
+    /// @dev Convert uint64 to decimal string (for share token symbols).
+    function _uint64ToString(uint64 value) internal pure returns (string memory) {
+        if (value == 0) return "0";
+        uint64 temp = value;
+        uint256 digits;
+        while (temp != 0) { digits++; temp /= 10; }
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+        return string(buffer);
+    }
 }
 
-/// @notice Minimal interface for VaultFactory.createVault() calls
+/// @notice Minimal interface for VaultFactory calls
 interface IVaultFactory {
     function createVault(
         uint64 serviceId, address assetToken, address admin, address operator,
         address[] calldata signers, uint256 requiredSigs,
         string calldata name, string calldata symbol, bytes32 salt
     ) external returns (address vault, address shareToken);
+
+    function createBotVault(
+        uint64 serviceId, address assetToken, address admin, address operator,
+        address[] calldata signers, uint256 requiredSigs,
+        string calldata name, string calldata symbol, bytes32 salt
+    ) external returns (address vault, address shareToken);
+
+    function getServiceVaults(uint64 serviceId) external view returns (address[] memory);
 }

@@ -20,7 +20,7 @@ import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
-import { SecretsModal } from '~/components/home/SecretsModal';
+import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
@@ -67,7 +67,7 @@ export default function HomePage() {
   const myProvisions = useStableProvisions(userAddress);
 
   // State
-  const [secretsModalProv, setSecretsModalProv] = useState<TrackedProvision | null>(null);
+  const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
   // Derived data
@@ -95,8 +95,8 @@ export default function HomePage() {
       if (b.id.startsWith('provision:') && provIds.has(b.id.slice('provision:'.length))) return true;
       // Bot vault matches a user provision
       if (provVaults.has(b.vaultAddress.toLowerCase())) return true;
-      // Confirmed active from operator API (was provisioned at some point)
-      if (myServiceIds.has(b.serviceId) && (b.tradingActive === true || b.secretsConfigured === true)) return true;
+      // Bot belongs to one of the user's services
+      if (myServiceIds.has(b.serviceId)) return true;
       return false;
     });
   }, [bots, myServiceIds, myProvisions]);
@@ -271,7 +271,7 @@ export default function HomePage() {
         <ProvisionsBanner
           provisions={inProgressProvisions}
           failedProvisions={failedProvisions}
-          onConfigure={(prov) => setSecretsModalProv(prov)}
+          onConfigure={(prov) => prov.sandboxId ? setSecretsTarget({ sandboxId: prov.sandboxId, provisionId: prov.id }) : undefined}
           onDismiss={dismissProvision}
           onCheckStatus={checkStuckProvision}
           onClearFailed={clearAllFailed}
@@ -315,11 +315,17 @@ export default function HomePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {myBots.map((bot) => {
               const matchingProv = awaitingSecretsForBot.get(bot.vaultAddress.toLowerCase());
+              // Configure button: prefer provision-backed target, fall back to bot sandboxId
+              const configureHandler = matchingProv && matchingProv.sandboxId
+                ? () => setSecretsTarget({ sandboxId: matchingProv.sandboxId!, provisionId: matchingProv.id })
+                : bot.status === 'needs_config' && bot.sandboxId
+                  ? () => setSecretsTarget({ sandboxId: bot.sandboxId! })
+                  : undefined;
               return (
                 <HomeBotCard
                   key={bot.id}
                   bot={bot}
-                  onConfigure={matchingProv ? () => setSecretsModalProv(matchingProv) : undefined}
+                  onConfigure={configureHandler}
                 />
               );
             })}
@@ -344,8 +350,8 @@ export default function HomePage() {
 
       {/* Secrets configuration modal */}
       <SecretsModal
-        prov={secretsModalProv}
-        onClose={() => setSecretsModalProv(null)}
+        target={secretsTarget}
+        onClose={() => setSecretsTarget(null)}
       />
     </div>
   );

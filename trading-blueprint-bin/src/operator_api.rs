@@ -415,7 +415,43 @@ async fn configure_secrets(
         ));
     }
 
-    let result = trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot_id, body.env_json, None)
+    // When env_json is empty, use operator-provided AI keys from the binary's environment.
+    // This supports the "use operator provided keys" frontend option.
+    let env_json = if body.env_json.is_empty() {
+        let mut env = serde_json::Map::new();
+        // Try each supported AI provider in order of preference
+        let providers: &[(&str, &str, &str, &str)] = &[
+            ("ANTHROPIC_API_KEY", "anthropic", "claude-sonnet-4-20250514", "ANTHROPIC_API_KEY"),
+            ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
+        ];
+        let mut found = false;
+        for &(env_var, model_provider, model_name, native_key) in providers {
+            if let Ok(key) = std::env::var(env_var) {
+                if !key.is_empty() {
+                    env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
+                    env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
+                    env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
+                    env.insert(native_key.into(), key.into());
+                    found = true;
+                    tracing::info!("Using operator-provided {env_var} for bot {bot_id}");
+                    break;
+                }
+            }
+        }
+        if !found {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "No API keys provided and operator has no pre-configured AI keys. \
+                 Set ANTHROPIC_API_KEY or ZAI_API_KEY in the operator environment."
+                    .to_string(),
+            ));
+        }
+        env
+    } else {
+        body.env_json
+    };
+
+    let result = trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot_id, env_json, None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 

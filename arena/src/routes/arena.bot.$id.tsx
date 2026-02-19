@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useBots } from '~/lib/hooks/useBots';
@@ -10,6 +11,7 @@ import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
 import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { TerminalTab } from '~/components/bot-detail/TerminalTab';
+import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -18,6 +20,7 @@ export const meta: MetaFunction = () => [
 export default function BotDetailPage() {
   const { id } = useParams();
   const { bots, isLoading } = useBots();
+  const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   // Match by ID (vault address) or by vault address directly (handles case-mismatch)
   const bot = bots.find((b) => b.id === id)
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
@@ -98,9 +101,21 @@ export default function BotDetailPage() {
           </TabsContent>
 
           <TabsContent value="controls" className="mt-6">
-            <ControlsTab bot={bot} />
+            <ControlsTab
+              bot={bot}
+              onConfigureSecrets={
+                bot.status === 'needs_config' && bot.sandboxId
+                  ? () => setSecretsTarget({ sandboxId: bot.sandboxId! })
+                  : undefined
+              }
+            />
           </TabsContent>
         </Tabs>
+
+        <SecretsModal
+          target={secretsTarget}
+          onClose={() => setSecretsTarget(null)}
+        />
       </div>
     </AnimatedPage>
   );

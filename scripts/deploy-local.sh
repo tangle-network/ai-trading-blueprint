@@ -5,9 +5,9 @@
 #   1. Deploy contracts + register blueprint on Tangle (forge script)
 #   2. Wire VaultFactory to BSM (Anvil impersonation)
 #   3. Register operators for the new blueprint
-#   4. Request service + operators approve → vault auto-deploys via onServiceInitialized
+#   4. Request service + operators approve → service activated (no vault yet)
 #   5. Grant OPERATOR_ROLE via onOperatorJoined (Anvil impersonation)
-#   6. Seed vault, write .env.local
+#   6. Write .env.local (vaults created per-bot when provision jobs complete)
 #
 # Prerequisites:
 #   anvil --load-state /path/to/blueprint/crates/chain-setup/anvil/snapshots/localtestnet-state.json
@@ -213,7 +213,7 @@ echo "  Operator 1 approved"
 cast send "$TANGLE" "approveService(uint64,uint8)" "$REQUEST_ID" 100 \
   --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
   --rpc-url "$RPC_URL" --private-key "$OPERATOR2_KEY" > /dev/null 2>&1
-echo "  Operator 2 approved → service activated → vault auto-deployed"
+echo "  Operator 2 approved → service activated (per-bot vaults deploy on provision)"
 
 # ── [6/10] Grant OPERATOR_ROLE via onOperatorJoined ──────────────
 echo "[6/10] Granting OPERATOR_ROLE to operators..."
@@ -237,33 +237,15 @@ cast send "$BSM" "onOperatorJoined(uint64,address,uint16)" \
 cast rpc anvil_stopImpersonatingAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/null 2>&1
 echo "  OPERATOR_ROLE granted to both operators"
 
-# ── [7/10] Read vault address from BSM ───────────────────────────
-echo "[7/10] Reading vault address from BSM..."
-VAULT=$(cast call "$BSM" "instanceVault(uint64)(address)" "$SERVICE_ID" --rpc-url "$RPC_URL" 2>&1 | xargs)
-SHARE=$(cast call "$BSM" "instanceShare(uint64)(address)" "$SERVICE_ID" --rpc-url "$RPC_URL" 2>&1 | xargs)
+# ── [7/10] Verify service state ───────────────────────────────────
+echo "[7/10] Verifying service state..."
 PROVISIONED=$(cast call "$BSM" "instanceProvisioned(uint64)(bool)" "$SERVICE_ID" --rpc-url "$RPC_URL" 2>&1 | xargs)
-
 echo "  Service ID:    $SERVICE_ID"
-echo "  Vault:         $VAULT"
-echo "  Share token:   $SHARE"
 echo "  Provisioned:   $PROVISIONED"
+echo "  Note: Per-bot vaults are created when provision jobs complete (not at service init)"
 
-if [[ "$VAULT" == "0x0000000000000000000000000000000000000000" ]]; then
-  echo "ERROR: Vault was not auto-deployed. onServiceInitialized may have failed."
-  echo "Check that VaultFactory was properly wired to BSM."
-  exit 1
-fi
-
-# ── [8/10] Seed vault with 50K USDC ──────────────────────────────
-echo "[8/10] Seeding vault..."
-cast send "$USDC" "approve(address,uint256)" "$VAULT" 50000000000 \
-  --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
-cast send "$VAULT" "deposit(uint256,address)" 50000000000 "$DEPLOYER_ADDR" \
-  --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
-echo "  50,000 USDC deposited"
-
-# ── [9/10] Setup pricing engine keystores ────────────────────────
-echo "[9/10] Setting up pricing engine keystores..."
+# ── [8/9] Setup pricing engine keystores ─────────────────────────
+echo "[8/9] Setting up pricing engine keystores..."
 CARGO_TANGLE="${CARGO_TANGLE_BIN:-$(command -v cargo-tangle 2>/dev/null || echo "$ROOT_DIR/../blueprint/target/release/cargo-tangle")}"
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -283,8 +265,8 @@ else
   echo "  Then re-run this script to import operator keys"
 fi
 
-# ── [10/10] Write env file ───────────────────────────────────────
-echo "[10/10] Writing arena/.env.local..."
+# ── [9/9] Write env file ─────────────────────────────────────────
+echo "[9/9] Writing arena/.env.local..."
 cat > arena/.env.local <<EOF
 VITE_USE_LOCAL_CHAIN=true
 VITE_RPC_URL=http://127.0.0.1:8545
@@ -294,7 +276,6 @@ VITE_VAULT_FACTORY=$VAULT_FACTORY
 VITE_USDC_ADDRESS=$USDC
 VITE_WETH_ADDRESS=$WETH
 VITE_SERVICE_IDS=$SERVICE_ID
-VITE_SERVICE_VAULTS={"$SERVICE_ID":"$VAULT"}
 VITE_BOT_META={"$SERVICE_ID":{"name":"Arena Demo Bot","strategyType":"dex"}}
 VITE_OPERATOR_API_URL=/operator-api
 VITE_DEFAULT_AI_PROVIDER=zai
@@ -312,7 +293,7 @@ echo "║ BSM:             $BSM  ║"
 echo "║ VaultFactory:    $VAULT_FACTORY  ║"
 echo "║ USDC:            $USDC  ║"
 echo "║ WETH:            $WETH  ║"
-echo "║ Vault (svc $SERVICE_ID):   $VAULT  ║"
+echo "║ Service ID:      $SERVICE_ID (per-bot vaults on provision)             ║"
 echo "║ Blueprint ID:    $BLUEPRINT_ID                                       ║"
 echo "╠═════════════════════════════════════════════════════════════╣"
 echo "║ User:      $USER_ACCOUNT          ║"

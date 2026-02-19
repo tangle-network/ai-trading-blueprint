@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { decodeAbiParameters, decodeEventLog, zeroAddress } from 'viem';
+import type { Address } from 'viem';
 import { provisionsStore, updateProvision } from '~/lib/stores/provisions';
-import { tangleJobsAbi } from '~/lib/contracts/abis';
+import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle/blueprint-ui';
 
@@ -149,7 +150,7 @@ export function useProvisionWatcher() {
               for (const prov of waiting) {
                 if (prov.callId !== Number(cid)) continue;
                 if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
-                applyResultToProvision(prov.id, output, Number(sid));
+                applyResultToProvision(prov.id, output, Number(sid), Number(cid));
               }
             }
           } catch (err) {
@@ -174,7 +175,7 @@ export function useProvisionWatcher() {
               for (const prov of waiting) {
                 if (prov.callId !== Number(cid)) continue;
                 if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
-                applyResultToProvision(prov.id, output, Number(sid));
+                applyResultToProvision(prov.id, output, Number(sid), Number(cid));
               }
             }
           },
@@ -320,7 +321,7 @@ export function useProvisionWatcher() {
 
           for (const prov of needsRepair) {
             if (prov.callId !== Number(cid)) continue;
-            applyResultToProvision(prov.id, output, Number(log.args.serviceId ?? 0));
+            applyResultToProvision(prov.id, output, Number(log.args.serviceId ?? 0), Number(cid));
           }
         }
       } catch (err) {
@@ -330,30 +331,59 @@ export function useProvisionWatcher() {
   }, []);
 }
 
-/** Decode output and update a provision with vault/sandbox data. */
-function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number) {
+/** Decode output and update a provision with vault/sandbox data.
+ *  Since per-bot vaults are created on-chain in _handleProvisionResult,
+ *  the operator returns vault_address=0x0. We query botVaults(serviceId, callId)
+ *  from the BSM to get the actual vault address.
+ */
+function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number, callId?: number) {
+  let sandboxId: string | undefined;
+  let workflowId = 0;
+
+  // Decode operator output for sandbox_id and workflow_id
   if (output) {
     try {
-      const { vaultAddress, sandboxId, workflowId } = decodeProvisionOutput(output);
-      updateProvision(provId, {
-        phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
-        vaultAddress,
-        sandboxId,
-        workflowId,
-        ...(serviceId > 0 ? { serviceId } : {}),
-      });
+      const decoded = decodeProvisionOutput(output);
+      sandboxId = decoded.sandboxId;
+      workflowId = decoded.workflowId;
     } catch (decodeErr) {
       console.warn('[provision-watcher] Decode failed:', decodeErr);
-      // Job completed but decode failed — mark as awaiting_secrets so user can see it
+    }
+  }
+
+  // Query the per-bot vault from the BSM contract
+  const prov = provisionsStore.get().find((p) => p.id === provId);
+  const resolvedCallId = callId ?? prov?.callId;
+
+  if (resolvedCallId != null && serviceId > 0 && addresses.tradingBlueprint !== zeroAddress) {
+    publicClient.readContract({
+      address: addresses.tradingBlueprint,
+      abi: tradingBlueprintAbi,
+      functionName: 'botVaults',
+      args: [BigInt(serviceId), BigInt(resolvedCallId)],
+    }).then((vaultAddr) => {
+      const vault = vaultAddr as Address;
+      console.log('[provision-watcher] botVaults resolved:', vault, 'for callId=', resolvedCallId);
+      updateProvision(provId, {
+        phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+        vaultAddress: vault !== zeroAddress ? vault : undefined,
+        sandboxId,
+        workflowId,
+        serviceId,
+      });
+    }).catch((err) => {
+      console.warn('[provision-watcher] botVaults query failed:', err);
       updateProvision(provId, {
         phase: 'awaiting_secrets',
+        sandboxId,
         ...(serviceId > 0 ? { serviceId } : {}),
       });
-    }
+    });
   } else {
-    // No output data — mark as awaiting_secrets
+    // No BSM or no callId — update without vault
     updateProvision(provId, {
-      phase: 'awaiting_secrets',
+      phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+      sandboxId,
       ...(serviceId > 0 ? { serviceId } : {}),
     });
   }

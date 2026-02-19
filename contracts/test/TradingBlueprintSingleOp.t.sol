@@ -75,21 +75,55 @@ contract TradingBlueprintMultiOpTest is Setup {
         );
     }
 
-    /// @dev Full service lifecycle: onRequest → onServiceInitialized
-    function _initService() internal returns (address vault, address shareToken) {
+    /// @dev Full service lifecycle: onRequest → onServiceInitialized (no vault created)
+    function _initService() internal {
         vm.prank(tangleCore);
         blueprint.onRequest(requestId, address(0), new address[](0), _buildRequestInputs(), 0, address(0), 0);
 
         vm.prank(tangleCore);
         blueprint.onServiceInitialized(0, requestId, serviceId, address(0), new address[](0), 0);
-
-        vault = blueprint.instanceVault(serviceId);
-        shareToken = blueprint.instanceShare(serviceId);
     }
 
     function _joinOperator(address op) internal {
         vm.prank(tangleCore);
         blueprint.onOperatorJoined(serviceId, op, 0);
+    }
+
+    /// @dev Build provision inputs with valid vault config (asset token, signers)
+    function _buildBotProvisionInputs() internal view returns (bytes memory) {
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+        uint64[] memory validatorIds = new uint64[](0);
+        return abi.encode(
+            "Test Bot",         // name
+            "",                 // strategy_type
+            "",                 // strategy_config_json
+            "",                 // risk_params_json
+            address(0),         // factory_address
+            address(tokenA),    // asset_token
+            signers,            // signers
+            uint256(2),         // required_signatures
+            uint256(0),         // chain_id
+            "",                 // rpc_url
+            "",                 // trading_loop_cron
+            uint64(1),          // cpu_cores
+            uint64(1024),       // memory_mb
+            uint64(30),         // max_lifetime_days
+            validatorIds        // validator_service_ids
+        );
+    }
+
+    /// @dev Submit a provision job and its result, creating a per-bot vault
+    function _provisionBot(uint64 callId) internal returns (address vault, address shareToken) {
+        bytes memory inputs = _buildBotProvisionInputs();
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, callId, inputs);
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, callId, operator, inputs, "");
+        vault = blueprint.botVaults(serviceId, callId);
+        shareToken = blueprint.botShares(serviceId, callId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -109,53 +143,35 @@ contract TradingBlueprintMultiOpTest is Setup {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // VAULT AUTO-DEPLOY (onServiceInitialized)
+    // SERVICE INIT (onServiceInitialized) — stores config only, no vault
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_onServiceInitialized_deploysVault() public {
-        (address vault, address shareToken) = _initService();
+    function test_onServiceInitialized_storesConfigOnly() public {
+        _initService();
 
-        assertTrue(vault != address(0), "Vault should be deployed");
-        assertTrue(shareToken != address(0), "Share token should be deployed");
+        // No vault at service init — vaults are created per-bot via onJobResult
+        assertEq(blueprint.instanceVault(serviceId), address(0), "No vault at service init");
+        assertEq(blueprint.instanceShare(serviceId), address(0), "No share at service init");
         assertTrue(blueprint.instanceProvisioned(serviceId), "Should be provisioned");
-    }
-
-    function test_onServiceInitialized_emitsVaultDeployed() public {
-        vm.prank(tangleCore);
-        blueprint.onRequest(requestId, address(0), new address[](0), _buildRequestInputs(), 0, address(0), 0);
-
-        vm.prank(tangleCore);
-        // Can't predict exact addresses, just verify the event is emitted
-        vm.expectEmit(true, false, false, false);
-        emit TradingBlueprint.VaultDeployed(serviceId, address(0), address(0));
-        blueprint.onServiceInitialized(0, requestId, serviceId, address(0), new address[](0), 0);
-    }
-
-    function test_onServiceInitialized_blueprintIsVaultAdmin() public {
-        (address vault,) = _initService();
-
-        TradingVault tv = TradingVault(payable(vault));
-        assertTrue(tv.hasRole(tv.DEFAULT_ADMIN_ROLE(), address(blueprint)));
-    }
-
-    function test_onServiceInitialized_noInitialOperator() public {
-        (address vault,) = _initService();
-
-        // No operator role granted yet (operator param was address(0))
-        TradingVault tv = TradingVault(payable(vault));
-        assertFalse(tv.hasRole(tv.OPERATOR_ROLE(), operator));
-        assertFalse(tv.hasRole(tv.OPERATOR_ROLE(), operator2));
     }
 
     function test_onServiceInitialized_clearsRequestConfig() public {
         _initService();
 
         // Calling onServiceInitialized again with same requestId but new serviceId
-        // should not deploy (config was deleted)
+        // stores empty config (pending request was deleted)
         vm.prank(tangleCore);
         blueprint.onServiceInitialized(0, requestId, 99, address(0), new address[](0), 0);
 
-        assertEq(blueprint.instanceVault(99), address(0), "Should not deploy without config");
+        // Provision a bot for service 99 — should silently skip (empty service config,
+        // and provision inputs also have zero asset_token → no vault created)
+        bytes memory inputs = _buildProvisionInputs(1, 1024, 30);
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(99, JOB_PROVISION, 1, inputs);
+        vm.prank(tangleCore);
+        blueprint.onJobResult(99, JOB_PROVISION, 1, operator, inputs, "");
+
+        assertEq(blueprint.botVaults(99, 1), address(0), "Should not deploy without config");
     }
 
     function test_onServiceInitialized_skipsWithoutFactory() public {
@@ -170,23 +186,86 @@ contract TradingBlueprintMultiOpTest is Setup {
         vm.prank(tangleCore);
         freshBlueprint.onServiceInitialized(0, requestId, serviceId, address(0), new address[](0), 0);
 
-        assertEq(freshBlueprint.instanceVault(serviceId), address(0), "No vault without factory");
+        // Provision job result — should silently skip (no factory)
+        bytes memory inputs = _buildBotProvisionInputs();
+        vm.prank(tangleCore);
+        freshBlueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+        vm.prank(tangleCore);
+        freshBlueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+
+        assertEq(freshBlueprint.botVaults(serviceId, 1), address(0), "No vault without factory");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PER-BOT VAULT (onJobResult for JOB_PROVISION)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_provisionJob_deploysBotVault() public {
+        _initService();
+        (address vault, address shareToken) = _provisionBot(1);
+
+        assertTrue(vault != address(0), "Bot vault should be deployed");
+        assertTrue(shareToken != address(0), "Bot share token should be deployed");
+    }
+
+    function test_provisionJob_emitsBotVaultDeployed() public {
+        _initService();
+        bytes memory inputs = _buildBotProvisionInputs();
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+
+        vm.expectEmit(true, true, false, false);
+        emit TradingBlueprint.BotVaultDeployed(serviceId, 1, address(0), address(0));
+
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+    }
+
+    function test_provisionJob_blueprintIsVaultAdmin() public {
+        _initService();
+        (address vault,) = _provisionBot(1);
+
+        TradingVault tv = TradingVault(payable(vault));
+        assertTrue(tv.hasRole(tv.DEFAULT_ADMIN_ROLE(), address(blueprint)));
+    }
+
+    function test_provisionJob_noInitialOperator() public {
+        _initService();
+        (address vault,) = _provisionBot(1);
+
+        // No operators were in _serviceOperators (empty array passed to onServiceInitialized)
+        TradingVault tv = TradingVault(payable(vault));
+        assertFalse(tv.hasRole(tv.OPERATOR_ROLE(), operator));
+        assertFalse(tv.hasRole(tv.OPERATOR_ROLE(), operator2));
+    }
+
+    function test_provisionJob_multipleBotVaults() public {
+        _initService();
+        (address vault1,) = _provisionBot(1);
+        (address vault2,) = _provisionBot(2);
+
+        assertTrue(vault1 != address(0), "Bot 1 vault should be deployed");
+        assertTrue(vault2 != address(0), "Bot 2 vault should be deployed");
+        assertTrue(vault1 != vault2, "Each bot should get a different vault");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MULTI-OPERATOR (onOperatorJoined)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_onOperatorJoined_grantsRole() public {
-        (address vault,) = _initService();
+    function test_onOperatorJoined_grantsRoleOnBotVault() public {
+        _initService();
+        (address vault,) = _provisionBot(1);
         _joinOperator(operator);
 
         TradingVault tv = TradingVault(payable(vault));
         assertTrue(tv.hasRole(tv.OPERATOR_ROLE(), operator));
     }
 
-    function test_multipleOperators_allGetRole() public {
-        (address vault,) = _initService();
+    function test_multipleOperators_allGetRoleOnBotVault() public {
+        _initService();
+        (address vault,) = _provisionBot(1);
         _joinOperator(operator);
         _joinOperator(operator2);
         _joinOperator(operator3);
@@ -198,7 +277,8 @@ contract TradingBlueprintMultiOpTest is Setup {
     }
 
     function test_onOperatorJoined_emitsEvent() public {
-        (address vault,) = _initService();
+        _initService();
+        (address vault,) = _provisionBot(1);
 
         vm.expectEmit(true, true, false, true);
         emit TradingBlueprint.OperatorGranted(serviceId, operator, vault);
@@ -210,6 +290,18 @@ contract TradingBlueprintMultiOpTest is Setup {
         // Service 99 has no vault — should not revert
         vm.prank(tangleCore);
         blueprint.onOperatorJoined(99, operator, 0);
+    }
+
+    function test_onOperatorJoined_grantsRoleOnMultipleBotVaults() public {
+        _initService();
+        (address vault1,) = _provisionBot(1);
+        (address vault2,) = _provisionBot(2);
+        _joinOperator(operator);
+
+        TradingVault tv1 = TradingVault(payable(vault1));
+        TradingVault tv2 = TradingVault(payable(vault2));
+        assertTrue(tv1.hasRole(tv1.OPERATOR_ROLE(), operator));
+        assertTrue(tv2.hasRole(tv2.OPERATOR_ROLE(), operator));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

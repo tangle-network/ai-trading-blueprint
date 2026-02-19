@@ -54,7 +54,7 @@ contract MultiStrategyBlueprint is TradingBlueprint {
         bytes calldata outputs
     ) external payable override onlyFromTangle {
         if (job <= JOB_DEPROVISION) {
-            _handleCommonJobResult(serviceId, job, jobCallId, operator, outputs);
+            _handleCommonJobResult(serviceId, job, jobCallId, operator, inputs, outputs);
         } else if (job == JOB_DEFINE_STRATEGY) {
             emit StrategyDefined(serviceId, jobCallId, operator);
         } else if (job == JOB_EXECUTE) {

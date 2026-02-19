@@ -27,9 +27,10 @@ function formatTimestamp(ts: number): string {
 
 interface ControlsTabProps {
   bot: Bot;
+  onConfigureSecrets?: () => void;
 }
 
-export function ControlsTab({ bot }: ControlsTabProps) {
+export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   const { address } = useAccount();
   const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id);
   const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(bot.id);
@@ -67,6 +68,7 @@ export function ControlsTab({ bot }: ControlsTabProps) {
         startBot={startBot}
         stopBot={stopBot}
         runNow={runNow}
+        onConfigureSecrets={onConfigureSecrets}
       />
       <LifetimeCard
         bot={bot}
@@ -97,6 +99,7 @@ function StatusCard({
   startBot,
   stopBot,
   runNow,
+  onConfigureSecrets,
 }: {
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
   isOwner: boolean;
@@ -105,6 +108,7 @@ function StatusCard({
   startBot: ReturnType<typeof useBotControl>['startBot'];
   stopBot: ReturnType<typeof useBotControl>['stopBot'];
   runNow: ReturnType<typeof useBotControl>['runNow'];
+  onConfigureSecrets?: () => void;
 }) {
   const isWindingDown = detail.wind_down_started_at != null;
   const isAwaitingSecrets = !detail.secrets_configured;
@@ -147,9 +151,14 @@ function StatusCard({
       )}
 
       {isAwaitingSecrets && isOwner && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-sm text-violet-800 dark:text-violet-200">
-          <span className="i-ph:key text-xs mr-1" />
-          Configure API secrets to activate this bot.
+        <div className="mb-4 px-3 py-2.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-sm text-violet-800 dark:text-violet-200 flex items-center gap-2">
+          <span className="i-ph:key text-xs shrink-0" />
+          <span className="flex-1">Configure API secrets to activate this bot.</span>
+          {onConfigureSecrets && (
+            <Button size="sm" onClick={onConfigureSecrets} className="text-xs h-7 px-3 shrink-0">
+              Configure
+            </Button>
+          )}
         </div>
       )}
 
@@ -536,7 +545,7 @@ function AdvancedCard({
       </div>
 
       <p className="mt-4 text-xs text-arena-elements-textTertiary italic">
-        Deprovision and secret management are available from the dashboard provision page.
+        Deprovision available from the dashboard provision page.
       </p>
     </div>
   );

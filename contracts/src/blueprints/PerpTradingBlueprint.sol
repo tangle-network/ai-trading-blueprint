@@ -62,7 +62,7 @@ contract PerpTradingBlueprint is TradingBlueprint {
         bytes calldata outputs
     ) external payable override onlyFromTangle {
         if (job <= JOB_DEPROVISION) {
-            _handleCommonJobResult(serviceId, job, jobCallId, operator, outputs);
+            _handleCommonJobResult(serviceId, job, jobCallId, operator, inputs, outputs);
         } else if (job == JOB_OPEN_POSITION) {
             emit PositionOpened(serviceId, jobCallId, operator);
         } else if (job == JOB_CLOSE_POSITION) {

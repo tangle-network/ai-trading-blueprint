@@ -12,9 +12,9 @@ use sandbox_runtime::SandboxRecord;
 /// provided record instead.  Pass `None` in production to create a real
 /// sidecar container.
 ///
-/// Note: Vault creation happens on-chain in Solidity `onServiceInitialized`,
-/// NOT here.  The `factory_address` field is used as the pre-deployed vault
-/// address (set by the BSM contract before the operator receives the job).
+/// Note: Vault creation happens on-chain in Solidity `onJobResult` (per-bot),
+/// NOT here.  The operator returns Address::ZERO for vault_address; the BSM
+/// creates the vault via VaultFactory.createBotVault() when it receives the result.
 ///
 /// Two-phase provisioning (always):
 ///   1. Sidecar created with base env only (no secrets)
@@ -65,8 +65,8 @@ pub async fn provision_core(
         request.rpc_url.clone()
     };
 
-    // Vault address comes from the BSM contract (set during onServiceInitialized)
-    let vault_address = format!("{}", request.factory_address);
+    // Vault will be created on-chain in onJobResult — we don't know the address yet
+    let vault_address = String::new();
 
     // Trading API URL points to the shared HTTP API running in the binary
     let trading_api_url = std::env::var("TRADING_API_URL")
@@ -87,10 +87,8 @@ pub async fn provision_core(
         "TRADING_API_TOKEN".into(),
         serde_json::Value::String(api_token.clone()),
     );
-    env.insert(
-        "VAULT_ADDRESS".into(),
-        serde_json::Value::String(vault_address.clone()),
-    );
+    // VAULT_ADDRESS will be set later after on-chain vault creation
+    // (resolved when secrets are configured via operator API)
     env.insert(
         "STRATEGY_TYPE".into(),
         serde_json::Value::String(request.strategy_type.clone()),
@@ -233,15 +231,13 @@ pub async fn provision_core(
         None,
     );
 
-    tracing::info!("Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}, Vault: {vault_address}", record.id);
+    tracing::info!("Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}", record.id);
 
-    // 9. Return result — workflow_id=0 signals "awaiting secrets" to the frontend
-    let vault_addr_parsed: alloy::primitives::Address = vault_address
-        .parse()
-        .unwrap_or(request.factory_address);
-
+    // 9. Return result — vault_address=ZERO because the vault doesn't exist yet.
+    //    The BSM creates it on-chain in _handleProvisionResult when this result is submitted.
+    //    workflow_id=0 signals "awaiting secrets" to the frontend.
     Ok(TradingProvisionOutput {
-        vault_address: vault_addr_parsed,
+        vault_address: alloy::primitives::Address::ZERO,
         share_token: alloy::primitives::Address::ZERO,
         sandbox_id: record.id,
         workflow_id: 0,
