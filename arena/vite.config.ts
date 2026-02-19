@@ -1,7 +1,7 @@
 import { reactRouter } from '@react-router/dev/vite';
 import UnoCSS from 'unocss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 
 // SSR browser globals shim — web3 libraries (mipd, sonner, @tangle/agent-ui)
 // access document/window at module scope. Vite's SSR module runner evaluates
@@ -118,7 +118,13 @@ function clientChunks(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Load .env/.env.local so VITE_RPC_URL is available for proxy config.
+  // process.env.VITE_* is NOT populated when vite.config.ts runs — must use loadEnv().
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const rpcTarget = env.VITE_RPC_URL || 'http://127.0.0.1:8545';
+
+  return {
   plugins: [
     ssrBrowserShim(),
     UnoCSS(),
@@ -164,10 +170,11 @@ export default defineConfig({
       },
       // Proxy RPC calls so browsers on non-localhost (Tailscale, LAN) can reach Anvil
       '/rpc-proxy': {
-        target: 'http://127.0.0.1:8545',
+        target: rpcTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/rpc-proxy/, ''),
       },
     },
   },
+};
 });

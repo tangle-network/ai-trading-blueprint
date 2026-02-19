@@ -5,7 +5,7 @@ import "tnt-core/BlueprintServiceManagerBase.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @title TradingBlueprint
-/// @notice Abstract base for all trading blueprints.
+/// @notice Single trading blueprint for all strategy types.
 /// @dev Extends BlueprintServiceManagerBase with:
 ///   - Automatic vault deployment via VaultFactory on service initialization
 ///   - Multi-operator support (all operators get OPERATOR_ROLE on the vault)
@@ -20,7 +20,10 @@ import "@openzeppelin/contracts/access/IAccessControl.sol";
 ///     5. onJobResult(PROVISION) → creates per-bot vault via VaultFactory.createBotVault()
 ///     6. Trading begins — multiple operators independently generate trade intents
 ///     7. Validator network scores intents, vault executes approved ones (deduped by intentHash)
-abstract contract TradingBlueprint is BlueprintServiceManagerBase {
+contract TradingBlueprint is BlueprintServiceManagerBase {
+    string public constant BLUEPRINT_NAME = "trading-blueprint";
+    string public constant BLUEPRINT_VERSION = "0.1.0";
+
     // ═══════════════════════════════════════════════════════════════════════════
     // COMMON JOB IDS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -426,12 +429,24 @@ abstract contract TradingBlueprint is BlueprintServiceManagerBase {
     ) internal {
         if (vaultFactory == address(0)) return;
 
+        // The inputs may be either:
+        // a) Tuple-wrapped (alloy/viem encoding): first 32 bytes = 0x20 offset pointer
+        // b) Flat ABI encoding: first 32 bytes = offset to first string field (>= 0x1c0)
+        // Detect by checking if first word == 0x20 (tuple wrapper) and skip it.
+        bytes calldata inner = inputs;
+        if (inputs.length > 32) {
+            uint256 firstWord = uint256(bytes32(inputs[0:32]));
+            if (firstWord == 0x20) {
+                inner = inputs[32:];
+            }
+        }
+
         // Decode TradingProvisionRequest to extract vault config fields
         // Layout: (name, strategy_type, strategy_config_json, risk_params_json,
         //          factory_address, asset_token, signers, required_signatures, ...)
         (string memory botName,,,,, address assetToken, address[] memory signers,
             uint256 requiredSigs,,,,,,,) =
-            abi.decode(inputs, (string, string, string, string,
+            abi.decode(inner, (string, string, string, string,
                 address, address, address[], uint256, uint256,
                 string, string, uint64, uint64, uint64, uint64[]));
 

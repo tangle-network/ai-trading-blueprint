@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { ConnectKitButton } from 'connectkit';
-import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
+import { useAccount, useDisconnect, useSwitchChain, useConnectorClient } from 'wagmi';
 import { useStore } from '@nanostores/react';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
@@ -16,6 +16,7 @@ export function WalletButton() {
   const isReconnecting = status === 'reconnecting';
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const { data: connectorClient } = useConnectorClient();
   const selectedChainId = useStore(selectedChainIdStore);
   const selectedNetwork = networks[selectedChainId];
 
@@ -81,25 +82,32 @@ export function WalletButton() {
 
   async function addChain() {
     if (!targetChain) return;
-    const ethereum = (window as any).ethereum;
-    if (!ethereum) {
-      toast.error('No wallet detected');
-      return;
-    }
+    // Use wagmi's switchChain which handles add+switch via the active connector
     try {
-      await ethereum.request({
-        method: 'wallet_addEthereumChain',
-        params: [{
-          chainId: `0x${targetChain.id.toString(16)}`,
-          chainName: targetChain.name,
-          nativeCurrency: targetChain.nativeCurrency,
-          rpcUrls: targetChain.rpcUrls.default.http,
-        }],
-      });
-      toast.success(`${targetChain.name} added to wallet`);
+      switchChain({ chainId: targetChain.id });
+      toast.success(`Switching to ${targetChain.name}...`);
     } catch (err: any) {
       if (err?.code === 4001) return; // user rejected
-      toast.error('Failed to add chain');
+      // Fallback: try raw provider if available
+      const provider = connectorClient?.transport || (window as any).ethereum;
+      if (provider?.request) {
+        try {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: `0x${targetChain.id.toString(16)}`,
+              chainName: targetChain.name,
+              nativeCurrency: targetChain.nativeCurrency,
+              rpcUrls: targetChain.rpcUrls.default.http,
+            }],
+          });
+          toast.success(`${targetChain.name} added to wallet`);
+          return;
+        } catch (addErr: any) {
+          if (addErr?.code === 4001) return;
+        }
+      }
+      toast.error('Failed to add chain — add it manually in your wallet settings');
     }
   }
 

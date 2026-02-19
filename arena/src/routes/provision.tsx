@@ -565,50 +565,16 @@ export default function ProvisionPage() {
     }
     if (walletChainId === targetChain.id) return true;
 
-    const ethereum = (window as any).ethereum;
-    if (!ethereum) {
-      toast.error('No wallet provider found');
+    // Use wagmi's switchChainAsync which handles add+switch through the connector
+    try {
+      await switchChainAsync({ chainId: targetChain.id });
+      return true;
+    } catch (err: any) {
+      if (err?.code === 4001) return false; // user rejected
+      toast.error(`Switch to ${targetChain.name} in your wallet (chain ${targetChain.id})`);
       return false;
     }
-
-    const chainIdHex = `0x${targetChain.id.toString(16)}`;
-
-    // Step 1: Try switching directly
-    try {
-      await ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: chainIdHex }],
-      });
-      return true;
-    } catch (switchErr: any) {
-      // 4902 = chain not added yet
-      if (switchErr?.code !== 4902) {
-        // Try adding the chain as fallback for any error
-      }
-    }
-
-    // Step 2: Add the chain, then switch
-    try {
-      await ethereum.request({
-        method: 'wallet_addEthereumChain',
-        params: [{
-          chainId: chainIdHex,
-          chainName: targetChain.name,
-          nativeCurrency: targetChain.nativeCurrency,
-          rpcUrls: targetChain.rpcUrls.default.http,
-        }],
-      });
-      // Adding often auto-switches, but try explicit switch too
-      await ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: chainIdHex }],
-      }).catch(() => {}); // ignore if already switched
-      return true;
-    } catch {
-      toast.error(`Add chain ${targetChain.id} (${targetChain.name}) to your wallet manually`);
-      return false;
-    }
-  }, [isConnected, walletChainId]);
+  }, [isConnected, walletChainId, switchChainAsync]);
 
   // Wizard navigation
   const [step, setStep] = useState<WizardStep>('configure');
@@ -1020,7 +986,18 @@ export default function ProvisionPage() {
       },
       {
         onError(err) {
-          toast.error(`Transaction failed: ${err.message.slice(0, 120)}`);
+          // Extract meaningful error from wagmi/viem error chain
+          const msg = err.message || '';
+          const shortName = (err as any).shortMessage || '';
+          // Check for known revert reasons
+          if (msg.includes('NotPermittedCaller') || msg.includes('d5dd5b44')) {
+            toast.error('Not permitted — your wallet is not a permitted caller for this service');
+          } else if (shortName) {
+            toast.error(`Transaction failed: ${shortName.slice(0, 150)}`);
+          } else {
+            toast.error(`Transaction failed: ${msg.slice(0, 150)}`);
+          }
+          console.error('[provision] submitJob error:', err);
         },
       },
     );

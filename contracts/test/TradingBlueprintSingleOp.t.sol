@@ -2,15 +2,15 @@
 pragma solidity ^0.8.20;
 
 import "./helpers/Setup.sol";
-import "../src/blueprints/DexTradingBlueprint.sol";
+import "../src/blueprints/TradingBlueprint.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @title TradingBlueprintMultiOpTest
 /// @notice Tests for TradingBlueprint multi-operator model, vault auto-deploy,
 ///         lifecycle hooks, intent dedup, and job pricing.
-///         Uses DexTradingBlueprint as a concrete subclass.
+///         Tests the unified TradingBlueprint contract directly.
 contract TradingBlueprintMultiOpTest is Setup {
-    DexTradingBlueprint public blueprint;
+    TradingBlueprint public blueprint;
     address public tangleCore;
     address public operator2;
     address public operator3;
@@ -27,12 +27,11 @@ contract TradingBlueprintMultiOpTest is Setup {
     uint8 JOB_DEPROVISION;
     uint8 JOB_EXTEND;
     uint8 JOB_WORKFLOW_TICK;
-    uint8 JOB_EXECUTE_TWAP;
 
     function setUp() public override {
         super.setUp(); // Deploys tokens, VaultFactory, PolicyEngine, TradeValidator, FeeDistributor
 
-        blueprint = new DexTradingBlueprint();
+        blueprint = new TradingBlueprint();
         tangleCore = makeAddr("tangleCore");
         operator2 = makeAddr("operator2");
         operator3 = makeAddr("operator3");
@@ -53,7 +52,6 @@ contract TradingBlueprintMultiOpTest is Setup {
         JOB_DEPROVISION = blueprint.JOB_DEPROVISION();
         JOB_EXTEND = blueprint.JOB_EXTEND();
         JOB_WORKFLOW_TICK = blueprint.JOB_WORKFLOW_TICK();
-        JOB_EXECUTE_TWAP = blueprint.JOB_EXECUTE_TWAP();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -139,7 +137,6 @@ contract TradingBlueprintMultiOpTest is Setup {
         assertEq(blueprint.getRequiredResultCount(serviceId, JOB_STATUS), 0);
         assertEq(blueprint.getRequiredResultCount(serviceId, JOB_DEPROVISION), 0);
         assertEq(blueprint.getRequiredResultCount(serviceId, JOB_WORKFLOW_TICK), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_EXECUTE_TWAP), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -176,7 +173,7 @@ contract TradingBlueprintMultiOpTest is Setup {
 
     function test_onServiceInitialized_skipsWithoutFactory() public {
         // Deploy a fresh blueprint without factory set
-        DexTradingBlueprint freshBlueprint = new DexTradingBlueprint();
+        TradingBlueprint freshBlueprint = new TradingBlueprint();
         freshBlueprint.onBlueprintCreated(42, address(this), tangleCore);
         // Don't set factory
 
@@ -354,20 +351,6 @@ contract TradingBlueprintMultiOpTest is Setup {
         emit TradingBlueprint.TradingStopped(serviceId);
         vm.prank(tangleCore);
         blueprint.onJobResult(serviceId, JOB_STOP_TRADING, 3, operator, "", "");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SUBCLASS DELEGATION
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_subclass_twapJobWorks() public {
-        _initService();
-
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: 0}(serviceId, JOB_EXECUTE_TWAP, 5, "");
-
-        vm.prank(tangleCore);
-        blueprint.onJobResult(serviceId, JOB_EXECUTE_TWAP, 5, operator, "", "");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
