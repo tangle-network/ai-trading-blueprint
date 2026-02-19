@@ -232,12 +232,25 @@ export function useProvisionWatcher() {
               if (!res.ok) continue;
               const progress = await res.json();
               if (progress?.phase) {
-                updateProvision(prov.id, {
-                  phase: 'job_processing',
-                  progressPhase: progress.phase,
-                  progressDetail: progress.message,
-                  ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
-                });
+                // If operator reports ready (100%), transition to awaiting_secrets
+                // This is the fallback path when on-chain event decoding misses
+                if (progress.phase === 'ready' && progress.progress_pct === 100) {
+                  updateProvision(prov.id, {
+                    phase: 'awaiting_secrets',
+                    progressPhase: progress.phase,
+                    progressDetail: progress.message,
+                    ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+                    ...(progress.metadata?.bot_id ? {} : {}),
+                    ...(progress.metadata?.service_id ? { serviceId: progress.metadata.service_id } : {}),
+                  });
+                } else {
+                  updateProvision(prov.id, {
+                    phase: 'job_processing',
+                    progressPhase: progress.phase,
+                    progressDetail: progress.message,
+                    ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+                  });
+                }
               }
             } catch {
               // Operator API unreachable
