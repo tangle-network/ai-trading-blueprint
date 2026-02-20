@@ -213,9 +213,11 @@ export default function ProvisionPage() {
     () => selectedBlueprint?.blueprintId ?? import.meta.env.VITE_BLUEPRINT_ID ?? '0',
   );
   const [serviceMode, setServiceMode] = useState<'existing' | 'new'>('existing');
-  const [serviceId, setServiceId] = useState(
-    () => (import.meta.env.VITE_SERVICE_IDS ?? '0').split(',')[0].trim(),
-  );
+  const [serviceId, setServiceId] = useState(() => {
+    const raw = import.meta.env.VITE_SERVICE_IDS ?? '';
+    const first = raw.split(',')[0].trim();
+    return first && /^\d+$/.test(first) ? first : '0';
+  });
   const [serviceInfo, setServiceInfo] = useState<ServiceInfo | null>(null);
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
@@ -431,11 +433,12 @@ export default function ProvisionPage() {
       }
 
       if (Number(svc.blueprintId) !== Number(blueprintId)) {
-        setServiceError(
-          `Service ${serviceId} belongs to blueprint ${svc.blueprintId}, not ${blueprintId}`,
+        const onChainBid = String(svc.blueprintId);
+        toast.info(
+          `Service ${serviceId} belongs to blueprint ${onChainBid} (expected ${blueprintId}). Switched to blueprint ${onChainBid}.`,
+          { duration: 6000 },
         );
-        setServiceLoading(false);
-        return;
+        setBlueprintId(onChainBid);
       }
 
       setServiceInfo({
@@ -458,12 +461,12 @@ export default function ProvisionPage() {
     }
   }, [serviceId, blueprintId, userAddress]);
 
-  // Auto-validate service on mount and when service ID changes
+  // Auto-validate service on mount and when service ID / blueprint changes
   useEffect(() => {
     if (serviceMode === 'existing') {
       validateService();
     }
-  }, [serviceId, serviceMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [serviceId, serviceMode, validateService]);
 
   // ── Service discovery — find services the user can deploy to ───────────
 
@@ -471,7 +474,16 @@ export default function ProvisionPage() {
     if (!userAddress) return;
     setDiscoveryLoading(true);
     try {
-      // Scan ServiceActivated events for this blueprint
+      // Scan ServiceActivated events for this blueprint (bounded range for performance)
+      let fromBlock = 0n;
+      try {
+        const latestBlock = await publicClient.getBlockNumber();
+        // ~30 days of 12s blocks = 216_000 blocks; use a generous window
+        const lookback = 250_000n;
+        fromBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
+      } catch {
+        // Fall back to scanning from genesis if getBlockNumber fails
+      }
       const logs = await publicClient.getLogs({
         address: addresses.tangle,
         event: {
@@ -484,7 +496,7 @@ export default function ProvisionPage() {
           ],
         },
         args: { blueprintId: BigInt(blueprintId) },
-        fromBlock: 0n,
+        fromBlock,
       });
 
       if (logs.length === 0) {
@@ -577,6 +589,14 @@ export default function ProvisionPage() {
       toast.error('Enter agent name');
       return;
     }
+    if (!serviceInfo?.isActive) {
+      toast.error('Service is not active — select an active service in Infrastructure Settings');
+      return;
+    }
+    if (!serviceInfo?.isPermitted) {
+      toast.error('Your wallet is not a permitted caller on this service');
+      return;
+    }
 
     const strategyConfig: Record<string, unknown> = {};
     if (customExpertKnowledge) strategyConfig.expert_knowledge_override = customExpertKnowledge;
@@ -600,7 +620,12 @@ export default function ProvisionPage() {
       memoryMb: bp.defaults.memoryMb,
       maxLifetimeDays: bp.defaults.maxLifetimeDays,
       validatorServiceIds: validatorMode === 'custom' && customValidatorIds.trim()
-        ? customValidatorIds.split(',').map(s => BigInt(s.trim())).filter(n => n > 0n)
+        ? customValidatorIds.split(',').flatMap(s => {
+            const trimmed = s.trim();
+            if (!trimmed || !/^\d+$/.test(trimmed)) return [];
+            const n = BigInt(trimmed);
+            return n > 0n ? [n] : [];
+          })
         : [],
     });
 
@@ -799,16 +824,23 @@ export default function ProvisionPage() {
       return;
     }
 
-    // Poll activation progress
+    // Poll activation progress with failure limit
+    let pollFailures = 0;
     const pollInterval = setInterval(async () => {
       try {
         const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
         if (res.ok) {
           const data = await res.json();
           setActivationPhase(data.phase ?? null);
+          pollFailures = 0;
+        } else {
+          pollFailures++;
         }
       } catch {
-        // Ignore polling errors
+        pollFailures++;
+      }
+      if (pollFailures >= 10) {
+        clearInterval(pollInterval);
       }
     }, 1000);
 
@@ -831,15 +863,21 @@ export default function ProvisionPage() {
       }
 
       const postSecrets = async (tok: string) => {
-        const r = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tok}`,
-          },
-          body: JSON.stringify({ env_json: envJson }),
-        });
-        return r;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+        try {
+          return await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${tok}`,
+            },
+            body: JSON.stringify({ env_json: envJson }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
       };
 
       let res = await postSecrets(authToken);
@@ -909,7 +947,10 @@ export default function ProvisionPage() {
               <button
                 type="button"
                 onClick={() => {
-                  if (isDone) setStep(s);
+                  if (!isDone) return;
+                  // Don't allow navigating backwards past deploy once TX is in flight
+                  if (txHash && STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')) return;
+                  setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
                 className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap shrink-0 ${
@@ -1171,13 +1212,17 @@ export default function ProvisionPage() {
                     onClick={handleSubmit}
                     className="w-full"
                     size="lg"
-                    disabled={!isConnected || isPending}
+                    disabled={!isConnected || isPending || !serviceInfo?.isActive || !serviceInfo?.isPermitted}
                   >
                     {!isConnected
                       ? 'Connect Wallet'
-                      : isPending
-                        ? 'Confirm in Wallet...'
-                        : 'Provision Agent'}
+                      : !serviceInfo?.isActive
+                        ? 'Service Not Active'
+                        : !serviceInfo?.isPermitted
+                          ? 'Not Permitted on Service'
+                          : isPending
+                            ? 'Confirm in Wallet...'
+                            : 'Provision Agent'}
                   </Button>
                 </CardContent>
               </Card>
@@ -2356,9 +2401,10 @@ function ServiceDropdown({
 }
 
 function ElapsedTime({ since }: { since: number }) {
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor((Date.now() - since) / 1000)));
   useEffect(() => {
-    const interval = setInterval(() => setElapsed(Math.floor((Date.now() - since) / 1000)), 1000);
+    setElapsed(Math.max(0, Math.floor((Date.now() - since) / 1000)));
+    const interval = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - since) / 1000))), 1000);
     return () => clearInterval(interval);
   }, [since]);
 
