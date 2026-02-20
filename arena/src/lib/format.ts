@@ -15,6 +15,12 @@ export const STRATEGY_NAMES: Record<string, string> = {
   volatility: 'Volatility Trading',
   mm: 'Market Making',
   multi: 'Cross-Strategy',
+  momentum: 'Momentum',
+  'mean-reversion': 'Mean Reversion',
+  arbitrage: 'Arbitrage',
+  'trend-following': 'Trend Following',
+  'market-making': 'Market Making',
+  sentiment: 'Sentiment',
 };
 
 export const STRATEGY_SHORT: Record<string, string> = {
@@ -30,6 +36,12 @@ export const STRATEGY_SHORT: Record<string, string> = {
   volatility: 'Vol',
   mm: 'MM',
   multi: 'Multi',
+  momentum: 'Mom',
+  'mean-reversion': 'MR',
+  arbitrage: 'Arb',
+  'trend-following': 'Trend',
+  'market-making': 'MM2',
+  sentiment: 'Sent',
 };
 
 // ── Provision Progress ───────────────────────────────────────────────────
@@ -98,5 +110,5 @@ export function truncateAddress(address: string): string {
 const STUCK_THRESHOLD_MS = 5 * 60 * 1000;
 
 export function isStuck(updatedAt: number, phase: ProvisionPhase): boolean {
-  return phase === 'job_submitted' && Date.now() - updatedAt > STUCK_THRESHOLD_MS;
+  return (phase === 'job_submitted' || phase === 'job_processing') && Date.now() - updatedAt > STUCK_THRESHOLD_MS;
 }

@@ -419,7 +419,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 maxDrawdown: 0,
                 winRate: 0,
                 totalTrades: 0,
-                tvl: 0,
+                tvl: vaultEntry?.tvl ?? 0,
                 avgValidatorScore: 0,
                 sparklineData: [],
                 sandboxId: ob.sandbox_id,
@@ -479,6 +479,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           sandboxId: prov.sandboxId,
           secretsConfigured: prov.phase === 'active',
           tradingActive: prov.phase === 'active',
+          callId: prov.callId,
         });
       }
 

@@ -6,10 +6,14 @@ export const dismissedBotsStore = persistedAtom<string[]>({
   initial: [],
 });
 
+const MAX_DISMISSED = 100;
+
 export function dismissBot(botId: string) {
   const current = dismissedBotsStore.get();
   if (!current.includes(botId)) {
-    dismissedBotsStore.set([...current, botId]);
+    // Cap at MAX_DISMISSED — drop oldest entries first
+    const next = [...current, botId];
+    dismissedBotsStore.set(next.length > MAX_DISMISSED ? next.slice(-MAX_DISMISSED) : next);
   }
 }
 

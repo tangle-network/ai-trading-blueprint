@@ -85,8 +85,8 @@ export function useProvisionWatcher() {
                   data: log.data,
                   topics: log.topics,
                 });
-                if (decoded.eventName === 'JobSubmitted') {
-                  const args = decoded.args as { serviceId: bigint; callId: bigint; jobIndex: number };
+                if (decoded.eventName === 'JobSubmitted' || decoded.eventName === 'JobCalled') {
+                  const args = decoded.args as { serviceId: bigint; callId: bigint };
                   callId = Number(args.callId);
                   serviceId = Number(args.serviceId);
                   break;

@@ -50,15 +50,18 @@ export function getBotMeta(serviceId: number): BotMeta | undefined {
   return BOT_META[String(serviceId)];
 }
 
+const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+
 /**
  * Get the API URL for a bot by its bot ID string.
- * Bot IDs are now vault addresses; use getBotApiUrl(serviceId) directly when possible.
+ * Falls back to the operator API URL when no per-bot API is configured.
  */
 export function getApiUrlForBot(_botId: string): string | undefined {
-  // When only one bot API is configured, use it for any bot lookup.
-  // With multiple bots, callers should use getBotApiUrl(bot.serviceId) instead.
+  // When per-bot APIs are configured, use them
   const urls = Object.values(BOT_APIS);
   if (urls.length === 1) return urls[0];
+  // Fall back to operator API (which serves all bot endpoints)
+  if (OPERATOR_API_URL) return OPERATOR_API_URL;
   return undefined;
 }
 

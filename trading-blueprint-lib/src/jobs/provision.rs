@@ -131,6 +131,7 @@ pub async fn provision_core(
         ProvisionPhase::ContainerCreate,
         Some("Launching Docker container".into()),
         None,
+        None,
     );
 
     let record = if let Some(r) = mock_sandbox {
@@ -174,6 +175,7 @@ pub async fn provision_core(
         ProvisionPhase::ContainerStart,
         Some("Container launched successfully".into()),
         Some(record.id.clone()),
+        None,
     );
 
     // 8. Build TradingBotRecord — always awaiting secrets
@@ -217,6 +219,7 @@ pub async fn provision_core(
         ProvisionPhase::HealthCheck,
         Some("Finalizing bot configuration".into()),
         None,
+        None,
     );
     let _ = provision_progress::update_provision_metadata(
         call_id,
@@ -231,6 +234,7 @@ pub async fn provision_core(
         call_id,
         ProvisionPhase::Ready,
         Some("Provision complete — awaiting API key configuration".into()),
+        None,
         None,
     );
 

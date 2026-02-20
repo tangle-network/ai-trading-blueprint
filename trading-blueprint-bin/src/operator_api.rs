@@ -79,6 +79,7 @@ pub struct BotDetailResponse {
     pub created_at: u64,
     pub max_lifetime_days: u64,
     pub trading_api_url: String,
+    #[serde(skip_serializing)]
     pub trading_api_token: String,
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
@@ -399,9 +400,7 @@ async fn configure_secrets(
     Json(body): Json<ConfigureSecretsRequest>,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
 
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     // Verify caller is the bot's submitter
     if !bot.submitter_address.is_empty()
@@ -465,9 +464,7 @@ async fn wipe_secrets(
     Path(bot_id): Path<String>,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
 
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     if !bot.submitter_address.is_empty()
         && caller.to_lowercase() != bot.submitter_address.to_lowercase()
@@ -508,9 +505,7 @@ async fn start_bot(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
@@ -528,9 +523,7 @@ async fn stop_bot(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
@@ -548,9 +541,7 @@ async fn run_now(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<RunNowResponse>, (StatusCode, String)> {
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
@@ -595,9 +586,7 @@ async fn update_config(
     Path(bot_id): Path<String>,
     Json(body): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, String)> {
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
@@ -985,9 +974,7 @@ async fn debug_workflows() -> Json<serde_json::Value> {
 async fn debug_run_now(
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let bot = state::get_bot(&bot_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))?;
+    let bot = resolve_bot(&bot_id)?;
 
     let workflow_id = bot
         .workflow_id

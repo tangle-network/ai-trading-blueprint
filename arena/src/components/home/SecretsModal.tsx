@@ -100,7 +100,7 @@ export function SecretsModal({
         if (!authToken) throw new Error('Wallet authentication failed');
       }
 
-      const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+      let res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -108,6 +108,20 @@ export function SecretsModal({
         },
         body: JSON.stringify({ env_json: envJson }),
       });
+
+      // Retry once with fresh token on 401 (stale PASETO)
+      if (res.status === 401) {
+        authToken = await operatorAuth.authenticate();
+        if (!authToken) throw new Error('Re-authentication failed');
+        res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({ env_json: envJson }),
+        });
+      }
 
       if (!res.ok) {
         const errText = await res.text();

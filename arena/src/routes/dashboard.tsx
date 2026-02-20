@@ -17,7 +17,7 @@ import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useUserServices } from '~/lib/hooks/useUserServices';
-import { dismissedBotsStore, dismissBot } from '~/lib/stores/dismissedBots';
+import { dismissedBotsStore, dismissBot, undismissBot } from '~/lib/stores/dismissedBots';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
@@ -103,11 +103,19 @@ export default function HomePage() {
     });
   }, [bots, myServiceIds, myProvisions]);
 
-  // Filter out dismissed bots from user's view
+  // Filter out dismissed bots from user's view (auto-undismiss if they become active)
   const dismissedBots = useStore(dismissedBotsStore);
   const dismissedSet = useMemo(() => new Set(dismissedBots), [dismissedBots]);
   const visibleMyBots = useMemo(
-    () => myBots.filter((b) => !dismissedSet.has(b.id)),
+    () => myBots.filter((b) => {
+      if (!dismissedSet.has(b.id)) return true;
+      // Auto-undismiss bots that have become active or paused
+      if (b.status === 'active' || b.status === 'paused') {
+        undismissBot(b.id);
+        return true;
+      }
+      return false;
+    }),
     [myBots, dismissedSet],
   );
 

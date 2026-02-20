@@ -37,6 +37,7 @@ export function useBotControl(botId: string) {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['bots'] });
+    queryClient.invalidateQueries({ queryKey: ['bot-detail', botId] });
   };
 
   const startBot = useMutation({

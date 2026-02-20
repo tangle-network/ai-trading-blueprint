@@ -136,7 +136,7 @@ export function useBotTrades(botId: string, botName: string = '', limit = 50) {
       if (!apiUrl) {
         return [];
       }
-      const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/trades?limit=${limit}`);
+      const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/api/bots/${botId}/trades?limit=${limit}`);
       return data.map(t => mapApiTrade(t, botName));
     },
     staleTime: 30_000,
@@ -155,7 +155,7 @@ export function useBotPortfolio(botId: string) {
       if (!apiUrl) {
         return null;
       }
-      const data = await fetchBotApi<ApiPortfolioState>(apiUrl, '/portfolio/state');
+      const data = await fetchBotApi<ApiPortfolioState>(apiUrl, `/api/bots/${botId}/portfolio/state`);
       return mapApiPortfolio(data, botId);
     },
     staleTime: 30_000,
@@ -174,7 +174,7 @@ export function useBotMetrics(botId: string, days = 30) {
       if (!apiUrl) return [];
       const from = new Date(Date.now() - days * 86400000).toISOString();
       const to = new Date().toISOString();
-      return fetchBotApi<ApiMetricsSnapshot[]>(apiUrl, `/metrics/history?from=${from}&to=${to}&limit=100`);
+      return fetchBotApi<ApiMetricsSnapshot[]>(apiUrl, `/api/bots/${botId}/metrics/history?from=${from}&to=${to}&limit=100`);
     },
     staleTime: 60_000,
     enabled: !!apiUrl,
