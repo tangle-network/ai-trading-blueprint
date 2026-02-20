@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { Skeleton } from '@tangle/blueprint-ui/components';
 
@@ -55,7 +55,7 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
   return (
     <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
       {stats.map((stat, i) => (
-        <motion.div
+        <m.div
           key={stat.label}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -85,7 +85,7 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
           {stat.label === 'Total Value Locked' && paused && (
             <div className="mt-1 text-xs font-data uppercase tracking-wider text-crimson-600 dark:text-crimson-400">Paused</div>
           )}
-        </motion.div>
+        </m.div>
       ))}
     </div>
   );

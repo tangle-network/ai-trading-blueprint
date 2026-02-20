@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle/blueprint-ui/components';
@@ -65,7 +65,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {metrics.map((stat, i) => (
-          <motion.div
+          <m.div
             key={stat.label}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -78,7 +78,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
             <div className={`text-xl font-display font-bold ${stat.color}`}>
               {stat.value}
             </div>
-          </motion.div>
+          </m.div>
         ))}
       </div>
     </div>

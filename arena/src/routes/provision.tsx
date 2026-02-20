@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import {
@@ -583,7 +583,7 @@ export default function ProvisionPage() {
   const [blueprintId, setBlueprintId] = useState(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
   const [serviceMode, setServiceMode] = useState<'existing' | 'new'>('existing');
   const [serviceId, setServiceId] = useState(
-    (import.meta.env.VITE_SERVICE_IDS ?? '0').split(',')[0].trim(),
+    () => (import.meta.env.VITE_SERVICE_IDS ?? '0').split(',')[0].trim(),
   );
   const [serviceInfo, setServiceInfo] = useState<ServiceInfo | null>(null);
   const [serviceLoading, setServiceLoading] = useState(false);
@@ -1203,14 +1203,28 @@ export default function ProvisionPage() {
         if (!authToken) throw new Error('Wallet authentication failed');
       }
 
-      const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ env_json: envJson }),
-      });
+      const postSecrets = async (tok: string) => {
+        const r = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tok}`,
+          },
+          body: JSON.stringify({ env_json: envJson }),
+        });
+        return r;
+      };
+
+      let res = await postSecrets(authToken);
+
+      // If auth failed (stale token from previous operator session), re-authenticate and retry once
+      if (res.status === 401 || (!res.ok && (await res.clone().text()).includes('PASETO'))) {
+        operatorAuth.clearCachedToken();
+        const freshToken = await operatorAuth.authenticate();
+        if (!freshToken) throw new Error('Wallet re-authentication failed');
+        authToken = freshToken;
+        res = await postSecrets(freshToken);
+      }
 
       if (!res.ok) {
         const errText = await res.text();
@@ -1258,19 +1272,19 @@ export default function ProvisionPage() {
       </p>
 
       {/* Step indicator — 3-step wizard */}
-      <div className="flex items-center gap-2 mb-8">
+      <div className="flex items-center mb-8">
         {STEP_ORDER.map((s, i) => {
           const isCurrent = s === step;
           const isDone = i < stepIndex;
           return (
-            <div key={s} className="flex items-center gap-2 flex-1">
+            <Fragment key={s}>
               <button
                 type="button"
                 onClick={() => {
                   if (isDone) setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
-                className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap shrink-0 ${
                   isCurrent
                     ? 'text-violet-700 dark:text-violet-400'
                     : isDone
@@ -1293,10 +1307,10 @@ export default function ProvisionPage() {
               </button>
               {i < STEP_ORDER.length - 1 && (
                 <div
-                  className={`flex-1 h-px mx-1 transition-colors duration-300 ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
+                  className={`flex-1 h-px mx-3 transition-colors duration-300 ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
                 />
               )}
-            </div>
+            </Fragment>
           );
         })}
       </div>

@@ -54,6 +54,9 @@ impl HeartbeatConsumer for TradingHeartbeatConsumer {
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
+    // Load .env before anything reads env vars (AI keys, config, etc.)
+    dotenvy::dotenv().ok();
+
     setup_log();
 
     // ── 1. QoS service (heartbeat + metrics) ─────────────────────────────────

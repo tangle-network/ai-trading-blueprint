@@ -25,8 +25,6 @@ const config = createConfig(
   }),
 );
 
-export { config };
-
 export function Web3Provider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
     () =>

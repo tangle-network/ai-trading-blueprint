@@ -6,6 +6,7 @@ import { Toaster } from 'sonner';
 import { useThemeValue } from '@tangle/blueprint-ui';
 import { Header } from '~/components/layout/Header';
 import { Footer } from '~/components/layout/Footer';
+import { MotionProvider } from '~/providers/MotionProvider';
 import { useState, useEffect, type ReactNode } from 'react';
 
 const inlineThemeCode = `
@@ -79,15 +80,17 @@ export default function App() {
           },
         }}
       />
-      <ClientWeb3Provider>
-        <div className="flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
-          <Header />
-          <main className="flex-1 pt-[var(--header-height)] relative z-1">
-            <Outlet />
-          </main>
-          <Footer />
-        </div>
-      </ClientWeb3Provider>
+      <MotionProvider>
+        <ClientWeb3Provider>
+          <div className="flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+            <Header />
+            <main className="flex-1 pt-[var(--header-height)] relative z-1">
+              <Outlet />
+            </main>
+            <Footer />
+          </div>
+        </ClientWeb3Provider>
+      </MotionProvider>
     </>
   );
 }

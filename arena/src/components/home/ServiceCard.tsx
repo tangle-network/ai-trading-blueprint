@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { motion, AnimatePresence } from 'framer-motion';
+import { m, AnimatePresence } from 'framer-motion';
 import { Badge, Identicon } from '@tangle/blueprint-ui/components';
 import type { UserService } from '~/lib/hooks/useUserServices';
 import type { Bot } from '~/lib/types/bot';
@@ -98,7 +98,7 @@ export function ServiceCard({
       {/* Expanded detail */}
       <AnimatePresence>
         {expanded && (
-          <motion.div
+          <m.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -211,7 +211,7 @@ export function ServiceCard({
                 <span>Owner: {truncateAddress(service.owner)}</span>
               </div>
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>

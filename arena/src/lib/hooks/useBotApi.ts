@@ -2,8 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import type { Trade, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
-import { mockTrades } from '~/lib/mock/trades';
-import { mockPortfolios } from '~/lib/mock/portfolio';
 
 // Types matching the Rust HTTP API response schemas
 
@@ -136,8 +134,7 @@ export function useBotTrades(botId: string, botName: string = '', limit = 50) {
     queryKey: ['bot-trades', botId, limit],
     queryFn: async () => {
       if (!apiUrl) {
-        // Fallback to mock
-        return mockTrades.filter(t => t.botId === botId);
+        return [];
       }
       const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/trades?limit=${limit}`);
       return data.map(t => mapApiTrade(t, botName));
@@ -156,7 +153,7 @@ export function useBotPortfolio(botId: string) {
     queryKey: ['bot-portfolio', botId],
     queryFn: async () => {
       if (!apiUrl) {
-        return mockPortfolios[botId] ?? null;
+        return null;
       }
       const data = await fetchBotApi<ApiPortfolioState>(apiUrl, '/portfolio/state');
       return mapApiPortfolio(data, botId);
@@ -184,20 +181,3 @@ export function useBotMetrics(botId: string, days = 30) {
   });
 }
 
-/**
- * Fetch all recent trades across all configured bot APIs.
- * For the live ticker on the landing page.
- */
-export function useRecentTrades(limit = 20) {
-  return useQuery<Trade[]>({
-    queryKey: ['recent-trades', limit],
-    queryFn: async () => {
-      // For now, return mock trades sorted by timestamp
-      // When bot APIs are configured, this would aggregate across all bots
-      return [...mockTrades]
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, limit);
-    },
-    staleTime: 15_000,
-  });
-}

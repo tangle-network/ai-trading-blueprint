@@ -1,5 +1,4 @@
 import type { ProvisionPhase } from '~/lib/stores/provisions';
-import { networks } from '~/lib/contracts/chains';
 
 // ── Strategy Maps ────────────────────────────────────────────────────────
 
@@ -68,23 +67,6 @@ export function phaseLabel(phase: ProvisionPhase): string {
   }
 }
 
-export function phaseDescription(phase: ProvisionPhase, progressPhase?: string): string {
-  switch (phase) {
-    case 'pending_confirmation':
-      return 'Waiting for your transaction to confirm on-chain.';
-    case 'job_submitted':
-      return 'Job confirmed. An operator is picking it up.';
-    case 'job_processing':
-      return progressPhaseLabel(progressPhase) ?? 'Operator is provisioning your agent.';
-    case 'awaiting_secrets':
-      return 'Infrastructure deployed. Configure your API keys to start trading.';
-    case 'active':
-      return 'Agent is running. Vault deployed on-chain.';
-    case 'failed':
-      return 'Provisioning failed.';
-  }
-}
-
 // ── Time / Format ────────────────────────────────────────────────────────
 
 export function timeAgo(ts: number): string {
@@ -107,13 +89,6 @@ export function formatDuration(totalSeconds: number): string {
   const mins = Math.floor((totalSeconds % 3600) / 60);
   if (hrs > 0) return `${hrs}h ${mins}m`;
   return `${mins}m`;
-}
-
-export function explorerTxUrl(chainId: number, txHash: string): string | null {
-  const net = networks[chainId];
-  const base = net?.chain.blockExplorers?.default?.url;
-  if (!base) return null;
-  return `${base}/tx/${txHash}`;
 }
 
 export function truncateAddress(address: string): string {

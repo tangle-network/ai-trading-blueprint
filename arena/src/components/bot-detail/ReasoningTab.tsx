@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
 import { useThemeValue } from '@tangle/blueprint-ui';
@@ -92,7 +92,7 @@ function ValidatorCard({ response, index }: { response: ValidatorResponseDetail;
   const hasEip712Domain = response.chainId != null && response.verifyingContract;
 
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
@@ -132,7 +132,7 @@ function ValidatorCard({ response, index }: { response: ValidatorResponseDetail;
         {/* Expanded detail */}
         <AnimatePresence>
           {expanded && (
-            <motion.div
+            <m.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
@@ -203,11 +203,11 @@ function ValidatorCard({ response, index }: { response: ValidatorResponseDetail;
                   </code>
                 </div>
               </div>
-            </motion.div>
+            </m.div>
           )}
         </AnimatePresence>
       </div>
-    </motion.div>
+    </m.div>
   );
 }
 
@@ -218,7 +218,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
   ).length;
 
   return (
-    <motion.div
+    <m.div
       key={trade.id}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
@@ -294,7 +294,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
           )}
         </CardContent>
       </Card>
-    </motion.div>
+    </m.div>
   );
 }
 

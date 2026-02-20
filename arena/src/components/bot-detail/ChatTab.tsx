@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { m, AnimatePresence } from 'framer-motion';
 import {
   ChatContainer, useSessionStream,
   useSessions, useCreateSession, useDeleteSession, useRenameSession,
@@ -96,7 +96,7 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
 
       <AnimatePresence>
         {open && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
@@ -168,7 +168,7 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
                 New Session
               </button>
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>
@@ -182,7 +182,7 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
   const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useWagmiSidecarAuth(botId, apiUrl);
 
   const primarySessionId = `trading-${botId}`;
-  const [activeSessionId, setActiveSessionId] = useState(primarySessionId);
+  const [activeSessionId, setActiveSessionId] = useState(() => primarySessionId);
   const [isAborting, setIsAborting] = useState(false);
 
   // Session CRUD hooks

@@ -16,6 +16,8 @@ interface OperatorAuth {
   isAuthenticated: boolean;
   isAuthenticating: boolean;
   authenticate: () => Promise<string | null>;
+  /** Clear cached token (e.g. after server-side key rotation). */
+  clearCachedToken: () => void;
   error: string | null;
 }
 
@@ -131,11 +133,18 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
     };
   }, [token, expiresAt, authenticate, apiUrl]);
 
+  const clearCachedToken = useCallback(() => {
+    setToken(null);
+    setExpiresAt(0);
+    clearToken(apiUrl);
+  }, [apiUrl]);
+
   return {
     token,
     isAuthenticated: token !== null,
     isAuthenticating,
     authenticate,
+    clearCachedToken,
     error,
   };
 }

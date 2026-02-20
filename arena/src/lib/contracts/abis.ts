@@ -1,5 +1,5 @@
 // Core Tangle ABIs from shared package
-export { tangleJobsAbi, tangleServicesAbi, tangleOperatorsAbi } from '@tangle/blueprint-ui';
+export { tangleJobsAbi, tangleServicesAbi } from '@tangle/blueprint-ui';
 
 // Arena-specific ABIs (stay local)
 export const tradingVaultAbi = [

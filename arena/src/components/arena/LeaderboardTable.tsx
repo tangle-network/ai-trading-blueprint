@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
@@ -74,7 +74,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
       </TableHeader>
       <TableBody>
         {sorted.map((bot, index) => (
-          <motion.tr
+          <m.tr
             key={bot.id}
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
@@ -143,7 +143,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
                 {bot.status === 'needs_config' ? 'needs config' : bot.status}
               </Badge>
             </TableCell>
-          </motion.tr>
+          </m.tr>
         ))}
       </TableBody>
     </Table>

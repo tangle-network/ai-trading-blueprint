@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion, useInView, useSpring, useTransform } from 'framer-motion';
+import { m, useInView, useSpring, useTransform } from 'framer-motion';
 
 interface AnimatedNumberProps {
   value: number;
@@ -46,8 +46,8 @@ export function AnimatedNumber({
   }, [display]);
 
   return (
-    <motion.span ref={ref} className={className}>
+    <m.span ref={ref} className={className}>
       {prefix}{displayed}{suffix}
-    </motion.span>
+    </m.span>
   );
 }

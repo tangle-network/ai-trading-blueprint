@@ -62,9 +62,3 @@ export function getApiUrlForBot(_botId: string): string | undefined {
   return undefined;
 }
 
-/**
- * Check if any bot APIs are configured.
- */
-export function hasAnyBotApis(): boolean {
-  return Object.keys(BOT_APIS).length > 0;
-}
