@@ -47,6 +47,12 @@ pub struct TradingBotRecord {
     /// Custom cron schedule from user (empty = use pack default).
     #[serde(default)]
     pub trading_loop_cron: String,
+    /// On-chain job call ID (used to resolve vault via botVaults(serviceId, callId)).
+    #[serde(default)]
+    pub call_id: u64,
+    /// Tangle service ID this bot belongs to.
+    #[serde(default)]
+    pub service_id: u64,
 }
 
 /// A recorded paper trade (simulated execution).
@@ -289,6 +295,8 @@ mod tests {
             wind_down_started_at: None,
             submitter_address: String::new(),
             trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
         }
     }
 

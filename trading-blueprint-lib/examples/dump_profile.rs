@@ -51,6 +51,8 @@ fn main() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let profile = pack.build_agent_profile(&config);

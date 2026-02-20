@@ -102,6 +102,20 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Operators for each service (used to grant roles on new bot vaults)
     mapping(uint64 serviceId => address[]) internal _serviceOperators;
 
+    // ─── Per-provision storage (populated in onJobCall, consumed in onJobResult) ─
+
+    struct PendingProvision {
+        address assetToken;
+        address[] signers;
+        uint256 requiredSigs;
+        string name;
+    }
+
+    /// @dev Provision inputs stored during onJobCall for use in _handleProvisionResult.
+    ///      The Tangle protocol may not forward the original submitJob inputs to onJobResult,
+    ///      so we persist the config here where inputs are guaranteed correct.
+    mapping(uint64 serviceId => mapping(uint64 callId => PendingProvision)) internal _pendingProvisions;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -296,12 +310,17 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Validates payment.  JOB_PROVISION and JOB_EXTEND use dynamic pricing
     ///      based on resource requirements and lifetime.  All other jobs use flat
     ///      `jobPrice` pricing.
+    ///      For JOB_PROVISION: stores decoded inputs for use in _handleProvisionResult,
+    ///      because the Tangle protocol may not forward original inputs to onJobResult.
     function onJobCall(
         uint64 serviceId,
         uint8 job,
         uint64 jobCallId,
         bytes calldata inputs
     ) external payable virtual override onlyFromTangle {
+        if (job == JOB_PROVISION) {
+            _storeProvisionInputs(serviceId, jobCallId, inputs);
+        }
         _onJobCallDynamic(serviceId, job, jobCallId, inputs);
     }
 
@@ -419,20 +438,18 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         }
     }
 
-    /// @notice Creates a per-bot vault when a provision job completes.
-    /// @dev Decodes the provision request inputs to extract vault config,
-    ///      falls back to service-level config for missing fields.
-    function _handleProvisionResult(
+    /// @notice Decode and store provision inputs during onJobCall.
+    /// @dev Called from onJobCall when job == JOB_PROVISION. The Tangle protocol
+    ///      may not forward the original submitJob inputs to onJobResult, so we
+    ///      persist the vault config fields here for _handleProvisionResult to read.
+    function _storeProvisionInputs(
         uint64 serviceId,
         uint64 jobCallId,
         bytes calldata inputs
     ) internal {
-        if (vaultFactory == address(0)) return;
+        if (inputs.length == 0) return;
 
-        // The inputs may be either:
-        // a) Tuple-wrapped (alloy/viem encoding): first 32 bytes = 0x20 offset pointer
-        // b) Flat ABI encoding: first 32 bytes = offset to first string field (>= 0x1c0)
-        // Detect by checking if first word == 0x20 (tuple wrapper) and skip it.
+        // Handle tuple wrapping: viem encodes structs with 0x20 offset prefix
         bytes calldata inner = inputs;
         if (inputs.length > 32) {
             uint256 firstWord = uint256(bytes32(inputs[0:32]));
@@ -450,12 +467,42 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                 address, address, address[], uint256, uint256,
                 string, string, uint64, uint64, uint64, uint64[]));
 
-        // Fall back to service-level config for missing fields
+        _pendingProvisions[serviceId][jobCallId] = PendingProvision({
+            assetToken: assetToken,
+            signers: signers,
+            requiredSigs: requiredSigs,
+            name: botName
+        });
+    }
+
+    /// @notice Creates a per-bot vault when a provision job completes.
+    /// @dev Reads vault config from _pendingProvisions (stored during onJobCall),
+    ///      falls back to service-level config for missing fields.
+    ///      Does NOT rely on the `inputs` parameter from onJobResult, which the
+    ///      Tangle protocol may not populate with the original submitJob inputs.
+    function _handleProvisionResult(
+        uint64 serviceId,
+        uint64 jobCallId,
+        bytes calldata /* inputs — unreliable, use _pendingProvisions instead */
+    ) internal {
+        if (vaultFactory == address(0)) return;
+
+        // Read stored provision config (set in onJobCall)
+        PendingProvision memory pp = _pendingProvisions[serviceId][jobCallId];
         ServiceRequestConfig memory svcCfg = _serviceConfigs[serviceId];
-        if (assetToken == address(0)) assetToken = svcCfg.assetToken;
-        if (signers.length == 0) {
-            signers = svcCfg.signers;
-            requiredSigs = svcCfg.requiredSignatures;
+
+        // Resolve vault config: provision-specific > service defaults
+        address assetToken = pp.assetToken != address(0) ? pp.assetToken : svcCfg.assetToken;
+        string memory botName = bytes(pp.name).length > 0 ? pp.name : svcCfg.name;
+
+        // Use service operators as TradeValidator signers — operators (not users)
+        // produce EIP-712 validation signatures via the validator blueprint.
+        // If provision request included explicit signers, use those as override.
+        address[] memory signers = _serviceOperators[serviceId];
+        uint256 requiredSigs = signers.length > 0 ? 1 : 0;
+        if (pp.signers.length > 0) {
+            signers = pp.signers;
+            requiredSigs = pp.requiredSigs;
         }
 
         // Require valid config
@@ -490,6 +537,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         if (svcCfg.requester != address(0)) {
             IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, svcCfg.requester);
         }
+
+        // Cleanup stored inputs
+        delete _pendingProvisions[serviceId][jobCallId];
 
         emit BotVaultDeployed(serviceId, jobCallId, vault, shareToken);
     }

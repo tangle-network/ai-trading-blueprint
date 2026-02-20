@@ -8,9 +8,13 @@ use crate::{JsonResponse, TradingControlRequest};
 ///
 /// When `skip_docker` is true, skips the `delete_sidecar` Docker call but
 /// still cleans up bot record, workflow, sandbox store entries, and per-bot API.
+///
+/// When `tee_backend` is `Some`, the TEE enclave is torn down alongside the
+/// Docker container.
 pub async fn deprovision_core(
     sandbox_id: &str,
     skip_docker: bool,
+    tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
 ) -> Result<JsonResponse, String> {
     let bot = find_bot_by_sandbox(sandbox_id)?;
     let bot_id = bot.id.clone();
@@ -20,7 +24,7 @@ pub async fn deprovision_core(
         // Delete sidecar
         let record = sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id)
             .map_err(|e| format!("Sandbox not found: {e}"))?;
-        sandbox_runtime::runtime::delete_sidecar(&record, None)
+        sandbox_runtime::runtime::delete_sidecar(&record, tee_backend)
             .await
             .map_err(|e| format!("Failed to delete sidecar: {e}"))?;
 
@@ -59,6 +63,6 @@ pub async fn deprovision(
     TangleArg(request): TangleArg<TradingControlRequest>,
 ) -> Result<TangleResult<JsonResponse>, String> {
     Ok(TangleResult(
-        deprovision_core(&request.sandbox_id, false).await?,
+        deprovision_core(&request.sandbox_id, false, None).await?,
     ))
 }

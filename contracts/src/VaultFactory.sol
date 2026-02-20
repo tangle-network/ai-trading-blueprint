@@ -142,6 +142,11 @@ contract VaultFactory is Ownable2Step {
         // 6. Initialize PolicyEngine with sensible defaults
         policyEngine.initializeVault(vault, 50000, 100, 500); // 5x leverage, 100 trades/hr, 5% slippage
 
+        // 7. Auto-whitelist the asset token (always needed for deposits/withdrawals)
+        address[] memory tokenList = new address[](1);
+        tokenList[0] = assetToken;
+        policyEngine.setWhitelist(vault, tokenList, true);
+
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }
 
@@ -198,6 +203,11 @@ contract VaultFactory is Ownable2Step {
         // 6. Initialize PolicyEngine with sensible defaults
         policyEngine.initializeVault(vault, 50000, 100, 500);
 
+        // 7. Auto-whitelist the asset token (always needed for deposits/withdrawals)
+        address[] memory tokenList = new address[](1);
+        tokenList[0] = assetToken;
+        policyEngine.setWhitelist(vault, tokenList, true);
+
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }
 
@@ -242,6 +252,11 @@ contract VaultFactory is Ownable2Step {
 
         // 5. Initialize PolicyEngine
         policyEngine.initializeVault(vault, 50000, 100, 500);
+
+        // 6. Auto-whitelist the asset token
+        address[] memory tokenList = new address[](1);
+        tokenList[0] = assetToken;
+        policyEngine.setWhitelist(vault, tokenList, true);
 
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }

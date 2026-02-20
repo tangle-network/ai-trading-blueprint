@@ -30,6 +30,7 @@ pub async fn provision_core(
     call_id: u64,
     service_id: u64,
     caller: String,
+    tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
 ) -> Result<TradingProvisionOutput, String> {
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
@@ -162,7 +163,7 @@ pub async fn provision_core(
             user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
         };
 
-        let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, None)
+        let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
             .await
             .map_err(|e| format!("Failed to create sidecar: {e}"))?;
         r
@@ -206,6 +207,8 @@ pub async fn provision_core(
         wind_down_started_at: None,
         submitter_address: caller,
         trading_loop_cron: request.trading_loop_cron.clone(),
+        call_id,
+        service_id,
     };
 
     // 8. Store bot record
@@ -255,5 +258,5 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
-    Ok(TangleResult(provision_core(request, None, call_id, service_id, caller_str).await?))
+    Ok(TangleResult(provision_core(request, None, call_id, service_id, caller_str, None).await?))
 }

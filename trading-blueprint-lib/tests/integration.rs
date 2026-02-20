@@ -102,11 +102,11 @@ async fn test_provision_creates_records() {
     let sandbox_id = sandbox.id.clone();
 
     let request = make_provision_request("test-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     assert_eq!(output.sandbox_id, sandbox_id);
     assert_eq!(output.workflow_id, 0, "two-phase: workflow_id should be 0 (awaiting secrets)");
-    assert_eq!(output.vault_address, Address::from([0xBB; 20]));
+    assert_eq!(output.vault_address, Address::ZERO, "two-phase: vault created on-chain later, not during provision");
 
     // Verify bot record was stored in awaiting-secrets state
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
@@ -269,7 +269,7 @@ async fn test_deprovision_cleans_everything() {
     fixtures::seed_bot_record(bot_id, sandbox_id, "yield", "0xAA", Some(wf_id));
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
 
-    let response = deprovision_core(sandbox_id, true).await.unwrap();
+    let response = deprovision_core(sandbox_id, true, None).await.unwrap();
     let json: serde_json::Value = serde_json::from_str(&response.json).unwrap();
     assert_eq!(json["status"], "deprovisioned");
     assert_eq!(json["bot_id"], bot_id);
@@ -294,7 +294,7 @@ async fn test_bot_lifecycle_transitions() {
     let sandbox = mock_sandbox("sb-lifecycle-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("lifecycle-bot", "multi");
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     assert!(!bot.trading_active, "two-phase: bot starts inactive");
 
@@ -323,7 +323,7 @@ async fn test_bot_lifecycle_transitions() {
     assert!(find_bot_by_sandbox(&sandbox_id).unwrap().trading_active);
 
     // 5. Deprovision
-    let deprov_result = deprovision_core(&sandbox_id, true).await.unwrap();
+    let deprov_result = deprovision_core(&sandbox_id, true, None).await.unwrap();
     assert!(deprov_result.json.contains("deprovisioned"));
     assert!(find_bot_by_sandbox(&sandbox_id).is_err());
 }
@@ -334,7 +334,7 @@ async fn test_provision_returns_zero_workflow_id() {
 
     let sandbox = mock_sandbox("sb-cron-1");
     let request = make_provision_request("cron-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     // Two-phase: provision never creates workflows — that happens in activate_bot_with_secrets
     assert_eq!(output.workflow_id, 0, "provision should return workflow_id=0");
@@ -386,6 +386,8 @@ async fn test_system_prompt_includes_api_info() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -452,7 +454,7 @@ async fn test_bot_record_has_new_fields() {
 
     let sandbox = mock_sandbox("sb-new-fields-1");
     let request = make_provision_request("new-fields-bot", "yield");
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-new-fields-1").unwrap();
     // New fields should have default values (no operator context, no validator service IDs)
@@ -466,7 +468,7 @@ async fn test_provision_uses_requested_lifetime() {
 
     let sandbox = mock_sandbox("sb-lifetime-90");
     let request = make_provision_request_with_lifetime("lifetime-bot", "dex", 90);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-90").unwrap();
     assert_eq!(bot.max_lifetime_days, 90);
@@ -478,7 +480,7 @@ async fn test_provision_defaults_to_30_days() {
 
     let sandbox = mock_sandbox("sb-lifetime-default");
     let request = make_provision_request_with_lifetime("default-bot", "dex", 0);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-default").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -491,7 +493,7 @@ async fn test_extend_increases_lifetime() {
     // Provision with 30 days
     let sandbox = mock_sandbox("sb-extend-1");
     let request = make_provision_request_with_lifetime("extend-bot", "dex", 30);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string()).await.unwrap();
+    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
 
     let bot = find_bot_by_sandbox("sb-extend-1").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -578,6 +580,8 @@ async fn test_pack_profile_has_rich_content() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -626,6 +630,8 @@ async fn test_generic_strategy_gets_profile() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -679,6 +685,8 @@ async fn test_dex_profile_has_uniswap_content() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -718,6 +726,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             wind_down_started_at: None,
             submitter_address: String::new(),
             trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -757,6 +767,8 @@ async fn test_build_pack_agent_profile_integration() {
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -790,7 +802,7 @@ async fn test_two_phase_provision_e2e() {
     let sandbox = mock_sandbox("sb-2phase-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("two-phase-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xSUBMITTER".to_string())
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xSUBMITTER".to_string(), None)
         .await
         .unwrap();
 

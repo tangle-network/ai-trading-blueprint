@@ -55,3 +55,41 @@ pub async fn auth_middleware(
         _ => Err(StatusCode::UNAUTHORIZED),
     }
 }
+
+/// Auth middleware for the multi-bot trading HTTP API.
+///
+/// Resolves the calling bot by matching the bearer token via the
+/// `resolve_bot` function on `MultiBotTradingState`. On match, inserts
+/// a `BotContext` into request extensions so route handlers can access it.
+pub async fn multi_bot_auth_middleware(
+    State(state): State<Arc<crate::MultiBotTradingState>>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let path = request.uri().path();
+
+    // Skip auth for health check
+    if path == "/health" {
+        return Ok(next.run(request).await);
+    }
+
+    let auth_header = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+
+    let token = match auth_header {
+        Some(header) if header.starts_with("Bearer ") => &header[7..],
+        Some(header) => header,
+        None => return Err(StatusCode::UNAUTHORIZED),
+    };
+
+    // Look up bot by api_token via injected resolver
+    match (state.resolve_bot)(token) {
+        Some(ctx) => {
+            request.extensions_mut().insert(ctx);
+            Ok(next.run(request).await)
+        }
+        None => Err(StatusCode::UNAUTHORIZED),
+    }
+}

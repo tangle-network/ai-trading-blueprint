@@ -69,6 +69,8 @@ pub fn seed_bot_record(
         wind_down_started_at: None,
         submitter_address: String::new(),
         trading_loop_cron: String::new(),
+        call_id: 0,
+        service_id: 0,
     };
     bots()
         .expect("bots store")
