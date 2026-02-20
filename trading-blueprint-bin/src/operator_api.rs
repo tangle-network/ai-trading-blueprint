@@ -333,9 +333,11 @@ pub fn build_operator_router() -> Router {
 
 // ── Auth handlers ────────────────────────────────────────────────────────
 
-async fn create_challenge() -> (StatusCode, Json<serde_json::Value>) {
+async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
     let challenge = sandbox_runtime::session_auth::create_challenge();
-    (StatusCode::OK, Json(serde_json::to_value(challenge).unwrap()))
+    let value = serde_json::to_value(challenge)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Serialization error: {e}")))?;
+    Ok((StatusCode::OK, Json(value)))
 }
 
 async fn create_session(
@@ -343,7 +345,9 @@ async fn create_session(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
     let token = sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
         .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
-    Ok((StatusCode::OK, Json(serde_json::to_value(token).unwrap())))
+    let value = serde_json::to_value(token)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Serialization error: {e}")))?;
+    Ok((StatusCode::OK, Json(value)))
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────

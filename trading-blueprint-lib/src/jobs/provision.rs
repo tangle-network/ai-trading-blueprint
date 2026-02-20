@@ -37,11 +37,15 @@ pub async fn provision_core(
     let api_token = sandbox_runtime::auth::generate_token();
 
     // Start tracking provision progress via sandbox-runtime
-    let _ = provision_progress::start_provision(call_id);
-    let _ = provision_progress::update_provision_metadata(
+    if let Err(e) = provision_progress::start_provision(call_id) {
+        tracing::warn!("Provision progress tracking failed: {e}");
+    }
+    if let Err(e) = provision_progress::update_provision_metadata(
         call_id,
         serde_json::json!({ "service_id": service_id }),
-    );
+    ) {
+        tracing::warn!("Provision metadata update failed: {e}");
+    }
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
@@ -126,13 +130,15 @@ pub async fn provision_core(
     let env_json = serde_json::to_string(&env).unwrap_or_default();
 
     // 6. Create sidecar sandbox (or use mock)
-    let _ = provision_progress::update_provision(
+    if let Err(e) = provision_progress::update_provision(
         call_id,
         ProvisionPhase::ContainerCreate,
         Some("Launching Docker container".into()),
         None,
         None,
-    );
+    ) {
+        tracing::warn!("Provision progress update failed: {e}");
+    }
 
     let record = if let Some(r) = mock_sandbox {
         // Store mock sandbox so activate/wipe can look it up
@@ -170,13 +176,15 @@ pub async fn provision_core(
         r
     };
 
-    let _ = provision_progress::update_provision(
+    if let Err(e) = provision_progress::update_provision(
         call_id,
         ProvisionPhase::ContainerStart,
         Some("Container launched successfully".into()),
         Some(record.id.clone()),
         None,
-    );
+    ) {
+        tracing::warn!("Provision progress update failed: {e}");
+    }
 
     // 8. Build TradingBotRecord — always awaiting secrets
     let validator_service_ids: Vec<u64> = request
@@ -214,29 +222,35 @@ pub async fn provision_core(
     };
 
     // 8. Store bot record
-    let _ = provision_progress::update_provision(
+    if let Err(e) = provision_progress::update_provision(
         call_id,
         ProvisionPhase::HealthCheck,
         Some("Finalizing bot configuration".into()),
         None,
         None,
-    );
-    let _ = provision_progress::update_provision_metadata(
+    ) {
+        tracing::warn!("Provision progress update failed: {e}");
+    }
+    if let Err(e) = provision_progress::update_provision_metadata(
         call_id,
         serde_json::json!({ "service_id": service_id, "bot_id": &bot_id, "sandbox_id": &record.id }),
-    );
+    ) {
+        tracing::warn!("Provision metadata update failed: {e}");
+    }
 
     bots()?
         .insert(bot_key(&bot_id), bot_record)
         .map_err(|e| format!("Failed to store bot record: {e}"))?;
 
-    let _ = provision_progress::update_provision(
+    if let Err(e) = provision_progress::update_provision(
         call_id,
         ProvisionPhase::Ready,
         Some("Provision complete — awaiting API key configuration".into()),
         None,
         None,
-    );
+    ) {
+        tracing::warn!("Provision progress update failed: {e}");
+    }
 
     tracing::info!("Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}", record.id);
 

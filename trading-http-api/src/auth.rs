@@ -31,7 +31,7 @@ pub async fn auth_middleware(
 
     match auth_header {
         Some(header) => {
-            let token = if header.starts_with("Bearer ") {
+            let token = if header.len() > 7 && header.starts_with("Bearer ") {
                 &header[7..]
             } else {
                 header
@@ -79,7 +79,7 @@ pub async fn multi_bot_auth_middleware(
         .and_then(|v| v.to_str().ok());
 
     let token = match auth_header {
-        Some(header) if header.starts_with("Bearer ") => &header[7..],
+        Some(header) if header.len() > 7 && header.starts_with("Bearer ") => &header[7..],
         Some(header) => header,
         None => return Err(StatusCode::UNAUTHORIZED),
     };

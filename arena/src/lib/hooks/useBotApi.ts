@@ -159,6 +159,8 @@ export function useBotRecentValidations(botId: string, botName: string = '') {
     },
     refetchInterval: 5_000,
     staleTime: 3_000,
+    retry: 1,
+    retryDelay: 3_000,
     enabled: !!apiUrl,
   });
 }

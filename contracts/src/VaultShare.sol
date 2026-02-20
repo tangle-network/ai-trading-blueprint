@@ -72,6 +72,13 @@ contract VaultShare is ERC20, AccessControl {
         _burn(from, amount);
     }
 
+    /// @notice Spend allowance on behalf of the vault (for withdraw/redeem by third-party spenders).
+    /// @dev The vault calls this to decrement the ERC-20 allowance when a spender (not the owner)
+    ///      triggers a withdrawal. Without this, the allowance would be checked but never reduced.
+    function spendAllowance(address owner_, address spender, uint256 amount) external onlyRole(MINTER_ROLE) {
+        _spendAllowance(owner_, spender, amount);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // VAULT REGISTRY
     // ═══════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Input,
 } from '@tangle/blueprint-ui/components';
@@ -45,6 +45,19 @@ export function SecretsModal({
   const providerConfig = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0];
 
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clean up poll interval when dialog closes or component unmounts
+  useEffect(() => {
+    if (!target) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setIsSubmitting(false);
+      setActivationPhase(null);
+    }
+  }, [target]);
 
   const resolveBotId = useCallback(async (t: SecretsTarget): Promise<string | null> => {
     const result = await resolveBot(OPERATOR_API_URL, {
@@ -74,15 +87,24 @@ export function SecretsModal({
       return;
     }
 
-    const pollInterval = setInterval(async () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    let pollFailures = 0;
+    pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
         if (res.ok) {
           const data = await res.json();
           setActivationPhase(data.phase ?? null);
+          pollFailures = 0;
+        } else {
+          pollFailures++;
         }
       } catch {
-        // Ignore polling errors
+        pollFailures++;
+      }
+      if (pollFailures >= 10 && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
       }
     }, 1000);
 
@@ -147,7 +169,10 @@ export function SecretsModal({
         `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`,
       );
     } finally {
-      clearInterval(pollInterval);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       setIsSubmitting(false);
       setActivationPhase(null);
     }

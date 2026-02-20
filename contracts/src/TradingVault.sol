@@ -471,13 +471,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // INTERNALS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @dev Check and spend share token allowance if caller is not the owner
+    /// @dev Check and spend share token allowance if caller is not the owner.
+    ///      Uses VaultShare.spendAllowance() to atomically decrement the ERC-20
+    ///      allowance since we burn shares directly (no transferFrom).
     function _spendShareAllowance(address owner_, uint256 shares) internal {
         if (msg.sender != owner_) {
-            uint256 allowed = shareToken.allowance(owner_, msg.sender);
-            if (allowed < shares) revert InsufficientAllowance();
-            // We don't decrease the allowance here — that's handled by the ERC-20 transferFrom
-            // in this model we're burning directly, so we need to check allowance manually
+            shareToken.spendAllowance(owner_, msg.sender, shares);
         }
     }
 
