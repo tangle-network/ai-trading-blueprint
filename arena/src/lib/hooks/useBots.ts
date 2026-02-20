@@ -7,6 +7,7 @@ import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
 import { publicClient } from '@tangle/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
+import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 
 // Direct vault address mapping (fallback when neither Blueprint nor VaultFactory deployed):
 // VITE_SERVICE_VAULTS={"0":["0x..."],"1":["0x...","0x..."]}
@@ -30,7 +31,6 @@ const SERVICE_VAULTS: Record<string, Address[]> = (() => {
   }
 })();
 
-const BLUEPRINT_ID = BigInt(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 /** Intermediate: one entry per vault discovered on-chain */
@@ -61,25 +61,31 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
   const discover = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Phase 0: Discover service IDs from ServiceActivated events
-      const logs = await publicClient.getLogs({
-        address: addresses.tangle,
-        event: {
-          type: 'event',
-          name: 'ServiceActivated',
-          inputs: [
-            { name: 'serviceId', type: 'uint64', indexed: true },
-            { name: 'requestId', type: 'uint64', indexed: true },
-            { name: 'blueprintId', type: 'uint64', indexed: true },
-          ],
-        },
-        args: { blueprintId: BLUEPRINT_ID },
-        fromBlock: 0n,
-        toBlock: 'latest',
-      });
+      // Phase 0: Discover service IDs from ServiceActivated events across all configured blueprints
+      const allLogs = await Promise.all(
+        ALL_BLUEPRINT_IDS.map((bpId) =>
+          publicClient.getLogs({
+            address: addresses.tangle,
+            event: {
+              type: 'event',
+              name: 'ServiceActivated',
+              inputs: [
+                { name: 'serviceId', type: 'uint64', indexed: true },
+                { name: 'requestId', type: 'uint64', indexed: true },
+                { name: 'blueprintId', type: 'uint64', indexed: true },
+              ],
+            },
+            args: { blueprintId: bpId },
+            fromBlock: 0n,
+            toBlock: 'latest',
+          }),
+        ),
+      );
+      type ActivatedLog = { args: { serviceId?: bigint; requestId?: bigint; blueprintId?: bigint } };
+      const logs = allLogs.flat() as ActivatedLog[];
 
-      let serviceIds = [...new Set(
-        logs.map((log) => Number(log.args.serviceId)).filter((id) => !isNaN(id)),
+      let serviceIds: number[] = [...new Set(
+        logs.map((log: ActivatedLog) => Number(log.args.serviceId)).filter((id: number) => !isNaN(id)),
       )];
 
       // Fallback: use VITE_SERVICE_IDS if event discovery found nothing
@@ -301,10 +307,10 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
         }
       }
 
-      // Phase 4: Replace on-chain vault entries with per-bot entries from operator API.
-      // On-chain discovery sees ONE vault per service. The operator API knows about
-      // individual bots (each with a unique bot_id and sandbox_id) sharing that vault.
-      // When operator API is available, its per-bot entries replace the on-chain stub.
+      // Phase 4: Enrich with operator API data and resolve per-bot vaults.
+      // The operator API returns bots with call_id and service_id. For bots whose
+      // vault_address is empty (created on-chain AFTER operator submits result),
+      // we batch-query botVaults(serviceId, callId) from the BSM contract.
       if (OPERATOR_API_URL) {
         try {
           const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
@@ -321,45 +327,88 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
               created_at: number;
               sandbox_id: string;
               secrets_configured?: boolean;
+              call_id: number;
+              service_id: number;
             }> = data.bots ?? [];
 
-            // Remove on-chain stubs that the operator API will replace with per-bot entries
-            const operatorVaults = new Set(operatorBots.map((ob) => ob.vault_address?.toLowerCase()).filter(Boolean));
-            const keptBots = builtBots.filter((b) => !operatorVaults.has(b.vaultAddress.toLowerCase()));
+            // Resolve vault addresses for bots that don't have one yet.
+            // The vault is created on-chain in _handleProvisionResult, so we query
+            // botVaults(serviceId, callId) from the BSM contract.
+            const needsVaultResolution = operatorBots.filter((ob) => {
+              const v = ob.vault_address?.toLowerCase() ?? '';
+              return (!v || v === zeroAddress) && ob.call_id != null && ob.service_id > 0;
+            });
+
+            let resolvedVaults: Record<string, Address> = {};
+            if (needsVaultResolution.length > 0 && hasBlueprint) {
+              try {
+                const vaultResults = await publicClient.multicall({
+                  contracts: needsVaultResolution.map((ob) => ({
+                    address: addresses.tradingBlueprint,
+                    abi: tradingBlueprintAbi,
+                    functionName: 'botVaults' as const,
+                    args: [BigInt(ob.service_id), BigInt(ob.call_id)],
+                  })),
+                });
+                for (let i = 0; i < needsVaultResolution.length; i++) {
+                  const addr = vaultResults[i]?.result as Address | undefined;
+                  if (addr && addr !== zeroAddress) {
+                    resolvedVaults[needsVaultResolution[i].id] = addr;
+                  }
+                }
+              } catch (err) {
+                console.warn('[useBots] botVaults multicall failed:', err);
+              }
+            }
+
+            // Remove on-chain stubs that operator API bots will replace
+            const allOperatorVaults = new Set<string>();
+            for (const ob of operatorBots) {
+              const v = ob.vault_address?.toLowerCase();
+              if (v && v !== zeroAddress) allOperatorVaults.add(v);
+              const resolved = resolvedVaults[ob.id]?.toLowerCase();
+              if (resolved) allOperatorVaults.add(resolved);
+            }
+            const keptBots = builtBots.filter((b) => !allOperatorVaults.has(b.vaultAddress.toLowerCase()));
             builtBots.length = 0;
             builtBots.push(...keptBots);
 
             const seenBotIds = new Set(builtBots.map((b) => b.id));
 
             for (const ob of operatorBots) {
-              const vaultLower = ob.vault_address?.toLowerCase() ?? '';
-              // Skip bots with invalid vault addresses
-              if (!vaultLower || vaultLower === zeroAddress ||
-                  vaultLower === addresses.vaultFactory.toLowerCase() ||
-                  vaultLower === addresses.tangle.toLowerCase()) continue;
+              // Resolve vault: operator-provided > on-chain resolved > skip
+              let vaultAddr: Address = (ob.vault_address || zeroAddress) as Address;
+              if (!vaultAddr || vaultAddr === zeroAddress) {
+                vaultAddr = resolvedVaults[ob.id] ?? zeroAddress;
+              }
 
-              // Use bot_id as primary identifier (unique per bot)
+              // Skip bots with known-contract addresses (not real vaults)
+              const vaultLower = vaultAddr.toLowerCase();
+              if (vaultLower !== zeroAddress && (
+                  vaultLower === addresses.vaultFactory.toLowerCase() ||
+                  vaultLower === addresses.tangle.toLowerCase())) continue;
+
+              // Skip bots whose vault hasn't been created yet (still provisioning)
+              if (vaultLower === zeroAddress) continue;
+
               const botId = ob.id;
               if (seenBotIds.has(botId)) continue;
               seenBotIds.add(botId);
 
-              // Find matching provision for name and service ID
+              // Find matching provision for name
               const matchingProv = provisionsStore.get().find(
-                (p) => {
-                  if (p.sandboxId && ob.sandbox_id && p.sandboxId === ob.sandbox_id) return true;
-                  return false;
-                },
+                (p: { sandboxId?: string }) => p.sandboxId && ob.sandbox_id && p.sandboxId === ob.sandbox_id,
               );
 
-              // Find the on-chain data for this vault (TVL, asset, etc.)
+              // Find on-chain vault data (TVL, asset, etc.)
               const vaultEntry = vaultEntries.find((v) => v.vaultAddress.toLowerCase() === vaultLower);
 
               builtBots.push({
                 id: botId,
-                serviceId: matchingProv?.serviceId ?? vaultEntry?.serviceId ?? 0,
+                serviceId: ob.service_id || matchingProv?.serviceId || vaultEntry?.serviceId || 0,
                 name: matchingProv?.name ?? `${ob.strategy_type} Agent`,
                 operatorAddress: ob.operator_address || (vaultEntry?.operators[0] ?? zeroAddress),
-                vaultAddress: ob.vault_address as Address,
+                vaultAddress: vaultAddr,
                 strategyType: (ob.strategy_type || 'momentum') as StrategyType,
                 status: ob.secrets_configured === false ? 'needs_config'
                   : ob.trading_active ? 'active' : 'stopped',
@@ -377,6 +426,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 tradingActive: ob.trading_active,
                 secretsConfigured: ob.secrets_configured,
                 paperTrade: ob.paper_trade,
+                callId: ob.call_id ?? matchingProv?.callId,
               });
             }
           }

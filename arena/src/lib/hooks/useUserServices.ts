@@ -5,8 +5,7 @@ import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
-
-const BLUEPRINT_ID = BigInt(import.meta.env.VITE_BLUEPRINT_ID ?? '0');
+import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 const BLOCK_TIME_SECONDS = 12;
 
 export interface UserService {
@@ -40,25 +39,31 @@ export function useUserServices(userAddress: Address | undefined) {
 
     setIsLoading(true);
     try {
-      // Discover service IDs from ServiceActivated events
-      const logs = await publicClient.getLogs({
-        address: addresses.tangle,
-        event: {
-          type: 'event',
-          name: 'ServiceActivated',
-          inputs: [
-            { name: 'serviceId', type: 'uint64', indexed: true },
-            { name: 'requestId', type: 'uint64', indexed: true },
-            { name: 'blueprintId', type: 'uint64', indexed: true },
-          ],
-        },
-        args: { blueprintId: BLUEPRINT_ID },
-        fromBlock: 0n,
-        toBlock: 'latest',
-      });
+      // Discover service IDs from ServiceActivated events across all configured blueprints
+      const allLogs = await Promise.all(
+        ALL_BLUEPRINT_IDS.map((bpId) =>
+          publicClient.getLogs({
+            address: addresses.tangle,
+            event: {
+              type: 'event',
+              name: 'ServiceActivated',
+              inputs: [
+                { name: 'serviceId', type: 'uint64', indexed: true },
+                { name: 'requestId', type: 'uint64', indexed: true },
+                { name: 'blueprintId', type: 'uint64', indexed: true },
+              ],
+            },
+            args: { blueprintId: bpId },
+            fromBlock: 0n,
+            toBlock: 'latest',
+          }),
+        ),
+      );
+      type ActivatedLog = { args: { serviceId?: bigint; requestId?: bigint; blueprintId?: bigint } };
+      const logs = allLogs.flat() as ActivatedLog[];
 
-      let serviceIds = [...new Set(
-        logs.map((log) => Number(log.args.serviceId)).filter((id) => !isNaN(id)),
+      let serviceIds: number[] = [...new Set(
+        logs.map((log: ActivatedLog) => Number(log.args.serviceId)).filter((id: number) => !isNaN(id)),
       )];
 
       // Fallback: use VITE_SERVICE_IDS env var
@@ -119,8 +124,8 @@ export function useUserServices(userAddress: Address | undefined) {
       // Service IDs from user's provisions (user should always see services they provisioned)
       const provisionServiceIds = new Set(
         provisionsStore.get()
-          .filter((p) => p.owner.toLowerCase() === userLower && p.serviceId != null)
-          .map((p) => p.serviceId!),
+          .filter((p: { owner: string; serviceId?: number }) => p.owner.toLowerCase() === userLower && p.serviceId != null)
+          .map((p: { serviceId?: number }) => p.serviceId!),
       );
 
       for (let i = 0; i < serviceIds.length; i++) {

@@ -19,7 +19,7 @@ export function useTxWatcher() {
 
       publicClient
         .waitForTransactionReceipt({ hash: tx.hash })
-        .then((receipt) => {
+        .then((receipt: { status: string; blockNumber: bigint; gasUsed: bigint }) => {
           updateTx(tx.hash, {
             status: receipt.status === 'success' ? 'confirmed' : 'failed',
             blockNumber: receipt.blockNumber,

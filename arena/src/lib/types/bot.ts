@@ -38,4 +38,7 @@ export interface Bot {
   strategyConfig?: Record<string, unknown>;
   riskParams?: Record<string, unknown>;
   paperTrade?: boolean;
+
+  // On-chain provision tracking
+  callId?: number;
 }

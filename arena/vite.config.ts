@@ -1,3 +1,4 @@
+declare const process: { cwd(): string; env: Record<string, string | undefined> };
 import { reactRouter } from '@react-router/dev/vite';
 import UnoCSS from 'unocss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';

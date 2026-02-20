@@ -31,6 +31,8 @@ export interface TrackedProvision {
   progressPhase?: string;
   /** Human-readable progress detail */
   progressDetail?: string;
+  /** Which blueprint type was used ('trading-cloud' | 'trading-instance' | 'trading-tee-instance') */
+  blueprintType?: string;
 }
 
 const MAX_PROVISIONS = 20;
@@ -42,13 +44,13 @@ export const provisionsStore = persistedAtom<TrackedProvision[]>({
 
 export function addProvision(provision: TrackedProvision) {
   const existing = provisionsStore.get();
-  if (existing.some((p) => p.id === provision.id)) return;
+  if (existing.some((p: TrackedProvision) => p.id === provision.id)) return;
   provisionsStore.set([provision, ...existing].slice(0, MAX_PROVISIONS));
 }
 
 export function updateProvision(id: string, update: Partial<TrackedProvision>) {
   const current = provisionsStore.get();
-  const target = current.find((p) => p.id === id);
+  const target = current.find((p: TrackedProvision) => p.id === id);
   if (!target) return;
 
   // Skip no-op updates to avoid triggering subscriber cascades
@@ -58,14 +60,14 @@ export function updateProvision(id: string, update: Partial<TrackedProvision>) {
   if (dominated) return;
 
   provisionsStore.set(
-    current.map((p) =>
+    current.map((p: TrackedProvision) =>
       p.id === id ? { ...p, ...update, updatedAt: Date.now() } : p,
     ),
   );
 }
 
 export function removeProvision(id: string) {
-  provisionsStore.set(provisionsStore.get().filter((p) => p.id !== id));
+  provisionsStore.set(provisionsStore.get().filter((p: TrackedProvision) => p.id !== id));
 }
 
 /** Computed store filtered to provisions owned by a specific address. Cached per address. */

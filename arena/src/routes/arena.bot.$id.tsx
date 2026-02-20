@@ -21,8 +21,9 @@ export default function BotDetailPage() {
   const { id } = useParams();
   const { bots, isLoading } = useBots();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
-  // Match by ID (vault address) or by vault address directly (handles case-mismatch)
+  // Match by ID, sandbox ID, or vault address (handles various link formats)
   const bot = bots.find((b) => b.id === id)
+    ?? bots.find((b) => id && b.sandboxId === id)
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
 
   if (isLoading) {

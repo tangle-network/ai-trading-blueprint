@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { decodeAbiParameters, decodeEventLog, zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { provisionsStore, updateProvision } from '~/lib/stores/provisions';
+import { provisionsStore, updateProvision, type TrackedProvision } from '~/lib/stores/provisions';
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle/blueprint-ui';
@@ -70,7 +70,7 @@ export function useProvisionWatcher() {
 
         publicClient
           .waitForTransactionReceipt({ hash: prov.txHash })
-          .then((receipt) => {
+          .then((receipt: { status: string; logs: Array<{ data: `0x${string}`; topics: [`0x${string}`, ...`0x${string}`[]] }> }) => {
             if (receipt.status !== 'success') {
               updateProvision(prov.id, { phase: 'failed', errorMessage: 'Transaction reverted' });
               return;
@@ -103,7 +103,7 @@ export function useProvisionWatcher() {
               ...(serviceId != null ? { serviceId } : {}),
             });
           })
-          .catch((err) => {
+          .catch((err: unknown) => {
             updateProvision(prov.id, {
               phase: 'failed',
               errorMessage: err instanceof Error ? err.message.slice(0, 200) : 'Transaction failed',
@@ -116,7 +116,7 @@ export function useProvisionWatcher() {
 
       // ── Stage 2: Contract event watchers ──
       const hasPending = provisions.some(
-        (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+        (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
       );
 
       if (hasPending && !eventWatcherActive.current) {
@@ -140,7 +140,7 @@ export function useProvisionWatcher() {
               fromBlock: 0n,
             });
             const waiting = provisionsStore.get().filter(
-              (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+              (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
             );
             for (const log of logs) {
               const sid = log.args.serviceId;
@@ -162,9 +162,9 @@ export function useProvisionWatcher() {
           address: addresses.tangle,
           abi: tangleJobsAbi,
           eventName: 'JobResultSubmitted',
-          onLogs(logs) {
+          onLogs(logs: Array<{ args: { serviceId?: bigint; callId?: bigint; output?: `0x${string}` } }>) {
             const waiting = provisionsStore.get().filter(
-              (p) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+              (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
             );
             if (waiting.length === 0) return;
             for (const log of logs) {
@@ -185,7 +185,7 @@ export function useProvisionWatcher() {
           address: addresses.tangle,
           abi: tangleJobsAbi,
           eventName: 'JobCompleted',
-          onLogs(logs) {
+          onLogs(logs: Array<{ args: { callId?: bigint } }>) {
             for (const log of logs) {
               const cid = log.args.callId;
               if (cid == null) continue;
@@ -211,13 +211,13 @@ export function useProvisionWatcher() {
 
       // ── Stage 2.5: Operator API polling ──
       const hasSubmitted = provisions.some(
-        (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+        (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
       );
 
       if (hasSubmitted && OPERATOR_API_URL && !pollingRef.current) {
         const poll = async () => {
           const submitted = provisionsStore.get().filter(
-            (p) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+            (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
           );
           if (submitted.length === 0) {
             // No more pending — stop polling
@@ -288,7 +288,7 @@ export function useProvisionWatcher() {
     repairRan.current = true;
 
     const needsRepair = provisionsStore.get().filter(
-      (p) =>
+      (p: TrackedProvision) =>
         ['active', 'awaiting_secrets'].includes(p.phase) &&
         p.callId != null &&
         (!p.vaultAddress || p.vaultAddress === zeroAddress || p.vaultAddress === '0x0000000000000000000000000000000000000020'),
@@ -352,7 +352,7 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   }
 
   // Query the per-bot vault from the BSM contract
-  const prov = provisionsStore.get().find((p) => p.id === provId);
+  const prov = provisionsStore.get().find((p: TrackedProvision) => p.id === provId);
   const resolvedCallId = callId ?? prov?.callId;
 
   if (resolvedCallId != null && serviceId > 0 && addresses.tradingBlueprint !== zeroAddress) {
@@ -361,7 +361,7 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
       abi: tradingBlueprintAbi,
       functionName: 'botVaults',
       args: [BigInt(serviceId), BigInt(resolvedCallId)],
-    }).then((vaultAddr) => {
+    }).then((vaultAddr: unknown) => {
       const vault = vaultAddr as Address;
       console.log('[provision-watcher] botVaults resolved:', vault, 'for callId=', resolvedCallId);
       updateProvision(provId, {
@@ -371,7 +371,7 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
         workflowId,
         serviceId,
       });
-    }).catch((err) => {
+    }).catch((err: unknown) => {
       console.warn('[provision-watcher] botVaults query failed:', err);
       updateProvision(provId, {
         phase: 'awaiting_secrets',

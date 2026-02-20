@@ -182,7 +182,7 @@ export function TxDropdown() {
                 </p>
               </div>
             ) : (
-              txs.map((tx) => <TxRow key={tx.hash} tx={tx} />)
+              txs.map((tx: TrackedTx) => <TxRow key={tx.hash} tx={tx} />)
             )}
           </div>
         </div>
