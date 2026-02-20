@@ -144,16 +144,17 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             sandbox_id, provision_receipt.workflow_id, provision_receipt.vault_address
         );
         assert!(!sandbox_id.is_empty(), "sandbox_id should not be empty");
-        assert!(provision_receipt.workflow_id > 0, "workflow_id should be set");
+        // Two-phase provisioning: workflow_id=0 means "awaiting secrets injection"
+        assert_eq!(provision_receipt.workflow_id, 0, "workflow_id should be 0 (awaiting secrets)");
 
-        // ── 6. JOB_STATUS (4) ───────────────────────────────────────────
-        eprintln!("[test] Submitting JOB_STATUS...");
+        // ── 6a. JOB_STATUS (4) — verify "awaiting secrets" state ──────
+        eprintln!("[test] Submitting JOB_STATUS (pre-activation)...");
         let status_payload = TradingControlRequest {
             sandbox_id: sandbox_id.clone(),
         }
         .abi_encode();
         let status_sub = harness
-            .submit_job(JOB_STATUS, Bytes::from(status_payload))
+            .submit_job(JOB_STATUS, Bytes::from(status_payload.clone()))
             .await?;
         let status_output = harness
             .wait_for_job_result_with_deadline(status_sub, common::JOB_RESULT_TIMEOUT)
@@ -164,8 +165,75 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             "        state={}, trading_active={}",
             status_receipt.state, status_receipt.trading_active
         );
-        assert!(status_receipt.trading_active);
+        // Before secrets injection, bot is inactive
+        assert!(!status_receipt.trading_active, "bot should be inactive before secrets");
         assert_eq!(status_receipt.sandbox_id, sandbox_id);
+
+        // ── 6b. Activate with secrets (HTTP API path, not on-chain) ──
+        eprintln!("[test] Activating bot with mock secrets...");
+        let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&sandbox_id)
+            .expect("bot should exist after provision");
+        let mock_sb = sandbox_runtime::SandboxRecord {
+            id: sandbox_id.clone(),
+            container_id: format!("container-{}", sandbox_id),
+            sidecar_url: "http://127.0.0.1:19999".to_string(),
+            sidecar_port: 19999,
+            ssh_port: None,
+            token: "test-sidecar-token".to_string(),
+            created_at: chrono::Utc::now().timestamp() as u64,
+            cpu_cores: 2,
+            memory_mb: 4096,
+            state: sandbox_runtime::SandboxState::Running,
+            idle_timeout_seconds: 0,
+            max_lifetime_seconds: 86400,
+            last_activity_at: chrono::Utc::now().timestamp() as u64,
+            stopped_at: None,
+            snapshot_image_id: None,
+            snapshot_s3_url: None,
+            container_removed_at: None,
+            image_removed_at: None,
+            original_image: String::new(),
+            base_env_json: "{}".to_string(),
+            user_env_json: String::new(),
+            snapshot_destination: None,
+            tee_deployment_id: None,
+            tee_metadata_json: None,
+            name: String::new(),
+            agent_identifier: String::new(),
+            metadata_json: String::new(),
+            disk_gb: 0,
+            stack: String::new(),
+            owner: String::new(),
+            tee_config: None,
+        };
+        let mut user_env = serde_json::Map::new();
+        user_env.insert("ANTHROPIC_API_KEY".to_string(), serde_json::json!("test-key"));
+        let activate_result = trading_blueprint_lib::jobs::activate_bot_with_secrets(
+            &bot.id,
+            user_env,
+            Some(mock_sb),
+        )
+        .await;
+        assert!(activate_result.is_ok(), "activation should succeed: {:?}", activate_result.err());
+        let activate_out = activate_result.unwrap();
+        eprintln!("        workflow_id={}", activate_out.workflow_id);
+        assert!(activate_out.workflow_id > 0, "workflow_id should be set after activation");
+
+        // ── 6c. JOB_STATUS (4) — verify active state ─────────────────
+        eprintln!("[test] Submitting JOB_STATUS (post-activation)...");
+        let status_sub2 = harness
+            .submit_job(JOB_STATUS, Bytes::from(status_payload))
+            .await?;
+        let status_output2 = harness
+            .wait_for_job_result_with_deadline(status_sub2, common::JOB_RESULT_TIMEOUT)
+            .await?;
+        let status_receipt2 = TradingStatusResponse::abi_decode(&status_output2)?;
+        eprintln!(
+            "        state={}, trading_active={}",
+            status_receipt2.state, status_receipt2.trading_active
+        );
+        assert!(status_receipt2.trading_active, "bot should be active after secrets injection");
+        assert_eq!(status_receipt2.sandbox_id, sandbox_id);
 
         // ── 7. JOB_CONFIGURE (1) ────────────────────────────────────────
         eprintln!("[test] Submitting JOB_CONFIGURE...");
@@ -430,7 +498,8 @@ async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
                 receipt.sandbox_id, receipt.workflow_id, receipt.vault_address
             );
             assert!(!receipt.sandbox_id.is_empty(), "{strategy} sandbox_id empty");
-            assert!(receipt.workflow_id > 0, "{strategy} workflow_id should be set");
+            // Two-phase provisioning: workflow_id=0 means "awaiting secrets"
+            assert_eq!(receipt.workflow_id, 0, "{strategy} workflow_id should be 0 (awaiting secrets)");
 
             // Verify the bot record has the correct strategy type
             let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&receipt.sandbox_id)

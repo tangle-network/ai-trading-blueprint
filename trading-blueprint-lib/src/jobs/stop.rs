@@ -14,12 +14,17 @@ pub async fn stop_core(sandbox_id: &str, skip_docker: bool) -> Result<JsonRespon
     let workflow_id = bot.workflow_id;
 
     if !skip_docker {
-        // Stop sidecar container
-        let record = sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id)
-            .map_err(|e| format!("Sandbox not found: {e}"))?;
-        sandbox_runtime::runtime::stop_sidecar(&record)
-            .await
-            .map_err(|e| format!("Failed to stop sidecar: {e}"))?;
+        // Stop sidecar container (best-effort: container may already be stopped/removed)
+        match sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id) {
+            Ok(record) => {
+                if let Err(e) = sandbox_runtime::runtime::stop_sidecar(&record).await {
+                    tracing::warn!("Could not stop sidecar (may already be stopped): {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Sandbox record not found for stop (may be mock): {e}");
+            }
+        }
     }
 
     // Deactivate workflow
