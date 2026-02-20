@@ -16,6 +16,7 @@ x402 = ["blueprint-sdk/x402"]
 
 [dependencies]
 trading-blueprint-lib = { path = "../trading-blueprint-lib" }
+trading-http-api = { path = "../trading-http-api" }
 ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
 sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
 blueprint-producers-extra = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", features = ["cron"] }
@@ -31,7 +32,6 @@ dotenvy = "0.15"
 serde_json = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

@@ -4,7 +4,6 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
 
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
@@ -37,6 +36,8 @@ pub struct BotSummary {
     pub created_at: u64,
     pub secrets_configured: bool,
     pub sandbox_id: String,
+    pub call_id: u64,
+    pub service_id: u64,
 }
 
 impl BotSummary {
@@ -55,6 +56,8 @@ impl BotSummary {
             created_at: b.created_at,
             secrets_configured,
             sandbox_id: b.sandbox_id,
+            call_id: b.call_id,
+            service_id: b.service_id,
         }
     }
 }
@@ -287,22 +290,6 @@ struct SessionRequest {
 
 // ── Router ───────────────────────────────────────────────────────────────
 
-fn cors_layer() -> CorsLayer {
-    let origins = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default();
-    if origins == "*" || origins.is_empty() {
-        CorsLayer::permissive()
-    } else {
-        let parsed: Vec<_> = origins
-            .split(',')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-        CorsLayer::new()
-            .allow_origin(parsed)
-            .allow_methods(Any)
-            .allow_headers(Any)
-    }
-}
-
 pub fn build_operator_router() -> Router {
     Router::new()
         // Session auth (delegates to sandbox-runtime's session_auth)
@@ -334,7 +321,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/debug/sandboxes", get(debug_sandboxes))
         .route("/api/debug/workflows", get(debug_workflows))
         .route("/api/debug/run-now/{bot_id}", post(debug_run_now))
-        .layer(cors_layer())
+        .layer(sandbox_runtime::operator_api::build_cors_layer())
 }
 
 // ── Auth handlers ────────────────────────────────────────────────────────
@@ -1456,6 +1443,9 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: Some(5000),
             submitter_address: String::new(),
+            trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
         };
         store
             .insert(state::bot_key("wd-bot"), bot)

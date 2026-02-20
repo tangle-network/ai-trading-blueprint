@@ -7,7 +7,6 @@
 //! Vault deployment is handled by the Solidity `onServiceInitialized` hook.
 //! The operator binary focuses on sidecar management and trading loop execution.
 
-mod graceful_consumer;
 mod operator_api;
 
 use blueprint_producers_extra::cron::CronJob;
@@ -16,7 +15,7 @@ use blueprint_sdk::runner::BlueprintRunner;
 use blueprint_sdk::runner::config::BlueprintEnvironment;
 use blueprint_sdk::runner::tangle::config::TangleConfig;
 use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
-use graceful_consumer::GracefulConsumer;
+use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_blueprint_lib::JOB_WORKFLOW_TICK;
 use trading_blueprint_lib::context::TradingOperatorContext;
 
@@ -210,6 +209,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     let fee_distributor_address =
         std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
 
+    // Clone values needed by the trading HTTP API server before moving into context.
+    let private_key_for_api = private_key.clone();
+    let market_data_base_url_for_api = market_data_base_url.clone();
+
     let ctx = TradingOperatorContext {
         operator_address,
         private_key,
@@ -293,6 +296,49 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, router).await {
                 tracing::error!("Operator API server error: {e}");
+            }
+        });
+    }
+
+    // ── 6d. Spawn multi-bot trading HTTP API server ────────────────────────
+    {
+        let port: u16 = std::env::var("TRADING_API_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9100);
+
+        // Resolve validator endpoints from env (shared across all bots)
+        let validator_eps: Vec<String> =
+            trading_blueprint_lib::discovery::endpoints_from_env();
+
+        let trading_state = std::sync::Arc::new(trading_http_api::MultiBotTradingState {
+            operator_private_key: private_key_for_api,
+            market_data_base_url: market_data_base_url_for_api,
+            validation_deadline_secs,
+            min_validator_score,
+            resolve_bot: Box::new(move |token: &str| {
+                let bot = trading_blueprint_lib::state::find_bot_by_token(token).ok()?;
+                Some(trading_http_api::BotContext {
+                    bot_id: bot.id,
+                    vault_address: bot.vault_address,
+                    paper_trade: bot.paper_trade,
+                    chain_id: bot.chain_id,
+                    rpc_url: bot.rpc_url,
+                    validator_endpoints: validator_eps.clone(),
+                })
+            }),
+        });
+
+        let router = trading_http_api::build_multi_bot_router(trading_state);
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+            .await
+            .map_err(|e| {
+                blueprint_sdk::Error::Other(format!("Trading API bind failed: {e}"))
+            })?;
+        tracing::info!("Trading HTTP API listening on 0.0.0.0:{port}");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router).await {
+                tracing::error!("Trading API server error: {e}");
             }
         });
     }
