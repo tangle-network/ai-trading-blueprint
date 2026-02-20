@@ -7,6 +7,10 @@ members = [
     "trading-blueprint-bin",
     "trading-validator-lib",
     "trading-validator-bin",
+    "trading-instance-blueprint-lib",
+    "trading-instance-blueprint-bin",
+    "trading-tee-instance-blueprint-lib",
+    "trading-tee-instance-blueprint-bin",
 ]
 
 [workspace.package]

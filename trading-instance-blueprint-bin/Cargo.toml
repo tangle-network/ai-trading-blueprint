@@ -1,0 +1,24 @@
+[package]
+name = "trading-instance-blueprint-bin"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Binary runner for the AI trading instance blueprint (single dedicated bot)"
+license.workspace = true
+
+[[bin]]
+name = "trading-instance-blueprint"
+path = "src/main.rs"
+
+[dependencies]
+trading-instance-blueprint-lib = { path = "../trading-instance-blueprint-lib" }
+trading-blueprint-lib = { path = "../trading-blueprint-lib" }
+ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
+sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
+blueprint-producers-extra = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", features = ["cron"] }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tangle"] }
+axum = "0.8"
+dotenvy = "0.15"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,14 @@
+[package]
+name = "trading-tee-instance-blueprint-lib"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "AI Trading TEE Instance Blueprint — TEE-backed single bot per service instance"
+license.workspace = true
+
+[dependencies]
+trading-instance-blueprint-lib = { path = "../trading-instance-blueprint-lib" }
+trading-blueprint-lib = { path = "../trading-blueprint-lib" }
+sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime", features = ["tee-all"] }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
+tracing = "0.1"
