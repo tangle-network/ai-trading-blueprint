@@ -85,6 +85,8 @@ pub struct BotDetailResponse {
     pub workflow_id: Option<u64>,
     pub secrets_configured: bool,
     pub wind_down_started_at: Option<u64>,
+    pub validator_service_ids: Vec<u64>,
+    pub validator_endpoints: Vec<String>,
 }
 
 impl BotDetailResponse {
@@ -111,6 +113,8 @@ impl BotDetailResponse {
             workflow_id: b.workflow_id,
             secrets_configured,
             wind_down_started_at: b.wind_down_started_at,
+            validator_service_ids: b.validator_service_ids.clone(),
+            validator_endpoints: trading_blueprint_lib::discovery::endpoints_from_env(),
         }
     }
 }

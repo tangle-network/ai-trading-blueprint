@@ -3,12 +3,16 @@ import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle/blueprint-ui/components';
+import { useBotDetail } from '~/lib/hooks/useBotDetail';
 
 interface BotHeaderProps {
   bot: Bot;
 }
 
 export function BotHeader({ bot }: BotHeaderProps) {
+  const { data: detail } = useBotDetail(bot.id);
+  const validatorCount = detail?.validator_endpoints?.length ?? 0;
+
   const metrics = [
     {
       label: 'PnL',
@@ -54,6 +58,14 @@ export function BotHeader({ bot }: BotHeaderProps) {
           <Identicon address={bot.operatorAddress as Address} size={16} />
           {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
         </span>
+        {validatorCount > 0 && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="i-ph:shield-check text-xs text-violet-500" />
+            <span className="text-arena-elements-textSecondary">
+              {validatorCount} validator{validatorCount !== 1 ? 's' : ''}
+            </span>
+          </span>
+        )}
         {bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000' && (
           <Button asChild variant="ghost" size="sm">
             <Link to={`/vault/${bot.vaultAddress}`}>

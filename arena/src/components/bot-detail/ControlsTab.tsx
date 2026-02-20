@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { encodeAbiParameters, parseAbiParameters, formatEther } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
+import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
 import { Badge, Button } from '@tangle/blueprint-ui/components';
+import { ScoreRing } from './shared/ValidatorComponents';
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 
@@ -70,6 +72,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         runNow={runNow}
         onConfigureSecrets={onConfigureSecrets}
       />
+      <ValidatorInfoCard bot={bot} detail={detail} />
       <LifetimeCard
         bot={bot}
         detail={detail}
@@ -498,6 +501,118 @@ function StrategyCard({
               {JSON.stringify(detail.risk_params, null, 2)}
             </pre>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Validator Info Card ──────────────────────────────────────────────────
+
+function ValidatorInfoCard({
+  bot,
+  detail,
+}: {
+  bot: Bot;
+  detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
+}) {
+  const { data: trades } = useBotTrades(bot.id, bot.name);
+
+  const stats = useMemo(() => {
+    if (!trades || trades.length === 0) return { approvalRate: null, totalValidated: 0 };
+    const validated = trades.filter((t) => t.validation);
+    const approved = validated.filter((t) => t.validation?.approved);
+    return {
+      approvalRate: validated.length > 0 ? Math.round((approved.length / validated.length) * 100) : null,
+      totalValidated: validated.length,
+    };
+  }, [trades]);
+
+  const endpoints = detail.validator_endpoints ?? [];
+  const serviceIds = detail.validator_service_ids ?? [];
+  const hasValidators = endpoints.length > 0 || serviceIds.length > 0;
+
+  return (
+    <div className="glass-card rounded-xl p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-display font-bold text-lg">Validation</h3>
+        <div className="i-ph:shield-check text-lg text-violet-500" />
+      </div>
+
+      <div className="space-y-3 text-sm">
+        {/* Service IDs */}
+        <div className="flex justify-between items-start">
+          <span className="text-arena-elements-textTertiary">Service IDs</span>
+          <div className="flex gap-1 flex-wrap justify-end">
+            {serviceIds.length > 0 ? serviceIds.map((id) => (
+              <Badge key={id} variant="accent" className="text-xs py-0 font-data">{id}</Badge>
+            )) : (
+              <span className="font-data text-arena-elements-textTertiary">Default</span>
+            )}
+          </div>
+        </div>
+
+        {/* Endpoints */}
+        <div className="flex justify-between items-start gap-4">
+          <span className="text-arena-elements-textTertiary shrink-0">Endpoints</span>
+          <div className="text-right">
+            {endpoints.length > 0 ? endpoints.map((ep) => (
+              <div key={ep} className="font-data text-xs text-arena-elements-textSecondary truncate max-w-[220px]" title={ep}>
+                {ep}
+              </div>
+            )) : (
+              <span className="font-data text-xs text-arena-elements-textTertiary">None configured</span>
+            )}
+          </div>
+        </div>
+
+        {/* Validator count */}
+        <div className="flex justify-between">
+          <span className="text-arena-elements-textTertiary">Active</span>
+          <span className="font-data">
+            {hasValidators ? (
+              <>{endpoints.length} validator{endpoints.length !== 1 ? 's' : ''}</>
+            ) : (
+              <span className="text-arena-elements-textTertiary">—</span>
+            )}
+          </span>
+        </div>
+
+        {/* Avg Score */}
+        <div className="flex justify-between items-center">
+          <span className="text-arena-elements-textTertiary">Avg Score</span>
+          {bot.avgValidatorScore > 0 ? (
+            <ScoreRing score={bot.avgValidatorScore} size={32} />
+          ) : (
+            <span className="font-data text-arena-elements-textTertiary">—</span>
+          )}
+        </div>
+
+        {/* Approval Rate */}
+        <div className="flex justify-between">
+          <span className="text-arena-elements-textTertiary">Approval Rate</span>
+          <span className="font-data">
+            {stats.approvalRate != null ? (
+              <span className={stats.approvalRate >= 80 ? 'text-arena-elements-icon-success' : stats.approvalRate >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error'}>
+                {stats.approvalRate}%
+              </span>
+            ) : (
+              <span className="text-arena-elements-textTertiary">—</span>
+            )}
+            {stats.totalValidated > 0 && (
+              <span className="text-arena-elements-textTertiary ml-1 text-xs">
+                ({stats.totalValidated} trades)
+              </span>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {/* Paper trade note */}
+      {detail.paper_trade && (
+        <div className="mt-4 px-3 py-2 rounded-lg bg-arena-elements-background-depth-2 text-xs text-arena-elements-textTertiary">
+          <span className="i-ph:note text-xs mr-1" />
+          Paper mode: validates trades but does not execute on-chain.
         </div>
       )}
     </div>

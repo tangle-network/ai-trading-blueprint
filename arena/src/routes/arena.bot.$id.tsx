@@ -7,7 +7,7 @@ import { BotHeader } from '~/components/bot-detail/BotHeader';
 import { PerformanceTab } from '~/components/bot-detail/PerformanceTab';
 import { PositionsTab } from '~/components/bot-detail/PositionsTab';
 import { TradeHistoryTab } from '~/components/bot-detail/TradeHistoryTab';
-import { ReasoningTab } from '~/components/bot-detail/ReasoningTab';
+import { ReasoningTab, usePendingValidationCount } from '~/components/bot-detail/ReasoningTab';
 import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { TerminalTab } from '~/components/bot-detail/TerminalTab';
@@ -25,6 +25,9 @@ export default function BotDetailPage() {
   const bot = bots.find((b) => b.id === id)
     ?? bots.find((b) => id && b.sandboxId === id)
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
+
+  // Must call hooks before early returns (React rules of hooks)
+  const pendingValidationCount = usePendingValidationCount(bot?.id ?? '', bot?.name);
 
   if (isLoading) {
     return (
@@ -71,7 +74,12 @@ export default function BotDetailPage() {
             <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="positions">Positions</TabsTrigger>
             <TabsTrigger value="trades">Trade History</TabsTrigger>
-            <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
+            <TabsTrigger value="reasoning" className="relative">
+              Reasoning
+              {pendingValidationCount > 0 && (
+                <span className="ml-1.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
+              )}
+            </TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
             <TabsTrigger value="terminal">Terminal</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>

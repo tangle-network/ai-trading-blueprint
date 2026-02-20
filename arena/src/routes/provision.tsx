@@ -236,6 +236,8 @@ export default function ProvisionPage() {
   const [customExpertKnowledge, setCustomExpertKnowledge] = useState('');
   const [customCron, setCustomCron] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>('default');
+  const [customValidatorIds, setCustomValidatorIds] = useState('');
 
   // Step 4 — deploy
   const { writeContract, data: txHash, isPending, reset: resetTx } =
@@ -597,7 +599,9 @@ export default function ProvisionPage() {
       cpuCores: bp.defaults.cpuCores,
       memoryMb: bp.defaults.memoryMb,
       maxLifetimeDays: bp.defaults.maxLifetimeDays,
-      validatorServiceIds: [],
+      validatorServiceIds: validatorMode === 'custom' && customValidatorIds.trim()
+        ? customValidatorIds.split(',').map(s => BigInt(s.trim())).filter(n => n > 0n)
+        : [],
     });
 
     writeContract(
@@ -2000,12 +2004,64 @@ export default function ProvisionPage() {
                     ))}
                   </div>
                 </div>
-                {customCron && (
+                {/* Validator Configuration */}
+                <div className="pt-4 border-t border-arena-elements-dividerColor">
+                  <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-3 block">
+                    Validator Configuration
+                  </span>
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-3 cursor-pointer rounded-lg p-2.5 hover:bg-arena-elements-background-depth-2 transition-colors">
+                      <input
+                        type="radio"
+                        name="validator-mode"
+                        checked={validatorMode === 'default'}
+                        onChange={() => setValidatorMode('default')}
+                        className="mt-0.5 accent-violet-600"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-arena-elements-textPrimary">
+                          Default validators
+                        </span>
+                        <span className="ml-1.5 text-xs text-arena-elements-textTertiary">(recommended)</span>
+                        <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                          Uses the operator's configured validator endpoint(s)
+                        </p>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 cursor-pointer rounded-lg p-2.5 hover:bg-arena-elements-background-depth-2 transition-colors">
+                      <input
+                        type="radio"
+                        name="validator-mode"
+                        checked={validatorMode === 'custom'}
+                        onChange={() => setValidatorMode('custom')}
+                        className="mt-0.5 accent-violet-600"
+                      />
+                      <div className="flex-1">
+                        <span className="text-sm font-medium text-arena-elements-textPrimary">
+                          Specific validator service IDs
+                        </span>
+                        <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                          Choose which on-chain validator services score your trades
+                        </p>
+                        {validatorMode === 'custom' && (
+                          <Input
+                            value={customValidatorIds}
+                            onChange={(e) => setCustomValidatorIds(e.target.value)}
+                            placeholder="e.g. 1, 3, 7"
+                            className="mt-2 font-data text-sm"
+                          />
+                        )}
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {(customCron || validatorMode === 'custom') && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setCustomCron('')}
+                    onClick={() => { setCustomCron(''); setValidatorMode('default'); setCustomValidatorIds(''); }}
                     className="text-xs"
                   >
                     Reset to Defaults

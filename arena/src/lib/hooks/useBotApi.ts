@@ -144,6 +144,26 @@ export function useBotTrades(botId: string, botName: string = '', limit = 50) {
 }
 
 /**
+ * Fetch recent trades with high-frequency polling for live validation visibility.
+ * Returns the 5 most recent trades, polled every 5 seconds.
+ */
+export function useBotRecentValidations(botId: string, botName: string = '') {
+  const apiUrl = getApiUrlForBot(botId);
+
+  return useQuery<Trade[]>({
+    queryKey: ['bot-recent-validations', botId],
+    queryFn: async () => {
+      if (!apiUrl) return [];
+      const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/api/bots/${botId}/trades?limit=5`);
+      return data.map(t => mapApiTrade(t, botName));
+    },
+    refetchInterval: 5_000,
+    staleTime: 3_000,
+    enabled: !!apiUrl,
+  });
+}
+
+/**
  * Fetch portfolio/positions for a bot.
  */
 export function useBotPortfolio(botId: string) {

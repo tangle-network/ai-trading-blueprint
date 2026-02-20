@@ -21,6 +21,8 @@ export interface BotDetail {
   workflow_id: number | null;
   secrets_configured: boolean;
   wind_down_started_at: number | null;
+  validator_service_ids: number[];
+  validator_endpoints: string[];
 }
 
 export function useBotDetail(botId: string | undefined) {
