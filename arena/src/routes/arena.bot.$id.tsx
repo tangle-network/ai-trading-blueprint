@@ -105,8 +105,12 @@ export default function BotDetailPage() {
             <ControlsTab
               bot={bot}
               onConfigureSecrets={
-                bot.status === 'needs_config' && bot.sandboxId
-                  ? () => setSecretsTarget({ sandboxId: bot.sandboxId! })
+                bot.status === 'needs_config'
+                  ? () => setSecretsTarget({
+                      sandboxId: bot.sandboxId,
+                      callId: bot.callId,
+                      serviceId: bot.serviceId,
+                    })
                   : undefined
               }
             />

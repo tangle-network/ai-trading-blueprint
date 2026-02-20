@@ -13,9 +13,11 @@ import {
 } from '~/lib/stores/provisions';
 import { publicClient } from '@tangle/blueprint-ui';
 import { addresses } from '~/lib/contracts/addresses';
+import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useUserServices } from '~/lib/hooks/useUserServices';
+import { dismissedBotsStore, dismissBot } from '~/lib/stores/dismissedBots';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
@@ -101,6 +103,14 @@ export default function HomePage() {
     });
   }, [bots, myServiceIds, myProvisions]);
 
+  // Filter out dismissed bots from user's view
+  const dismissedBots = useStore(dismissedBotsStore);
+  const dismissedSet = useMemo(() => new Set(dismissedBots), [dismissedBots]);
+  const visibleMyBots = useMemo(
+    () => myBots.filter((b) => !dismissedSet.has(b.id)),
+    [myBots, dismissedSet],
+  );
+
   // Bots grouped by service
   const botsByService = useMemo(() => {
     const map = new Map<number, typeof bots>();
@@ -130,12 +140,13 @@ export default function HomePage() {
     return map;
   }, [myProvisions]);
 
-  // Aggregate stats
-  const activeBots = myBots.filter((b) => b.status === 'active');
-  const totalTvl = myBots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalPnl = myBots.reduce((sum, b) => sum + b.pnlAbsolute, 0);
-  const totalPnlPct = myBots.reduce((sum, b) => sum + b.pnlPercent, 0);
-  const totalTrades = myBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  // Aggregate stats (use visible bots for display)
+  const activeBots = visibleMyBots.filter((b) => b.status === 'active');
+  const pendingBots = visibleMyBots.filter((b) => b.status === 'needs_config');
+  const totalTvl = visibleMyBots.reduce((sum, b) => sum + b.tvl, 0);
+  const totalPnl = visibleMyBots.reduce((sum, b) => sum + b.pnlAbsolute, 0);
+  const totalPnlPct = visibleMyBots.reduce((sum, b) => sum + b.pnlPercent, 0);
+  const totalTrades = visibleMyBots.reduce((sum, b) => sum + b.totalTrades, 0);
 
   // Handlers
   const dismissProvision = useCallback((id: string) => {
@@ -199,7 +210,7 @@ export default function HomePage() {
   }
 
   // ── Loading ────────────────────────────────────────────────────────────
-  if (isLoading && services.length === 0 && myBots.length === 0) {
+  if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
         <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">Home</h1>
@@ -218,7 +229,7 @@ export default function HomePage() {
     );
   }
 
-  const hasContent = services.length > 0 || myBots.length > 0 || inProgressProvisions.length > 0;
+  const hasContent = services.length > 0 || visibleMyBots.length > 0 || inProgressProvisions.length > 0;
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
@@ -260,7 +271,7 @@ export default function HomePage() {
           <StatTile label="Trades" value={totalTrades} className="hidden lg:block" />
           <StatTile
             label="Avg Score"
-            value={myBots.length > 0 ? Math.round(myBots.reduce((s, b) => s + b.avgValidatorScore, 0) / myBots.length) : 0}
+            value={visibleMyBots.length > 0 ? Math.round(visibleMyBots.reduce((s, b) => s + b.avgValidatorScore, 0) / visibleMyBots.length) : 0}
             className="hidden lg:block"
           />
         </div>
@@ -271,7 +282,12 @@ export default function HomePage() {
         <ProvisionsBanner
           provisions={inProgressProvisions}
           failedProvisions={failedProvisions}
-          onConfigure={(prov) => prov.sandboxId ? setSecretsTarget({ sandboxId: prov.sandboxId, provisionId: prov.id }) : undefined}
+          onConfigure={(prov) => setSecretsTarget({
+            sandboxId: prov.sandboxId,
+            callId: prov.callId,
+            serviceId: prov.serviceId,
+            provisionId: prov.id,
+          })}
           onDismiss={dismissProvision}
           onCheckStatus={checkStuckProvision}
           onClearFailed={clearAllFailed}
@@ -304,28 +320,46 @@ export default function HomePage() {
       )}
 
       {/* ── My Bots ─────────────────────────────────────────────────────── */}
-      {myBots.length > 0 ? (
+      {visibleMyBots.length > 0 ? (
         <section>
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
               My Bots
             </h2>
-            <Badge variant="secondary" className="text-[10px]">{myBots.length}</Badge>
+            <Badge variant="secondary" className="text-[10px]">{visibleMyBots.length}</Badge>
+            {pendingBots.length > 0 && (
+              <button
+                onClick={() => { pendingBots.forEach((b) => dismissBot(b.id)); toast.info(`Cleared ${pendingBots.length} pending`); }}
+                className="ml-auto text-xs font-data text-arena-elements-textTertiary hover:text-crimson-400 transition-colors"
+              >
+                Clear pending ({pendingBots.length})
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {myBots.map((bot) => {
+            {visibleMyBots.map((bot) => {
               const matchingProv = awaitingSecretsForBot.get(bot.vaultAddress.toLowerCase());
-              // Configure button: prefer provision-backed target, fall back to bot sandboxId
-              const configureHandler = matchingProv && matchingProv.sandboxId
-                ? () => setSecretsTarget({ sandboxId: matchingProv.sandboxId!, provisionId: matchingProv.id })
-                : bot.status === 'needs_config' && bot.sandboxId
-                  ? () => setSecretsTarget({ sandboxId: bot.sandboxId! })
+              // Configure button: prefer provision-backed target, fall back to bot identifiers
+              const configureHandler = matchingProv
+                ? () => setSecretsTarget({
+                    sandboxId: matchingProv.sandboxId,
+                    callId: matchingProv.callId ?? bot.callId,
+                    serviceId: matchingProv.serviceId ?? bot.serviceId,
+                    provisionId: matchingProv.id,
+                  })
+                : bot.status === 'needs_config'
+                  ? () => setSecretsTarget({
+                      sandboxId: bot.sandboxId,
+                      callId: bot.callId,
+                      serviceId: bot.serviceId,
+                    })
                   : undefined;
               return (
                 <HomeBotCard
                   key={bot.id}
                   bot={bot}
                   onConfigure={configureHandler}
+                  onDismiss={() => { dismissBot(bot.id); toast.info('Dismissed'); }}
                 />
               );
             })}

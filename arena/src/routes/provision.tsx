@@ -45,6 +45,7 @@ import {
   type StrategyPackDef,
 } from '~/lib/blueprints';
 import { BlueprintSelector } from '~/components/provision/BlueprintSelector';
+import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
@@ -758,45 +759,37 @@ export default function ProvisionPage() {
     }
   }, [latestDeployment?.phase, step]);
 
-  /** Resolve operator bot ID from the sandbox ID. */
-  const resolveBotId = useCallback(async (sandboxId: string): Promise<string | null> => {
-    if (!OPERATOR_API_URL) {
-      setSecretsLookupError('Operator API URL not configured');
-      return null;
+  /** Resolve operator bot ID using multi-strategy lookup. */
+  const resolveBotId = useCallback(async (opts: {
+    sandboxId?: string;
+    callId?: number;
+    serviceId?: number;
+  }): Promise<string | null> => {
+    const result = await resolveBot(OPERATOR_API_URL, opts);
+    if ('botId' in result) {
+      setSecretsLookupError(null);
+      return result.botId;
     }
-    try {
-      const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
-      if (!res.ok) {
-        setSecretsLookupError('Failed to fetch bots from operator API');
-        return null;
-      }
-      const data = await res.json();
-      const match = data.bots?.find(
-        (b: { sandbox_id: string }) => b.sandbox_id === sandboxId,
-      );
-      if (match) {
-        setSecretsLookupError(null);
-        return match.id as string;
-      }
-      setSecretsLookupError('Bot not found on operator. It may still be registering.');
-      return null;
-    } catch {
-      setSecretsLookupError('Could not reach operator API');
-      return null;
-    }
+    setSecretsLookupError(result.error);
+    return null;
   }, []);
 
   const [useOperatorKey, setUseOperatorKey] = useState(false);
 
   const handleSubmitSecrets = async () => {
-    if (!latestDeployment || !latestDeployment.sandboxId) return;
+    if (!latestDeployment) return;
+    if (!latestDeployment.sandboxId && !latestDeployment.callId) return;
     if (!useOperatorKey && !apiKey.trim()) return;
 
     setIsSubmittingSecrets(true);
     setActivationPhase(null);
     setSecretsLookupError(null);
 
-    const botId = await resolveBotId(latestDeployment.sandboxId);
+    const botId = await resolveBotId({
+      sandboxId: latestDeployment.sandboxId,
+      callId: latestDeployment.callId,
+      serviceId: latestDeployment.serviceId,
+    });
     if (!botId) {
       setIsSubmittingSecrets(false);
       return;

@@ -108,10 +108,19 @@ export default function IndexPage() {
   const { bots: rawBots, isLoading, isOnChain } = useBots();
   const bots = useBotEnrichment(rawBots);
 
-  // Exclude provision-only bots (still being set up, no vault yet)
-  const realBots = bots.filter((b) => !b.id.startsWith('provision:'));
+  // Leaderboard: only bots that are active or were previously active
+  const leaderboardBots = bots.filter((b) => {
+    if (b.id.startsWith('provision:')) return false;
+    if (b.status === 'active') return true;
+    if (b.status === 'paused') return true; // paused implies was-active
+    if (b.status === 'stopped') {
+      // Only show stopped bots with evidence of prior activity
+      return (b.secretsConfigured === true || b.totalTrades > 0 || b.tvl > 0);
+    }
+    return false; // needs_config → hidden from leaderboard
+  });
 
-  const filteredBots = realBots.filter(
+  const filteredBots = leaderboardBots.filter(
     (bot) =>
       bot.name.toLowerCase().includes(search.toLowerCase()) ||
       bot.strategyType.toLowerCase().includes(search.toLowerCase()) ||
@@ -121,10 +130,10 @@ export default function IndexPage() {
 
   const sorted = [...filteredBots].sort((a, b) => b.pnlPercent - a.pnlPercent);
 
-  const totalTvl = realBots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalTrades = realBots.reduce((sum, b) => sum + b.totalTrades, 0);
-  const avgScore = realBots.length > 0
-    ? Math.round(realBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / realBots.length)
+  const totalTvl = leaderboardBots.reduce((sum, b) => sum + b.tvl, 0);
+  const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const avgScore = leaderboardBots.length > 0
+    ? Math.round(leaderboardBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / leaderboardBots.length)
     : 0;
 
   return (
@@ -142,7 +151,7 @@ export default function IndexPage() {
             </div>
           </div>
           <div className="flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
-            <span><span className="text-arena-elements-textPrimary font-semibold">{realBots.length}</span> agents</span>
+            <span><span className="text-arena-elements-textPrimary font-semibold">{leaderboardBots.length}</span> agents</span>
             {totalTvl > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">${totalTvl >= 1000 ? `${(totalTvl / 1000).toFixed(0)}K` : totalTvl.toFixed(0)}</span> TVL</span>}
             {totalTrades > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{totalTrades.toLocaleString()}</span> trades</span>}
             {avgScore > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{avgScore}</span>/100</span>}

@@ -238,6 +238,13 @@ pub fn find_bot_by_vault_address(vault: &str) -> Result<Option<TradingBotRecord>
         .map_err(|e| e.to_string())
 }
 
+/// Find a bot by on-chain call_id and service_id.
+pub fn find_bot_by_call_id(service_id: u64, call_id: u64) -> Result<Option<TradingBotRecord>, String> {
+    bots()?
+        .find(|b| b.service_id == service_id && b.call_id == call_id)
+        .map_err(|e| e.to_string())
+}
+
 /// Get a bot by either its trading ID or vault address.
 pub fn resolve_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
     if let Some(b) = get_bot(id)? {

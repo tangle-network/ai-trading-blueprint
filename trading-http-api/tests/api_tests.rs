@@ -14,6 +14,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use trading_http_api::{TradingApiState, build_router};
+use trading_http_api::{MultiBotTradingState, BotContext, build_multi_bot_router};
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::validator_client::ValidatorClient;
 use trading_runtime::executor::TradeExecutor;
@@ -663,4 +664,242 @@ async fn test_metrics_current() {
     assert_eq!(json["bot_id"], "test-bot");
     assert_eq!(json["paper_trade"], true);
     assert_eq!(json["trading_active"], true);
+}
+
+// ── Multi-bot trading API tests ─────────────────────────────────────────────
+
+fn multi_bot_state() -> Arc<MultiBotTradingState> {
+    ensure_state_dir();
+    Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(|token: &str| {
+            if token == "bot-token-abc" {
+                Some(BotContext {
+                    bot_id: "bot-1".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    paper_trade: true,
+                    chain_id: 31337,
+                    rpc_url: "http://localhost:8545".to_string(),
+                    validator_endpoints: vec![],
+                })
+            } else {
+                None
+            }
+        }),
+    })
+}
+
+#[tokio::test]
+async fn test_multi_bot_health_no_auth() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ok");
+}
+
+#[tokio::test]
+async fn test_multi_bot_auth_rejects_bad_token() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bad-token")
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn test_multi_bot_auth_rejects_missing_header() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn test_multi_bot_validate_paper_bypass() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let validate_body = serde_json::to_string(&serde_json::json!({
+        "strategy_id": "test-strat",
+        "action": "swap",
+        "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "amount_in": "1.5",
+        "min_amount_out": "3000",
+        "target_protocol": "uniswap_v3"
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["approved"], true);
+    assert_eq!(json["aggregate_score"], 100);
+    let responses = json["validator_responses"].as_array().unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0]["validator"], "paper-mode");
+}
+
+#[tokio::test]
+async fn test_multi_bot_execute_paper_trade() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["paper_trade"], true);
+    let tx_hash = json["tx_hash"].as_str().unwrap();
+    assert!(tx_hash.starts_with("0xpaper_"), "tx_hash should start with 0xpaper_, got: {tx_hash}");
+}
+
+#[tokio::test]
+async fn test_multi_bot_execute_rejects_unapproved() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let unapproved_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "test-strat",
+            "action": "swap",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "3000",
+            "target_protocol": "uniswap_v3"
+        },
+        "validation": {
+            "approved": false,
+            "aggregate_score": 30,
+            "intent_hash": "0xabc123",
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 30,
+                    "reasoning": "Trade too risky",
+                    "signature": "0xsig1"
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(unapproved_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(body_str.contains("Validation not approved"), "Expected 'Validation not approved', got: {body_str}");
+}
+
+#[tokio::test]
+async fn test_multi_bot_validate_bad_action() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let bad_action_body = serde_json::to_string(&serde_json::json!({
+        "strategy_id": "test-strat",
+        "action": "invalid_action",
+        "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "amount_in": "1.5",
+        "min_amount_out": "3000",
+        "target_protocol": "uniswap_v3"
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(bad_action_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(body_str.contains("Unknown action"), "Expected 'Unknown action' error, got: {body_str}");
 }

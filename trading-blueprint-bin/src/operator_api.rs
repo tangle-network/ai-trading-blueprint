@@ -12,6 +12,8 @@ pub struct BotListQuery {
     pub operator: Option<String>,
     pub strategy: Option<String>,
     pub status: Option<String>,
+    pub call_id: Option<u64>,
+    pub service_id: Option<u64>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -346,6 +348,15 @@ async fn list_bots(
 ) -> Result<Json<BotListResponse>, (StatusCode, String)> {
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
+
+    // Exact match by on-chain call_id + service_id (most reliable lookup)
+    if let (Some(call_id), Some(service_id)) = (query.call_id, query.service_id) {
+        let bot = state::find_bot_by_call_id(service_id, call_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let bots: Vec<BotSummary> = bot.into_iter().map(BotSummary::from_record).collect();
+        let total = bots.len();
+        return Ok(Json(BotListResponse { bots, total, limit, offset }));
+    }
 
     let result = if let Some(ref operator) = query.operator {
         state::bots_by_operator(operator, limit, offset)

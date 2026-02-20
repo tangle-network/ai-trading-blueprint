@@ -16,9 +16,11 @@ const STATUS_BADGE: Record<string, { variant: 'success' | 'amber' | 'secondary' 
 export function HomeBotCard({
   bot,
   onConfigure,
+  onDismiss,
 }: {
   bot: Bot;
   onConfigure?: () => void;
+  onDismiss?: () => void;
 }) {
   const hasVault = bot.vaultAddress && bot.vaultAddress !== zeroAddress;
   const isProvisioning = bot.id.startsWith('provision:');
@@ -84,6 +86,18 @@ export function HomeBotCard({
 
           {/* Operator identicon */}
           <Identicon address={bot.operatorAddress as Address} size={24} />
+
+          {/* Dismiss button for pending/unconfigured bots */}
+          {onDismiss && (bot.status === 'needs_config' || (bot.status === 'stopped' && !bot.secretsConfigured)) && (
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); onDismiss(); }}
+              className="p-1 rounded text-arena-elements-textTertiary hover:text-crimson-400 transition-colors shrink-0"
+              title="Dismiss from dashboard"
+            >
+              <div className="i-ph:x text-sm" />
+            </button>
+          )}
         </div>
 
         {/* Metrics row */}

@@ -137,6 +137,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     event JobPriceUpdated(uint8 indexed job, uint256 price);
     event ProvisionPricingUpdated(uint256 basePrice, uint256 dailyRate, uint256 cpuDailyRate, uint256 memGbDailyRate);
     event BotExtended(uint64 indexed serviceId, uint64 jobCallId, uint64 additionalDays);
+    event BotVaultSkipped(uint64 indexed serviceId, uint64 indexed callId, string reason);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONFIGURATION
@@ -505,9 +506,16 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             requiredSigs = pp.requiredSigs;
         }
 
-        // Require valid config
-        if (assetToken == address(0)) return;
-        if (signers.length == 0 || requiredSigs == 0) return;
+        // Require valid config — emit diagnostic event on skip so operators can diagnose.
+        // We don't revert because that would brick onJobResult for the entire service.
+        if (assetToken == address(0)) {
+            emit BotVaultSkipped(serviceId, jobCallId, "no asset token");
+            return;
+        }
+        if (signers.length == 0 || requiredSigs == 0) {
+            emit BotVaultSkipped(serviceId, jobCallId, "no signers (operators may not have joined yet)");
+            return;
+        }
 
         bytes32 salt = keccak256(abi.encodePacked(serviceId, jobCallId));
         string memory symbol = string(abi.encodePacked("bot", _uint64ToString(jobCallId)));

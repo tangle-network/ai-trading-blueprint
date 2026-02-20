@@ -617,4 +617,193 @@ contract TradingBlueprintMultiOpTest is Setup {
             validatorIds        // validator_service_ids
         );
     }
+
+    /// @dev Build provision inputs with valid asset token but NO explicit signers.
+    ///      When signers are empty and requiredSigs is 0, the blueprint falls back
+    ///      to using _serviceOperators as signers with requiredSigs = 1.
+    function _buildBotProvisionInputsNoSigners() internal view returns (bytes memory) {
+        address[] memory signers = new address[](0);
+        uint64[] memory validatorIds = new uint64[](0);
+        return abi.encode(
+            "Test Bot",         // name
+            "",                 // strategy_type
+            "",                 // strategy_config_json
+            "",                 // risk_params_json
+            address(0),         // factory_address
+            address(tokenA),    // asset_token
+            signers,            // signers (empty — fallback to operators)
+            uint256(0),         // required_signatures (0 — fallback to 1)
+            uint256(0),         // chain_id
+            "",                 // rpc_url
+            "",                 // trading_loop_cron
+            uint64(1),          // cpu_cores
+            uint64(1024),       // memory_mb
+            uint64(30),         // max_lifetime_days
+            validatorIds        // validator_service_ids
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-WHITELIST VERIFICATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice After provisioning a bot vault, the asset token should be auto-whitelisted
+    ///         in PolicyEngine by VaultFactory.createBotVault().
+    function test_createBotVault_autoWhitelistsAssetToken() public {
+        _initService();
+        (address vault,) = _provisionBot(1);
+
+        assertTrue(
+            policyEngine.tokenWhitelisted(vault, address(tokenA)),
+            "Asset token should be auto-whitelisted in PolicyEngine"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // OPERATOR-AS-SIGNERS DEFAULT (no explicit signers)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice When provision inputs have empty signers, the blueprint should fall back
+    ///         to using service operators as TradeValidator signers (1-of-N).
+    function test_provisionJob_usesOperatorsAsSigners() public {
+        _initService();
+        _joinOperator(operator);
+
+        // Provision with no explicit signers — should use operators as signers
+        bytes memory inputs = _buildBotProvisionInputsNoSigners();
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+
+        address vault = blueprint.botVaults(serviceId, 1);
+        assertTrue(vault != address(0), "Bot vault should be deployed");
+
+        // TradeValidator should have 1 signer (the operator) with requiredSigs = 1
+        assertEq(tradeValidator.getSignerCount(vault), 1, "Should have 1 signer (the operator)");
+        assertEq(tradeValidator.getRequiredSignatures(vault), 1, "Should require 1 signature");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator should be a signer");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EMPTY OPERATORS + EMPTY SIGNERS → SKIP EVENT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice When no operators have joined and provision inputs have empty signers,
+    ///         the blueprint should emit BotVaultSkipped and not create a vault.
+    function test_provisionJob_emitsSkipWhenNoOperatorsNoSigners() public {
+        _initService(); // Empty operators, no _joinOperator
+
+        bytes memory inputs = _buildBotProvisionInputsNoSigners();
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+
+        vm.expectEmit(true, true, false, true);
+        emit TradingBlueprint.BotVaultSkipped(serviceId, 1, "no signers (operators may not have joined yet)");
+
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+
+        assertEq(blueprint.botVaults(serviceId, 1), address(0), "No vault should be created");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EMPTY OPERATORS + NO ASSET TOKEN → DIFFERENT SKIP EVENT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice When provision inputs have address(0) as asset token AND the service
+    ///         config has no asset token, the blueprint should emit BotVaultSkipped
+    ///         with "no asset token" reason.
+    function test_provisionJob_emitsSkipWhenNoAssetToken() public {
+        // Initialize service WITHOUT onRequest so _serviceConfigs has zero asset token
+        uint64 svcId = 99;
+        vm.prank(tangleCore);
+        blueprint.onServiceInitialized(0, 0, svcId, address(0), new address[](0), 0);
+
+        // Use _buildProvisionInputs which has address(0) as asset_token
+        bytes memory inputs = _buildProvisionInputs(1, 1024, 30);
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(svcId, JOB_PROVISION, 1, inputs);
+
+        vm.expectEmit(true, true, false, true);
+        emit TradingBlueprint.BotVaultSkipped(svcId, 1, "no asset token");
+
+        vm.prank(tangleCore);
+        blueprint.onJobResult(svcId, JOB_PROVISION, 1, operator, inputs, "");
+
+        assertEq(blueprint.botVaults(svcId, 1), address(0), "No vault should be created");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXPLICIT SIGNERS OVERRIDE OPERATORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice When provision inputs include explicit signers, those should override
+    ///         the operator-based defaults even if operators have joined.
+    function test_provisionJob_explicitSignersOverrideOperators() public {
+        _initService();
+        _joinOperator(operator);
+        _joinOperator(operator2);
+
+        // Provision with explicit signers [v1,v2,v3] and requiredSigs=2
+        // (the default _buildBotProvisionInputs uses these explicit signers)
+        (address vault,) = _provisionBot(1);
+
+        // TradeValidator should have 3 signers (validators) requiring 2, NOT 1-of-2 from operators
+        assertEq(tradeValidator.getSignerCount(vault), 3, "Should have 3 explicit signers");
+        assertEq(tradeValidator.getRequiredSignatures(vault), 2, "Should require 2 signatures");
+
+        // Verify the explicit signers are registered, not the operators
+        assertTrue(tradeValidator.isVaultSigner(vault, validator1), "validator1 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, validator2), "validator2 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, validator3), "validator3 should be a signer");
+
+        // Operators should NOT be signers (they have OPERATOR_ROLE, not signer role)
+        assertFalse(tradeValidator.isVaultSigner(vault, operator), "operator should not be a signer");
+        assertFalse(tradeValidator.isVaultSigner(vault, operator2), "operator2 should not be a signer");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VAULTFACTORY DIRECT VALIDATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice VaultFactory.createBotVault() should revert with InvalidSignerConfig
+    ///         when called with an empty signers array.
+    function test_createBotVault_revertsOnEmptySigners() public {
+        address[] memory emptySigners = new address[](0);
+
+        vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
+        vaultFactory.createBotVault(
+            serviceId,
+            address(tokenA),
+            address(this),      // admin
+            address(0),         // operator
+            emptySigners,
+            uint256(1),         // requiredSigs
+            "Test Bot",
+            "tBOT",
+            bytes32("test-salt")
+        );
+    }
+
+    /// @notice VaultFactory.createBotVault() should revert with InvalidSignerConfig
+    ///         when requiredSigs exceeds signers.length.
+    function test_createBotVault_revertsOnExcessiveRequiredSigs() public {
+        address[] memory signers = new address[](2);
+        signers[0] = validator1;
+        signers[1] = validator2;
+
+        vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
+        vaultFactory.createBotVault(
+            serviceId,
+            address(tokenA),
+            address(this),      // admin
+            address(0),         // operator
+            signers,
+            uint256(3),         // requiredSigs > signers.length
+            "Test Bot",
+            "tBOT",
+            bytes32("test-salt")
+        );
+    }
 }

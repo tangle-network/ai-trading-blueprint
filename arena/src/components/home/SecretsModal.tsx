@@ -4,6 +4,7 @@ import {
 } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
 import { updateProvision } from '~/lib/stores/provisions';
+import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
   AI_PROVIDERS,
@@ -18,7 +19,10 @@ const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 /** Generic target for secrets configuration — works from provisions or bot detail. */
 export type SecretsTarget = {
-  sandboxId: string;
+  sandboxId?: string;
+  callId?: number;
+  serviceId?: number;
+  botId?: string;
   provisionId?: string; // If from a provision, to update provision store on success
 };
 
@@ -42,41 +46,29 @@ export function SecretsModal({
 
   const [lookupError, setLookupError] = useState<string | null>(null);
 
-  const resolveBotId = useCallback(async (sandboxId: string): Promise<string | null> => {
-    if (!OPERATOR_API_URL) {
-      setLookupError('Operator API URL not configured');
-      return null;
+  const resolveBotId = useCallback(async (t: SecretsTarget): Promise<string | null> => {
+    const result = await resolveBot(OPERATOR_API_URL, {
+      botId: t.botId,
+      callId: t.callId,
+      serviceId: t.serviceId,
+      sandboxId: t.sandboxId,
+    });
+    if ('botId' in result) {
+      setLookupError(null);
+      return result.botId;
     }
-    try {
-      const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
-      if (!res.ok) {
-        setLookupError('Failed to fetch bots from operator API');
-        return null;
-      }
-      const data = await res.json();
-      const match = data.bots?.find(
-        (b: { sandbox_id: string }) => b.sandbox_id === sandboxId,
-      );
-      if (match) {
-        setLookupError(null);
-        return match.id as string;
-      }
-      setLookupError('Bot not found on operator. It may still be registering.');
-      return null;
-    } catch {
-      setLookupError('Could not reach operator API');
-      return null;
-    }
+    setLookupError(result.error);
+    return null;
   }, []);
 
   const handleSubmit = async () => {
-    if (!target || !apiKey.trim() || !target.sandboxId) return;
+    if (!target || !apiKey.trim()) return;
 
     setIsSubmitting(true);
     setActivationPhase(null);
     setLookupError(null);
 
-    const botId = await resolveBotId(target.sandboxId);
+    const botId = await resolveBotId(target);
     if (!botId) {
       setIsSubmitting(false);
       return;
