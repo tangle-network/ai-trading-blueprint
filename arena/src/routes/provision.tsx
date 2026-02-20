@@ -604,6 +604,58 @@ export default function ProvisionPage() {
 
     // Use the selected blueprint's encoder (or fall back to cloud defaults)
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
+
+    // Resolve validator service IDs
+    const resolvedValidatorIds: bigint[] = validatorMode === 'custom' && customValidatorIds.trim()
+      ? customValidatorIds.split(',').flatMap(s => {
+          const trimmed = s.trim();
+          if (!trimmed || !/^\d+$/.test(trimmed)) return [];
+          const n = BigInt(trimmed);
+          return n > 0n ? [n] : [];
+        })
+      : (() => {
+          const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+          const n = BigInt(defaultId);
+          return n > 0n ? [n] : [];
+        })();
+
+    // Resolve validator operators from on-chain to use as vault signers.
+    // These are the addresses that will produce EIP-712 trade approval signatures.
+    let vaultSigners: Address[] = [];
+    if (resolvedValidatorIds.length > 0) {
+      try {
+        const operatorResults = await Promise.all(
+          resolvedValidatorIds.map(vid =>
+            publicClient.readContract({
+              address: addresses.tangle,
+              abi: tangleServicesAbi,
+              functionName: 'getServiceOperators',
+              args: [vid],
+            }),
+          ),
+        );
+        // Flatten and deduplicate operator addresses across all validator services
+        const seen = new Set<string>();
+        for (const ops of operatorResults) {
+          for (const op of ops as Address[]) {
+            const lower = op.toLowerCase();
+            if (!seen.has(lower)) {
+              seen.add(lower);
+              vaultSigners.push(op);
+            }
+          }
+        }
+        if (vaultSigners.length === 0) {
+          toast.error('Selected validator services have no operators — cannot create vault signers');
+          return;
+        }
+      } catch (err) {
+        console.error('[provision] Failed to resolve validator operators:', err);
+        toast.error('Failed to query validator service operators from chain');
+        return;
+      }
+    }
+
     const inputs = bp.encodeProvision({
       name,
       strategyType,
@@ -612,21 +664,16 @@ export default function ProvisionPage() {
       vaultAddress: zeroAddress,
       assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
-      depositors: [userAddress],
+      // Vault signers: validator operators (if validators selected), otherwise empty
+      // (empty = BSM defaults to trading service operators)
+      depositors: vaultSigners.length > 0 ? vaultSigners : [],
       chainId: BigInt(targetChain.id),
       rpcUrl: '',
       cron: effectiveCron,
       cpuCores: bp.defaults.cpuCores,
       memoryMb: bp.defaults.memoryMb,
       maxLifetimeDays: bp.defaults.maxLifetimeDays,
-      validatorServiceIds: validatorMode === 'custom' && customValidatorIds.trim()
-        ? customValidatorIds.split(',').flatMap(s => {
-            const trimmed = s.trim();
-            if (!trimmed || !/^\d+$/.test(trimmed)) return [];
-            const n = BigInt(trimmed);
-            return n > 0n ? [n] : [];
-          })
-        : [],
+      validatorServiceIds: resolvedValidatorIds,
     });
 
     writeContract(
@@ -2069,7 +2116,9 @@ export default function ProvisionPage() {
                         </span>
                         <span className="ml-1.5 text-xs text-arena-elements-textTertiary">(recommended)</span>
                         <p className="text-xs text-arena-elements-textTertiary mt-0.5">
-                          Uses the operator's configured validator endpoint(s)
+                          {(import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0') !== '0'
+                            ? `Uses validator service ${import.meta.env.VITE_VALIDATOR_SERVICE_ID} for AI trade scoring`
+                            : 'Paper-trade mode (no validator configured)'}
                         </p>
                       </div>
                     </label>

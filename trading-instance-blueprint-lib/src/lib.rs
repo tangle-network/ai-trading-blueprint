@@ -8,6 +8,7 @@
 
 pub mod jobs;
 pub mod operator_api;
+pub use operator_api::build_instance_router;
 
 // Re-export ABI types from cloud variant (shared on-chain structs).
 pub use trading_blueprint_lib::{

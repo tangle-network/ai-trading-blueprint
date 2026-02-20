@@ -348,3 +348,122 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
     eprintln!("On-chain verified: approved={}, validCount={}", on_chain.approved, on_chain.validCount);
     Ok(())
 }
+
+/// Multi-strategy provision test — provisions bots with all 5 strategy types
+/// via the Tangle harness and verifies each receives the correct pack profile.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
+    if std::env::var("SIDECAR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: set SIDECAR_E2E=1 to run");
+        return Ok(());
+    }
+
+    common::setup_log();
+    let _state_dir = common::init_test_env();
+    let guard = common::HARNESS_LOCK.lock().await;
+
+    let result = timeout(common::ANVIL_TEST_TIMEOUT, async {
+        let anvil = Anvil::new().try_spawn().context("Failed to spawn Anvil")?;
+        let rpc_url = anvil.endpoint();
+
+        let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
+        let deployer_wallet = EthereumWallet::from(deployer_key);
+        let deployer_provider = ProviderBuilder::new()
+            .wallet(deployer_wallet)
+            .connect_http(rpc_url.parse().unwrap());
+
+        let val_addrs: Vec<Address> = (3..6)
+            .map(|i| {
+                let k: PrivateKeySigner = anvil.keys()[i].clone().into();
+                k.address()
+            })
+            .collect();
+
+        let (_tv_addr, vault_addr) = contract_deployer::deploy_trade_validator(
+            &deployer_provider,
+            val_addrs.clone(),
+            2,
+        )
+        .await;
+
+        unsafe { std::env::set_var("TRADING_API_URL", "http://127.0.0.1:9100"); }
+        common::setup_sidecar_env();
+
+        let Some(harness) = common::spawn_harness().await? else {
+            eprintln!("Skipping: TNT artifacts not found");
+            return Ok(());
+        };
+
+        let strategies = ["dex", "yield", "perp", "prediction", "multi"];
+
+        for strategy in &strategies {
+            eprintln!("\n[test] Provisioning strategy: {strategy}");
+            let provision_payload = TradingProvisionRequest {
+                name: format!("e2e-{strategy}-bot"),
+                strategy_type: strategy.to_string(),
+                strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
+                risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
+                factory_address: vault_addr,
+                asset_token: Address::from([0xCC; 20]),
+                signers: val_addrs.clone(),
+                required_signatures: U256::from(2),
+                chain_id: U256::from(31337),
+                rpc_url: rpc_url.clone(),
+                trading_loop_cron: "0 */5 * * * *".to_string(),
+                cpu_cores: 2,
+                memory_mb: 4096,
+                max_lifetime_days: 30,
+                validator_service_ids: vec![],
+            }
+            .abi_encode();
+
+            let sub = harness
+                .submit_job(JOB_PROVISION, Bytes::from(provision_payload))
+                .await?;
+            let output = harness
+                .wait_for_job_result_with_deadline(sub, common::JOB_RESULT_TIMEOUT)
+                .await?;
+            let receipt = TradingProvisionOutput::abi_decode(&output)?;
+
+            eprintln!(
+                "        sandbox_id={}, workflow_id={}, vault={}",
+                receipt.sandbox_id, receipt.workflow_id, receipt.vault_address
+            );
+            assert!(!receipt.sandbox_id.is_empty(), "{strategy} sandbox_id empty");
+            assert!(receipt.workflow_id > 0, "{strategy} workflow_id should be set");
+
+            // Verify the bot record has the correct strategy type
+            let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&receipt.sandbox_id)
+                .expect("bot should exist");
+            assert_eq!(
+                bot.strategy_type, *strategy,
+                "Bot strategy should be {strategy}"
+            );
+
+            // Deprovision to free resources
+            let deprov_payload = TradingControlRequest {
+                sandbox_id: receipt.sandbox_id.clone(),
+            }
+            .abi_encode();
+            let deprov_sub = harness
+                .submit_job(JOB_DEPROVISION, Bytes::from(deprov_payload))
+                .await?;
+            let deprov_output = harness
+                .wait_for_job_result_with_deadline(deprov_sub, common::JOB_RESULT_TIMEOUT)
+                .await?;
+            let deprov_receipt = JsonResponse::abi_decode(&deprov_output)?;
+            assert!(
+                deprov_receipt.json.contains("deprovisioned"),
+                "{strategy} deprovision failed"
+            );
+        }
+
+        eprintln!("\n[done] All 5 strategies provisioned and deprovisioned successfully!");
+        harness.shutdown().await;
+        Ok(())
+    })
+    .await;
+
+    drop(guard);
+    result.context("test_multi_strategy_provision_via_tangle timed out")?
+}

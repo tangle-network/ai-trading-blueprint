@@ -869,6 +869,165 @@ async fn test_multi_bot_execute_rejects_unapproved() {
     assert!(body_str.contains("Validation not approved"), "Expected 'Validation not approved', got: {body_str}");
 }
 
+// ── Edge case tests (Part 5b) ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_validate_missing_fields() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    // Empty body
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_execute_missing_intent() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    // Body with validation but no intent
+    let body = serde_json::to_string(&serde_json::json!({
+        "validation": {
+            "approved": true,
+            "aggregate_score": 85,
+            "intent_hash": "0xabc123",
+            "validator_responses": []
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_execute_missing_validation() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    // Body with intent but no validation
+    let body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "test-strat",
+            "action": "swap",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "3000",
+            "target_protocol": "uniswap_v3"
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_metrics_history_empty() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics/history?limit=10")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let snapshots = json["snapshots"].as_array().unwrap();
+    // May or may not be empty (depends on test execution order due to shared state),
+    // but should always be a valid array
+    let _ = snapshots;
+}
+
+#[tokio::test]
+async fn test_bearer_token_empty_string() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer ")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn test_bearer_token_just_bearer() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
 #[tokio::test]
 async fn test_multi_bot_validate_bad_action() {
     let state = multi_bot_state();

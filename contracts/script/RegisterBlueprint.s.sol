@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "tnt-core/libraries/Types.sol";
 import "../src/blueprints/TradingBlueprint.sol";
+import "../src/blueprints/ValidatorBlueprint.sol";
 import "../src/VaultFactory.sol";
 import "../src/PolicyEngine.sol";
 import "../src/TradeValidator.sol";
@@ -62,8 +63,9 @@ contract RegisterBlueprint is Script {
         tradeValidator.transferOwnership(address(vaultFactory));
         vaultFactory.acceptDependencyOwnership();
 
-        // ── Deploy BSM ────────────────────────────────────────────────
+        // ── Deploy BSMs ───────────────────────────────────────────────
         TradingBlueprint bsm = new TradingBlueprint();
+        ValidatorBlueprint validatorBsm = new ValidatorBlueprint();
 
         // ── Fund Test Accounts ────────────────────────────────────────
         payable(USER_ACCOUNT).transfer(100 ether);
@@ -78,11 +80,41 @@ contract RegisterBlueprint is Script {
             // Extra accounts handled by bash wrapper (complex parsing)
         }
 
-        // ── Register Blueprint on Tangle ──────────────────────────────
-        Types.BlueprintDefinition memory def = _buildDefinition(address(bsm));
-        uint64 blueprintId = tangle.createBlueprint(def);
-        // createBlueprint internally calls bsm.onBlueprintCreated(blueprintId, deployer, TANGLE)
-        // which sets tangleCore = TANGLE in the BSM
+        // ── Register Blueprints on Tangle ─────────────────────────────
+        // All three variants share the same BSM contract (on-chain logic is identical).
+        // They differ only in the off-chain binary that processes jobs.
+
+        // 1. Cloud (multi-bot fleet)
+        uint64 cloudId = tangle.createBlueprint(_buildDefinition(
+            address(bsm),
+            "AI Trading Cloud",
+            "Multi-bot fleet: deploy multiple trading bots per service",
+            "trading-blueprint-bin",
+            "trading-blueprint"
+        ));
+
+        // 2. Instance (single-bot per service)
+        uint64 instanceId = tangle.createBlueprint(_buildDefinition(
+            address(bsm),
+            "AI Trading Instance",
+            "Single dedicated bot per service: one agent, one strategy",
+            "trading-instance-blueprint-bin",
+            "trading-instance-blueprint"
+        ));
+
+        // 3. TEE Instance (hardware-isolated single-bot)
+        uint64 teeId = tangle.createBlueprint(_buildDefinition(
+            address(bsm),
+            "AI Trading TEE Instance",
+            "TEE-secured single bot: hardware-isolated execution",
+            "trading-tee-instance-blueprint-bin",
+            "trading-tee-instance-blueprint"
+        ));
+
+        // 4. Validator (shared trade validation network)
+        uint64 validatorId = tangle.createBlueprint(_buildValidatorDefinition(
+            address(validatorBsm)
+        ));
 
         vm.stopBroadcast();
 
@@ -94,11 +126,26 @@ contract RegisterBlueprint is Script {
         console.log("DEPLOY_POLICY_ENGINE=%s", vm.toString(address(policyEngine)));
         console.log("DEPLOY_TRADE_VALIDATOR=%s", vm.toString(address(tradeValidator)));
         console.log("DEPLOY_FEE_DISTRIBUTOR=%s", vm.toString(address(feeDistributor)));
-        console.log("DEPLOY_BLUEPRINT_ID=%s", vm.toString(blueprintId));
+        console.log("DEPLOY_VALIDATOR_BSM=%s", vm.toString(address(validatorBsm)));
+        console.log("DEPLOY_BLUEPRINT_ID=%s", vm.toString(cloudId));
+        console.log("DEPLOY_INSTANCE_BLUEPRINT_ID=%s", vm.toString(instanceId));
+        console.log("DEPLOY_TEE_BLUEPRINT_ID=%s", vm.toString(teeId));
+        console.log("DEPLOY_VALIDATOR_BLUEPRINT_ID=%s", vm.toString(validatorId));
     }
 
-    /// @notice Construct the BlueprintDefinition struct for createBlueprint()
-    function _buildDefinition(address manager) internal pure returns (Types.BlueprintDefinition memory def) {
+    /// @notice Construct a BlueprintDefinition for a specific variant.
+    /// @param manager BSM contract address (shared across all variants)
+    /// @param bpName Human-readable name for the blueprint
+    /// @param bpDescription Description of this variant
+    /// @param crateName Rust crate name (e.g. "trading-blueprint-bin")
+    /// @param binaryName Binary name (e.g. "trading-blueprint")
+    function _buildDefinition(
+        address manager,
+        string memory bpName,
+        string memory bpDescription,
+        string memory crateName,
+        string memory binaryName
+    ) internal pure returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmTradingBlueprint";
         def.manager = manager;
         def.masterManagerRevision = 0;
@@ -117,8 +164,8 @@ contract RegisterBlueprint is Script {
 
         // Metadata
         def.metadata = Types.BlueprintMetadata({
-            name: "AI Trading Blueprint",
-            description: "Autonomous AI trading bots on Tangle Network",
+            name: bpName,
+            description: bpDescription,
             author: "Tangle",
             category: "Trading",
             codeRepository: "https://github.com/tangle-network/ai-trading-blueprints",
@@ -128,7 +175,7 @@ contract RegisterBlueprint is Script {
             profilingData: ""
         });
 
-        // Jobs (7 core jobs matching blueprint-definition.json)
+        // Jobs (7 core jobs — identical across all variants)
         def.jobs = new Types.JobDefinition[](7);
         def.jobs[0] = Types.JobDefinition("provision", "Provision a new trading bot", "", "", "");
         def.jobs[1] = Types.JobDefinition("configure", "Reconfigure bot strategy", "", "", "");
@@ -142,13 +189,13 @@ contract RegisterBlueprint is Script {
         def.registrationSchema = "";
         def.requestSchema = "";
 
-        // Source (Native binary)
+        // Source (Native binary — differs per variant)
         def.sources = new Types.BlueprintSource[](1);
         Types.BlueprintBinary[] memory bins = new Types.BlueprintBinary[](1);
         bins[0] = Types.BlueprintBinary({
             arch: Types.BlueprintArchitecture.Amd64,
             os: Types.BlueprintOperatingSystem.Linux,
-            name: "trading-blueprint",
+            name: binaryName,
             sha256: bytes32(uint256(0xdeadbeef))
         });
 
@@ -158,14 +205,81 @@ contract RegisterBlueprint is Script {
             wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
             native: Types.NativeSource(
                 Types.BlueprintFetcherKind.None,
-                "file:///target/release/trading-blueprint",
-                "./target/release/trading-blueprint"
+                string(abi.encodePacked("file:///target/release/", binaryName)),
+                string(abi.encodePacked("./target/release/", binaryName))
             ),
-            testing: Types.TestingSource("trading-blueprint-bin", "trading-blueprint", "."),
+            testing: Types.TestingSource(crateName, binaryName, "."),
             binaries: bins
         });
 
         // Supported memberships
+        def.supportedMemberships = new Types.MembershipModel[](1);
+        def.supportedMemberships[0] = Types.MembershipModel.Fixed;
+    }
+
+    /// @notice Construct the BlueprintDefinition for the validator blueprint.
+    /// @dev Separate from trading variants: different BSM, different jobs (3 vs 7).
+    function _buildValidatorDefinition(
+        address manager
+    ) internal pure returns (Types.BlueprintDefinition memory def) {
+        def.metadataUri = "ipfs://QmValidatorBlueprint";
+        def.manager = manager;
+        def.masterManagerRevision = 0;
+        def.hasConfig = true;
+
+        def.config = Types.BlueprintConfig({
+            membership: Types.MembershipModel.Fixed,
+            pricing: Types.PricingModel.PayOnce,
+            minOperators: 1,
+            maxOperators: 50,
+            subscriptionRate: 0,
+            subscriptionInterval: 0,
+            eventRate: 0
+        });
+
+        def.metadata = Types.BlueprintMetadata({
+            name: "AI Trading Validator",
+            description: "Trade validation network: AI scoring + EIP-712 signing",
+            author: "Tangle",
+            category: "Trading",
+            codeRepository: "https://github.com/tangle-network/ai-trading-blueprints",
+            logo: "",
+            website: "https://tangle.network",
+            license: "MIT",
+            profilingData: ""
+        });
+
+        // 3 operational jobs
+        def.jobs = new Types.JobDefinition[](3);
+        def.jobs[0] = Types.JobDefinition("update_reputation", "Record validation count and reputation delta", "", "", "");
+        def.jobs[1] = Types.JobDefinition("update_config", "Update validator configuration", "", "", "");
+        def.jobs[2] = Types.JobDefinition("liveness", "Heartbeat liveness proof", "", "", "");
+
+        def.registrationSchema = "";
+        def.requestSchema = "";
+
+        def.sources = new Types.BlueprintSource[](1);
+        Types.BlueprintBinary[] memory bins = new Types.BlueprintBinary[](1);
+        bins[0] = Types.BlueprintBinary({
+            arch: Types.BlueprintArchitecture.Amd64,
+            os: Types.BlueprintOperatingSystem.Linux,
+            name: "trading-validator",
+            sha256: bytes32(uint256(0xdeadbeef))
+        });
+
+        def.sources[0] = Types.BlueprintSource({
+            kind: Types.BlueprintSourceKind.Native,
+            container: Types.ImageRegistrySource("", "", ""),
+            wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
+            native: Types.NativeSource(
+                Types.BlueprintFetcherKind.None,
+                "file:///target/release/trading-validator",
+                "./target/release/trading-validator"
+            ),
+            testing: Types.TestingSource("trading-validator-bin", "trading-validator", "."),
+            binaries: bins
+        });
+
         def.supportedMemberships = new Types.MembershipModel[](1);
         def.supportedMemberships[0] = Types.MembershipModel.Fixed;
     }

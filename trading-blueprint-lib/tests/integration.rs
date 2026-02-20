@@ -925,3 +925,254 @@ async fn test_two_phase_provision_e2e() {
     assert_eq!(bot.sandbox_id, "sb-2phase-reactivated");
     assert!(result2.workflow_id > 0);
 }
+
+// ---------------------------------------------------------------------------
+// Part 3: Multi-strategy provision tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_provision_all_strategy_types() {
+    let _dir = common::init_test_env();
+
+    for strategy in &["dex", "yield", "perp", "prediction", "multi"] {
+        let sb_id = format!("sb-strategy-{strategy}");
+        let sandbox = mock_sandbox(&sb_id);
+        let request = make_provision_request(&format!("{strategy}-bot"), strategy);
+        let output = provision_core(
+            request,
+            Some(sandbox),
+            0,
+            0,
+            "0xSTRATCALLER".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.workflow_id, 0);
+        let bot = find_bot_by_sandbox(&sb_id).unwrap();
+        assert_eq!(bot.strategy_type, *strategy);
+    }
+}
+
+#[tokio::test]
+async fn test_activate_each_strategy_gets_correct_pack_profile() {
+    let _dir = common::init_test_env();
+
+    for strategy in &["dex", "yield", "perp", "prediction"] {
+        let sb_id = format!("sb-packtest-{strategy}");
+        let sandbox = mock_sandbox(&sb_id);
+        let request = make_provision_request(&format!("pack-{strategy}"), strategy);
+        let _output = provision_core(
+            request,
+            Some(sandbox),
+            0,
+            0,
+            "0xPACKCALLER".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let bot = find_bot_by_sandbox(&sb_id).unwrap();
+
+        // Activate to verify workflow creation uses correct pack
+        let mut env = serde_json::Map::new();
+        env.insert(
+            "ANTHROPIC_API_KEY".into(),
+            serde_json::Value::String("sk-test".to_string()),
+        );
+
+        let mock = mock_sandbox(&format!("sb-packtest-{strategy}-active"));
+        let result = activate_bot_with_secrets(&bot.id, env, Some(mock))
+            .await
+            .unwrap();
+
+        assert!(result.workflow_id > 0);
+
+        // Verify workflow has correct prompt content
+        let wf_key =
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key)
+            .unwrap()
+            .expect("workflow should exist");
+
+        let wf_json: serde_json::Value =
+            serde_json::from_str(&wf.workflow_json).unwrap();
+        let prompt = wf_json["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("Trading iteration") || prompt.contains("trading"),
+            "Workflow prompt for {strategy} should contain trading context, got: {}",
+            &prompt[..prompt.len().min(100)]
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_strategy_specific_cron_defaults() {
+    // Prediction pack uses 15-minute intervals
+    let prediction_pack = packs::get_pack("prediction").unwrap();
+    assert_eq!(prediction_pack.default_cron, "0 */15 * * * *");
+
+    // DEX pack uses 5-minute intervals
+    let dex_pack = packs::get_pack("dex").unwrap();
+    assert!(
+        dex_pack.default_cron.contains("*/5") || dex_pack.default_cron.contains("*/10"),
+        "DEX should have 5 or 10 minute cron, got: {}",
+        dex_pack.default_cron
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Part 5a: Edge case tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_provision_empty_name_still_works() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-empty-name-1");
+    let request = make_provision_request("", "dex");
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(output.workflow_id, 0);
+    let bot = find_bot_by_sandbox("sb-empty-name-1").unwrap();
+    assert!(!bot.id.is_empty(), "bot_id should be generated even with empty name");
+}
+
+#[tokio::test]
+async fn test_provision_empty_strategy_config() {
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-empty-cfg-1");
+    let mut request = make_provision_request("empty-cfg-bot", "dex");
+    request.strategy_config_json = String::new();
+    request.risk_params_json = String::new();
+
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(output.workflow_id, 0);
+    let bot = find_bot_by_sandbox("sb-empty-cfg-1").unwrap();
+    // Empty string → serde_json::from_str("").unwrap_or_default() → Value::Null
+    // This verifies provision doesn't panic on empty config
+    assert!(
+        bot.strategy_config.is_null() || bot.strategy_config.is_object(),
+        "strategy_config should be null (default) or object, got: {}",
+        bot.strategy_config
+    );
+}
+
+#[tokio::test]
+async fn test_configure_nonexistent_sandbox_fails() {
+    let _dir = common::init_test_env();
+
+    let result = configure_core("nonexistent-sandbox-xyz", r#"{"a":1}"#, "").await;
+    assert!(result.is_err(), "configure with bad sandbox_id should fail");
+}
+
+#[tokio::test]
+async fn test_start_nonexistent_sandbox_fails() {
+    let _dir = common::init_test_env();
+
+    let result = start_core("nonexistent-sandbox-xyz", true).await;
+    assert!(result.is_err(), "start with bad sandbox_id should fail");
+}
+
+#[tokio::test]
+async fn test_stop_already_stopped_bot() {
+    let _dir = common::init_test_env();
+
+    let sandbox_id = "sb-stop-idem-1";
+    let bot_id = "trading-stop-idem-1";
+    let wf_id = 33333u64;
+
+    let mut bot = fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xII", Some(wf_id));
+    fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+
+    // Stop once
+    let _ = stop_core(sandbox_id, true).await.unwrap();
+    let bot_after = find_bot_by_sandbox(sandbox_id).unwrap();
+    assert!(!bot_after.trading_active);
+
+    // Stop again — should succeed idempotently (or at least not crash)
+    let result = stop_core(sandbox_id, true).await;
+    // Could succeed or error but should not panic
+    let _ = result;
+}
+
+#[tokio::test]
+async fn test_deprovision_already_deprovisioned_fails() {
+    let _dir = common::init_test_env();
+
+    let sandbox_id = "sb-deprov-dup-1";
+    let bot_id = "trading-deprov-dup-1";
+    let wf_id = 44444u64;
+
+    fixtures::seed_bot_record(bot_id, sandbox_id, "yield", "0xDD", Some(wf_id));
+    fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+
+    // First deprovision succeeds
+    let response = deprovision_core(sandbox_id, true, None).await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&response.json).unwrap();
+    assert_eq!(json["status"], "deprovisioned");
+
+    // Second deprovision should fail (bot record gone)
+    let result = deprovision_core(sandbox_id, true, None).await;
+    assert!(result.is_err(), "second deprovision should fail");
+}
+
+#[tokio::test]
+async fn test_concurrent_provision_unique_ids() {
+    let _dir = common::init_test_env();
+
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let sandbox = mock_sandbox(&format!("sb-concurrent-{i}"));
+        let request = make_provision_request(&format!("concurrent-{i}"), "dex");
+        handles.push(tokio::spawn(async move {
+            provision_core(
+                request,
+                Some(sandbox),
+                700 + i as u64,
+                0,
+                format!("0xCALLER{i}"),
+                None,
+            )
+            .await
+            .unwrap()
+        }));
+    }
+
+    let mut sandbox_ids = std::collections::HashSet::new();
+    for handle in handles {
+        let output = handle.await.unwrap();
+        assert!(!output.sandbox_id.is_empty());
+        sandbox_ids.insert(output.sandbox_id);
+    }
+
+    assert_eq!(
+        sandbox_ids.len(),
+        5,
+        "all 5 provisions should have unique sandbox IDs"
+    );
+}

@@ -9934,6 +9934,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "hyper 1.8.1",
+ "once_cell",
  "sandbox-runtime",
  "serde",
  "serde_json",
@@ -10032,7 +10033,10 @@ name = "trading-instance-blueprint-lib"
 version = "0.1.0"
 dependencies = [
  "ai-agent-sandbox-blueprint-lib",
+ "alloy",
+ "anyhow",
  "axum",
+ "blueprint-anvil-testing-utils",
  "blueprint-sdk",
  "chrono",
  "http-body-util",
@@ -10045,6 +10049,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "tracing-subscriber 0.3.22",
  "trading-blueprint-lib",
  "uuid 1.21.0",
 ]
