@@ -264,7 +264,7 @@ export default function ProvisionPage() {
     [discoveredOperators, selectedOperators],
   );
   const ttlBlocks = useMemo(() => BigInt((30 * 86400) / 12), []); // ~30 days at 12s/block
-  const quotesEnabled = selectedOperators.size > 0 && serviceMode === 'new' && !isInstance;
+  const quotesEnabled = selectedOperators.size > 0 && serviceMode === 'new';
   const {
     quotes,
     isLoading: isQuoting,
@@ -879,12 +879,8 @@ export default function ProvisionPage() {
 
   const handleDeployNewService = async () => {
     if (!(await ensureCorrectChain()) || !userAddress) return;
-    if (!isInstance && quotes.length === 0) {
+    if (quotes.length === 0) {
       toast.error('No quotes available — select operators first');
-      return;
-    }
-    if (isInstance && selectedOperators.size === 0) {
-      toast.error('Select at least one operator');
       return;
     }
 
@@ -964,73 +960,42 @@ export default function ProvisionPage() {
       ],
     );
 
-    if (isInstance) {
-      // Instance mode: use requestService (subscription pricing, no quotes needed)
-      const operatorAddrs = Array.from(selectedOperators) as Address[];
-      writeNewService(
-        {
-          address: addresses.tangle,
-          abi: tangleServicesAbi,
-          functionName: 'requestService',
-          args: [
-            BigInt(blueprintId),
-            operatorAddrs,
-            config,
-            [userAddress],
-            ttlBlocks,
-            zeroAddress,    // paymentToken (native)
-            0n,             // paymentAmount (free for local dev / subscription)
-          ],
-        },
-        {
-          onSuccess(hash) {
-            setNewServiceTxHash(hash);
-            setNewServiceDeploying(true);
-          },
-          onError(err) {
-            toast.error(`New service failed: ${err.message.slice(0, 120)}`);
-            setNewServiceDeploying(false);
-          },
-        },
-      );
-    } else {
-      // Fleet mode: use createServiceFromQuotes (per-operator pricing)
-      const quoteTuples = quotes.map((q) => ({
-        details: {
-          blueprintId: q.details.blueprintId,
-          ttlBlocks: q.details.ttlBlocks,
-          totalCost: q.details.totalCost,
-          timestamp: q.details.timestamp,
-          expiry: q.details.expiry,
-          securityCommitments: q.details.securityCommitments.map((sc) => ({
-            asset: { kind: sc.asset.kind, token: sc.asset.token },
-            exposureBps: sc.exposureBps,
-          })),
-        },
-        signature: q.signature,
-        operator: q.operator,
-      }));
+    // Build signed quote tuples for createServiceFromQuotes
+    const quoteTuples = quotes.map((q) => ({
+      details: {
+        blueprintId: q.details.blueprintId,
+        ttlBlocks: q.details.ttlBlocks,
+        totalCost: q.details.totalCost,
+        timestamp: q.details.timestamp,
+        expiry: q.details.expiry,
+        securityCommitments: q.details.securityCommitments.map((sc) => ({
+          asset: { kind: sc.asset.kind, token: sc.asset.token },
+          exposureBps: sc.exposureBps,
+        })),
+      },
+      signature: q.signature,
+      operator: q.operator,
+    }));
 
-      writeNewService(
-        {
-          address: addresses.tangle,
-          abi: tangleServicesAbi,
-          functionName: 'createServiceFromQuotes',
-          args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
-          value: totalCost,
+    writeNewService(
+      {
+        address: addresses.tangle,
+        abi: tangleServicesAbi,
+        functionName: 'createServiceFromQuotes',
+        args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
+        value: totalCost,
+      },
+      {
+        onSuccess(hash) {
+          setNewServiceTxHash(hash);
+          setNewServiceDeploying(true);
         },
-        {
-          onSuccess(hash) {
-            setNewServiceTxHash(hash);
-            setNewServiceDeploying(true);
-          },
-          onError(err) {
-            toast.error(`New service failed: ${err.message.slice(0, 120)}`);
-            setNewServiceDeploying(false);
-          },
+        onError(err) {
+          toast.error(`New service failed: ${err.message.slice(0, 120)}`);
+          setNewServiceDeploying(false);
         },
-      );
-    }
+      },
+    );
   };
 
   // ── Step navigation ────────────────────────────────────────────────────
@@ -1534,7 +1499,23 @@ export default function ProvisionPage() {
                     </Button>
                   )}
 
-                  {selectedOperators.size > 0 && (
+                  {selectedOperators.size > 0 && quotes.length === 0 && !isQuoting && (
+                    <Button
+                      variant="outline"
+                      onClick={() => { setShowInfra(true); refetchQuotes(); }}
+                      className="w-full"
+                    >
+                      Get Operator Quotes
+                    </Button>
+                  )}
+
+                  {isQuoting && (
+                    <div className="text-center text-sm text-arena-elements-textTertiary animate-pulse py-2">
+                      Fetching operator quotes...
+                    </div>
+                  )}
+
+                  {quotes.length > 0 && (
                     <Button
                       onClick={handleDeployNewService}
                       className="w-full"
@@ -1549,7 +1530,7 @@ export default function ProvisionPage() {
                             ? 'Waiting for Service Activation...'
                             : instanceProvisioning
                               ? 'Provisioning Instance Bot...'
-                              : 'Create Instance Service'}
+                              : `Create Instance Service (${formatCost(totalCost)})`}
                     </Button>
                   )}
 
@@ -2229,8 +2210,8 @@ export default function ProvisionPage() {
                   </div>
                 </div>
 
-                {/* Quotes (fleet mode only — instance uses subscription pricing) */}
-                {selectedOperators.size > 0 && !isInstance && (
+                {/* Quotes */}
+                {selectedOperators.size > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-data text-arena-elements-textSecondary">Operator Quotes</span>
