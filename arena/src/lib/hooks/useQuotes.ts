@@ -189,7 +189,7 @@ export function useQuotes(
   blueprintId: bigint,
   ttlBlocks: bigint,
   enabled: boolean,
-  pricingModel: PricingModelHint = PricingModelHint.PAY_ONCE,
+  pricingModel: PricingModelHint,
 ): UseQuotesResult {
   const [quotes, setQuotes] = useState<OperatorQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);

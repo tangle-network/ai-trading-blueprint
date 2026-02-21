@@ -1,45 +1,11 @@
 # Local devnet pricing configuration
 #
-# Two pricing modes (selected by PricingModelHint in the gRPC request):
-#
-# 1. PAY_ONCE (default): resource-based pricing
-#    Formula: total = sum(benchmark_count * rate * ttl_blocks * block_time)
-#    block_time = 6 seconds, 30 days ≈ 216,000 blocks → 1,296,000 seconds
-#
-# 2. SUBSCRIPTION: flat rate per billing interval
-#    subscription_rate is returned as totalCost (10^9 scale on-chain = 1 USD)
-#    subscription_interval = billing period in seconds (86400 = daily)
-#    event_rate = optional per-job-event charge
-#
-# The pricing engine branches on the request's pricing_model field.
-# Subscription mode skips benchmarks entirely.
+# Subscription pricing: flat rate per billing interval.
+# The pricing engine returns subscription_rate as totalCost when
+# the request's pricing_model = SUBSCRIPTION (1).
 
 [default]
 pricing_model = "subscription"
 subscription_rate = 0.001
 subscription_interval = 86400
 event_rate = 0.0001
-
-resources = [
-  # CPU: ~$15/month at 2 detected cores
-  # 2 * 0.0000058 * 1,296,000 ≈ $15
-  { kind = "CPU", count = 1, price_per_unit_rate = 0.0000058 },
-
-  # Memory: ~$13/month at 2000 MB detected
-  # 2000 * 0.000000005 * 1,296,000 ≈ $13
-  { kind = "MemoryMB", count = 1024, price_per_unit_rate = 0.000000005 },
-
-  # Storage: zeroed — benchmark detects hundreds of GB, blows up cost
-  { kind = "StorageMB", count = 1024, price_per_unit_rate = 0.0 },
-
-  # Network: zeroed for local dev
-  { kind = "NetworkEgressMB", count = 1024, price_per_unit_rate = 0.0 },
-  { kind = "NetworkIngressMB", count = 1024, price_per_unit_rate = 0.0 },
-
-  # GPU: zeroed — not relevant for trading bots
-  { kind = "GPU", count = 1, price_per_unit_rate = 0.0 },
-
-  { kind = "Request", count = 1000, price_per_unit_rate = 0.0 },
-  { kind = "Invocation", count = 1000, price_per_unit_rate = 0.0 },
-  { kind = "ExecutionTimeMS", count = 1000, price_per_unit_rate = 0.0 }
-]

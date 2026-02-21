@@ -351,9 +351,9 @@ if [[ -x "$CARGO_TANGLE" ]]; then
     --keystore-path "$SCRIPTS_DIR/data/operator2/keystore" 2>/dev/null || true
   echo "  Keys imported via cargo-tangle"
 else
-  echo "  WARNING: cargo-tangle not found at $CARGO_TANGLE"
-  echo "  Build it: cd ../blueprint && cargo build -p cargo-tangle --release"
-  echo "  Then re-run this script to import operator keys"
+  echo "ERROR: cargo-tangle not found at $CARGO_TANGLE"
+  echo "Build it: cd ../blueprint && cargo build -p cargo-tangle --release"
+  exit 1
 fi
 
 # ── [8/9] Write env file ─────────────────────────────────────────
