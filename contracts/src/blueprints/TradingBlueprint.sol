@@ -72,6 +72,10 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice Configurable price per job (in wei).  Zero = free.
     mapping(uint8 => uint256) public jobPrice;
 
+    /// @notice When true, vault is created in onServiceInitialized (instance/TEE mode).
+    /// When false, vault is created per-bot in onJobResult(PROVISION) (fleet mode).
+    bool public instanceMode;
+
     /// @notice Dynamic provision pricing — one-time setup fee (wei)
     uint256 public provisionBasePrice;
     /// @notice Per-day rate (wei)
@@ -146,6 +150,12 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice Set the VaultFactory address.  Called once after deployment.
     function setVaultFactory(address _factory) external onlyFromTangle {
         vaultFactory = _factory;
+    }
+
+    /// @notice Enable instance mode: vault created at service init, not per-bot.
+    /// @dev Set to true for instance/TEE BSMs after deployment.
+    function setInstanceMode(bool _mode) external onlyFromTangle {
+        instanceMode = _mode;
     }
 
     /// @notice Set the price for a specific job (governance only).
@@ -230,9 +240,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     }
 
     /// @notice Called when the service is activated (all operators approved).
-    /// @dev Stores config and operators for per-bot vault creation in onJobResult.
-    ///      Vaults are NOT created here — they are created per-bot when JOB_PROVISION
-    ///      results arrive via _handleProvisionResult.
+    /// @dev Stores config and operators for per-bot vault creation.
+    ///      Fleet mode: Vaults created per-bot in onJobResult(PROVISION).
+    ///      Instance mode: Vault created here immediately (one vault per service).
     function onServiceInitialized(
         uint64,
         uint64 requestId,
@@ -249,6 +259,83 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         instanceProvisioned[serviceId] = true;
 
         delete _pendingRequests[requestId];
+
+        // Instance mode: create vault immediately at service initialization
+        if (instanceMode) {
+            _createInstanceVault(serviceId, req, operators);
+        }
+    }
+
+    /// @notice Creates a singleton vault for instance mode (one vault per service).
+    /// @dev Called from onServiceInitialized when instanceMode=true. Uses callId=0
+    ///      since there is exactly one bot per service. Mirrors _handleProvisionResult
+    ///      logic but uses service-level config directly.
+    function _createInstanceVault(
+        uint64 serviceId,
+        ServiceRequestConfig memory cfg,
+        address[] calldata operators
+    ) internal {
+        if (vaultFactory == address(0)) return;
+
+        address assetToken = cfg.assetToken;
+        if (assetToken == address(0)) {
+            emit BotVaultSkipped(serviceId, 0, "no asset token at service init");
+            return;
+        }
+
+        // Resolve signers: explicit from request > service operators
+        address[] memory signers;
+        uint256 requiredSigs;
+        if (cfg.signers.length > 0) {
+            signers = cfg.signers;
+            requiredSigs = cfg.requiredSignatures > 0 ? cfg.requiredSignatures : 1;
+        } else {
+            signers = new address[](operators.length);
+            for (uint256 i = 0; i < operators.length; i++) {
+                signers[i] = operators[i];
+            }
+            requiredSigs = signers.length > 0 ? 1 : 0;
+        }
+
+        if (signers.length == 0 || requiredSigs == 0) {
+            emit BotVaultSkipped(serviceId, 0, "no signers at service init");
+            return;
+        }
+
+        // callId=0 for instance mode (singleton bot)
+        bytes32 salt = keccak256(abi.encodePacked(serviceId, uint64(0)));
+        string memory name_ = bytes(cfg.name).length > 0 ? cfg.name : "Instance Vault";
+        string memory symbol_ = bytes(cfg.symbol).length > 0 ? cfg.symbol : "iVAULT";
+
+        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
+            serviceId,
+            assetToken,
+            address(this),  // admin = this BSM
+            address(0),     // no initial operator — granted below
+            signers,
+            requiredSigs,
+            name_,
+            symbol_,
+            salt
+        );
+
+        // Store in both instance-level and per-bot (callId=0) mappings
+        instanceVault[serviceId] = vault;
+        instanceShare[serviceId] = shareToken;
+        botVaults[serviceId][0] = vault;
+        botShares[serviceId][0] = shareToken;
+
+        // Grant OPERATOR_ROLE to all service operators
+        for (uint256 i = 0; i < operators.length; i++) {
+            IAccessControl(vault).grantRole(VAULT_OPERATOR_ROLE, operators[i]);
+        }
+
+        // Grant CREATOR_ROLE to the service requester
+        if (cfg.requester != address(0)) {
+            IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, cfg.requester);
+        }
+
+        emit BotVaultDeployed(serviceId, 0, vault, shareToken);
     }
 
     /// @notice Called when an operator joins the service.

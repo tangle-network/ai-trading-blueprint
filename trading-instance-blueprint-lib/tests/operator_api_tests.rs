@@ -465,3 +465,118 @@ async fn test_metrics_history_empty() {
 
     let _ = clear_instance_bot_id();
 }
+
+// ---------------------------------------------------------------------------
+// Secrets injection success-path tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_configure_secrets_correct_submitter_reaches_activation() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, _sandbox_id) = seed_singleton("dex");
+
+    let body = serde_json::json!({
+        "env_json": { "ANTHROPIC_API_KEY": "sk-test-key-123" },
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/secrets")
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status().as_u16();
+    // Auth passed (not 401/403/404). The activation will fail at sandbox layer (500)
+    // because there's no real Docker container, but that confirms we reached the
+    // activation code path.
+    assert_ne!(status, 401, "Should pass auth");
+    assert_ne!(status, 403, "Should pass submitter check");
+    assert_ne!(status, 404, "Bot should be found");
+    assert_eq!(status, 500, "Expected 500 from sandbox/activation layer (no Docker container)");
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    // The error should mention activation/sandbox, not auth
+    assert!(
+        err.contains("Bot") || err.contains("sandbox") || err.contains("secrets") || err.contains("inject") || err.contains("activate"),
+        "Error should be from activation layer, got: {err}"
+    );
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_wipe_secrets_requires_existing_secrets() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, _sandbox_id) = seed_singleton("dex");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/bot/secrets")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status().as_u16();
+    assert_ne!(status, 401, "Should pass auth");
+    assert_ne!(status, 403, "Should pass submitter check");
+    // Wipe fails because bot has no secrets configured (correct behavior)
+    assert_eq!(status, 500, "Expected 500 — no secrets to wipe");
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(
+        err.contains("no secrets") || err.contains("has no") || err.contains("Bot") || err.contains("Sandbox") || err.contains("not found"),
+        "Error should be from sandbox/secrets layer, got: {err}"
+    );
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_configure_secrets_not_provisioned() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    // No singleton seeded — instance has no bot
+
+    let body = serde_json::json!({
+        "env_json": { "ANTHROPIC_API_KEY": "sk-test" },
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/secrets")
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+
+    let _ = clear_instance_bot_id();
+}

@@ -2,9 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { ConnectKitProvider, getDefaultConfig } from 'connectkit';
 import { type ReactNode, useState } from 'react';
+import type { Chain } from 'viem';
 import { tangleLocal, tangleTestnet, tangleMainnet, mainnet, rpcUrl } from '~/lib/contracts/chains';
 
-const chains = [tangleLocal, tangleTestnet, tangleMainnet, mainnet] as const;
+const chains: readonly [Chain, ...Chain[]] = [tangleLocal, tangleTestnet, tangleMainnet, mainnet];
 
 const transports = {
   [tangleLocal.id]: http(rpcUrl),

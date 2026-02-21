@@ -152,6 +152,7 @@ interface ServiceInfo {
   status: number; // 0=Pending, 1=Active, 2=Terminated
   isActive: boolean;
   isPermitted: boolean;
+  blueprintMismatch: boolean;
 }
 
 interface DiscoveredService {
@@ -231,6 +232,10 @@ export default function ProvisionPage() {
   const [newServiceTxHash, setNewServiceTxHash] = useState<`0x${string}` | undefined>();
   const [newServiceDeploying, setNewServiceDeploying] = useState(false);
 
+  // Instance auto-provision state
+  const [instanceProvisioning, setInstanceProvisioning] = useState(false);
+  const [instanceProvisionError, setInstanceProvisionError] = useState<string | null>(null);
+
   // Configure — agent settings
   const [name, setName] = useState('');
   const [strategyType, setStrategyType] = useState('dex');
@@ -299,6 +304,16 @@ export default function ProvisionPage() {
     setCustomCron('');
   }
 
+  // Determine if the current blueprint is an instance (non-fleet) variant
+  const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
+
+  // Auto-set service mode to 'new' for instance blueprints
+  useEffect(() => {
+    if (isInstance) {
+      setServiceMode('new');
+    }
+  }, [isInstance]);
+
   // Reset new service deploying state when switching modes
   useEffect(() => {
     if (serviceMode !== 'new') {
@@ -348,6 +363,129 @@ export default function ProvisionPage() {
       });
   }, [newServiceTxHash, newServiceDeploying]);
 
+  // Auto-provision instance bot via operator API after service activation
+  const autoProvisionInstance = useCallback(async (activatedServiceId: string) => {
+    setInstanceProvisioning(true);
+    setInstanceProvisionError(null);
+
+    // Retry with backoff — operator binary may not be ready yet
+    const maxRetries = 5;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        let authToken = operatorAuth.token;
+        if (!authToken) {
+          authToken = await operatorAuth.authenticate();
+          if (!authToken) throw new Error('Wallet authentication failed');
+        }
+
+        // Resolve validator service IDs
+        const resolvedValidatorIds: number[] = validatorMode === 'custom' && customValidatorIds.trim()
+          ? customValidatorIds.split(',').flatMap(s => {
+              const n = parseInt(s.trim(), 10);
+              return !isNaN(n) && n > 0 ? [n] : [];
+            })
+          : (() => {
+              const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+              const n = parseInt(defaultId, 10);
+              return !isNaN(n) && n > 0 ? [n] : [];
+            })();
+
+        const provisionBody = {
+          name: name || `Instance Bot (service ${activatedServiceId})`,
+          strategy_type: strategyType,
+          strategy_config_json: JSON.stringify(
+            (() => {
+              const cfg: Record<string, unknown> = {};
+              if (customExpertKnowledge) cfg.expert_knowledge_override = customExpertKnowledge;
+              if (customInstructions) cfg.custom_instructions = customInstructions;
+              return cfg;
+            })(),
+          ),
+          trading_loop_cron: effectiveCron,
+          validator_service_ids: resolvedValidatorIds,
+        };
+
+        const res = await fetch(`${OPERATOR_API_URL}/api/bot/provision`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify(provisionBody),
+        });
+
+        // Auth retry
+        if (res.status === 401) {
+          operatorAuth.clearCachedToken();
+          const fresh = await operatorAuth.authenticate();
+          if (!fresh) throw new Error('Re-authentication failed');
+          const retry = await fetch(`${OPERATOR_API_URL}/api/bot/provision`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${fresh}`,
+            },
+            body: JSON.stringify(provisionBody),
+          });
+          if (!retry.ok) throw new Error(await retry.text());
+          const result = await retry.json();
+          handleInstanceProvisionSuccess(activatedServiceId, result);
+          return;
+        }
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+
+        const result = await res.json();
+        handleInstanceProvisionSuccess(activatedServiceId, result);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        if (attempt < maxRetries - 1) {
+          // Backoff: 2s, 4s, 8s, 16s
+          await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
+          continue;
+        }
+        setInstanceProvisionError(msg);
+        toast.error(`Instance provision failed: ${msg.slice(0, 150)}`);
+      }
+    }
+    setInstanceProvisioning(false);
+  }, [name, strategyType, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorAuth]);
+
+  const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
+    setInstanceProvisioning(false);
+    setServiceId(activatedServiceId);
+
+    // Create a tracked provision entry so the secrets step can find it
+    addProvision({
+      id: `instance-${activatedServiceId}`,
+      owner: userAddress!,
+      name: name || 'Instance Agent',
+      strategyType,
+      operators: [],
+      blueprintId,
+      blueprintType: selectedBlueprint?.id,
+      serviceId: Number(activatedServiceId),
+      jobIndex: 0,
+      phase: 'awaiting_secrets',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      chainId: targetChain.id,
+      sandboxId: result.sandbox_id,
+      callId: 0,
+    });
+
+    // Point txHash-like reference at the instance provision entry
+    // so latestDeployment resolves to it
+    resetTx();
+
+    toast.success(`Instance provisioned! Configure API keys to start trading.`);
+    setStep('secrets');
+  }, [userAddress, name, strategyType, blueprintId, selectedBlueprint, targetChain.id, resetTx]);
+
   // Watch for ServiceActivated when deploying new service
   useEffect(() => {
     if (!newServiceDeploying) return;
@@ -362,21 +500,32 @@ export default function ProvisionPage() {
           if (bid == null || sid == null) continue;
           if (Number(bid) === Number(blueprintId)) {
             const activatedId = Number(sid).toString();
-            setServiceId(activatedId);
-            setServiceMode('existing');
             setNewServiceDeploying(false);
             setShowInfra(false);
-            toast.success(`Service #${activatedId} is live! Ready to provision agents.`);
-            // Refresh discovery so the new service appears in the dropdown
-            discoverServices();
+
+            if (isInstance) {
+              // Instance blueprint: auto-provision via operator API
+              toast.success(`Service #${activatedId} active! Provisioning instance bot...`);
+              autoProvisionInstance(activatedId);
+            } else {
+              // Fleet blueprint: switch to existing service mode
+              setServiceId(activatedId);
+              setServiceMode('existing');
+              toast.success(`Service #${activatedId} is live! Ready to provision agents.`);
+              discoverServices();
+            }
           }
         }
       },
     });
     return unwatch;
-  }, [newServiceDeploying, blueprintId]);
+  }, [newServiceDeploying, blueprintId, isInstance, autoProvisionInstance]);
 
   // ── Service validation ─────────────────────────────────────────────────
+
+  // Use ref for blueprintId to avoid cycle: validateService → setBlueprintId → validateService
+  const blueprintIdRef = useRef(blueprintId);
+  blueprintIdRef.current = blueprintId;
 
   const validateService = useCallback(async () => {
     setServiceLoading(true);
@@ -432,14 +581,8 @@ export default function ProvisionPage() {
         });
       }
 
-      if (Number(svc.blueprintId) !== Number(blueprintId)) {
-        const onChainBid = String(svc.blueprintId);
-        toast.info(
-          `Service ${serviceId} belongs to blueprint ${onChainBid} (expected ${blueprintId}). Switched to blueprint ${onChainBid}.`,
-          { duration: 6000 },
-        );
-        setBlueprintId(onChainBid);
-      }
+      const currentBid = blueprintIdRef.current;
+      const blueprintMismatch = Number(svc.blueprintId) !== Number(currentBid);
 
       setServiceInfo({
         blueprintId: Number(svc.blueprintId),
@@ -451,6 +594,7 @@ export default function ProvisionPage() {
         status: svc.status,
         isActive,
         isPermitted,
+        blueprintMismatch,
       });
     } catch (err) {
       setServiceError(
@@ -459,14 +603,24 @@ export default function ProvisionPage() {
     } finally {
       setServiceLoading(false);
     }
-  }, [serviceId, blueprintId, userAddress]);
+  }, [serviceId, userAddress]);
 
-  // Auto-validate service on mount and when service ID / blueprint changes
+  // Auto-validate service on mount and when service ID changes
   useEffect(() => {
     if (serviceMode === 'existing') {
       validateService();
     }
   }, [serviceId, serviceMode, validateService]);
+
+  // Update mismatch flag when blueprint changes (without re-fetching service)
+  useEffect(() => {
+    if (serviceInfo) {
+      const mismatch = serviceInfo.blueprintId !== Number(blueprintId);
+      if (serviceInfo.blueprintMismatch !== mismatch) {
+        setServiceInfo((prev) => prev ? { ...prev, blueprintMismatch: mismatch } : prev);
+      }
+    }
+  }, [blueprintId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Service discovery — find services the user can deploy to ───────────
 
@@ -730,29 +884,78 @@ export default function ProvisionPage() {
       return;
     }
 
-    // Encode a minimal config for the service (tuple-wrapped for alloy compat)
+    // Resolve validator service IDs for instance mode (needed for vault signers)
+    let instanceValidatorIds: bigint[] = [];
+    let instanceVaultSigners: Address[] = [];
+    if (isInstance) {
+      instanceValidatorIds = validatorMode === 'custom' && customValidatorIds.trim()
+        ? customValidatorIds.split(',').flatMap(s => {
+            const n = BigInt(s.trim() || '0');
+            return n > 0n ? [n] : [];
+          })
+        : (() => {
+            const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+            const n = BigInt(defaultId);
+            return n > 0n ? [n] : [];
+          })();
+
+      // Resolve validator operators as vault signers
+      if (instanceValidatorIds.length > 0) {
+        try {
+          const opResults = await Promise.all(
+            instanceValidatorIds.map(vid =>
+              publicClient.readContract({
+                address: addresses.tangle,
+                abi: tangleServicesAbi,
+                functionName: 'getServiceOperators',
+                args: [vid],
+              }),
+            ),
+          );
+          const seen = new Set<string>();
+          for (const ops of opResults) {
+            for (const op of ops as Address[]) {
+              const lower = op.toLowerCase();
+              if (!seen.has(lower)) {
+                seen.add(lower);
+                instanceVaultSigners.push(op);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[provision] Failed to resolve validator operators for instance vault:', err);
+        }
+      }
+    }
+
+    // Encode config for the service (tuple-wrapped for alloy compat)
+    // Instance mode fills bot fields so onServiceInitialized can create the vault.
+    const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
     const config = encodeAbiParameters(
       parseAbiParameters(
         '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[])',
       ),
       [
         [
-          '',
-          '',
-          '{}',
-          '{}',
-          zeroAddress,
+          isInstance ? (name || 'Instance Bot') : '',
+          isInstance ? strategyType : '',
+          isInstance ? JSON.stringify({
+            ...(customExpertKnowledge ? { expert_knowledge_override: customExpertKnowledge } : {}),
+            ...(customInstructions ? { custom_instructions: customInstructions } : {}),
+          }) : '{}',
+          '{}',                          // risk_params
+          zeroAddress,                   // factory_address
           (import.meta.env.VITE_USDC_ADDRESS ??
             '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
-          [],   // signers: empty = use service operators
-          0n,   // requiredSigs: 0 = auto (1-of-n operators)
+          isInstance ? instanceVaultSigners : [],   // signers for vault
+          isInstance && instanceVaultSigners.length > 0 ? 1n : 0n,  // requiredSigs
           BigInt(targetChain.id),
-          '',
-          '',
-          2n,
-          2048n,
-          30n,
-          [],
+          '',                            // rpc_url
+          isInstance ? effectiveCron : '',
+          bp.defaults.cpuCores,
+          bp.defaults.memoryMb,
+          bp.defaults.maxLifetimeDays,
+          isInstance ? instanceValidatorIds : [],
         ],
       ],
     );
@@ -826,7 +1029,11 @@ export default function ProvisionPage() {
     if (idx > 0) setStep(STEP_ORDER[idx - 1]);
   };
 
-  const latestDeployment = myProvisions.find((p) => p.txHash === txHash);
+  // For fleet blueprints, match by txHash. For instance blueprints, also check instance provision entries.
+  const latestDeployment = myProvisions.find((p) =>
+    p.txHash === txHash ||
+    (isInstance && p.id.startsWith('instance-') && p.phase !== 'failed'),
+  );
 
   // Auto-advance to secrets step when provisioning completes with awaiting_secrets
   useEffect(() => {
@@ -875,7 +1082,10 @@ export default function ProvisionPage() {
     let pollFailures = 0;
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
+        const progressUrl = isInstance
+          ? `${OPERATOR_API_URL}/api/bot/activation-progress`
+          : `${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`;
+        const res = await fetch(progressUrl);
         if (res.ok) {
           const data = await res.json();
           setActivationPhase(data.phase ?? null);
@@ -909,11 +1119,16 @@ export default function ProvisionPage() {
         if (!authToken) throw new Error('Wallet authentication failed');
       }
 
+      // Instance blueprints use singleton /api/bot/secrets, fleet uses /api/bots/:botId/secrets
+      const secretsUrl = isInstance
+        ? `${OPERATOR_API_URL}/api/bot/secrets`
+        : `${OPERATOR_API_URL}/api/bots/${botId}/secrets`;
+
       const postSecrets = async (tok: string) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
         try {
-          return await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
+          return await fetch(secretsUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1092,28 +1307,45 @@ export default function ProvisionPage() {
               className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg border border-arena-elements-borderColor/60 hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 transition-colors group"
             >
               <div className="flex items-center gap-3">
-                {serviceInfo && (
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${serviceInfo.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
-                  />
-                )}
-                {serviceLoading && (
-                  <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400 animate-pulse" />
-                )}
-                <span className="text-xs font-data text-arena-elements-textSecondary">
-                  Service {serviceId}
-                  {serviceInfo && serviceInfo.isActive && ` (Active, ${serviceInfo.operators.length} operators)`}
-                  {serviceInfo && !serviceInfo.isActive && ' (Inactive)'}
-                  {serviceError && ' (Error)'}
-                  {serviceLoading && ' (Checking...)'}
-                  {discoveryLoading && ' (Discovering...)'}
-                </span>
-                {serviceInfo && !serviceInfo.isPermitted && userAddress && (
-                  <span className="text-[11px] text-amber-600 dark:text-amber-400">Not permitted</span>
+                {isInstance ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-violet-400" />
+                    <span className="text-xs font-data text-arena-elements-textSecondary">
+                      {selectedBlueprint?.name ?? 'Instance'} — New service will be created
+                      {selectedOperators.size > 0 && ` (${selectedOperators.size} operators)`}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {serviceInfo && (
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${serviceInfo.isActive ? 'bg-arena-elements-icon-success' : 'bg-crimson-400'}`}
+                      />
+                    )}
+                    {serviceLoading && (
+                      <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400 animate-pulse" />
+                    )}
+                    <span className="text-xs font-data text-arena-elements-textSecondary">
+                      Service {serviceId}
+                      {serviceInfo && serviceInfo.isActive && ` (Active, ${serviceInfo.operators.length} operators)`}
+                      {serviceInfo && !serviceInfo.isActive && ' (Inactive)'}
+                      {serviceError && ' (Error)'}
+                      {serviceLoading && ' (Checking...)'}
+                      {discoveryLoading && ' (Discovering...)'}
+                    </span>
+                    {serviceInfo && !serviceInfo.isPermitted && userAddress && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400">Not permitted</span>
+                    )}
+                    {serviceInfo?.blueprintMismatch && (
+                      <span className="text-[11px] text-crimson-600 dark:text-crimson-400">
+                        Wrong blueprint (service uses #{serviceInfo.blueprintId})
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
               <span className="text-xs font-data text-arena-elements-textTertiary group-hover:text-violet-600 dark:group-hover:text-violet-400 transition-colors">
-                Change
+                {isInstance ? 'Configure' : 'Change'}
               </span>
             </button>
 
@@ -1225,7 +1457,94 @@ export default function ProvisionPage() {
         {/* ── Step 4: Provision Agent ──────────────────────────────── */}
         {step === 'deploy' && (
           <>
-            {!txHash && (
+            {/* Instance blueprint: create service → auto-provision */}
+            {isInstance && !latestDeployment && (
+              <Card>
+                <CardContent className="pt-5 pb-5 space-y-4">
+                  <div>
+                    <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                      Create Instance Service
+                    </span>
+                    <p className="text-xs text-arena-elements-textTertiary mt-1">
+                      This creates a dedicated service for your trading bot. The vault is created on-chain
+                      and the sidecar is provisioned automatically.
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
+                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
+                      <span className="text-arena-elements-textTertiary">Blueprint</span>
+                      <span className="text-arena-elements-textPrimary">{selectedBlueprint?.name ?? 'Instance'}</span>
+                      <span className="text-arena-elements-textTertiary">Agent</span>
+                      <span className="text-arena-elements-textPrimary">{name}</span>
+                      <span className="text-arena-elements-textTertiary">Strategy</span>
+                      <span className="text-arena-elements-textPrimary">{selectedPack.name}</span>
+                      <span className="text-arena-elements-textTertiary">Frequency</span>
+                      <span className="text-arena-elements-textPrimary">
+                        Every {cronToHuman(effectiveCron)}
+                      </span>
+                      <span className="text-arena-elements-textTertiary">Operators</span>
+                      <span className="text-arena-elements-textPrimary">
+                        {selectedOperators.size > 0 ? `${selectedOperators.size} selected` : 'None — select in Infrastructure Settings'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {selectedOperators.size === 0 && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowInfra(true)}
+                      className="w-full"
+                    >
+                      Select Operators
+                    </Button>
+                  )}
+
+                  {selectedOperators.size > 0 && quotes.length === 0 && !isQuoting && (
+                    <Button
+                      variant="outline"
+                      onClick={() => { setShowInfra(true); refetchQuotes(); }}
+                      className="w-full"
+                    >
+                      Get Operator Quotes
+                    </Button>
+                  )}
+
+                  {isQuoting && (
+                    <div className="text-center text-sm text-arena-elements-textTertiary animate-pulse py-2">
+                      Fetching operator quotes...
+                    </div>
+                  )}
+
+                  {quotes.length > 0 && (
+                    <Button
+                      onClick={handleDeployNewService}
+                      className="w-full"
+                      size="lg"
+                      disabled={!isConnected || isNewServicePending || newServiceDeploying || instanceProvisioning}
+                    >
+                      {!isConnected
+                        ? 'Connect Wallet'
+                        : isNewServicePending
+                          ? 'Confirm in Wallet...'
+                          : newServiceDeploying
+                            ? 'Waiting for Service Activation...'
+                            : instanceProvisioning
+                              ? 'Provisioning Instance Bot...'
+                              : `Create Instance Service (${formatCost(totalCost)})`}
+                    </Button>
+                  )}
+
+                  {instanceProvisionError && (
+                    <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
+                      {instanceProvisionError}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Fleet blueprint: standard submitJob flow */}
+            {!isInstance && !txHash && (
               <Card>
                 <CardContent className="pt-5 pb-5 space-y-4">
                   <div>
@@ -1259,17 +1578,19 @@ export default function ProvisionPage() {
                     onClick={handleSubmit}
                     className="w-full"
                     size="lg"
-                    disabled={!isConnected || isPending || !serviceInfo?.isActive || !serviceInfo?.isPermitted}
+                    disabled={!isConnected || isPending || !serviceInfo?.isActive || !serviceInfo?.isPermitted || serviceInfo?.blueprintMismatch}
                   >
                     {!isConnected
                       ? 'Connect Wallet'
-                      : !serviceInfo?.isActive
-                        ? 'Service Not Active'
-                        : !serviceInfo?.isPermitted
-                          ? 'Not Permitted on Service'
-                          : isPending
-                            ? 'Confirm in Wallet...'
-                            : 'Provision Agent'}
+                      : serviceInfo?.blueprintMismatch
+                        ? `Wrong Blueprint (service uses #${serviceInfo.blueprintId})`
+                        : !serviceInfo?.isActive
+                          ? 'Service Not Active'
+                          : !serviceInfo?.isPermitted
+                            ? 'Not Permitted on Service'
+                            : isPending
+                              ? 'Confirm in Wallet...'
+                              : 'Provision Agent'}
                   </Button>
                 </CardContent>
               </Card>
@@ -1779,45 +2100,52 @@ export default function ProvisionPage() {
           </DialogHeader>
 
           <div className="space-y-5 py-2">
-            {/* Service mode toggle */}
+            {/* Service mode toggle — instance blueprints always create new */}
             <div className="space-y-2">
               <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
                 Service
               </span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setServiceMode('existing')}
-                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
-                    serviceMode === 'existing'
-                      ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
-                      : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                  }`}
-                >
-                  <div className={`text-sm font-display font-semibold ${serviceMode === 'existing' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
-                    Use Existing
-                  </div>
-                  <div className="text-xs text-arena-elements-textTertiary mt-0.5">
-                    Join a running service
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setServiceMode('new')}
-                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
-                    serviceMode === 'new'
-                      ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
-                      : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
-                  }`}
-                >
-                  <div className={`text-sm font-display font-semibold ${serviceMode === 'new' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
-                    Create New
-                  </div>
-                  <div className="text-xs text-arena-elements-textTertiary mt-0.5">
-                    Deploy new infrastructure
-                  </div>
-                </button>
-              </div>
+              {isInstance && (
+                <div className="p-3 rounded-lg bg-violet-500/5 border border-violet-500/30 text-sm text-arena-elements-textSecondary">
+                  Instance blueprints create a dedicated service per bot. Each service runs exactly one trading agent.
+                </div>
+              )}
+              {!isInstance && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setServiceMode('existing')}
+                    className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
+                      serviceMode === 'existing'
+                        ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                        : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                    }`}
+                  >
+                    <div className={`text-sm font-display font-semibold ${serviceMode === 'existing' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
+                      Use Existing
+                    </div>
+                    <div className="text-xs text-arena-elements-textTertiary mt-0.5">
+                      Join a running service
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setServiceMode('new')}
+                    className={`flex-1 rounded-lg border px-4 py-3 text-left transition-all ${
+                      serviceMode === 'new'
+                        ? 'border-violet-500/50 bg-violet-500/5 ring-1 ring-violet-500/20'
+                        : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/40 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                    }`}
+                  >
+                    <div className={`text-sm font-display font-semibold ${serviceMode === 'new' ? 'text-violet-700 dark:text-violet-400' : 'text-arena-elements-textPrimary'}`}>
+                      Create New
+                    </div>
+                    <div className="text-xs text-arena-elements-textTertiary mt-0.5">
+                      Deploy new infrastructure
+                    </div>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Existing service config */}

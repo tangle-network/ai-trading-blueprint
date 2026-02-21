@@ -7,7 +7,7 @@ import {
 } from '@tangle/agent-ui';
 import { Button } from '@tangle/blueprint-ui/components';
 import { AuthBanner } from '~/components/bot-detail/AuthBanner';
-import { useWagmiSidecarAuth } from '@tangle/blueprint-ui';
+import { useWagmiSidecarAuth } from '~/lib/hooks/useWagmiSidecarAuth';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
 
 interface ChatTabProps {

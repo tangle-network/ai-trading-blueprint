@@ -5,7 +5,7 @@ use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
-use crate::require_instance_bot;
+use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
 
 // ── Response types ──────────────────────────────────────────────────────
 
@@ -157,6 +157,25 @@ struct ConfigResponse {
     status: String,
 }
 
+// ── Instance provision types ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct InstanceProvisionRequest {
+    name: Option<String>,
+    strategy_type: Option<String>,
+    strategy_config_json: Option<String>,
+    risk_params_json: Option<String>,
+    trading_loop_cron: Option<String>,
+    validator_service_ids: Option<Vec<u64>>,
+}
+
+#[derive(Serialize)]
+struct InstanceProvisionResponse {
+    status: String,
+    bot_id: String,
+    sandbox_id: String,
+}
+
 // ── Metrics / trades response types ─────────────────────────────────────
 
 #[derive(Serialize)]
@@ -258,6 +277,8 @@ pub fn build_instance_router() -> Router {
         // Session auth
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
+        // Instance provisioning (off-chain — replaces on-chain JOB_PROVISION)
+        .route("/api/bot/provision", post(provision_bot))
         // Singleton bot management
         .route("/api/bot", get(get_bot))
         .route(
@@ -319,6 +340,91 @@ async fn create_session(
     let token = sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
         .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
     Ok((StatusCode::OK, Json(serde_json::to_value(token).unwrap())))
+}
+
+// ── Instance provision handler ────────────────────────────────────────────
+
+/// Provision the singleton bot via the operator API.
+///
+/// This replaces the on-chain `JOB_PROVISION` for instance/TEE blueprints.
+/// The vault is already created on-chain by `onServiceInitialized` when
+/// `instanceMode=true`. This endpoint creates the sidecar container and
+/// bot record.
+async fn provision_bot(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<InstanceProvisionRequest>,
+) -> Result<Json<InstanceProvisionResponse>, (StatusCode, String)> {
+    // Singleton check — reject if already provisioned
+    if get_instance_bot_id()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_some()
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "Instance already provisioned — deprovision first to replace".to_string(),
+        ));
+    }
+
+    let service_id = crate::context::operator_context()
+        .map(|c| c.service_id)
+        .unwrap_or(0);
+
+    // Build TradingProvisionRequest from API body with sensible defaults
+    use blueprint_sdk::alloy::primitives::{Address, U256};
+
+    let request = trading_blueprint_lib::TradingProvisionRequest {
+        name: body.name.unwrap_or_else(|| format!("Instance Bot (service {service_id})")),
+        strategy_type: body.strategy_type.unwrap_or_else(|| "dex".to_string()),
+        strategy_config_json: body.strategy_config_json.unwrap_or_else(|| "{}".to_string()),
+        risk_params_json: body.risk_params_json.unwrap_or_else(|| "{}".to_string()),
+        factory_address: Address::ZERO,
+        asset_token: Address::ZERO,
+        signers: vec![],
+        required_signatures: U256::ZERO,
+        chain_id: U256::from(1u64),
+        rpc_url: String::new(),
+        trading_loop_cron: body.trading_loop_cron.unwrap_or_else(|| "0 */5 * * * *".to_string()),
+        cpu_cores: 2,
+        memory_mb: 2048,
+        max_lifetime_days: 30,
+        validator_service_ids: body.validator_service_ids.unwrap_or_default(),
+    };
+
+    // Auto-detect TEE backend (None for plain instance, Some for TEE instance)
+    let tee_backend = sandbox_runtime::tee::try_tee_backend()
+        .map(|b| b.as_ref() as &dyn sandbox_runtime::tee::TeeBackend);
+
+    // Use call_id=0 for the singleton instance bot
+    let call_id = 0u64;
+
+    let output = trading_blueprint_lib::jobs::provision_core(
+        request,
+        None,
+        call_id,
+        service_id,
+        caller.clone(),
+        tee_backend,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Resolve bot_id and store singleton reference
+    let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&output.sandbox_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    set_instance_bot_id(bot.id.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    tracing::info!(
+        "Instance provisioned via operator API: bot={}, sandbox={}, caller={caller}",
+        bot.id,
+        output.sandbox_id,
+    );
+
+    Ok(Json(InstanceProvisionResponse {
+        status: "provisioned".to_string(),
+        bot_id: bot.id,
+        sandbox_id: output.sandbox_id,
+    }))
 }
 
 // ── Bot handlers (singleton — no bot_id path param) ─────────────────────

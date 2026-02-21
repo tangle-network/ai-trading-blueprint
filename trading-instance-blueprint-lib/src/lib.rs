@@ -101,7 +101,7 @@ pub fn clear_instance_bot_id() -> Result<(), String> {
 /// `TradingBotRecord` from `trading_blueprint_lib::state::bots()`.
 pub fn require_instance_bot() -> Result<TradingBotRecord, String> {
     let bot_id = get_instance_bot_id()?.ok_or_else(|| {
-        "Instance not provisioned — call JOB_PROVISION first".to_string()
+        "Instance not provisioned — call POST /api/bot/provision first".to_string()
     })?;
     trading_blueprint_lib::state::get_bot(&bot_id)?
         .ok_or_else(|| format!("Instance bot record {bot_id} not found in store"))

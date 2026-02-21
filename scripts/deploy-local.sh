@@ -65,6 +65,8 @@ parse_deploy() {
 }
 
 BSM=$(parse_deploy BSM)
+INSTANCE_BSM=$(parse_deploy INSTANCE_BSM)
+TEE_BSM=$(parse_deploy TEE_BSM)
 VALIDATOR_BSM=$(parse_deploy VALIDATOR_BSM)
 VAULT_FACTORY=$(parse_deploy VAULT_FACTORY)
 USDC=$(parse_deploy USDC)
@@ -81,7 +83,9 @@ if [[ -z "$BSM" || -z "$VAULT_FACTORY" || -z "$USDC" || -z "$BLUEPRINT_ID" ]]; t
   exit 1
 fi
 
-echo "  BSM:                    $BSM"
+echo "  Cloud BSM:              $BSM"
+echo "  Instance BSM:           $INSTANCE_BSM"
+echo "  TEE BSM:                $TEE_BSM"
 echo "  Validator BSM:          $VALIDATOR_BSM"
 echo "  VaultFactory:           $VAULT_FACTORY"
 echo "  USDC:                   $USDC"
@@ -115,20 +119,34 @@ if [[ -n "${EXTRA_ACCOUNTS:-}" ]]; then
   done
 fi
 
-# ── [2/10] Wire VaultFactory to BSM (Tangle impersonation) ───────
-echo "[2/10] Wiring VaultFactory to BSM..."
+# ── [2/10] Wire VaultFactory to all BSMs (Tangle impersonation) ──
+echo "[2/10] Wiring VaultFactory to all BSMs..."
 # setVaultFactory() has onlyFromTangle modifier — msg.sender must be Tangle contract
 cast rpc anvil_impersonateAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/null 2>&1
 # Fund Tangle contract for gas
 cast rpc anvil_setBalance "$TANGLE" "0x56BC75E2D63100000" --rpc-url "$RPC_URL" > /dev/null 2>&1
-cast send "$BSM" "setVaultFactory(address)" "$VAULT_FACTORY" \
-  --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
-  --rpc-url "$RPC_URL" > /dev/null 2>&1
+for BSM_ADDR in "$BSM" "$INSTANCE_BSM" "$TEE_BSM"; do
+  cast send "$BSM_ADDR" "setVaultFactory(address)" "$VAULT_FACTORY" \
+    --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+    --rpc-url "$RPC_URL" > /dev/null 2>&1
+done
+
+# Set instanceMode=true on Instance and TEE BSMs (vault created at service init, not provision job)
+for BSM_ADDR in "$INSTANCE_BSM" "$TEE_BSM"; do
+  cast send "$BSM_ADDR" "setInstanceMode(bool)" true \
+    --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+    --rpc-url "$RPC_URL" > /dev/null 2>&1
+done
+
 cast rpc anvil_stopImpersonatingAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/null 2>&1
 
 # Verify
 FACTORY_CHECK=$(cast call "$BSM" "vaultFactory()(address)" --rpc-url "$RPC_URL" 2>&1 | xargs)
-echo "  BSM.vaultFactory = $FACTORY_CHECK"
+echo "  Cloud BSM.vaultFactory = $FACTORY_CHECK"
+INSTANCE_MODE_CHECK=$(cast call "$INSTANCE_BSM" "instanceMode()(bool)" --rpc-url "$RPC_URL" 2>&1 | xargs)
+echo "  Instance BSM.instanceMode = $INSTANCE_MODE_CHECK"
+TEE_MODE_CHECK=$(cast call "$TEE_BSM" "instanceMode()(bool)" --rpc-url "$RPC_URL" 2>&1 | xargs)
+echo "  TEE BSM.instanceMode = $TEE_MODE_CHECK"
 
 # ── [3/9] Register operators for all blueprints ──────────────────
 echo "[3/9] Registering operators for all blueprint variants..."
@@ -267,18 +285,24 @@ echo "[5/9] Granting OPERATOR_ROLE to operators..."
 # We impersonate Tangle to trigger it on both BSMs.
 cast rpc anvil_impersonateAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/null 2>&1
 
-# Trading services (use trading BSM)
+# Trading services — each variant has its own BSM
+declare -A SVC_BSM_MAP
+SVC_BSM_MAP["$CLOUD_SERVICE_ID"]="$BSM"
+SVC_BSM_MAP["$INSTANCE_SERVICE_ID"]="$INSTANCE_BSM"
+SVC_BSM_MAP["$TEE_SERVICE_ID"]="$TEE_BSM"
+
 for SVC_ID in "$CLOUD_SERVICE_ID" "$INSTANCE_SERVICE_ID" "$TEE_SERVICE_ID"; do
-  cast send "$BSM" "onOperatorJoined(uint64,address,uint16)" \
+  SVC_BSM="${SVC_BSM_MAP[$SVC_ID]}"
+  cast send "$SVC_BSM" "onOperatorJoined(uint64,address,uint16)" \
     "$SVC_ID" "$OPERATOR1_ADDR" 10000 \
     --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
     --rpc-url "$RPC_URL" > /dev/null 2>&1
-  cast send "$BSM" "onOperatorJoined(uint64,address,uint16)" \
+  cast send "$SVC_BSM" "onOperatorJoined(uint64,address,uint16)" \
     "$SVC_ID" "$OPERATOR2_ADDR" 10000 \
     --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
     --rpc-url "$RPC_URL" > /dev/null 2>&1
 done
-echo "  Trading BSM: OPERATOR_ROLE granted on services $CLOUD_SERVICE_ID, $INSTANCE_SERVICE_ID, $TEE_SERVICE_ID"
+echo "  Trading BSMs: OPERATOR_ROLE granted on services $CLOUD_SERVICE_ID, $INSTANCE_SERVICE_ID, $TEE_SERVICE_ID"
 
 # Validator services (use validator BSM — no vaults, just operator tracking)
 for SVC_ID in "${VALIDATOR_SERVICE_IDS[@]}"; do
@@ -297,10 +321,13 @@ cast rpc anvil_stopImpersonatingAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/nu
 
 # ── [6/9] Verify service state ───────────────────────────────────
 echo "[6/9] Verifying service state..."
+SERVICE_IDS=("$CLOUD_SERVICE_ID" "$INSTANCE_SERVICE_ID" "$TEE_SERVICE_ID")
+SERVICE_BSMS=("$BSM" "$INSTANCE_BSM" "$TEE_BSM")
 for idx in 0 1 2; do
   SVC_ID="${SERVICE_IDS[$idx]}"
+  SVC_BSM="${SERVICE_BSMS[$idx]}"
   BP_NAME="${BLUEPRINT_NAMES[$idx]}"
-  PROVISIONED=$(cast call "$BSM" "instanceProvisioned(uint64)(bool)" "$SVC_ID" --rpc-url "$RPC_URL" 2>&1 | xargs)
+  PROVISIONED=$(cast call "$SVC_BSM" "instanceProvisioned(uint64)(bool)" "$SVC_ID" --rpc-url "$RPC_URL" 2>&1 | xargs)
   echo "  $BP_NAME (service $SVC_ID): provisioned=$PROVISIONED"
 done
 echo "  Validator ($N_VALIDATOR_SERVICES services: $VALIDATOR_SERVICE_IDS_CSV): active (no vaults needed)"
@@ -347,6 +374,8 @@ VITE_OPERATOR_API_URL=/operator-api
 VITE_DEFAULT_AI_PROVIDER=zai
 VITE_DEFAULT_AI_API_KEY=${ZAI_API_KEY:-}
 VITE_TRADING_BLUEPRINT=$BSM
+VITE_INSTANCE_TRADING_BLUEPRINT=$INSTANCE_BSM
+VITE_TEE_TRADING_BLUEPRINT=$TEE_BSM
 VITE_VALIDATOR_BLUEPRINT=$VALIDATOR_BSM
 VITE_BLUEPRINT_ID=$BLUEPRINT_ID
 VITE_INSTANCE_BLUEPRINT_ID=$INSTANCE_BLUEPRINT_ID
@@ -363,7 +392,9 @@ echo "╔═══════════════════════�
 echo "║              TRADING ARENA — LOCAL TESTNET (Blueprint)            ║"
 echo "╠════════════════════════════════════════════════════════════════════╣"
 echo "║ Tangle:         $TANGLE"
-echo "║ Trading BSM:    $BSM"
+echo "║ Cloud BSM:      $BSM"
+echo "║ Instance BSM:   $INSTANCE_BSM"
+echo "║ TEE BSM:        $TEE_BSM"
 echo "║ Validator BSM:  $VALIDATOR_BSM"
 echo "║ VaultFactory:   $VAULT_FACTORY"
 echo "║ USDC:           $USDC"

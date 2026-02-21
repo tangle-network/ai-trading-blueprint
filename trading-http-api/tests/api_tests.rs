@@ -1062,3 +1062,401 @@ async fn test_multi_bot_validate_bad_action() {
     let body_str = String::from_utf8_lossy(&body);
     assert!(body_str.contains("Unknown action"), "Expected 'Unknown action' error, got: {body_str}");
 }
+
+// ── Validator fan-out tests ─────────────────────────────────────────────────
+
+/// Create a multi-bot state with real validator endpoints (paper_trade=false).
+fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotTradingState> {
+    ensure_state_dir();
+    Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(move |token: &str| {
+            if token == "bot-token-abc" {
+                Some(BotContext {
+                    bot_id: "bot-validators".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001"
+                        .to_string(),
+                    paper_trade: false,
+                    chain_id: 31337,
+                    rpc_url: "http://localhost:8545".to_string(),
+                    validator_endpoints: validator_uris.clone(),
+                })
+            } else {
+                None
+            }
+        }),
+    })
+}
+
+fn validate_body() -> String {
+    serde_json::to_string(&serde_json::json!({
+        "strategy_id": "test-strat",
+        "action": "swap",
+        "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "amount_in": "1.5",
+        "min_amount_out": "3000",
+        "target_protocol": "uniswap_v3"
+    }))
+    .unwrap()
+}
+
+/// Two mock validators return scores 80 and 90 → average 85 >= threshold 50 → approved.
+#[tokio::test]
+async fn test_multi_bot_validate_with_mock_validators() {
+    let v1 = MockServer::start().await;
+    let v2 = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 80,
+            "signature": "0xsig_v1",
+            "reasoning": "Reasonable risk-reward ratio",
+            "validator": "0xValidator1"
+        })))
+        .mount(&v1)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 90,
+            "signature": "0xsig_v2",
+            "reasoning": "Strong market signal with low volatility",
+            "validator": "0xValidator2"
+        })))
+        .mount(&v2)
+        .await;
+
+    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["approved"], true);
+    assert_eq!(json["aggregate_score"], 85);
+    let responses = json["validator_responses"].as_array().unwrap();
+    assert_eq!(responses.len(), 2, "Expected 2 validator responses, got {}", responses.len());
+
+    // Both validators should be present (order may vary)
+    let validators: Vec<&str> = responses
+        .iter()
+        .map(|r| r["validator"].as_str().unwrap())
+        .collect();
+    assert!(validators.contains(&"0xValidator1"), "Missing 0xValidator1 in {validators:?}");
+    assert!(validators.contains(&"0xValidator2"), "Missing 0xValidator2 in {validators:?}");
+
+    // intent_hash should be present and non-empty
+    let intent_hash = json["intent_hash"].as_str().unwrap();
+    assert!(!intent_hash.is_empty(), "intent_hash should not be empty");
+}
+
+/// Two validators return low scores (20 and 30) → average 25 < threshold 50 → rejected.
+#[tokio::test]
+async fn test_multi_bot_validate_below_threshold() {
+    let v1 = MockServer::start().await;
+    let v2 = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 20,
+            "signature": "0xsig_low1",
+            "reasoning": "Extreme volatility detected",
+            "validator": "0xValidator1"
+        })))
+        .mount(&v1)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 30,
+            "signature": "0xsig_low2",
+            "reasoning": "Insufficient liquidity for this trade size",
+            "validator": "0xValidator2"
+        })))
+        .mount(&v2)
+        .await;
+
+    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["aggregate_score"], 25);
+    let responses = json["validator_responses"].as_array().unwrap();
+    assert_eq!(responses.len(), 2);
+}
+
+/// One validator returns 200 with score 90, other returns 500.
+/// ValidatorClient silently drops failures → 1 response, score 90 >= 50 → approved.
+#[tokio::test]
+async fn test_multi_bot_validate_partial_failure() {
+    let v_ok = MockServer::start().await;
+    let v_fail = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 90,
+            "signature": "0xsig_good",
+            "reasoning": "Trade parameters look solid",
+            "validator": "0xValidatorOK"
+        })))
+        .mount(&v_ok)
+        .await;
+
+    // Failing validator returns 500 — ValidatorClient's .ok() on json parse drops it
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+        .mount(&v_fail)
+        .await;
+
+    let state = multi_bot_state_with_validators(vec![v_ok.uri(), v_fail.uri()]);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["approved"], true);
+    assert_eq!(json["aggregate_score"], 90);
+    let responses = json["validator_responses"].as_array().unwrap();
+    assert_eq!(
+        responses.len(),
+        1,
+        "Only the successful validator should be in responses, got {}",
+        responses.len()
+    );
+    assert_eq!(responses[0]["validator"], "0xValidatorOK");
+}
+
+/// Both validators return 500 → ValidatorClient returns "No validators responded"
+/// → handler maps to BAD_GATEWAY (502).
+#[tokio::test]
+async fn test_multi_bot_validate_all_fail() {
+    let v1 = MockServer::start().await;
+    let v2 = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("down for maintenance"))
+        .mount(&v1)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+        .mount(&v2)
+        .await;
+
+    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 502);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(
+        body_str.contains("No validators responded"),
+        "Expected 'No validators responded' error, got: {body_str}"
+    );
+}
+
+// ── Portfolio P&L tracking tests ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_portfolio_state_with_positions() {
+    use rust_decimal::Decimal;
+    use trading_runtime::{Position, PositionType};
+
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+
+    // Pre-populate the portfolio with two positions before building the router.
+    {
+        let mut portfolio = state.portfolio.write().await;
+        portfolio.positions.push(Position {
+            token: "WETH".to_string(),
+            amount: Decimal::new(15, 1),       // 1.5
+            entry_price: Decimal::new(2400, 0), // 2400
+            current_price: Decimal::new(2500, 0), // 2500
+            unrealized_pnl: Decimal::new(150, 0), // +150
+            protocol: "uniswap_v3".to_string(),
+            position_type: PositionType::Spot,
+        });
+        portfolio.positions.push(Position {
+            token: "USDC".to_string(),
+            amount: Decimal::new(5000, 0),      // 5000
+            entry_price: Decimal::new(1, 0),    // 1.0
+            current_price: Decimal::new(1, 0),  // 1.0
+            unrealized_pnl: Decimal::new(0, 0), // 0
+            protocol: "aave_v3".to_string(),
+            position_type: PositionType::Lending,
+        });
+        // total_value_usd = 1.5*2500 + 5000*1 = 3750 + 5000 = 8750
+        portfolio.total_value_usd = Decimal::new(8750, 0);
+        portfolio.unrealized_pnl = Decimal::new(150, 0);
+        portfolio.realized_pnl = Decimal::new(320, 0);
+    }
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify positions
+    let positions = json["positions"].as_array().unwrap();
+    assert_eq!(positions.len(), 2, "Expected 2 positions, got {}", positions.len());
+
+    // Find WETH position
+    let weth = positions.iter().find(|p| p["token"] == "WETH").unwrap();
+    assert_eq!(weth["amount"], "1.5");
+    assert_eq!(weth["entry_price"], "2400");
+    assert_eq!(weth["current_price"], "2500");
+    assert_eq!(weth["unrealized_pnl"], "150");
+    assert_eq!(weth["protocol"], "uniswap_v3");
+    assert_eq!(weth["position_type"], "spot");
+
+    // Find USDC lending position
+    let usdc = positions.iter().find(|p| p["token"] == "USDC").unwrap();
+    assert_eq!(usdc["amount"], "5000");
+    assert_eq!(usdc["position_type"], "lending");
+
+    // Verify aggregate P&L
+    assert_eq!(json["total_value_usd"], "8750");
+    assert_eq!(json["unrealized_pnl"], "150");
+    assert_eq!(json["realized_pnl"], "320");
+}
+
+#[tokio::test]
+async fn test_portfolio_pnl_reflects_losses() {
+    use rust_decimal::Decimal;
+    use trading_runtime::{Position, PositionType};
+
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+
+    // Portfolio with a losing position
+    {
+        let mut portfolio = state.portfolio.write().await;
+        portfolio.positions.push(Position {
+            token: "WETH".to_string(),
+            amount: Decimal::new(2, 0),          // 2.0 ETH
+            entry_price: Decimal::new(3000, 0),  // bought at 3000
+            current_price: Decimal::new(2200, 0), // now at 2200
+            unrealized_pnl: Decimal::new(-1600, 0), // -1600 loss
+            protocol: "uniswap_v3".to_string(),
+            position_type: PositionType::Spot,
+        });
+        // total_value_usd = 2 * 2200 = 4400
+        portfolio.total_value_usd = Decimal::new(4400, 0);
+        portfolio.unrealized_pnl = Decimal::new(-1600, 0);
+        portfolio.realized_pnl = Decimal::new(0, 0);
+        portfolio.high_water_mark = Decimal::new(6000, 0);
+        portfolio.max_drawdown_pct = Decimal::new(2667, 2); // 26.67%
+    }
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["total_value_usd"], "4400");
+    assert_eq!(json["unrealized_pnl"], "-1600");
+    assert_eq!(json["realized_pnl"], "0");
+
+    let positions = json["positions"].as_array().unwrap();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["unrealized_pnl"], "-1600");
+    assert_eq!(positions[0]["current_price"], "2200");
+}

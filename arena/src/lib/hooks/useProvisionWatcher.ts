@@ -70,7 +70,7 @@ export function useProvisionWatcher() {
 
         publicClient
           .waitForTransactionReceipt({ hash: prov.txHash })
-          .then((receipt: { status: string; logs: Array<{ data: `0x${string}`; topics: [`0x${string}`, ...`0x${string}`[]] }> }) => {
+          .then((receipt) => {
             if (receipt.status !== 'success') {
               updateProvision(prov.id, { phase: 'failed', errorMessage: 'Transaction reverted' });
               return;

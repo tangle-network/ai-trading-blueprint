@@ -41,6 +41,7 @@ type VaultEntry = {
   operators: Address[];
   isActive: boolean;
   isProvisioned: boolean;
+  tvl: number;
 };
 
 /**
@@ -197,7 +198,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
         // One entry per vault
         vaultAddrs.forEach((addr, vi) => {
-          vaultEntries.push({ serviceId: id, vaultAddress: addr, vaultIndex: vi, operators, isActive, isProvisioned });
+          vaultEntries.push({ serviceId: id, vaultAddress: addr, vaultIndex: vi, operators, isActive, isProvisioned, tvl: 0 });
         });
       }
 
@@ -274,6 +275,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
             tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
           }
+          entry.tvl = tvlRaw;
 
           const botStatus: BotStatus = !entry.isProvisioned ? 'stopped'
             : !entry.isActive ? 'stopped'

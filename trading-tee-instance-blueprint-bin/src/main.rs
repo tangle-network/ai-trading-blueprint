@@ -113,6 +113,13 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 5. Reconcile sandbox state with Docker ───────────────────────────
     sandbox_runtime::reaper::reconcile_on_startup().await;
 
+    // ── 5b. Log instance provisioning state ─────────────────────────────
+    match trading_instance_blueprint_lib::get_instance_bot_id() {
+        Ok(Some(id)) => tracing::info!("TEE instance bot already provisioned: {id}"),
+        Ok(None) => tracing::info!("TEE instance not provisioned — waiting for operator API trigger (POST /api/bot/provision)"),
+        Err(e) => tracing::warn!("TEE instance state check failed: {e}"),
+    }
+
     // ── 6. Spawn reaper background task ──────────────────────────────────
     {
         let config = sandbox_runtime::runtime::SidecarRuntimeConfig::load();

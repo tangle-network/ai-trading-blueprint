@@ -64,7 +64,11 @@ contract RegisterBlueprint is Script {
         vaultFactory.acceptDependencyOwnership();
 
         // ── Deploy BSMs ───────────────────────────────────────────────
+        // Each variant needs its own BSM instance because onBlueprintCreated
+        // can only be called once per contract (sets Tangle address).
         TradingBlueprint bsm = new TradingBlueprint();
+        TradingBlueprint instanceBsm = new TradingBlueprint();
+        TradingBlueprint teeBsm = new TradingBlueprint();
         ValidatorBlueprint validatorBsm = new ValidatorBlueprint();
 
         // ── Fund Test Accounts ────────────────────────────────────────
@@ -95,7 +99,7 @@ contract RegisterBlueprint is Script {
 
         // 2. Instance (single-bot per service)
         uint64 instanceId = tangle.createBlueprint(_buildDefinition(
-            address(bsm),
+            address(instanceBsm),
             "AI Trading Instance",
             "Single dedicated bot per service: one agent, one strategy",
             "trading-instance-blueprint-bin",
@@ -104,7 +108,7 @@ contract RegisterBlueprint is Script {
 
         // 3. TEE Instance (hardware-isolated single-bot)
         uint64 teeId = tangle.createBlueprint(_buildDefinition(
-            address(bsm),
+            address(teeBsm),
             "AI Trading TEE Instance",
             "TEE-secured single bot: hardware-isolated execution",
             "trading-tee-instance-blueprint-bin",
@@ -120,6 +124,8 @@ contract RegisterBlueprint is Script {
 
         // ── Output Addresses (parsed by bash wrapper) ─────────────────
         console.log("DEPLOY_BSM=%s", vm.toString(address(bsm)));
+        console.log("DEPLOY_INSTANCE_BSM=%s", vm.toString(address(instanceBsm)));
+        console.log("DEPLOY_TEE_BSM=%s", vm.toString(address(teeBsm)));
         console.log("DEPLOY_VAULT_FACTORY=%s", vm.toString(address(vaultFactory)));
         console.log("DEPLOY_USDC=%s", vm.toString(address(usdc)));
         console.log("DEPLOY_WETH=%s", vm.toString(address(weth)));
