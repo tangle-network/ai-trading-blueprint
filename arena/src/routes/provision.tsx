@@ -19,6 +19,7 @@ import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
 import { publicClient, selectedChainIdStore, useOperators } from '@tangle/blueprint-ui';
 import { useQuotes } from '~/lib/hooks/useQuotes';
+import { PricingModelHint } from '~/lib/gen/pricing_pb';
 import { addTx } from '@tangle/blueprint-ui';
 import {
   provisionsForOwner,
@@ -271,7 +272,7 @@ export default function ProvisionPage() {
     errors: quoteErrors,
     totalCost,
     refetch: refetchQuotes,
-  } = useQuotes(selectedOps, blueprintIdBig, ttlBlocks, quotesEnabled);
+  } = useQuotes(selectedOps, blueprintIdBig, ttlBlocks, quotesEnabled, PricingModelHint.SUBSCRIPTION);
 
   // Second writeContract for new service (separate from job submission)
   const {

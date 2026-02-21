@@ -160,12 +160,12 @@ contract RegisterBlueprint is Script {
         // Config
         def.config = Types.BlueprintConfig({
             membership: Types.MembershipModel.Fixed,
-            pricing: Types.PricingModel.PayOnce,
+            pricing: Types.PricingModel.Subscription,
             minOperators: 1,
             maxOperators: 10,
-            subscriptionRate: 0,
-            subscriptionInterval: 0,
-            eventRate: 0
+            subscriptionRate: 1_000_000_000, // 1 USD per interval (10^9 scale)
+            subscriptionInterval: 86400,     // daily billing
+            eventRate: 100_000_000           // 0.1 USD per job event
         });
 
         // Metadata

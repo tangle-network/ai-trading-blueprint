@@ -1,15 +1,25 @@
 # Local devnet pricing configuration
-# Tuned for reasonable prices: ~$30/month for a trading bot service.
 #
-# Formula: total = sum(benchmark_count * rate * ttl_blocks * block_time)
-#   block_time = 6 seconds
-#   30 days ≈ 216,000 blocks → 1,296,000 seconds
+# Two pricing modes (selected by PricingModelHint in the gRPC request):
 #
-# Benchmark detects real machine resources, so rates must be tiny
-# to produce sane totals. Only CPU/Memory contribute meaningfully;
-# storage/network/GPU are zeroed out to avoid benchmark-driven blow-up.
+# 1. PAY_ONCE (default): resource-based pricing
+#    Formula: total = sum(benchmark_count * rate * ttl_blocks * block_time)
+#    block_time = 6 seconds, 30 days ≈ 216,000 blocks → 1,296,000 seconds
+#
+# 2. SUBSCRIPTION: flat rate per billing interval
+#    subscription_rate is returned as totalCost (10^9 scale on-chain = 1 USD)
+#    subscription_interval = billing period in seconds (86400 = daily)
+#    event_rate = optional per-job-event charge
+#
+# The pricing engine branches on the request's pricing_model field.
+# Subscription mode skips benchmarks entirely.
 
 [default]
+pricing_model = "subscription"
+subscription_rate = 0.001
+subscription_interval = 86400
+event_rate = 0.0001
+
 resources = [
   # CPU: ~$15/month at 2 detected cores
   # 2 * 0.0000058 * 1,296,000 ≈ $15

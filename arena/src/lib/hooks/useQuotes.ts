@@ -9,6 +9,7 @@ import {
   GetPriceRequestSchema,
   type GetPriceResponse,
   type QuoteDetails,
+  PricingModelHint,
 } from '~/lib/gen/pricing_pb';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -188,6 +189,7 @@ export function useQuotes(
   blueprintId: bigint,
   ttlBlocks: bigint,
   enabled: boolean,
+  pricingModel: PricingModelHint = PricingModelHint.PAY_ONCE,
 ): UseQuotesResult {
   const [quotes, setQuotes] = useState<OperatorQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -229,6 +231,7 @@ export function useQuotes(
             ttlBlocks,
             proofOfWork,
             challengeTimestamp: timestamp,
+            pricingModel,
             resourceRequirements: [
               { kind: 'CPU', count: 1n },
               { kind: 'MemoryMB', count: 1024n },
@@ -269,7 +272,7 @@ export function useQuotes(
 
     fetchQuotes();
     return () => { cancelled = true; };
-  }, [operators, blueprintId, ttlBlocks, enabled, fetchKey]);
+  }, [operators, blueprintId, ttlBlocks, enabled, pricingModel, fetchKey]);
 
   const totalCost = quotes.reduce((sum, q) => sum + q.totalCost, 0n);
 

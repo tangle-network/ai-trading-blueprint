@@ -30,9 +30,11 @@ USER_ACCOUNT_2="0xd04E36A1C370c6115e1C676838AcD0b430d740F3"
 TANGLE="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
 RESTAKING="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
 
-# Operator API ports (serves pricing, bot management, etc.)
-OPERATOR1_RPC="http://localhost:9200"
-OPERATOR2_RPC="http://localhost:9201"
+# Pricing engine gRPC ports (operators register these for RFQ quotes).
+# NOT the operator HTTP API (9200/9201) — the frontend's useQuotes hook
+# connects via gRPC-Web to these addresses.
+OPERATOR1_RPC="http://localhost:50051"
+OPERATOR2_RPC="http://localhost:50052"
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -406,8 +408,8 @@ echo "║ TEE:       blueprint=$TEE_BLUEPRINT_ID  service=$TEE_SERVICE_ID"
 echo "║ Validator: blueprint=$VALIDATOR_BLUEPRINT_ID  services=$VALIDATOR_SERVICE_IDS_CSV"
 echo "╠════════════════════════════════════════════════════════════════════╣"
 echo "║ User:      $USER_ACCOUNT"
-echo "║ Operator1: $OPERATOR1_ADDR → :9200"
-echo "║ Operator2: $OPERATOR2_ADDR → :9201"
+echo "║ Operator1: $OPERATOR1_ADDR → gRPC :50051, HTTP :9200"
+echo "║ Operator2: $OPERATOR2_ADDR → gRPC :50052, HTTP :9201"
 echo "╚════════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Next steps:"
