@@ -9,16 +9,15 @@ import {SignatureLib} from "tnt-core/libraries/SignatureLib.sol";
 contract DebugEip712Test is Test {
     function test_computeDigest() public view {
         // Domain separator — same as Tangle contract at 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-        bytes32 domainSep = SignatureLib.computeDomainSeparator(
-            "TangleQuote",
-            "1",
-            0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-        );
+        bytes32 domainSep =
+            SignatureLib.computeDomainSeparator("TangleQuote", "1", 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9);
         console.log("Domain separator:");
         console.logBytes32(domainSep);
 
         // QUOTE_TYPEHASH
-        bytes32 quoteTypeHash = keccak256("QuoteDetails(uint64 blueprintId,uint64 ttlBlocks,uint256 totalCost,uint64 timestamp,uint64 expiry,AssetSecurityCommitment[] securityCommitments)AssetSecurityCommitment(Asset asset,uint16 exposureBps)Asset(uint8 kind,address token)");
+        bytes32 quoteTypeHash = keccak256(
+            "QuoteDetails(uint64 blueprintId,uint64 ttlBlocks,uint256 totalCost,uint64 timestamp,uint64 expiry,AssetSecurityCommitment[] securityCommitments)AssetSecurityCommitment(Asset asset,uint16 exposureBps)Asset(uint8 kind,address token)"
+        );
         console.log("QUOTE_TYPEHASH:");
         console.logBytes32(quoteTypeHash);
 
@@ -39,8 +38,7 @@ contract DebugEip712Test is Test {
         // Add a security commitment
         quote.securityCommitments = new Types.AssetSecurityCommitment[](1);
         quote.securityCommitments[0] = Types.AssetSecurityCommitment({
-            asset: Types.Asset({kind: Types.AssetKind.ERC20, token: address(0)}),
-            exposureBps: 1000
+            asset: Types.Asset({kind: Types.AssetKind.ERC20, token: address(0)}), exposureBps: 1000
         });
 
         bytes32 quoteDigest = SignatureLib.computeQuoteDigest(domainSep, quote);

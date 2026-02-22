@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @title TradingBlueprintMultiOpTest
 /// @notice Tests for TradingBlueprint multi-operator model, vault auto-deploy,
-///         lifecycle hooks, intent dedup, and job pricing.
+///         lifecycle hooks, intent dedup, and protocol-native pricing helpers.
 ///         Tests the unified TradingBlueprint contract directly.
 contract TradingBlueprintMultiOpTest is Setup {
     TradingBlueprint public blueprint;
@@ -65,11 +65,11 @@ contract TradingBlueprintMultiOpTest is Setup {
         signers[2] = validator3;
 
         return abi.encode(
-            address(tokenA),  // assetToken
-            signers,          // signers
-            uint256(2),       // requiredSignatures (2-of-3)
-            "Test Vault",     // name
-            "tVLT"            // symbol
+            address(tokenA), // assetToken
+            signers, // signers
+            uint256(2), // requiredSignatures (2-of-3)
+            "Test Vault", // name
+            "tVLT" // symbol
         );
     }
 
@@ -95,21 +95,21 @@ contract TradingBlueprintMultiOpTest is Setup {
         signers[2] = validator3;
         uint64[] memory validatorIds = new uint64[](0);
         return abi.encode(
-            "Test Bot",         // name
-            "",                 // strategy_type
-            "",                 // strategy_config_json
-            "",                 // risk_params_json
-            address(0),         // factory_address
-            address(tokenA),    // asset_token
-            signers,            // signers
-            uint256(2),         // required_signatures
-            uint256(0),         // chain_id
-            "",                 // rpc_url
-            "",                 // trading_loop_cron
-            uint64(1),          // cpu_cores
-            uint64(1024),       // memory_mb
-            uint64(30),         // max_lifetime_days
-            validatorIds        // validator_service_ids
+            "Test Bot", // name
+            "", // strategy_type
+            "", // strategy_config_json
+            "", // risk_params_json
+            address(0), // factory_address
+            address(tokenA), // asset_token
+            signers, // signers
+            uint256(2), // required_signatures
+            uint256(0), // chain_id
+            "", // rpc_url
+            "", // trading_loop_cron
+            uint64(1), // cpu_cores
+            uint64(1024), // memory_mb
+            uint64(30), // max_lifetime_days
+            validatorIds // validator_service_ids
         );
     }
 
@@ -162,7 +162,7 @@ contract TradingBlueprintMultiOpTest is Setup {
 
         // Provision a bot for service 99 — should silently skip (empty service config,
         // and provision inputs also have zero asset_token → no vault created)
-        bytes memory inputs = _buildProvisionInputs(1, 1024, 30);
+        bytes memory inputs = _buildProvisionInputs();
         vm.prank(tangleCore);
         blueprint.onJobCall{value: 0}(99, JOB_PROVISION, 1, inputs);
         vm.prank(tangleCore);
@@ -390,194 +390,93 @@ contract TradingBlueprintMultiOpTest is Setup {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // JOB PRICING (flat)
+    // PRICING HELPERS (protocol-native)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_setJobPrice() public {
-        vm.prank(tangleCore);
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
-
-        assertEq(blueprint.jobPrice(JOB_PROVISION), 0.01 ether);
+    function test_getJobPriceMultiplier() public view {
+        assertEq(blueprint.getJobPriceMultiplier(JOB_PROVISION), 50);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_CONFIGURE), 2);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_START_TRADING), 1);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_STOP_TRADING), 1);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_STATUS), 0);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_DEPROVISION), 1);
+        assertEq(blueprint.getJobPriceMultiplier(JOB_EXTEND), 10);
+        // Unknown job returns 0
+        assertEq(blueprint.getJobPriceMultiplier(255), 0);
     }
 
-    function test_setJobPrice_emitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit TradingBlueprint.JobPriceUpdated(JOB_PROVISION, 0.01 ether);
+    function test_getDefaultJobRates() public view {
+        uint256 baseRate = 0.001 ether;
+        (uint8[] memory jobIndexes, uint256[] memory rates) = blueprint.getDefaultJobRates(baseRate);
 
-        vm.prank(tangleCore);
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
+        assertEq(jobIndexes.length, 7);
+        assertEq(rates.length, 7);
+
+        assertEq(jobIndexes[0], JOB_PROVISION);
+        assertEq(rates[0], baseRate * 50);
+
+        assertEq(jobIndexes[1], JOB_CONFIGURE);
+        assertEq(rates[1], baseRate * 2);
+
+        assertEq(jobIndexes[2], JOB_START_TRADING);
+        assertEq(rates[2], baseRate * 1);
+
+        assertEq(jobIndexes[3], JOB_STOP_TRADING);
+        assertEq(rates[3], baseRate * 1);
+
+        assertEq(jobIndexes[4], JOB_STATUS);
+        assertEq(rates[4], 0);
+
+        assertEq(jobIndexes[5], JOB_DEPROVISION);
+        assertEq(rates[5], baseRate * 1);
+
+        assertEq(jobIndexes[6], JOB_EXTEND);
+        assertEq(rates[6], baseRate * 10);
     }
 
-    function test_onJobCall_rejectsInsufficientPayment() public {
-        vm.prank(tangleCore);
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
-
-        vm.deal(tangleCore, 1 ether);
-        vm.prank(tangleCore);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TradingBlueprint.InsufficientPayment.selector,
-                JOB_PROVISION,
-                0.01 ether,
-                0.005 ether
-            )
-        );
-        blueprint.onJobCall{value: 0.005 ether}(serviceId, JOB_PROVISION, 1, "");
-    }
-
-    function test_onJobCall_acceptsSufficientPayment() public {
-        vm.prank(tangleCore);
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
-
-        vm.deal(tangleCore, 1 ether);
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: 0.01 ether}(serviceId, JOB_PROVISION, 1, "");
-    }
-
-    function test_onJobCall_acceptsOverpayment() public {
-        vm.prank(tangleCore);
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
-
-        vm.deal(tangleCore, 1 ether);
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: 0.05 ether}(serviceId, JOB_PROVISION, 1, "");
-    }
-
-    function test_onJobCall_freeJobsStillWork() public {
-        assertEq(blueprint.jobPrice(JOB_STATUS), 0);
-
+    function test_onJobCall_noPaymentRequired() public {
         _initService();
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: 0}(serviceId, JOB_STATUS, 2, "");
-    }
 
-    function test_setJobPrice_onlyFromTangle() public {
-        vm.expectRevert();
-        blueprint.setJobPrice(JOB_PROVISION, 0.01 ether);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // DYNAMIC PROVISION PRICING
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function _setDefaultPricing() internal {
-        vm.prank(tangleCore);
-        blueprint.setProvisionPricing(
-            0.01 ether,     // basePrice
-            0.001 ether,    // dailyRate
-            0.0005 ether,   // cpuDailyRate
-            0.0002 ether    // memGbDailyRate
-        );
-    }
-
-    function test_setProvisionPricing() public {
-        _setDefaultPricing();
-
-        assertEq(blueprint.provisionBasePrice(), 0.01 ether);
-        assertEq(blueprint.dailyRate(), 0.001 ether);
-        assertEq(blueprint.cpuDailyRate(), 0.0005 ether);
-        assertEq(blueprint.memGbDailyRate(), 0.0002 ether);
-    }
-
-    function test_setProvisionPricing_onlyFromTangle() public {
-        vm.expectRevert();
-        blueprint.setProvisionPricing(1, 2, 3, 4);
-    }
-
-    function test_estimateProvisionCost() public {
-        _setDefaultPricing();
-
-        // 30 days, 2 cores, 4096 MB (4 GB)
-        // basePrice + (30 * 0.001) + (30 * 2 * 0.0005) + (30 * 4096 * 0.0002 / 1024)
-        // = 0.01 + 0.03 + 0.03 + 0.024 = 0.094 ether
-        uint256 cost = blueprint.estimateProvisionCost(30, 2, 4096);
-        assertEq(cost, 0.094 ether);
-
-        // 0 days should default to 30
-        uint256 costDefault = blueprint.estimateProvisionCost(0, 2, 4096);
-        assertEq(costDefault, cost, "0 days should default to 30");
-
-        // 1 day, 1 core, 1024 MB (1 GB)
-        // basePrice + (1 * 0.001) + (1 * 1 * 0.0005) + (1 * 1024 * 0.0002 / 1024)
-        // = 0.01 + 0.001 + 0.0005 + 0.0002 = 0.0117 ether
-        uint256 costMin = blueprint.estimateProvisionCost(1, 1, 1024);
-        assertEq(costMin, 0.0117 ether);
-    }
-
-    function test_dynamicPricing_rejectsUnderpayment() public {
-        _initService();
-        _setDefaultPricing();
-
-        // 30 days, 2 cores, 4096 MB = 0.094 ether
-        uint256 required = blueprint.estimateProvisionCost(30, 2, 4096);
-
-        // Build a minimal provision-like ABI payload with the resource fields
-        bytes memory inputs = _buildProvisionInputs(2, 4096, 30);
-
-        vm.deal(tangleCore, 1 ether);
-        vm.prank(tangleCore);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TradingBlueprint.InsufficientPayment.selector,
-                JOB_PROVISION,
-                required,
-                required / 2
-            )
-        );
-        blueprint.onJobCall{value: required / 2}(serviceId, JOB_PROVISION, 1, inputs);
-    }
-
-    function test_dynamicPricing_acceptsCorrectPayment() public {
-        _initService();
-        _setDefaultPricing();
-
-        uint256 required = blueprint.estimateProvisionCost(30, 2, 4096);
-        bytes memory inputs = _buildProvisionInputs(2, 4096, 30);
-
-        vm.deal(tangleCore, 1 ether);
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: required}(serviceId, JOB_PROVISION, 1, inputs);
-    }
-
-    function test_dynamicPricing_zeroRates_freeProvision() public {
-        // When no pricing is set (all zeros), provision should be free — backward compatible
-        assertEq(blueprint.provisionBasePrice(), 0);
-        assertEq(blueprint.dailyRate(), 0);
-
-        uint256 cost = blueprint.estimateProvisionCost(365, 8, 32768);
-        assertEq(cost, 0, "Zero rates should mean free provisioning");
-
-        // Should succeed with no payment
+        // All jobs succeed with zero payment — pricing is protocol-level
         vm.prank(tangleCore);
         blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, "");
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_CONFIGURE, 2, "");
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_START_TRADING, 3, "");
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_STOP_TRADING, 4, "");
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_STATUS, 5, "");
+
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_DEPROVISION, 6, "");
     }
 
-    function test_extendJob_pricing() public {
+    function test_getDefaultJobRates_revertsOnOverflow() public {
+        uint256 maxBase = type(uint256).max / blueprint.PRICE_MULT_PROVISION();
+        // Max safe value works
+        blueprint.getDefaultJobRates(maxBase);
+
+        // One above max reverts with clear error
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.BaseRateTooLarge.selector, maxBase + 1, maxBase));
+        blueprint.getDefaultJobRates(maxBase + 1);
+    }
+
+    function test_unknownJob_requiresProvisioned() public {
+        // Jobs beyond JOB_EXTEND (e.g. job 15) also require instanceProvisioned
+        vm.prank(tangleCore);
+        vm.expectRevert("Not provisioned");
+        blueprint.onJobCall{value: 0}(serviceId, 15, 1, "");
+
+        // After provisioning, unknown jobs pass through
         _initService();
-
         vm.prank(tangleCore);
-        blueprint.setProvisionPricing(0.01 ether, 0.001 ether, 0, 0);
-
-        // JOB_EXTEND: 60 additional days at 0.001/day = 0.06 ether
-        bytes memory extendInputs = abi.encode("sandbox-123", uint64(60));
-
-        vm.deal(tangleCore, 1 ether);
-
-        // Underpayment should revert
-        vm.prank(tangleCore);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TradingBlueprint.InsufficientPayment.selector,
-                JOB_EXTEND,
-                0.06 ether,
-                0.01 ether
-            )
-        );
-        blueprint.onJobCall{value: 0.01 ether}(serviceId, JOB_EXTEND, 1, extendInputs);
-
-        // Correct payment should succeed
-        vm.prank(tangleCore);
-        blueprint.onJobCall{value: 0.06 ether}(serviceId, JOB_EXTEND, 2, extendInputs);
+        blueprint.onJobCall{value: 0}(serviceId, 15, 1, "");
     }
 
     function test_extendJob_zeroDays_reverts() public {
@@ -590,31 +489,26 @@ contract TradingBlueprintMultiOpTest is Setup {
         blueprint.onJobCall{value: 0}(serviceId, JOB_EXTEND, 1, extendInputs);
     }
 
-    /// @dev Build a minimal TradingProvisionRequest ABI payload for testing dynamic pricing.
-    function _buildProvisionInputs(
-        uint64 cpuCores,
-        uint64 memoryMb,
-        uint64 maxLifetimeDays
-    ) internal pure returns (bytes memory) {
-        // TradingProvisionRequest fields in order
+    /// @dev Build a minimal TradingProvisionRequest ABI payload (no asset token, no signers).
+    function _buildProvisionInputs() internal pure returns (bytes memory) {
         address[] memory signers = new address[](0);
         uint64[] memory validatorIds = new uint64[](0);
         return abi.encode(
-            "",                 // name
-            "",                 // strategy_type
-            "",                 // strategy_config_json
-            "",                 // risk_params_json
-            address(0),         // factory_address
-            address(0),         // asset_token
-            signers,            // signers
-            uint256(0),         // required_signatures
-            uint256(0),         // chain_id
-            "",                 // rpc_url
-            "",                 // trading_loop_cron
-            cpuCores,           // cpu_cores
-            memoryMb,           // memory_mb
-            maxLifetimeDays,    // max_lifetime_days
-            validatorIds        // validator_service_ids
+            "", // name
+            "", // strategy_type
+            "", // strategy_config_json
+            "", // risk_params_json
+            address(0), // factory_address
+            address(0), // asset_token
+            signers, // signers
+            uint256(0), // required_signatures
+            uint256(0), // chain_id
+            "", // rpc_url
+            "", // trading_loop_cron
+            uint64(1), // cpu_cores
+            uint64(1024), // memory_mb
+            uint64(30), // max_lifetime_days
+            validatorIds // validator_service_ids
         );
     }
 
@@ -625,21 +519,21 @@ contract TradingBlueprintMultiOpTest is Setup {
         address[] memory signers = new address[](0);
         uint64[] memory validatorIds = new uint64[](0);
         return abi.encode(
-            "Test Bot",         // name
-            "",                 // strategy_type
-            "",                 // strategy_config_json
-            "",                 // risk_params_json
-            address(0),         // factory_address
-            address(tokenA),    // asset_token
-            signers,            // signers (empty — fallback to operators)
-            uint256(0),         // required_signatures (0 — fallback to 1)
-            uint256(0),         // chain_id
-            "",                 // rpc_url
-            "",                 // trading_loop_cron
-            uint64(1),          // cpu_cores
-            uint64(1024),       // memory_mb
-            uint64(30),         // max_lifetime_days
-            validatorIds        // validator_service_ids
+            "Test Bot", // name
+            "", // strategy_type
+            "", // strategy_config_json
+            "", // risk_params_json
+            address(0), // factory_address
+            address(tokenA), // asset_token
+            signers, // signers (empty — fallback to operators)
+            uint256(0), // required_signatures (0 — fallback to 1)
+            uint256(0), // chain_id
+            "", // rpc_url
+            "", // trading_loop_cron
+            uint64(1), // cpu_cores
+            uint64(1024), // memory_mb
+            uint64(30), // max_lifetime_days
+            validatorIds // validator_service_ids
         );
     }
 
@@ -721,7 +615,7 @@ contract TradingBlueprintMultiOpTest is Setup {
         blueprint.onServiceInitialized(0, 0, svcId, address(0), new address[](0), 0);
 
         // Use _buildProvisionInputs which has address(0) as asset_token
-        bytes memory inputs = _buildProvisionInputs(1, 1024, 30);
+        bytes memory inputs = _buildProvisionInputs();
         vm.prank(tangleCore);
         blueprint.onJobCall{value: 0}(svcId, JOB_PROVISION, 1, inputs);
 
@@ -776,10 +670,10 @@ contract TradingBlueprintMultiOpTest is Setup {
         vaultFactory.createBotVault(
             serviceId,
             address(tokenA),
-            address(this),      // admin
-            address(0),         // operator
+            address(this), // admin
+            address(0), // operator
             emptySigners,
-            uint256(1),         // requiredSigs
+            uint256(1), // requiredSigs
             "Test Bot",
             "tBOT",
             bytes32("test-salt")
@@ -797,10 +691,10 @@ contract TradingBlueprintMultiOpTest is Setup {
         vaultFactory.createBotVault(
             serviceId,
             address(tokenA),
-            address(this),      // admin
-            address(0),         // operator
+            address(this), // admin
+            address(0), // operator
             signers,
-            uint256(3),         // requiredSigs > signers.length
+            uint256(3), // requiredSigs > signers.length
             "Test Bot",
             "tBOT",
             bytes32("test-salt")

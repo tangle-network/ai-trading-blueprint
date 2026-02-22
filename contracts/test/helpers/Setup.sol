@@ -184,13 +184,11 @@ abstract contract Setup is Test {
     // HELPER: EIP-712 signature for TradeValidator
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function _signValidation(
-        uint256 privateKey,
-        bytes32 intentHash,
-        address vault,
-        uint256 score,
-        uint256 deadline
-    ) internal view returns (bytes memory) {
+    function _signValidation(uint256 privateKey, bytes32 intentHash, address vault, uint256 score, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
         bytes32 digest = tradeValidator.computeDigest(intentHash, vault, score, deadline);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);

@@ -297,7 +297,7 @@ contract WindDownTest is Setup {
 
         // Try to call a target that would drain deposit asset
         vm.prank(user);
-        vm.expectRevert();  // MockUnwindTarget.drain transfers tokens OUT, balance decreases
+        vm.expectRevert(); // MockUnwindTarget.drain transfers tokens OUT, balance decreases
         vault.unwind(
             address(unwindTarget),
             abi.encodeWithSelector(MockUnwindTarget.drain.selector, address(vault), address(tokenA)),
@@ -334,11 +334,7 @@ contract WindDownTest is Setup {
 
         vm.prank(user);
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
-        vault.unwind(
-            address(unwindTarget),
-            abi.encodeWithSelector(MockUnwindTarget.alwaysFails.selector),
-            0
-        );
+        vault.unwind(address(unwindTarget), abi.encodeWithSelector(MockUnwindTarget.alwaysFails.selector), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -384,9 +380,7 @@ contract WindDownTest is Setup {
         // Call that succeeds but returns 0 tokens (position was already closed)
         vm.prank(user);
         vault.unwind(
-            address(unwindTarget),
-            abi.encodeWithSelector(MockUnwindTarget.closePosition.selector, address(vault), 0),
-            0
+            address(unwindTarget), abi.encodeWithSelector(MockUnwindTarget.closePosition.selector, address(vault), 0), 0
         );
 
         // Balance unchanged, no revert

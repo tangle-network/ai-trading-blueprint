@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
-import { encodeAbiParameters, parseAbiParameters, formatEther } from 'viem';
+import { useAccount, useWriteContract } from 'wagmi';
+import { encodeAbiParameters, parseAbiParameters } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
@@ -8,7 +8,7 @@ import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
 import { Badge, Button } from '@tangle/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
-import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
+import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 
 const JOB_EXTEND = 6;
@@ -275,14 +275,6 @@ function LifetimeCard({
   const remainingDays = Math.max(0, maxDays - elapsedDays);
   const progressPct = Math.min(100, (elapsedDays / maxDays) * 100);
 
-  const { data: extendCost } = useReadContract({
-    address: addresses.tradingBlueprint,
-    abi: tradingBlueprintAbi,
-    functionName: 'estimateExtendCost',
-    args: [BigInt(extendDays)],
-    query: { enabled: showExtend },
-  });
-
   const handleExtend = () => {
     if (!detail.sandbox_id || !bot.serviceId) return;
     const inputs = encodeAbiParameters(
@@ -294,7 +286,6 @@ function LifetimeCard({
       abi: tangleJobsAbi,
       functionName: 'submitJob',
       args: [BigInt(bot.serviceId), JOB_EXTEND, inputs],
-      value: extendCost ?? 0n,
     });
   };
 
@@ -351,11 +342,9 @@ function LifetimeCard({
                 className="w-20 px-2 py-1 rounded border border-arena-elements-borderColor bg-transparent text-sm font-data"
               />
             </div>
-            {extendCost != null && (
-              <p className="text-xs text-arena-elements-textTertiary">
-                Cost: {formatEther(extendCost)} ETH
-              </p>
-            )}
+            <p className="text-xs text-arena-elements-textTertiary">
+              Covered by service subscription
+            </p>
             <div className="flex gap-2">
               <Button size="sm" disabled={isExtending} onClick={handleExtend}>
                 {isExtending ? 'Extending...' : 'Submit Extension'}

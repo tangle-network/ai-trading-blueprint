@@ -141,17 +141,12 @@ contract ReentrancyTest is Setup {
     /// @dev Build ExecuteParams pointing at a specific target contract.
     ///      The swap call sends output tokens to the vault address, and uses tokenB as outputToken
     ///      so that policy checks pass before the external call is reached.
-    function _buildParams(
-        address target,
-        uint256 outputAmount,
-        bytes32 intentHash,
-        uint256 deadline
-    ) internal view returns (TradingVault.ExecuteParams memory) {
-        bytes memory data = abi.encodeWithSelector(
-            MockTarget.swap.selector,
-            address(vault),
-            outputAmount
-        );
+    function _buildParams(address target, uint256 outputAmount, bytes32 intentHash, uint256 deadline)
+        internal
+        view
+        returns (TradingVault.ExecuteParams memory)
+    {
+        bytes memory data = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount);
 
         return TradingVault.ExecuteParams({
             target: target,
@@ -192,9 +187,8 @@ contract ReentrancyTest is Setup {
 
         // Build the reentrant (inner) call params with a different intent hash
         bytes32 innerIntentHash = keccak256("inner reentrant trade");
-        TradingVault.ExecuteParams memory innerParams = _buildParams(
-            address(malicious), 100 ether, innerIntentHash, deadline
-        );
+        TradingVault.ExecuteParams memory innerParams =
+            _buildParams(address(malicious), 100 ether, innerIntentHash, deadline);
         (bytes[] memory innerSigs, uint256[] memory innerScores) = _createSigs(innerIntentHash, deadline);
 
         // Store inner payload in the malicious contract
@@ -202,9 +196,8 @@ contract ReentrancyTest is Setup {
 
         // Build the outer call params
         bytes32 outerIntentHash = keccak256("outer trade");
-        TradingVault.ExecuteParams memory outerParams = _buildParams(
-            address(malicious), 100 ether, outerIntentHash, deadline
-        );
+        TradingVault.ExecuteParams memory outerParams =
+            _buildParams(address(malicious), 100 ether, outerIntentHash, deadline);
         (bytes[] memory outerSigs, uint256[] memory outerScores) = _createSigs(outerIntentHash, deadline);
 
         // Record balances before
@@ -241,9 +234,7 @@ contract ReentrancyTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         bytes32 intentHash = keccak256("deposit reentrant trade");
 
-        TradingVault.ExecuteParams memory params = _buildParams(
-            address(malicious), 100 ether, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createSigs(intentHash, deadline);
 
         // Record balances before
@@ -279,9 +270,7 @@ contract ReentrancyTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         bytes32 intentHash = keccak256("withdraw reentrant trade");
 
-        TradingVault.ExecuteParams memory params = _buildParams(
-            address(malicious), 100 ether, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createSigs(intentHash, deadline);
 
         // Record balances before
@@ -297,15 +286,9 @@ contract ReentrancyTest is Setup {
 
         // Verify no tokens were withdrawn and shares unchanged
         assertEq(tokenA.balanceOf(address(vault)), vaultTokenABefore, "vault tokenA balance changed");
+        assertEq(shareToken.balanceOf(address(malicious)), maliciousSharesBefore, "malicious contract shares changed");
         assertEq(
-            shareToken.balanceOf(address(malicious)),
-            maliciousSharesBefore,
-            "malicious contract shares changed"
-        );
-        assertEq(
-            tokenA.balanceOf(address(malicious)),
-            maliciousTokenABefore,
-            "malicious contract tokenA balance changed"
+            tokenA.balanceOf(address(malicious)), maliciousTokenABefore, "malicious contract tokenA balance changed"
         );
         assertFalse(vault.executedIntents(intentHash), "intent incorrectly marked executed");
     }
@@ -345,9 +328,8 @@ contract ReentrancyTest is Setup {
 
         // Attempt the reentrancy (should fail with ExecutionFailed)
         bytes32 maliciousHash = keccak256("malicious trade");
-        TradingVault.ExecuteParams memory maliciousParams = _buildParams(
-            address(malicious), 100 ether, maliciousHash, deadline
-        );
+        TradingVault.ExecuteParams memory maliciousParams =
+            _buildParams(address(malicious), 100 ether, maliciousHash, deadline);
         (bytes[] memory mSigs, uint256[] memory mScores) = _createSigs(maliciousHash, deadline);
 
         vm.prank(operator);
@@ -357,9 +339,8 @@ contract ReentrancyTest is Setup {
         // Now do a legitimate trade — should succeed
         uint256 outputAmount = 500 ether;
         bytes32 legitHash = keccak256("legit trade");
-        TradingVault.ExecuteParams memory legitParams = _buildParams(
-            address(legitimateTarget), outputAmount, legitHash, deadline
-        );
+        TradingVault.ExecuteParams memory legitParams =
+            _buildParams(address(legitimateTarget), outputAmount, legitHash, deadline);
         (bytes[] memory lSigs, uint256[] memory lScores) = _createSigs(legitHash, deadline);
 
         vm.prank(operator);

@@ -62,11 +62,9 @@ contract VaultFactory is Ownable2Step {
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    constructor(
-        PolicyEngine _policyEngine,
-        TradeValidator _tradeValidator,
-        FeeDistributor _feeDistributor
-    ) Ownable(msg.sender) {
+    constructor(PolicyEngine _policyEngine, TradeValidator _tradeValidator, FeeDistributor _feeDistributor)
+        Ownable(msg.sender)
+    {
         if (address(_policyEngine) == address(0)) revert ZeroAddress();
         if (address(_tradeValidator) == address(0)) revert ZeroAddress();
         if (address(_feeDistributor) == address(0)) revert ZeroAddress();
@@ -276,38 +274,24 @@ contract VaultFactory is Ownable2Step {
     }
 
     /// @notice Precompute vault address for given parameters
-    function getVaultAddress(
-        uint64 serviceId,
-        address assetToken,
-        address admin,
-        address operator,
-        bytes32 salt
-    ) external view returns (address) {
+    function getVaultAddress(uint64 serviceId, address assetToken, address admin, address operator, bytes32 salt)
+        external
+        view
+        returns (address)
+    {
         address shareAddr = serviceShares[serviceId];
         if (shareAddr == address(0)) {
             // Predict the share address first
             bytes32 shareSalt = keccak256(abi.encodePacked(serviceId, "share", salt));
-            shareAddr = _predictCreate2(
-                shareSalt,
-                type(VaultShare).creationCode
-            );
+            shareAddr = _predictCreate2(shareSalt, type(VaultShare).creationCode);
         }
 
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
         bytes memory constructorArgs = abi.encode(
-            assetToken,
-            VaultShare(shareAddr),
-            policyEngine,
-            tradeValidator,
-            feeDistributor,
-            admin,
-            operator
+            assetToken, VaultShare(shareAddr), policyEngine, tradeValidator, feeDistributor, admin, operator
         );
 
-        return _predictCreate2(
-            vaultSalt,
-            abi.encodePacked(type(TradingVault).creationCode, constructorArgs)
-        );
+        return _predictCreate2(vaultSalt, abi.encodePacked(type(TradingVault).creationCode, constructorArgs));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -325,13 +309,7 @@ contract VaultFactory is Ownable2Step {
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
 
         TradingVault v = new TradingVault{salt: vaultSalt}(
-            assetToken,
-            shareToken,
-            policyEngine,
-            tradeValidator,
-            feeDistributor,
-            admin,
-            operator
+            assetToken, shareToken, policyEngine, tradeValidator, feeDistributor, admin, operator
         );
 
         vault = address(v);
@@ -340,14 +318,7 @@ contract VaultFactory is Ownable2Step {
     }
 
     function _predictCreate2(bytes32 salt, bytes memory creationCode) internal view returns (address) {
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                bytes1(0xff),
-                address(this),
-                salt,
-                keccak256(creationCode)
-            )
-        );
+        bytes32 hash = keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(creationCode)));
         return address(uint160(uint256(hash)));
     }
 }

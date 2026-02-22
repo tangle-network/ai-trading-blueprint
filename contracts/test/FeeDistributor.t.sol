@@ -58,9 +58,7 @@ contract FeeDistributorTest is Setup {
         address fdOwner = feeDistributor.owner();
 
         vm.prank(fdOwner);
-        (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(
-            address(vault), address(tokenA)
-        );
+        (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // First settlement: HWM was 0, AUM is 10000 ether
         // Perf fee = 10000 * 2000 / 10000 = 2000
@@ -90,9 +88,7 @@ contract FeeDistributorTest is Setup {
         uint256 currentAUM = tokenA.balanceOf(address(vault));
 
         vm.prank(fdOwner);
-        (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(
-            address(vault), address(tokenA)
-        );
+        (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // Performance fee should be on gains above HWM (10000)
         if (currentAUM > 10000 ether) {
@@ -118,9 +114,7 @@ contract FeeDistributorTest is Setup {
         uint256 currentAUM = tokenA.balanceOf(address(vault));
 
         vm.prank(fdOwner);
-        (, uint256 mgmtFee) = feeDistributor.settleFees(
-            address(vault), address(tokenA)
-        );
+        (, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // Management fee = AUM * 200 / 10000 * (365 days / 365 days) = AUM * 2%
         uint256 expectedMgmt = (currentAUM * 200 * 365 days) / (10000 * 365 days);
@@ -142,9 +136,7 @@ contract FeeDistributorTest is Setup {
         assertTrue(currentAUM < 10000 ether, "AUM should be below HWM after fee deduction");
 
         vm.prank(fdOwner);
-        (uint256 perfFee,) = feeDistributor.settleFees(
-            address(vault), address(tokenA)
-        );
+        (uint256 perfFee,) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // No perf fee when below HWM
         assertEq(perfFee, 0);

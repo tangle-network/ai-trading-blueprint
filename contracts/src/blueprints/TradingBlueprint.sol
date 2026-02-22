@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/access/IAccessControl.sol";
 ///   - Automatic vault deployment via VaultFactory on service initialization
 ///   - Multi-operator support (all operators get OPERATOR_ROLE on the vault)
 ///   - Intent deduplication happens at the vault level (TradingVault.executedIntents)
-///   - Configurable per-job pricing
+///   - Protocol-native pricing via EIP-712 signed quotes (subscription or per-job)
 ///
 ///   Lifecycle:
 ///     1. Consumer calls requestService() → onRequest() stores vault config
@@ -69,21 +69,21 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice VaultFactory address — set via setVaultFactory()
     address public vaultFactory;
 
-    /// @notice Configurable price per job (in wei).  Zero = free.
-    mapping(uint8 => uint256) public jobPrice;
-
     /// @notice When true, vault is created in onServiceInitialized (instance/TEE mode).
     /// When false, vault is created per-bot in onJobResult(PROVISION) (fleet mode).
     bool public instanceMode;
 
-    /// @notice Dynamic provision pricing — one-time setup fee (wei)
-    uint256 public provisionBasePrice;
-    /// @notice Per-day rate (wei)
-    uint256 public dailyRate;
-    /// @notice Per-CPU-core per-day rate (wei)
-    uint256 public cpuDailyRate;
-    /// @notice Per-GB-memory per-day rate (wei)
-    uint256 public memGbDailyRate;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PER-JOB PRICING MULTIPLIERS (informational — used by off-chain pricing engine)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    uint256 public constant PRICE_MULT_PROVISION = 50;
+    uint256 public constant PRICE_MULT_CONFIGURE = 2;
+    uint256 public constant PRICE_MULT_START_TRADING = 1;
+    uint256 public constant PRICE_MULT_STOP_TRADING = 1;
+    uint256 public constant PRICE_MULT_STATUS = 0;
+    uint256 public constant PRICE_MULT_DEPROVISION = 1;
+    uint256 public constant PRICE_MULT_EXTEND = 10;
 
     // ─── Pending request storage (requestId → config) ────────────────────────
 
@@ -124,9 +124,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    error InsufficientPayment(uint8 job, uint256 required, uint256 sent);
     error VaultFactoryNotSet();
     error InvalidLifetimeDays();
+    error BaseRateTooLarge(uint256 baseRate, uint256 maxBaseRate);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -138,8 +138,6 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     event ServiceTerminated(uint64 indexed serviceId);
     event TradingStarted(uint64 indexed serviceId);
     event TradingStopped(uint64 indexed serviceId);
-    event JobPriceUpdated(uint8 indexed job, uint256 price);
-    event ProvisionPricingUpdated(uint256 basePrice, uint256 dailyRate, uint256 cpuDailyRate, uint256 memGbDailyRate);
     event BotExtended(uint64 indexed serviceId, uint64 jobCallId, uint64 additionalDays);
     event BotVaultSkipped(uint64 indexed serviceId, uint64 indexed callId, string reason);
 
@@ -156,50 +154,6 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Set to true for instance/TEE BSMs after deployment.
     function setInstanceMode(bool _mode) external onlyFromTangle {
         instanceMode = _mode;
-    }
-
-    /// @notice Set the price for a specific job (governance only).
-    function setJobPrice(uint8 job, uint256 price) external onlyFromTangle {
-        jobPrice[job] = price;
-        emit JobPriceUpdated(job, price);
-    }
-
-    /// @notice Set dynamic provision pricing parameters (governance only).
-    function setProvisionPricing(
-        uint256 _basePrice,
-        uint256 _dailyRate,
-        uint256 _cpuDailyRate,
-        uint256 _memGbDailyRate
-    ) external onlyFromTangle {
-        provisionBasePrice = _basePrice;
-        dailyRate = _dailyRate;
-        cpuDailyRate = _cpuDailyRate;
-        memGbDailyRate = _memGbDailyRate;
-        emit ProvisionPricingUpdated(_basePrice, _dailyRate, _cpuDailyRate, _memGbDailyRate);
-    }
-
-    /// @notice Estimate the cost for provisioning a bot.
-    /// @param maxLifetimeDays Number of days the bot will run (0 = default 30)
-    /// @param cpuCores Number of CPU cores requested
-    /// @param memoryMb Memory in MB requested
-    /// @return cost Total cost in wei
-    function estimateProvisionCost(
-        uint64 maxLifetimeDays,
-        uint64 cpuCores,
-        uint64 memoryMb
-    ) public view returns (uint256 cost) {
-        uint64 days_ = maxLifetimeDays == 0 ? 30 : maxLifetimeDays;
-        cost = provisionBasePrice
-            + (uint256(days_) * dailyRate)
-            + (uint256(days_) * uint256(cpuCores) * cpuDailyRate)
-            + (uint256(days_) * uint256(memoryMb) * memGbDailyRate / 1024);
-    }
-
-    /// @notice Estimate the cost for extending a bot's lifetime.
-    /// @param additionalDays Number of extra days to add
-    /// @return cost Total cost in wei
-    function estimateExtendCost(uint64 additionalDays) public view returns (uint256 cost) {
-        cost = uint256(additionalDays) * dailyRate;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -270,11 +224,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Called from onServiceInitialized when instanceMode=true. Uses callId=0
     ///      since there is exactly one bot per service. Mirrors _handleProvisionResult
     ///      logic but uses service-level config directly.
-    function _createInstanceVault(
-        uint64 serviceId,
-        ServiceRequestConfig memory cfg,
-        address[] calldata operators
-    ) internal {
+    function _createInstanceVault(uint64 serviceId, ServiceRequestConfig memory cfg, address[] calldata operators)
+        internal
+    {
         if (vaultFactory == address(0)) return;
 
         address assetToken = cfg.assetToken;
@@ -307,17 +259,18 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         string memory name_ = bytes(cfg.name).length > 0 ? cfg.name : "Instance Vault";
         string memory symbol_ = bytes(cfg.symbol).length > 0 ? cfg.symbol : "iVAULT";
 
-        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
-            serviceId,
-            assetToken,
-            address(this),  // admin = this BSM
-            address(0),     // no initial operator — granted below
-            signers,
-            requiredSigs,
-            name_,
-            symbol_,
-            salt
-        );
+        (address vault, address shareToken) = IVaultFactory(vaultFactory)
+            .createBotVault(
+                serviceId,
+                assetToken,
+                address(this), // admin = this BSM
+                address(0), // no initial operator — granted below
+                signers,
+                requiredSigs,
+                name_,
+                symbol_,
+                salt
+            );
 
         // Store in both instance-level and per-bot (callId=0) mappings
         instanceVault[serviceId] = vault;
@@ -340,11 +293,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
     /// @notice Called when an operator joins the service.
     /// @dev Grants OPERATOR_ROLE on ALL vaults for this service (legacy + per-bot).
-    function onOperatorJoined(
-        uint64 serviceId,
-        address operator,
-        uint16
-    ) external override onlyFromTangle {
+    function onOperatorJoined(uint64 serviceId, address operator, uint16) external override onlyFromTangle {
         // Grant on legacy service-level vault (if exists)
         address legacyVault = instanceVault[serviceId];
         if (legacyVault != address(0)) {
@@ -368,10 +317,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     }
 
     /// @notice Called when the service is terminated.
-    function onServiceTermination(
-        uint64 serviceId,
-        address
-    ) external override onlyFromTangle {
+    function onServiceTermination(uint64 serviceId, address) external override onlyFromTangle {
         instanceProvisioned[serviceId] = false;
         emit ServiceTerminated(serviceId);
     }
@@ -383,10 +329,53 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @notice All operators participate in every job.
     /// @dev Returns 0 which means "use protocol default" (all registered operators).
     ///      Intent deduplication at the vault level prevents duplicate execution.
-    function getRequiredResultCount(
-        uint64,
-        uint8
-    ) external view virtual override returns (uint32) {
+    function getRequiredResultCount(uint64, uint8) external view virtual override returns (uint32) {
+        return 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PRICING HELPERS (informational — actual enforcement via Tangle protocol)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Returns default per-job rates given a base rate.
+    /// @dev Used by the off-chain pricing engine to generate EIP-712 quotes.
+    ///      Actual payment enforcement happens via the protocol's quote system.
+    /// @param baseRate Base rate in wei. Must be <= type(uint256).max / PRICE_MULT_PROVISION.
+    function getDefaultJobRates(uint256 baseRate)
+        external
+        pure
+        returns (uint8[] memory jobIndexes, uint256[] memory rates)
+    {
+        uint256 maxBase = type(uint256).max / PRICE_MULT_PROVISION;
+        if (baseRate > maxBase) revert BaseRateTooLarge(baseRate, maxBase);
+
+        jobIndexes = new uint8[](7);
+        rates = new uint256[](7);
+        jobIndexes[0] = JOB_PROVISION;
+        rates[0] = baseRate * PRICE_MULT_PROVISION;
+        jobIndexes[1] = JOB_CONFIGURE;
+        rates[1] = baseRate * PRICE_MULT_CONFIGURE;
+        jobIndexes[2] = JOB_START_TRADING;
+        rates[2] = baseRate * PRICE_MULT_START_TRADING;
+        jobIndexes[3] = JOB_STOP_TRADING;
+        rates[3] = baseRate * PRICE_MULT_STOP_TRADING;
+        jobIndexes[4] = JOB_STATUS;
+        rates[4] = baseRate * PRICE_MULT_STATUS;
+        jobIndexes[5] = JOB_DEPROVISION;
+        rates[5] = baseRate * PRICE_MULT_DEPROVISION;
+        jobIndexes[6] = JOB_EXTEND;
+        rates[6] = baseRate * PRICE_MULT_EXTEND;
+    }
+
+    /// @notice Returns the pricing multiplier for a specific job.
+    function getJobPriceMultiplier(uint8 jobId) external pure returns (uint256) {
+        if (jobId == JOB_PROVISION) return PRICE_MULT_PROVISION;
+        if (jobId == JOB_CONFIGURE) return PRICE_MULT_CONFIGURE;
+        if (jobId == JOB_START_TRADING) return PRICE_MULT_START_TRADING;
+        if (jobId == JOB_STOP_TRADING) return PRICE_MULT_STOP_TRADING;
+        if (jobId == JOB_STATUS) return PRICE_MULT_STATUS;
+        if (jobId == JOB_DEPROVISION) return PRICE_MULT_DEPROVISION;
+        if (jobId == JOB_EXTEND) return PRICE_MULT_EXTEND;
         return 0;
     }
 
@@ -395,100 +384,27 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Called when a job is submitted.
-    /// @dev Validates payment.  JOB_PROVISION and JOB_EXTEND use dynamic pricing
-    ///      based on resource requirements and lifetime.  All other jobs use flat
-    ///      `jobPrice` pricing.
-    ///      For JOB_PROVISION: stores decoded inputs for use in _handleProvisionResult,
-    ///      because the Tangle protocol may not forward original inputs to onJobResult.
-    function onJobCall(
-        uint64 serviceId,
-        uint8 job,
-        uint64 jobCallId,
-        bytes calldata inputs
-    ) external payable virtual override onlyFromTangle {
+    /// @dev No on-chain payment validation — pricing is handled by the Tangle protocol
+    ///      via createServiceFromQuotes (subscription) or submitJobFromQuote (per-job).
+    ///      This hook only stores provision inputs and validates preconditions.
+    function onJobCall(uint64 serviceId, uint8 job, uint64 jobCallId, bytes calldata inputs)
+        external
+        payable
+        virtual
+        override
+        onlyFromTangle
+    {
         if (job == JOB_PROVISION) {
             _storeProvisionInputs(serviceId, jobCallId, inputs);
-        }
-        _onJobCallDynamic(serviceId, job, jobCallId, inputs);
-    }
-
-    /// @notice Internal: dynamic pricing for PROVISION/EXTEND, flat pricing for all others.
-    function _onJobCallDynamic(
-        uint64 serviceId,
-        uint8 job,
-        uint64 jobCallId,
-        bytes calldata inputs
-    ) internal {
-        if (job == JOB_PROVISION && _hasDynamicPricing()) {
-            _validateProvisionPayment(inputs);
-        } else if (job == JOB_EXTEND) {
-            require(instanceProvisioned[serviceId], "Not provisioned");
-            _validateExtendPayment(inputs, jobCallId, serviceId);
-            return; // skip _onJobCallBase — we already checked provisioned
         } else {
-            _onJobCallBase(serviceId, job);
-            return;
-        }
-        // For JOB_PROVISION with dynamic pricing, still run base checks
-        _onJobCallBase(serviceId, job);
-    }
-
-    /// @notice Internal: payment validation + common preconditions.
-    function _onJobCallBase(uint64 serviceId, uint8 job) internal {
-        // Payment validation (flat pricing — skipped for PROVISION when dynamic pricing is active)
-        uint256 required = jobPrice[job];
-        if (required > 0 && msg.value < required) {
-            revert InsufficientPayment(job, required, msg.value);
-        }
-
-        // Service must be initialized (vault deployed) for all jobs
-        if (job <= JOB_EXTEND && job != JOB_PROVISION) {
+            // All non-provision jobs require the service to be provisioned
             require(instanceProvisioned[serviceId], "Not provisioned");
+            if (job == JOB_EXTEND) {
+                (, uint64 additionalDays) = abi.decode(inputs, (string, uint64));
+                if (additionalDays == 0) revert InvalidLifetimeDays();
+                emit BotExtended(serviceId, jobCallId, additionalDays);
+            }
         }
-    }
-
-    /// @notice Check if dynamic provision pricing is configured (any rate > 0).
-    function _hasDynamicPricing() internal view returns (bool) {
-        return provisionBasePrice > 0 || dailyRate > 0 || cpuDailyRate > 0 || memGbDailyRate > 0;
-    }
-
-    /// @notice Validate payment for JOB_PROVISION using dynamic pricing.
-    /// @dev Decodes provision inputs to extract resource parameters and lifetime.
-    function _validateProvisionPayment(bytes calldata inputs) internal view {
-        // TradingProvisionRequest layout: 15 fields, maxLifetimeDays is field index 11 (0-indexed)
-        // Fields: name, strategy_type, strategy_config_json, risk_params_json,
-        //         factory_address, asset_token, signers, required_signatures, chain_id,
-        //         rpc_url, trading_loop_cron, cpu_cores, memory_mb, max_lifetime_days, validator_service_ids
-        (,,,,,,,,,,,uint64 cpuCores, uint64 memoryMb, uint64 maxLifetimeDays,) =
-            abi.decode(inputs, (string, string, string, string,
-                address, address, address[], uint256, uint256,
-                string, string, uint64, uint64, uint64, uint64[]));
-
-        uint256 required = estimateProvisionCost(maxLifetimeDays, cpuCores, memoryMb);
-        if (required > 0 && msg.value < required) {
-            revert InsufficientPayment(JOB_PROVISION, required, msg.value);
-        }
-    }
-
-    /// @notice Validate payment for JOB_EXTEND using dynamic pricing.
-    function _validateExtendPayment(
-        bytes calldata inputs,
-        uint64 jobCallId,
-        uint64 serviceId
-    ) internal {
-        (string memory sandboxId, uint64 additionalDays) =
-            abi.decode(inputs, (string, uint64));
-
-        if (additionalDays == 0) revert InvalidLifetimeDays();
-
-        // Compute cost: use same daily rates but no base price for extensions
-        // Use 1 cpu / 1024 mb as baseline (rates already factor in resources for extend)
-        uint256 required = uint256(additionalDays) * dailyRate;
-        if (required > 0 && msg.value < required) {
-            revert InsufficientPayment(JOB_EXTEND, required, msg.value);
-        }
-
-        emit BotExtended(serviceId, jobCallId, additionalDays);
     }
 
     /// @notice Called when a job result is submitted by an operator.
@@ -530,11 +446,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Called from onJobCall when job == JOB_PROVISION. The Tangle protocol
     ///      may not forward the original submitJob inputs to onJobResult, so we
     ///      persist the vault config fields here for _handleProvisionResult to read.
-    function _storeProvisionInputs(
-        uint64 serviceId,
-        uint64 jobCallId,
-        bytes calldata inputs
-    ) internal {
+    function _storeProvisionInputs(uint64 serviceId, uint64 jobCallId, bytes calldata inputs) internal {
         if (inputs.length == 0) return;
 
         // Handle tuple wrapping: viem encodes structs with 0x20 offset prefix
@@ -549,18 +461,29 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         // Decode TradingProvisionRequest to extract vault config fields
         // Layout: (name, strategy_type, strategy_config_json, risk_params_json,
         //          factory_address, asset_token, signers, required_signatures, ...)
-        (string memory botName,,,,, address assetToken, address[] memory signers,
-            uint256 requiredSigs,,,,,,,) =
-            abi.decode(inner, (string, string, string, string,
-                address, address, address[], uint256, uint256,
-                string, string, uint64, uint64, uint64, uint64[]));
+        (string memory botName,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,) = abi.decode(
+            inner,
+            (
+                string,
+                string,
+                string,
+                string,
+                address,
+                address,
+                address[],
+                uint256,
+                uint256,
+                string,
+                string,
+                uint64,
+                uint64,
+                uint64,
+                uint64[]
+            )
+        );
 
-        _pendingProvisions[serviceId][jobCallId] = PendingProvision({
-            assetToken: assetToken,
-            signers: signers,
-            requiredSigs: requiredSigs,
-            name: botName
-        });
+        _pendingProvisions[serviceId][jobCallId] =
+            PendingProvision({assetToken: assetToken, signers: signers, requiredSigs: requiredSigs, name: botName});
     }
 
     /// @notice Creates a per-bot vault when a provision job completes.
@@ -572,7 +495,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint64 serviceId,
         uint64 jobCallId,
         bytes calldata /* inputs — unreliable, use _pendingProvisions instead */
-    ) internal {
+    )
+        internal
+    {
         if (vaultFactory == address(0)) return;
 
         // Read stored provision config (set in onJobCall)
@@ -607,17 +532,18 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         bytes32 salt = keccak256(abi.encodePacked(serviceId, jobCallId));
         string memory symbol = string(abi.encodePacked("bot", _uint64ToString(jobCallId)));
 
-        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
-            serviceId,
-            assetToken,
-            address(this),  // admin = this BSM contract
-            address(0),     // no initial operator — granted below
-            signers,
-            requiredSigs,
-            botName,
-            symbol,
-            salt
-        );
+        (address vault, address shareToken) = IVaultFactory(vaultFactory)
+            .createBotVault(
+                serviceId,
+                assetToken,
+                address(this), // admin = this BSM contract
+                address(0), // no initial operator — granted below
+                signers,
+                requiredSigs,
+                botName,
+                symbol,
+                salt
+            );
 
         botVaults[serviceId][jobCallId] = vault;
         botShares[serviceId][jobCallId] = shareToken;
@@ -644,7 +570,10 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         if (value == 0) return "0";
         uint64 temp = value;
         uint256 digits;
-        while (temp != 0) { digits++; temp /= 10; }
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
         bytes memory buffer = new bytes(digits);
         while (value != 0) {
             digits -= 1;
@@ -658,15 +587,27 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 /// @notice Minimal interface for VaultFactory calls
 interface IVaultFactory {
     function createVault(
-        uint64 serviceId, address assetToken, address admin, address operator,
-        address[] calldata signers, uint256 requiredSigs,
-        string calldata name, string calldata symbol, bytes32 salt
+        uint64 serviceId,
+        address assetToken,
+        address admin,
+        address operator,
+        address[] calldata signers,
+        uint256 requiredSigs,
+        string calldata name,
+        string calldata symbol,
+        bytes32 salt
     ) external returns (address vault, address shareToken);
 
     function createBotVault(
-        uint64 serviceId, address assetToken, address admin, address operator,
-        address[] calldata signers, uint256 requiredSigs,
-        string calldata name, string calldata symbol, bytes32 salt
+        uint64 serviceId,
+        address assetToken,
+        address admin,
+        address operator,
+        address[] calldata signers,
+        uint256 requiredSigs,
+        string calldata name,
+        string calldata symbol,
+        bytes32 salt
     ) external returns (address vault, address shareToken);
 
     function getServiceVaults(uint64 serviceId) external view returns (address[] memory);

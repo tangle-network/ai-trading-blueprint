@@ -21,9 +21,8 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     /// @notice EIP-712 type hash for trade validation signatures
     /// @dev Score is included in signed data to prevent manipulation
-    bytes32 public constant VALIDATION_TYPEHASH = keccak256(
-        "TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)"
-    );
+    bytes32 public constant VALIDATION_TYPEHASH =
+        keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)");
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -76,11 +75,7 @@ contract TradeValidator is EIP712, Ownable2Step {
     /// @param vault The vault address to configure
     /// @param signers Array of authorized signer addresses
     /// @param requiredSigs Minimum number of valid signatures required (m in m-of-n)
-    function configureVault(
-        address vault,
-        address[] calldata signers,
-        uint256 requiredSigs
-    ) external onlyOwner {
+    function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external onlyOwner {
         if (vault == address(0)) revert ZeroAddress();
         if (requiredSigs == 0 || requiredSigs > signers.length) revert InvalidRequiredSignatures();
 
@@ -164,13 +159,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
         for (uint256 i = 0; i < signatures.length; i++) {
             // Build the EIP-712 struct hash with the score INSIDE the signed data
-            bytes32 structHash = keccak256(abi.encode(
-                VALIDATION_TYPEHASH,
-                intentHash,
-                vault,
-                scores[i],
-                deadline
-            ));
+            bytes32 structHash = keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, vault, scores[i], deadline));
 
             bytes32 digest = _hashTypedDataV4(structHash);
             address signer = ECDSA.recover(digest, signatures[i]);
@@ -221,19 +210,12 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     /// @notice Compute the EIP-712 digest for a trade validation (useful for off-chain signing)
-    function computeDigest(
-        bytes32 intentHash,
-        address vault,
-        uint256 score,
-        uint256 deadline
-    ) external view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(
-            VALIDATION_TYPEHASH,
-            intentHash,
-            vault,
-            score,
-            deadline
-        ));
+    function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline)
+        external
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash = keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, vault, score, deadline));
         return _hashTypedDataV4(structHash);
     }
 

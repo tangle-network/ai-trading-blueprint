@@ -50,17 +50,12 @@ contract TradingVaultTest is Setup {
     }
 
     /// @dev Build ExecuteParams struct for execute()
-    function _buildExecuteParams(
-        uint256 outputAmount,
-        uint256 minOutput,
-        bytes32 intentHash,
-        uint256 deadline
-    ) internal view returns (TradingVault.ExecuteParams memory) {
-        bytes memory data = abi.encodeWithSelector(
-            MockTarget.swap.selector,
-            address(vault),
-            outputAmount
-        );
+    function _buildExecuteParams(uint256 outputAmount, uint256 minOutput, bytes32 intentHash, uint256 deadline)
+        internal
+        view
+        returns (TradingVault.ExecuteParams memory)
+    {
+        bytes memory data = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount);
 
         return TradingVault.ExecuteParams({
             target: address(mockTarget),
@@ -171,9 +166,8 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("test trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            expectedOutput, expectedOutput, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params =
+            _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         vm.prank(operator);
@@ -190,9 +184,7 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("test trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            500 ether, 500 ether, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         vm.prank(operator);
@@ -208,9 +200,7 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("test trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            500 ether, 500 ether, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         // Only provide 1 signature (need 2-of-3)
         bytes[] memory sigs = new bytes[](1);
@@ -233,15 +223,11 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("test trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            actualOutput, minOutput, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(actualOutput, minOutput, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput)
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput));
         vault.execute(params, sigs, scores);
     }
 
@@ -287,9 +273,7 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("test trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            500 ether, 500 ether, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         // Non-operator (user) tries to execute
@@ -334,9 +318,8 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("dedup test");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(
-            expectedOutput, expectedOutput, intentHash, deadline
-        );
+        TradingVault.ExecuteParams memory params =
+            _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         // First execution succeeds
@@ -346,9 +329,7 @@ contract TradingVaultTest is Setup {
 
         // Second execution with same intentHash reverts
         vm.prank(operator);
-        vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.IntentAlreadyExecuted.selector, intentHash)
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.IntentAlreadyExecuted.selector, intentHash));
         vault.execute(params, sigs, scores);
     }
 
@@ -362,9 +343,7 @@ contract TradingVaultTest is Setup {
 
         // Trade 1
         bytes32 hash1 = keccak256("trade 1");
-        TradingVault.ExecuteParams memory params1 = _buildExecuteParams(
-            expectedOutput, expectedOutput, hash1, deadline
-        );
+        TradingVault.ExecuteParams memory params1 = _buildExecuteParams(expectedOutput, expectedOutput, hash1, deadline);
         (bytes[] memory sigs1, uint256[] memory scores1) = _createValidatorSigs(hash1, deadline);
 
         vm.prank(operator);
@@ -372,9 +351,7 @@ contract TradingVaultTest is Setup {
 
         // Trade 2 with different hash — should succeed
         bytes32 hash2 = keccak256("trade 2");
-        TradingVault.ExecuteParams memory params2 = _buildExecuteParams(
-            expectedOutput, expectedOutput, hash2, deadline
-        );
+        TradingVault.ExecuteParams memory params2 = _buildExecuteParams(expectedOutput, expectedOutput, hash2, deadline);
         (bytes[] memory sigs2, uint256[] memory scores2) = _createValidatorSigs(hash2, deadline);
 
         vm.prank(operator);

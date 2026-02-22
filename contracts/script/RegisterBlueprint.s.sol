@@ -89,36 +89,40 @@ contract RegisterBlueprint is Script {
         // They differ only in the off-chain binary that processes jobs.
 
         // 1. Cloud (multi-bot fleet)
-        uint64 cloudId = tangle.createBlueprint(_buildDefinition(
-            address(bsm),
-            "AI Trading Cloud",
-            "Multi-bot fleet: deploy multiple trading bots per service",
-            "trading-blueprint-bin",
-            "trading-blueprint"
-        ));
+        uint64 cloudId = tangle.createBlueprint(
+            _buildDefinition(
+                address(bsm),
+                "AI Trading Cloud",
+                "Multi-bot fleet: deploy multiple trading bots per service",
+                "trading-blueprint-bin",
+                "trading-blueprint"
+            )
+        );
 
         // 2. Instance (single-bot per service)
-        uint64 instanceId = tangle.createBlueprint(_buildDefinition(
-            address(instanceBsm),
-            "AI Trading Instance",
-            "Single dedicated bot per service: one agent, one strategy",
-            "trading-instance-blueprint-bin",
-            "trading-instance-blueprint"
-        ));
+        uint64 instanceId = tangle.createBlueprint(
+            _buildDefinition(
+                address(instanceBsm),
+                "AI Trading Instance",
+                "Single dedicated bot per service: one agent, one strategy",
+                "trading-instance-blueprint-bin",
+                "trading-instance-blueprint"
+            )
+        );
 
         // 3. TEE Instance (hardware-isolated single-bot)
-        uint64 teeId = tangle.createBlueprint(_buildDefinition(
-            address(teeBsm),
-            "AI Trading TEE Instance",
-            "TEE-secured single bot: hardware-isolated execution",
-            "trading-tee-instance-blueprint-bin",
-            "trading-tee-instance-blueprint"
-        ));
+        uint64 teeId = tangle.createBlueprint(
+            _buildDefinition(
+                address(teeBsm),
+                "AI Trading TEE Instance",
+                "TEE-secured single bot: hardware-isolated execution",
+                "trading-tee-instance-blueprint-bin",
+                "trading-tee-instance-blueprint"
+            )
+        );
 
         // 4. Validator (shared trade validation network)
-        uint64 validatorId = tangle.createBlueprint(_buildValidatorDefinition(
-            address(validatorBsm)
-        ));
+        uint64 validatorId = tangle.createBlueprint(_buildValidatorDefinition(address(validatorBsm)));
 
         vm.stopBroadcast();
 
@@ -164,8 +168,8 @@ contract RegisterBlueprint is Script {
             minOperators: 1,
             maxOperators: 10,
             subscriptionRate: 1_000_000_000, // 1 USD per interval (10^9 scale)
-            subscriptionInterval: 86400,     // daily billing
-            eventRate: 100_000_000           // 0.1 USD per job event
+            subscriptionInterval: 86400, // daily billing
+            eventRate: 100_000_000 // 0.1 USD per job event
         });
 
         // Metadata
@@ -225,9 +229,7 @@ contract RegisterBlueprint is Script {
 
     /// @notice Construct the BlueprintDefinition for the validator blueprint.
     /// @dev Separate from trading variants: different BSM, different jobs (3 vs 7).
-    function _buildValidatorDefinition(
-        address manager
-    ) internal pure returns (Types.BlueprintDefinition memory def) {
+    function _buildValidatorDefinition(address manager) internal pure returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmValidatorBlueprint";
         def.manager = manager;
         def.masterManagerRevision = 0;
@@ -257,7 +259,8 @@ contract RegisterBlueprint is Script {
 
         // 3 operational jobs
         def.jobs = new Types.JobDefinition[](3);
-        def.jobs[0] = Types.JobDefinition("update_reputation", "Record validation count and reputation delta", "", "", "");
+        def.jobs[0] =
+            Types.JobDefinition("update_reputation", "Record validation count and reputation delta", "", "", "");
         def.jobs[1] = Types.JobDefinition("update_config", "Update validator configuration", "", "", "");
         def.jobs[2] = Types.JobDefinition("liveness", "Heartbeat liveness proof", "", "", "");
 

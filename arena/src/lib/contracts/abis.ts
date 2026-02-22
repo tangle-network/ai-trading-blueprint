@@ -37,13 +37,12 @@ export const vaultFactoryAbi = [
 ] as const;
 
 export const tradingBlueprintAbi = [
-  { type: 'function', name: 'estimateProvisionCost', inputs: [{ name: 'maxLifetimeDays', type: 'uint64' }, { name: 'cpuCores', type: 'uint64' }, { name: 'memoryMb', type: 'uint64' }], outputs: [{ name: 'cost', type: 'uint256' }], stateMutability: 'view' },
-  { type: 'function', name: 'estimateExtendCost', inputs: [{ name: 'additionalDays', type: 'uint64' }], outputs: [{ name: 'cost', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceVault', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceShare', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'botVaults', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'callId', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'botShares', inputs: [{ name: 'serviceId', type: 'uint64' }, { name: 'callId', type: 'uint64' }], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },
   { type: 'function', name: 'instanceProvisioned', inputs: [{ name: '', type: 'uint64' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
-  { type: 'function', name: 'dailyRate', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'getDefaultJobRates', inputs: [{ name: 'baseRate', type: 'uint256' }], outputs: [{ name: 'jobIndexes', type: 'uint8[]' }, { name: 'rates', type: 'uint256[]' }], stateMutability: 'pure' },
+  { type: 'function', name: 'getJobPriceMultiplier', inputs: [{ name: 'jobId', type: 'uint8' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'pure' },
   { type: 'event', name: 'BotVaultDeployed', inputs: [{ name: 'serviceId', type: 'uint64', indexed: true }, { name: 'callId', type: 'uint64', indexed: true }, { name: 'vault', type: 'address', indexed: false }, { name: 'shareToken', type: 'address', indexed: false }], anonymous: false },
 ] as const;

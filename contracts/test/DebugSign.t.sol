@@ -15,11 +15,8 @@ contract DebugSignTest is Test {
         console.log("Operator1 address:", op1);
 
         // Build domain separator matching local Anvil deployment
-        bytes32 domainSep = SignatureLib.computeDomainSeparator(
-            "TangleQuote",
-            "1",
-            0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-        );
+        bytes32 domainSep =
+            SignatureLib.computeDomainSeparator("TangleQuote", "1", 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9);
         console.log("Domain separator:");
         console.logBytes32(domainSep);
 
@@ -32,8 +29,7 @@ contract DebugSignTest is Test {
         quote.expiry = 1771296951;
         quote.securityCommitments = new Types.AssetSecurityCommitment[](1);
         quote.securityCommitments[0] = Types.AssetSecurityCommitment({
-            asset: Types.Asset({kind: Types.AssetKind.ERC20, token: address(0)}),
-            exposureBps: 1000
+            asset: Types.Asset({kind: Types.AssetKind.ERC20, token: address(0)}), exposureBps: 1000
         });
 
         // Compute digest

@@ -60,9 +60,7 @@ contract PolicyEngineTest is Setup {
     function test_doubleInitReverts() public {
         pe.initializeVault(testVault, 30000, 50, 300);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(PolicyEngine.VaultAlreadyInitialized.selector, testVault)
-        );
+        vm.expectRevert(abi.encodeWithSelector(PolicyEngine.VaultAlreadyInitialized.selector, testVault));
         pe.initializeVault(testVault, 30000, 50, 300);
     }
 
@@ -189,7 +187,7 @@ contract PolicyEngineTest is Setup {
 
         pe.setMaxSlippage(testVault, 100); // 1%
 
-        (,,,uint256 maxSlippageBps,) = pe.policies(testVault);
+        (,,, uint256 maxSlippageBps,) = pe.policies(testVault);
         assertEq(maxSlippageBps, 100);
     }
 
@@ -237,8 +235,8 @@ contract PolicyEngineTest is Setup {
         assertTrue(valid);
 
         // Verify leverage caps are independent
-        (,uint256 leverageCap1,,,) = pe.policies(testVault);
-        (,uint256 leverageCap2,,,) = pe.policies(testVault2);
+        (, uint256 leverageCap1,,,) = pe.policies(testVault);
+        (, uint256 leverageCap2,,,) = pe.policies(testVault2);
         assertEq(leverageCap1, 30000);
         assertEq(leverageCap2, 50000);
     }

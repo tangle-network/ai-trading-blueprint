@@ -84,12 +84,12 @@ contract DeployLocal is Script {
         address[] memory signers = new address[](1);
         signers[0] = deployer; // deployer is also a validator signer for testing
         (address vault0Raw, address share0) = vaultFactory.createVault(
-            0,                  // serviceId
-            address(usdc),      // asset token (USDC)
-            deployer,           // admin
-            deployer,           // operator
+            0, // serviceId
+            address(usdc), // asset token (USDC)
+            deployer, // admin
+            deployer, // operator
             signers,
-            1,                  // 1-of-1 sigs for testing
+            1, // 1-of-1 sigs for testing
             "Arena Vault Shares",
             "avSHARE",
             bytes32("arena-vault-0")

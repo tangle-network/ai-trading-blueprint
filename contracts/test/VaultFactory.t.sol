@@ -20,15 +20,7 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault, address shareAddr) = vaultFactory.createVault(
-            serviceId,
-            address(tokenA),
-            owner,
-            operator,
-            signers,
-            2,
-            "Test Shares",
-            "tSHR",
-            bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1")
         );
 
         assertTrue(vault != address(0));
@@ -69,27 +61,12 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault1, address shareAddr) = vaultFactory.createVault(
-            serviceId,
-            address(tokenA),
-            owner,
-            operator,
-            signers,
-            2,
-            "Test Shares",
-            "tSHR",
-            bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1")
         );
 
         // Now add a second asset vault (WETH vault) to the same service
-        address vault2 = vaultFactory.addAssetVault(
-            serviceId,
-            address(tokenB),
-            owner,
-            operator,
-            signers,
-            2,
-            bytes32("salt2")
-        );
+        address vault2 =
+            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt2"));
 
         assertTrue(vault2 != address(0));
         assertTrue(vault1 != vault2);
@@ -120,26 +97,11 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId,
-            address(tokenA),
-            owner,
-            operator,
-            signers,
-            2,
-            "Multi-Asset Shares",
-            "maSHR",
-            bytes32("salt-usdc")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Multi-Asset Shares", "maSHR", bytes32("salt-usdc")
         );
 
-        address wethVault = vaultFactory.addAssetVault(
-            serviceId,
-            address(tokenB),
-            owner,
-            operator,
-            signers,
-            2,
-            bytes32("salt-weth")
-        );
+        address wethVault =
+            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt-weth"));
 
         // Deposit into USDC vault
         vm.startPrank(user);
@@ -171,16 +133,12 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2,
-            "Test", "TST", bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1")
         );
 
-        vm.expectRevert(
-            abi.encodeWithSelector(VaultFactory.ServiceAlreadyInitialized.selector, serviceId)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VaultFactory.ServiceAlreadyInitialized.selector, serviceId));
         vaultFactory.createVault(
-            serviceId, address(tokenA), user, operator, signers, 2,
-            "Test2", "TST2", bytes32("salt2")
+            serviceId, address(tokenA), user, operator, signers, 2, "Test2", "TST2", bytes32("salt2")
         );
     }
 
@@ -192,14 +150,11 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault1,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2,
-            "Test", "TST", bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1")
         );
 
-        address vault2 = vaultFactory.addAssetVault(
-            serviceId, address(tokenB), owner, operator, signers, 2,
-            bytes32("salt2")
-        );
+        address vault2 =
+            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt2"));
 
         address[] memory vaults = vaultFactory.getServiceVaults(serviceId);
         assertEq(vaults.length, 2);
@@ -220,10 +175,8 @@ contract VaultFactoryTest is Setup {
         // when the service doesn't exist yet. The factory internally deploys the share token first,
         // then the vault. For precomputation to work correctly, we need the share token address.
         // Since the factory uses CREATE2, the address is deterministic.
-        (address actual,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2,
-            "Test", "TST", salt
-        );
+        (address actual,) =
+            vaultFactory.createVault(serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", salt);
 
         // After creation, we can verify the service is mapped
         assertTrue(actual != address(0));

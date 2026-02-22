@@ -14,9 +14,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_registerStrategy() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(
-            1, "My Yield Strategy", "defi-yield", "QmHash123"
-        );
+        uint256 strategyId = strategyRegistry.registerStrategy(1, "My Yield Strategy", "defi-yield", "QmHash123");
 
         assertEq(strategyId, 1);
 
@@ -59,9 +57,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_registerStrategy_anyoneCanRegister() public {
         vm.prank(user);
-        uint256 strategyId = strategyRegistry.registerStrategy(
-            1, "User Strategy", "dex-trading", "hash"
-        );
+        uint256 strategyId = strategyRegistry.registerStrategy(1, "User Strategy", "dex-trading", "hash");
 
         StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
         assertEq(info.owner, user);
@@ -95,18 +91,14 @@ contract StrategyRegistryTest is Setup {
         uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
         strategyRegistry.deactivateStrategy(strategyId);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId)
-        );
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId));
         strategyRegistry.updateStrategy(strategyId, "newHash");
         vm.stopPrank();
     }
 
     function test_updateStrategy_revertsForNonExistent() public {
         vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyRegistry.StrategyNotFound.selector, 999)
-        );
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotFound.selector, 999));
         strategyRegistry.updateStrategy(999, "hash");
     }
 
@@ -138,9 +130,7 @@ contract StrategyRegistryTest is Setup {
         uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
         strategyRegistry.deactivateStrategy(strategyId);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId)
-        );
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId));
         strategyRegistry.deactivateStrategy(strategyId);
         vm.stopPrank();
     }
@@ -226,9 +216,7 @@ contract StrategyRegistryTest is Setup {
     }
 
     function test_getStrategy_revertsForNonExistent() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(StrategyRegistry.StrategyNotFound.selector, 999)
-        );
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotFound.selector, 999));
         strategyRegistry.getStrategy(999);
     }
 }

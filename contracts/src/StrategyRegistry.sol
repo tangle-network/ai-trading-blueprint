@@ -122,10 +122,11 @@ contract StrategyRegistry {
     /// @notice Update a strategy's IPFS hash
     /// @param strategyId The strategy ID
     /// @param ipfsHash The new IPFS hash
-    function updateStrategy(
-        uint256 strategyId,
-        string calldata ipfsHash
-    ) external strategyExists(strategyId) onlyStrategyOwner(strategyId) {
+    function updateStrategy(uint256 strategyId, string calldata ipfsHash)
+        external
+        strategyExists(strategyId)
+        onlyStrategyOwner(strategyId)
+    {
         if (!strategies[strategyId].active) revert StrategyNotActive(strategyId);
 
         strategies[strategyId].ipfsHash = ipfsHash;
@@ -135,9 +136,7 @@ contract StrategyRegistry {
 
     /// @notice Deactivate a strategy
     /// @param strategyId The strategy ID
-    function deactivateStrategy(
-        uint256 strategyId
-    ) external strategyExists(strategyId) onlyStrategyOwner(strategyId) {
+    function deactivateStrategy(uint256 strategyId) external strategyExists(strategyId) onlyStrategyOwner(strategyId) {
         if (!strategies[strategyId].active) revert StrategyNotActive(strategyId);
 
         strategies[strategyId].active = false;
@@ -149,11 +148,11 @@ contract StrategyRegistry {
     /// @param strategyId The strategy ID
     /// @param aum The current AUM
     /// @param pnl The current PnL
-    function updateMetrics(
-        uint256 strategyId,
-        uint256 aum,
-        int256 pnl
-    ) external strategyExists(strategyId) onlyStrategyOwner(strategyId) {
+    function updateMetrics(uint256 strategyId, uint256 aum, int256 pnl)
+        external
+        strategyExists(strategyId)
+        onlyStrategyOwner(strategyId)
+    {
         strategies[strategyId].aum = aum;
         strategies[strategyId].totalPnl = pnl;
 
@@ -167,7 +166,12 @@ contract StrategyRegistry {
     /// @notice Get full strategy info
     /// @param strategyId The strategy ID
     /// @return info The strategy information struct
-    function getStrategy(uint256 strategyId) external view strategyExists(strategyId) returns (StrategyInfo memory info) {
+    function getStrategy(uint256 strategyId)
+        external
+        view
+        strategyExists(strategyId)
+        returns (StrategyInfo memory info)
+    {
         return strategies[strategyId];
     }
 

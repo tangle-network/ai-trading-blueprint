@@ -20,7 +20,9 @@ contract PolicyEngine is Ownable2Step {
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    event VaultInitialized(address indexed vault, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps);
+    event VaultInitialized(
+        address indexed vault, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps
+    );
     event PolicyUpdated(address indexed vault, string policyType);
     event TradeRejected(address indexed vault, address indexed token, uint256 amount, string reason);
 
@@ -79,12 +81,10 @@ contract PolicyEngine is Ownable2Step {
     /// @param leverageCap Maximum leverage in basis points (e.g., 50000 = 5x)
     /// @param maxTradesPerHour Maximum trades per hour (0 = unlimited)
     /// @param maxSlippageBps Maximum slippage in basis points
-    function initializeVault(
-        address vault,
-        uint256 leverageCap,
-        uint256 maxTradesPerHour,
-        uint256 maxSlippageBps
-    ) external onlyOwner {
+    function initializeVault(address vault, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps)
+        external
+        onlyOwner
+    {
         if (vault == address(0)) revert ZeroAddress();
         if (policies[vault].initialized) revert VaultAlreadyInitialized(vault);
 
@@ -109,7 +109,9 @@ contract PolicyEngine is Ownable2Step {
 
     /// @notice Set token whitelist status for a vault
     function setWhitelist(address vault, address[] calldata tokens, bool allowed)
-        external onlyOwner vaultInitialized(vault)
+        external
+        onlyOwner
+        vaultInitialized(vault)
     {
         for (uint256 i = 0; i < tokens.length; i++) {
             tokenWhitelisted[vault][tokens[i]] = allowed;
@@ -119,7 +121,9 @@ contract PolicyEngine is Ownable2Step {
 
     /// @notice Set target contract whitelist status for a vault
     function setTargetWhitelist(address vault, address[] calldata targets, bool allowed)
-        external onlyOwner vaultInitialized(vault)
+        external
+        onlyOwner
+        vaultInitialized(vault)
     {
         for (uint256 i = 0; i < targets.length; i++) {
             targetWhitelisted[vault][targets[i]] = allowed;
@@ -129,24 +133,22 @@ contract PolicyEngine is Ownable2Step {
 
     /// @notice Set the maximum position size for a token in a vault
     function setPositionLimit(address vault, address token, uint256 maxAmount)
-        external onlyOwner vaultInitialized(vault)
+        external
+        onlyOwner
+        vaultInitialized(vault)
     {
         positionLimit[vault][token] = maxAmount;
         emit PolicyUpdated(vault, "positionLimit");
     }
 
     /// @notice Set the maximum leverage for a vault
-    function setLeverageCap(address vault, uint256 maxLeverage)
-        external onlyOwner vaultInitialized(vault)
-    {
+    function setLeverageCap(address vault, uint256 maxLeverage) external onlyOwner vaultInitialized(vault) {
         policies[vault].leverageCap = maxLeverage;
         emit PolicyUpdated(vault, "leverageCap");
     }
 
     /// @notice Set the rate limit for a vault
-    function setRateLimit(address vault, uint256 _maxTradesPerHour)
-        external onlyOwner vaultInitialized(vault)
-    {
+    function setRateLimit(address vault, uint256 _maxTradesPerHour) external onlyOwner vaultInitialized(vault) {
         policies[vault].maxTradesPerHour = _maxTradesPerHour;
         delete tradeTimestamps[vault];
         if (_maxTradesPerHour > 0) {
@@ -157,9 +159,7 @@ contract PolicyEngine is Ownable2Step {
     }
 
     /// @notice Set the maximum allowed slippage for a vault
-    function setMaxSlippage(address vault, uint256 bps)
-        external onlyOwner vaultInitialized(vault)
-    {
+    function setMaxSlippage(address vault, uint256 bps) external onlyOwner vaultInitialized(vault) {
         policies[vault].maxSlippageBps = bps;
         emit PolicyUpdated(vault, "maxSlippage");
     }
@@ -175,13 +175,10 @@ contract PolicyEngine is Ownable2Step {
     /// @param target The target contract being called
     /// @param leverage The leverage in basis points (0 for spot)
     /// @return valid Whether the trade passes all policy checks
-    function validateTrade(
-        address vault,
-        address token,
-        uint256 amount,
-        address target,
-        uint256 leverage
-    ) external returns (bool valid) {
+    function validateTrade(address vault, address token, uint256 amount, address target, uint256 leverage)
+        external
+        returns (bool valid)
+    {
         VaultPolicy storage policy = policies[vault];
         if (!policy.initialized) {
             emit TradeRejected(vault, token, amount, "Vault not initialized");

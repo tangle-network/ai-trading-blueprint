@@ -51,11 +51,7 @@ contract VaultShare is ERC20, AccessControl {
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        address admin
-    ) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, address admin) ERC20(name_, symbol_) {
         if (admin == address(0)) revert ZeroAddress();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }

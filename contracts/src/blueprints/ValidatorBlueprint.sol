@@ -76,10 +76,7 @@ contract ValidatorBlueprint is BlueprintServiceManagerBase {
     /// @dev The operator's RPC endpoint is stored on-chain by the protocol
     ///      itself — we just need to track registration state and init reputation.
     ///      The `inputs` may contain the serviceId as context.
-    function onRegister(
-        address operator,
-        bytes calldata inputs
-    ) external payable override onlyFromTangle {
+    function onRegister(address operator, bytes calldata inputs) external payable override onlyFromTangle {
         // The protocol calls this per-operator.  We need the serviceId to
         // scope the registration.  If inputs encode a serviceId, use it;
         // otherwise use 0 as a global scope.
@@ -115,10 +112,7 @@ contract ValidatorBlueprint is BlueprintServiceManagerBase {
 
     /// @notice How many operator results are required for a job to be considered
     ///         complete.  Liveness requires ALL operators; other jobs need one.
-    function getRequiredResultCount(
-        uint64 serviceId,
-        uint8 jobIndex
-    ) external view override returns (uint32) {
+    function getRequiredResultCount(uint64 serviceId, uint8 jobIndex) external view override returns (uint32) {
         if (jobIndex == JOB_LIVENESS) {
             // ALL operators must submit a heartbeat
             uint256 count = validatorCount[serviceId];
@@ -132,21 +126,17 @@ contract ValidatorBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Called when a slash is queued but not yet applied (dispute window).
-    function onUnappliedSlash(
-        uint64 serviceId,
-        bytes calldata offender,
-        uint8 slashPercent
-    ) external override onlyFromTangle {
+    function onUnappliedSlash(uint64 serviceId, bytes calldata offender, uint8 slashPercent)
+        external
+        override
+        onlyFromTangle
+    {
         // No-op: let the dispute window play out.
     }
 
     /// @notice Called when a slash is finalized and applied by the Tangle protocol.
     /// @dev Reduces the operator's on-chain reputation by `slashPercent` points.
-    function onSlash(
-        uint64 serviceId,
-        bytes calldata offender,
-        uint8 slashPercent
-    ) external override onlyFromTangle {
+    function onSlash(uint64 serviceId, bytes calldata offender, uint8 slashPercent) external override onlyFromTangle {
         address operator = abi.decode(offender, (address));
         int256 penalty = int256(uint256(slashPercent));
         validatorReputation[serviceId][operator] -= penalty;
@@ -162,12 +152,12 @@ contract ValidatorBlueprint is BlueprintServiceManagerBase {
     // JOB HOOKS (operational tasks only)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function onJobCall(
-        uint64 serviceId,
-        uint8 job,
-        uint64 jobCallId,
-        bytes calldata inputs
-    ) external payable override onlyFromTangle {
+    function onJobCall(uint64 serviceId, uint8 job, uint64 jobCallId, bytes calldata inputs)
+        external
+        payable
+        override
+        onlyFromTangle
+    {
         // No precondition checks needed for operational jobs
     }
 

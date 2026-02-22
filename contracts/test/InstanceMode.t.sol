@@ -44,11 +44,11 @@ contract InstanceModeTest is Setup {
         signers[1] = validator2;
 
         return abi.encode(
-            address(tokenA),  // assetToken
-            signers,          // signers
-            uint256(1),       // requiredSignatures
+            address(tokenA), // assetToken
+            signers, // signers
+            uint256(1), // requiredSignatures
             "Instance Vault", // name
-            "iVLT"            // symbol
+            "iVLT" // symbol
         );
     }
 
@@ -57,11 +57,11 @@ contract InstanceModeTest is Setup {
         address[] memory signers = new address[](0);
 
         return abi.encode(
-            address(0),       // assetToken = zero
-            signers,          // signers
-            uint256(0),       // requiredSignatures
-            "",               // name
-            ""                // symbol
+            address(0), // assetToken = zero
+            signers, // signers
+            uint256(0), // requiredSignatures
+            "", // name
+            "" // symbol
         );
     }
 
@@ -212,13 +212,7 @@ contract InstanceModeTest is Setup {
 
         // Build inputs with asset but no explicit signers, and pass empty operators
         address[] memory signers = new address[](0);
-        bytes memory inputs = abi.encode(
-            address(tokenA),
-            signers,
-            uint256(0),
-            "Test",
-            "TST"
-        );
+        bytes memory inputs = abi.encode(address(tokenA), signers, uint256(0), "Test", "TST");
 
         vm.prank(tangleCore);
         blueprint.onRequest(requestId, address(0), new address[](0), inputs, 0, address(0), 0);
@@ -240,7 +234,7 @@ contract InstanceModeTest is Setup {
         bytes memory inputs = abi.encode(
             address(tokenA),
             signers,
-            uint256(0),    // requiredSigs = 0 (will default to 1)
+            uint256(0), // requiredSigs = 0 (will default to 1)
             "Op Vault",
             "oVLT"
         );

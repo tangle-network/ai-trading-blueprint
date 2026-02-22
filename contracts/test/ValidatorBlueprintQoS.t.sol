@@ -119,10 +119,8 @@ contract ValidatorBlueprintQoSTest is Test {
         _registerOperator(operator1);
 
         vm.startPrank(tangleCore);
-        blueprint.onJobResult(serviceId, JOB_UPDATE_REPUTATION, 1, operator1, "",
-            abi.encode(uint256(5), int256(3)));
-        blueprint.onJobResult(serviceId, JOB_UPDATE_REPUTATION, 2, operator1, "",
-            abi.encode(uint256(10), int256(-1)));
+        blueprint.onJobResult(serviceId, JOB_UPDATE_REPUTATION, 1, operator1, "", abi.encode(uint256(5), int256(3)));
+        blueprint.onJobResult(serviceId, JOB_UPDATE_REPUTATION, 2, operator1, "", abi.encode(uint256(10), int256(-1)));
         vm.stopPrank();
 
         assertEq(blueprint.totalValidations(serviceId, operator1), 15);

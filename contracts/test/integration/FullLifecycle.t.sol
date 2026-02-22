@@ -83,20 +83,15 @@ contract FullLifecycleTest is Setup {
     }
 
     function _validateTradePolicy() internal {
-        bool policyValid = policyEngine.validateTrade(
-            address(vault), address(tokenB), 1000 ether, address(mockTarget), 20000
-        );
+        bool policyValid =
+            policyEngine.validateTrade(address(vault), address(tokenB), 1000 ether, address(mockTarget), 20000);
         assertTrue(policyValid, "Policy validation should pass");
     }
 
-    function _executeTrade()
-        internal
-        returns (uint256 expectedOutput, bytes32 intentHash)
-    {
+    function _executeTrade() internal returns (uint256 expectedOutput, bytes32 intentHash) {
         expectedOutput = 950 ether;
-        intentHash = keccak256(abi.encodePacked(
-            address(tokenA), uint256(1000 ether), address(mockTarget), uint256(20000)
-        ));
+        intentHash =
+            keccak256(abi.encodePacked(address(tokenA), uint256(1000 ether), address(mockTarget), uint256(20000)));
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes[] memory signatures = new bytes[](2);
@@ -106,9 +101,7 @@ contract FullLifecycleTest is Setup {
         signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
         signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
 
-        bytes memory swapData = abi.encodeWithSelector(
-            MockTarget.swap.selector, address(vault), expectedOutput
-        );
+        bytes memory swapData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), expectedOutput);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: address(mockTarget),
@@ -141,18 +134,13 @@ contract FullLifecycleTest is Setup {
         assertEq(perfFee1, expectedPerfFee, "Performance fee incorrect on first settlement");
 
         // Verify tokens actually moved to FeeDistributor
-        assertTrue(
-            tokenA.balanceOf(address(feeDistributor)) >= perfFee1,
-            "Fee tokens should be in FeeDistributor"
-        );
+        assertTrue(tokenA.balanceOf(address(feeDistributor)) >= perfFee1, "Fee tokens should be in FeeDistributor");
 
         // Advance time 30 days then settle again
         vm.warp(block.timestamp + 30 days);
 
         vm.prank(fdOwner);
-        (uint256 perfFee2, uint256 mgmtFee) = feeDistributor.settleFees(
-            address(vault), address(tokenA)
-        );
+        (uint256 perfFee2, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // No new gains since HWM was set, so perf fee = 0
         assertEq(perfFee2, 0, "No perf fee when at or below HWM");

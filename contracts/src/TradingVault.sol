@@ -57,11 +57,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
 
     event TradeExecuted(
-        address indexed target,
-        uint256 value,
-        uint256 outputGained,
-        address outputToken,
-        bytes32 indexed intentHash
+        address indexed target, uint256 value, uint256 outputGained, address outputToken, bytes32 indexed intentHash
     );
     event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
     event WindDownActivated(uint256 timestamp);
@@ -177,7 +173,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @inheritdoc IERC7575
-    function deposit(uint256 assets, address receiver) external override nonReentrant whenNotPaused returns (uint256 shares) {
+    function deposit(uint256 assets, address receiver)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 shares)
+    {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
 
@@ -204,7 +206,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @inheritdoc IERC7575
     function withdraw(uint256 assets, address receiver, address owner_)
-        external override nonReentrant whenNotPaused returns (uint256 shares)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 shares)
     {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
@@ -232,7 +238,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @inheritdoc IERC7575
     function redeem(uint256 shares, address receiver, address owner_)
-        external override nonReentrant whenNotPaused returns (uint256 assets)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 assets)
     {
         if (shares == 0) revert ZeroShares();
         if (receiver == address(0)) revert ZeroAddress();
@@ -265,11 +275,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Execute a validated trade through an arbitrary target contract
     /// @dev Requires OPERATOR_ROLE + PolicyEngine approval + TradeValidator m-of-n sigs.
     ///      Blocked when wind-down mode is active — use unwind() instead.
-    function execute(
-        ExecuteParams calldata params,
-        bytes[] calldata signatures,
-        uint256[] calldata scores
-    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+    function execute(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores)
+        external
+        onlyRole(OPERATOR_ROLE)
+        nonReentrant
+        whenNotPaused
+    {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
 
@@ -299,9 +310,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores,
         uint256 deadline
     ) internal view {
-        (bool ok,) = tradeValidator.validateWithSignatures(
-            intentHash, address(this), signatures, scores, deadline
-        );
+        (bool ok,) = tradeValidator.validateWithSignatures(intentHash, address(this), signatures, scores, deadline);
         if (!ok) revert ValidatorCheckFailed();
     }
 
@@ -364,11 +373,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @param target The protocol contract to call (must be whitelisted)
     /// @param data The calldata to execute (e.g. Aave withdraw, GMX close position)
     /// @param value ETH value to send (for protocols that require it)
-    function unwind(
-        address target,
-        bytes calldata data,
-        uint256 value
-    ) external nonReentrant {
+    function unwind(address target, bytes calldata data, uint256 value) external nonReentrant {
         if (!windDownActive) revert WindDownNotActive();
         if (target == address(0)) revert ZeroAddress();
 
@@ -400,11 +405,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @param target The protocol contract to call (must be whitelisted)
     /// @param data The calldata to execute
     /// @param value ETH value to send
-    function adminUnwind(
-        address target,
-        bytes calldata data,
-        uint256 value
-    ) external onlyRole(CREATOR_ROLE) nonReentrant {
+    function adminUnwind(address target, bytes calldata data, uint256 value)
+        external
+        onlyRole(CREATOR_ROLE)
+        nonReentrant
+    {
         if (!windDownActive) revert WindDownNotActive();
         if (target == address(0)) revert ZeroAddress();
 
@@ -423,9 +428,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Emergency withdraw all tokens of a given type (ADMIN only)
-    function emergencyWithdraw(address token, address to)
-        external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant
-    {
+    function emergencyWithdraw(address token, address to) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         if (to == address(0)) revert ZeroAddress();
 
         uint256 amount;

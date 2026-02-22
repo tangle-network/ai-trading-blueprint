@@ -80,9 +80,9 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
     constructor(address _treasury) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
         treasury = _treasury;
-        performanceFeeBps = 2000;     // 20% default
-        managementFeeBps = 200;       // 2% annual default
-        validatorFeeShareBps = 3000;  // 30% of perf fee default
+        performanceFeeBps = 2000; // 20% default
+        managementFeeBps = 200; // 2% annual default
+        validatorFeeShareBps = 3000; // 30% of perf fee default
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -127,11 +127,11 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Calculate management fee pro-rata since last settlement
-    function calculateManagementFee(
-        address vault,
-        uint256 aum,
-        uint256 lastSettledTime
-    ) public view returns (uint256 fee) {
+    function calculateManagementFee(address vault, uint256 aum, uint256 lastSettledTime)
+        public
+        view
+        returns (uint256 fee)
+    {
         if (lastSettledTime >= block.timestamp) return 0;
         uint256 elapsed = block.timestamp - lastSettledTime;
         fee = (aum * managementFeeBps * elapsed) / (BPS_DENOMINATOR * SECONDS_PER_YEAR);
@@ -147,10 +147,12 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
     /// @param feeToken The token to collect fees in
     /// @return perfFee The performance fee collected
     /// @return mgmtFee The management fee collected
-    function settleFees(
-        address vault,
-        address feeToken
-    ) external onlyOwner nonReentrant returns (uint256 perfFee, uint256 mgmtFee) {
+    function settleFees(address vault, address feeToken)
+        external
+        onlyOwner
+        nonReentrant
+        returns (uint256 perfFee, uint256 mgmtFee)
+    {
         if (vault == address(0)) revert ZeroAddress();
         if (feeToken == address(0)) revert ZeroAddress();
 
