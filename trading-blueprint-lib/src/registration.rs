@@ -45,7 +45,8 @@ mod tests {
 
     #[test]
     fn test_roundtrip_full_payload() {
-        let payload = trading_registration_payload(10, "http://localhost:9200", "momentum,mean_reversion");
+        let payload =
+            trading_registration_payload(10, "http://localhost:9200", "momentum,mean_reversion");
 
         let mut pos = 0;
 

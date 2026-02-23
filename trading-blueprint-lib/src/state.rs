@@ -116,7 +116,9 @@ pub fn update_activation_progress(bot_id: &str, phase: &str, detail: &str) {
 }
 
 pub fn get_activation(bot_id: &str) -> Result<Option<ActivationProgress>, String> {
-    activations()?.get(&activation_key(bot_id)).map_err(|e| e.to_string())
+    activations()?
+        .get(&activation_key(bot_id))
+        .map_err(|e| e.to_string())
 }
 
 pub fn clear_activation(bot_id: &str) {
@@ -196,7 +198,11 @@ pub fn list_bots(limit: usize, offset: usize) -> Result<PaginatedBots, String> {
 }
 
 /// List bots owned by a specific operator address.
-pub fn bots_by_operator(operator: &str, limit: usize, offset: usize) -> Result<PaginatedBots, String> {
+pub fn bots_by_operator(
+    operator: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<PaginatedBots, String> {
     let op = operator.to_lowercase();
     let mut all: Vec<TradingBotRecord> = bots()?
         .values()
@@ -211,7 +217,11 @@ pub fn bots_by_operator(operator: &str, limit: usize, offset: usize) -> Result<P
 }
 
 /// List bots using a specific strategy type.
-pub fn bots_by_strategy(strategy: &str, limit: usize, offset: usize) -> Result<PaginatedBots, String> {
+pub fn bots_by_strategy(
+    strategy: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<PaginatedBots, String> {
     let strat = strategy.to_string();
     let mut all: Vec<TradingBotRecord> = bots()?
         .values()
@@ -239,7 +249,10 @@ pub fn find_bot_by_vault_address(vault: &str) -> Result<Option<TradingBotRecord>
 }
 
 /// Find a bot by on-chain call_id and service_id.
-pub fn find_bot_by_call_id(service_id: u64, call_id: u64) -> Result<Option<TradingBotRecord>, String> {
+pub fn find_bot_by_call_id(
+    service_id: u64,
+    call_id: u64,
+) -> Result<Option<TradingBotRecord>, String> {
     bots()?
         .find(|b| b.service_id == service_id && b.call_id == call_id)
         .map_err(|e| e.to_string())
@@ -313,9 +326,15 @@ mod tests {
         setup_test_env();
 
         let store = bots().unwrap();
-        store.insert(bot_key("b1"), make_bot("b1", "0xOp1", "defi_yield", 1000)).unwrap();
-        store.insert(bot_key("b2"), make_bot("b2", "0xOp2", "dex_trading", 2000)).unwrap();
-        store.insert(bot_key("b3"), make_bot("b3", "0xOp1", "defi_yield", 3000)).unwrap();
+        store
+            .insert(bot_key("b1"), make_bot("b1", "0xOp1", "defi_yield", 1000))
+            .unwrap();
+        store
+            .insert(bot_key("b2"), make_bot("b2", "0xOp2", "dex_trading", 2000))
+            .unwrap();
+        store
+            .insert(bot_key("b3"), make_bot("b3", "0xOp1", "defi_yield", 3000))
+            .unwrap();
 
         // list_bots: all 3, sorted descending by created_at
         let result = list_bots(10, 0).unwrap();
@@ -339,7 +358,12 @@ mod tests {
         // bots_by_strategy
         let by_strat = bots_by_strategy("defi_yield", 10, 0).unwrap();
         assert_eq!(by_strat.total, 2);
-        assert!(by_strat.bots.iter().all(|b| b.strategy_type == "defi_yield"));
+        assert!(
+            by_strat
+                .bots
+                .iter()
+                .all(|b| b.strategy_type == "defi_yield")
+        );
 
         // get_bot
         let found = get_bot("b1").unwrap();

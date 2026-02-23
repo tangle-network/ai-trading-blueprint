@@ -75,7 +75,11 @@ pub struct PaginatedTrades {
     pub total: usize,
 }
 
-pub fn trades_for_bot(bot_id: &str, limit: usize, offset: usize) -> Result<PaginatedTrades, String> {
+pub fn trades_for_bot(
+    bot_id: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<PaginatedTrades, String> {
     let bid = bot_id.to_string();
     let mut all: Vec<TradeRecord> = trades()?
         .values()
@@ -90,5 +94,8 @@ pub fn trades_for_bot(bot_id: &str, limit: usize, offset: usize) -> Result<Pagin
     let total = all.len();
     let page = all.into_iter().skip(offset).take(limit).collect();
 
-    Ok(PaginatedTrades { trades: page, total })
+    Ok(PaginatedTrades {
+        trades: page,
+        total,
+    })
 }

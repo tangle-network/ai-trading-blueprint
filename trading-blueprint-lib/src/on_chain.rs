@@ -5,12 +5,15 @@
 //! - Vault creation via `VaultFactory.createVault()`
 //! - Strategy registration via `StrategyRegistry.registerStrategy()`
 //! - Fee settlement via `FeeDistributor.settleFees()`
+//! - Subscription billing via `ITangleServices.billSubscription()`
 
 use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use trading_runtime::chain::ChainClient;
-use trading_runtime::contracts::{IFeeDistributor, IStrategyRegistry, IVaultFactory};
+use trading_runtime::contracts::{
+    IFeeDistributor, IStrategyRegistry, ITangleServices, IVaultFactory,
+};
 
 /// Result of deploying a vault via VaultFactory.
 #[derive(Debug, Clone)]
@@ -34,6 +37,7 @@ pub struct VaultDeployment {
 /// * `name` — Share token name (e.g., "AI Yield Shares")
 /// * `symbol` — Share token symbol (e.g., "aiYLD")
 /// * `salt` — CREATE2 salt for deterministic addresses
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_vault(
     chain: &ChainClient,
     factory_address: Address,
@@ -78,12 +82,10 @@ pub async fn deploy_vault(
 
     // Parse return values from the transaction receipt logs
     // The VaultCreated event contains: (serviceId, vault, shareToken, assetToken, admin, operator)
-    let (vault_address, share_token) = parse_vault_created_event(&receipt)
-        .unwrap_or((Address::ZERO, Address::ZERO));
+    let (vault_address, share_token) =
+        parse_vault_created_event(&receipt).unwrap_or((Address::ZERO, Address::ZERO));
 
-    tracing::info!(
-        "Vault deployed: vault={vault_address}, share={share_token}, tx={tx_hash}"
-    );
+    tracing::info!("Vault deployed: vault={vault_address}, share={share_token}, tx={tx_hash}");
 
     Ok(VaultDeployment {
         vault_address,
@@ -161,9 +163,7 @@ pub async fn register_strategy(
 }
 
 /// Parse StrategyRegistered event from receipt.
-fn parse_strategy_registered_event(
-    receipt: &alloy::rpc::types::TransactionReceipt,
-) -> Option<u64> {
+fn parse_strategy_registered_event(receipt: &alloy::rpc::types::TransactionReceipt) -> Option<u64> {
     // topic[0] = event sig
     // topic[1] = strategyId (indexed uint256)
     for log in receipt.inner.logs() {
@@ -246,9 +246,7 @@ pub async fn settle_fees(
     //                    uint256 validatorShare, uint256 protocolShare)
     let (perf, mgmt) = parse_fees_settled_event(&receipt).unwrap_or((U256::ZERO, U256::ZERO));
 
-    tracing::info!(
-        "Fees settled: vault={vault_address}, perf={perf}, mgmt={mgmt}, tx={tx_hash}"
-    );
+    tracing::info!("Fees settled: vault={vault_address}, perf={perf}, mgmt={mgmt}, tx={tx_hash}");
 
     Ok((perf, mgmt))
 }
@@ -269,4 +267,116 @@ fn parse_fees_settled_event(
         }
     }
     None
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUBSCRIPTION BILLING (Tangle protocol)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Service escrow info returned by `getServiceEscrow()`.
+#[derive(Debug, Clone)]
+pub struct ServiceEscrowInfo {
+    pub token: Address,
+    pub balance: U256,
+    pub total_deposited: U256,
+    pub total_released: U256,
+}
+
+/// Bill a subscription service via `ITangleServices.billSubscription()`.
+///
+/// This is permissionless — anyone can call it, but operators are naturally
+/// incentivized to call it to receive payment. Reverts with `BillingTooEarly`
+/// if the billing interval hasn't elapsed yet.
+pub async fn bill_subscription(
+    chain: &ChainClient,
+    tangle_address: Address,
+    service_id: u64,
+) -> Result<(), String> {
+    let call = ITangleServices::billSubscriptionCall {
+        serviceId: service_id,
+    };
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(tangle_address)
+        .input(Bytes::from(call.abi_encode()).into());
+
+    let pending = chain
+        .provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| format!("billSubscription tx failed: {e}"))?;
+
+    let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+
+    pending
+        .get_receipt()
+        .await
+        .map_err(|e| format!("billSubscription receipt failed: {e}"))?;
+
+    tracing::info!("Subscription billed: service={service_id}, tx={tx_hash}");
+    Ok(())
+}
+
+/// Check which services are currently billable via `ITangleServices.getBillableServices()`.
+///
+/// Returns the subset of `service_ids` that have elapsed their billing interval.
+pub async fn get_billable_services(
+    chain: &ChainClient,
+    tangle_address: Address,
+    service_ids: Vec<u64>,
+) -> Result<Vec<u64>, String> {
+    let call = ITangleServices::getBillableServicesCall {
+        serviceIds: service_ids,
+    };
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(tangle_address)
+        .input(Bytes::from(call.abi_encode()).into());
+
+    let result = chain
+        .provider
+        .call(tx)
+        .await
+        .map_err(|e| format!("getBillableServices call failed: {e}"))?;
+
+    // sol! flattens single return values — decoded is Vec<u64> directly
+    let billable: Vec<u64> = <alloy::sol_types::sol_data::Array<
+        alloy::sol_types::sol_data::Uint<64>,
+    > as alloy::sol_types::SolType>::abi_decode(result.as_ref())
+    .map_err(|e| format!("getBillableServices decode failed: {e}"))?;
+
+    Ok(billable)
+}
+
+/// Get service escrow details via `ITangleServices.getServiceEscrow()`.
+pub async fn get_service_escrow(
+    chain: &ChainClient,
+    tangle_address: Address,
+    service_id: u64,
+) -> Result<ServiceEscrowInfo, String> {
+    let call = ITangleServices::getServiceEscrowCall {
+        serviceId: service_id,
+    };
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(tangle_address)
+        .input(Bytes::from(call.abi_encode()).into());
+
+    let result = chain
+        .provider
+        .call(tx)
+        .await
+        .map_err(|e| format!("getServiceEscrow call failed: {e}"))?;
+
+    // sol! flattens single struct returns — decoded is ServiceEscrow directly
+    let escrow =
+        <ITangleServices::getServiceEscrowCall as SolCall>::abi_decode_returns(result.as_ref())
+            .map_err(|e| format!("getServiceEscrow decode failed: {e}"))?;
+
+    Ok(ServiceEscrowInfo {
+        token: escrow.token,
+        balance: escrow.balance,
+        total_deposited: escrow.totalDeposited,
+        total_released: escrow.totalReleased,
+    })
 }

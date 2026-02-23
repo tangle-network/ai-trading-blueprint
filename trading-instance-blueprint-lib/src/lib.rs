@@ -21,11 +21,11 @@ pub use trading_blueprint_lib::context;
 pub use trading_blueprint_lib::state::TradingBotRecord;
 
 // Re-export sandbox-runtime modules.
-pub use sandbox_runtime::{auth, reaper, runtime, store, tee};
 pub use sandbox_runtime::instance_types::{
     InstanceExecRequest, InstanceExecResponse, InstancePromptRequest, InstancePromptResponse,
     InstanceTaskRequest, InstanceTaskResponse,
 };
+pub use sandbox_runtime::{auth, reaper, runtime, store, tee};
 
 use blueprint_sdk::Job;
 use blueprint_sdk::Router;
@@ -86,12 +86,16 @@ pub fn set_instance_bot_id(bot_id: String) -> Result<(), String> {
 
 /// Get the singleton bot_id, if provisioned.
 pub fn get_instance_bot_id() -> Result<Option<String>, String> {
-    instance_store()?.get(INSTANCE_KEY).map_err(|e| e.to_string())
+    instance_store()?
+        .get(INSTANCE_KEY)
+        .map_err(|e| e.to_string())
 }
 
 /// Clear the singleton reference.
 pub fn clear_instance_bot_id() -> Result<(), String> {
-    instance_store()?.remove(INSTANCE_KEY).map_err(|e| e.to_string())?;
+    instance_store()?
+        .remove(INSTANCE_KEY)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

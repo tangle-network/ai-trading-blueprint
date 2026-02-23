@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
-use crate::prompts::packs;
-use crate::state::{bots, TradingBotRecord};
 use crate::JsonResponse;
+use crate::prompts::packs;
+use crate::state::{TradingBotRecord, bots};
 
 /// Process a webhook event by routing it to matching bots' sidecars.
 ///
@@ -117,10 +117,7 @@ fn find_target_bots(target: &str) -> Result<Vec<TradingBotRecord>, String> {
     }
 
     if let Some(bot_id) = target.strip_prefix("bot:") {
-        return Ok(all_bots
-            .into_iter()
-            .filter(|b| b.id == bot_id)
-            .collect());
+        return Ok(all_bots.into_iter().filter(|b| b.id == bot_id).collect());
     }
 
     Err(format!(
@@ -292,11 +289,7 @@ mod tests {
     #[test]
     fn test_build_event_prompt_perp_funding() {
         let bot = test_bot("perp");
-        let prompt = build_event_prompt_for_bot(
-            &bot,
-            "funding_rate",
-            &json!({"rate": 0.001}),
-        );
+        let prompt = build_event_prompt_for_bot(&bot, "funding_rate", &json!({"rate": 0.001}));
         // perp pack has gmx_v2, hyperliquid, vertex — all handle funding_rate
         assert!(prompt.contains("FUNDING RATE"));
     }
@@ -346,8 +339,6 @@ mod tests {
                 || "prediction_politics".starts_with(&format!("{strategy}_"))
         );
         // Non-match
-        assert!(
-            !("dex" == strategy || "dex".starts_with(&format!("{strategy}_")))
-        );
+        assert!(!("dex" == strategy || "dex".starts_with(&format!("{strategy}_"))));
     }
 }

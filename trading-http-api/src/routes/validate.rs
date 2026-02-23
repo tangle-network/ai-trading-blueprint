@@ -1,13 +1,13 @@
-use axum::{Router, routing::post, extract::State, Json};
+use crate::{MultiBotTradingState, TradingApiState};
 use axum::extract::Request;
 use axum::http::StatusCode;
+use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::{TradingApiState, MultiBotTradingState};
-use trading_runtime::{Action, TradeIntentBuilder};
 use trading_runtime::intent::hash_intent;
 #[allow(unused_imports)]
 use trading_runtime::validator_client::ValidatorClient;
+use trading_runtime::{Action, TradeIntentBuilder};
 
 #[derive(Deserialize)]
 pub struct ValidateRequest {
@@ -22,7 +22,9 @@ pub struct ValidateRequest {
     pub deadline_secs: u64,
 }
 
-fn default_deadline() -> u64 { 300 }
+fn default_deadline() -> u64 {
+    300
+}
 
 #[derive(Serialize)]
 pub struct ValidateResponse {
@@ -79,13 +81,21 @@ async fn validate(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, (axum::http::StatusCode, String)> {
-    let action = parse_action(&request.action)
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
+    let action =
+        parse_action(&request.action).map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
 
-    let amount_in: rust_decimal::Decimal = request.amount_in.parse()
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid amount_in: {e}")))?;
-    let min_amount_out: rust_decimal::Decimal = request.min_amount_out.parse()
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid min_amount_out: {e}")))?;
+    let amount_in: rust_decimal::Decimal = request.amount_in.parse().map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in: {e}"),
+        )
+    })?;
+    let min_amount_out: rust_decimal::Decimal = request.min_amount_out.parse().map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid min_amount_out: {e}"),
+        )
+    })?;
 
     let intent = TradeIntentBuilder::new()
         .strategy_id(&request.strategy_id)
@@ -104,18 +114,25 @@ async fn validate(
         .as_secs();
     let deadline = now + request.deadline_secs;
 
-    let result = state.validator_client.validate(&intent, &state.vault_address, deadline).await
+    let result = state
+        .validator_client
+        .validate(&intent, &state.vault_address, deadline)
+        .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    let responses = result.validator_responses.iter().map(|r| ValidatorResponseEntry {
-        validator: r.validator.clone(),
-        score: r.score,
-        reasoning: r.reasoning.clone(),
-        signature: r.signature.clone(),
-        chain_id: r.chain_id,
-        verifying_contract: r.verifying_contract.clone(),
-        validated_at: r.validated_at.clone(),
-    }).collect();
+    let responses = result
+        .validator_responses
+        .iter()
+        .map(|r| ValidatorResponseEntry {
+            validator: r.validator.clone(),
+            score: r.score,
+            reasoning: r.reasoning.clone(),
+            signature: r.signature.clone(),
+            chain_id: r.chain_id,
+            verifying_contract: r.verifying_contract.clone(),
+            validated_at: r.validated_at.clone(),
+        })
+        .collect();
 
     Ok(Json(ValidateResponse {
         approved: result.approved,
@@ -143,13 +160,18 @@ async fn validate_multi_bot(
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
-    let action = parse_action(&req.action)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let action = parse_action(&req.action).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    let amount_in: rust_decimal::Decimal = req.amount_in.parse()
+    let amount_in: rust_decimal::Decimal = req
+        .amount_in
+        .parse()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid amount_in: {e}")))?;
-    let min_amount_out: rust_decimal::Decimal = req.min_amount_out.parse()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid min_amount_out: {e}")))?;
+    let min_amount_out: rust_decimal::Decimal = req.min_amount_out.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid min_amount_out: {e}"),
+        )
+    })?;
 
     let intent = TradeIntentBuilder::new()
         .strategy_id(&req.strategy_id)
@@ -194,18 +216,24 @@ async fn validate_multi_bot(
 
     // Real validation: fan out to validator endpoints
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
-    let result = client.validate(&intent, &bot.vault_address, deadline).await
+    let result = client
+        .validate(&intent, &bot.vault_address, deadline)
+        .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    let responses = result.validator_responses.iter().map(|r| ValidatorResponseEntry {
-        validator: r.validator.clone(),
-        score: r.score,
-        reasoning: r.reasoning.clone(),
-        signature: r.signature.clone(),
-        chain_id: r.chain_id,
-        verifying_contract: r.verifying_contract.clone(),
-        validated_at: r.validated_at.clone(),
-    }).collect();
+    let responses = result
+        .validator_responses
+        .iter()
+        .map(|r| ValidatorResponseEntry {
+            validator: r.validator.clone(),
+            score: r.score,
+            reasoning: r.reasoning.clone(),
+            signature: r.signature.clone(),
+            chain_id: r.chain_id,
+            verifying_contract: r.verifying_contract.clone(),
+            validated_at: r.validated_at.clone(),
+        })
+        .collect();
 
     Ok(Json(ValidateResponse {
         approved: result.approved,

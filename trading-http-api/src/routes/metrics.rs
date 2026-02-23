@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::metrics_store::{self, MetricSnapshot};
 use crate::TradingApiState;
+use crate::metrics_store::{self, MetricSnapshot};
 
 #[derive(Serialize)]
 pub struct BotMetrics {
@@ -100,8 +100,7 @@ async fn post_snapshot(
         trade_count: req.trade_count,
     };
 
-    metrics_store::record_snapshot(snapshot)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    metrics_store::record_snapshot(snapshot).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(SnapshotResponse {
         recorded: true,

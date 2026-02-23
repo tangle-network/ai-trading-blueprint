@@ -55,41 +55,25 @@ mod tests {
 
     #[test]
     fn test_performance_fee_above_hwm() {
-        let fee = calculate_performance_fee(
-            Decimal::new(110000, 0),
-            Decimal::new(100000, 0),
-            2000,
-        );
+        let fee = calculate_performance_fee(Decimal::new(110000, 0), Decimal::new(100000, 0), 2000);
         assert_eq!(fee, Decimal::new(2000, 0));
     }
 
     #[test]
     fn test_performance_fee_below_hwm() {
-        let fee = calculate_performance_fee(
-            Decimal::new(90000, 0),
-            Decimal::new(100000, 0),
-            2000,
-        );
+        let fee = calculate_performance_fee(Decimal::new(90000, 0), Decimal::new(100000, 0), 2000);
         assert_eq!(fee, Decimal::ZERO);
     }
 
     #[test]
     fn test_management_fee_one_year() {
-        let fee = calculate_management_fee(
-            Decimal::new(1000000, 0),
-            200,
-            365 * 24 * 3600,
-        );
+        let fee = calculate_management_fee(Decimal::new(1000000, 0), 200, 365 * 24 * 3600);
         assert_eq!(fee, Decimal::new(20000, 0));
     }
 
     #[test]
     fn test_management_fee_half_year() {
-        let fee = calculate_management_fee(
-            Decimal::new(1000000, 0),
-            200,
-            365 * 24 * 3600 / 2,
-        );
+        let fee = calculate_management_fee(Decimal::new(1000000, 0), 200, 365 * 24 * 3600 / 2);
         assert_eq!(fee, Decimal::new(10000, 0));
     }
 

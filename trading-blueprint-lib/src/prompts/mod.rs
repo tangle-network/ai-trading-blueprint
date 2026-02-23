@@ -203,22 +203,55 @@ mod tests {
         let pack = packs::get_pack("prediction").unwrap();
         let prompt = build_pack_loop_prompt(&pack);
 
-        assert!(prompt.contains("phase.json"), "loop prompt must reference phase.json");
-        assert!(prompt.contains("bootstrap"), "loop prompt must mention bootstrap phase");
-        assert!(prompt.contains("research"), "loop prompt must mention research phase");
-        assert!(prompt.contains("trading"), "loop prompt must mention trading phase");
-        assert!(prompt.contains("reflect"), "loop prompt must mention reflect phase");
-        assert!(prompt.contains("20 turns"), "loop prompt must include max_turns");
-        assert!(prompt.contains("insights.jsonl"), "loop prompt must reference insights");
-        assert!(prompt.contains("memory"), "loop prompt must reference memory table");
-        assert!(prompt.contains("signal accuracy"), "loop prompt must reference signal accuracy");
+        assert!(
+            prompt.contains("phase.json"),
+            "loop prompt must reference phase.json"
+        );
+        assert!(
+            prompt.contains("bootstrap"),
+            "loop prompt must mention bootstrap phase"
+        );
+        assert!(
+            prompt.contains("research"),
+            "loop prompt must mention research phase"
+        );
+        assert!(
+            prompt.contains("trading"),
+            "loop prompt must mention trading phase"
+        );
+        assert!(
+            prompt.contains("reflect"),
+            "loop prompt must mention reflect phase"
+        );
+        assert!(
+            prompt.contains("20 turns"),
+            "loop prompt must include max_turns"
+        );
+        assert!(
+            prompt.contains("insights.jsonl"),
+            "loop prompt must reference insights"
+        );
+        assert!(
+            prompt.contains("memory"),
+            "loop prompt must reference memory table"
+        );
+        assert!(
+            prompt.contains("signal accuracy"),
+            "loop prompt must reference signal accuracy"
+        );
     }
 
     #[test]
     fn test_build_system_prompt_volatility() {
         let prompt = build_system_prompt("volatility", &test_config());
-        assert!(prompt.contains("volatility"), "must include volatility fragment");
-        assert!(prompt.contains("delta-neutral"), "must mention delta-neutral");
+        assert!(
+            prompt.contains("volatility"),
+            "must include volatility fragment"
+        );
+        assert!(
+            prompt.contains("delta-neutral"),
+            "must mention delta-neutral"
+        );
     }
 
     #[test]

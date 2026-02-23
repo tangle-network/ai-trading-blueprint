@@ -24,8 +24,7 @@ pub async fn deprovision_core(
         // Delete sidecar (best-effort: container may not exist in mock/test)
         match sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id) {
             Ok(record) => {
-                if let Err(e) =
-                    sandbox_runtime::runtime::delete_sidecar(&record, tee_backend).await
+                if let Err(e) = sandbox_runtime::runtime::delete_sidecar(&record, tee_backend).await
                 {
                     tracing::warn!("Could not delete sidecar (may be mock): {e}");
                 }
@@ -44,8 +43,7 @@ pub async fn deprovision_core(
     // Remove workflow
     if let Some(wf_id) = workflow_id {
         let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?
-            .remove(&key);
+        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.remove(&key);
     }
 
     // Remove bot record

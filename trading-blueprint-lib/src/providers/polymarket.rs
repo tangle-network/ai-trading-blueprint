@@ -258,5 +258,4 @@ mod tests {
         assert!(!p.setup_commands().is_empty());
         assert!(p.setup_commands()[0].contains("py-clob-client"));
     }
-
 }

@@ -3,9 +3,7 @@ pub mod fixtures;
 pub mod validators;
 
 use anyhow::Result;
-use blueprint_anvil_testing_utils::{
-    BlueprintHarness, MultiHarness, missing_tnt_core_artifacts,
-};
+use blueprint_anvil_testing_utils::{BlueprintHarness, MultiHarness, missing_tnt_core_artifacts};
 use once_cell::sync::Lazy;
 use std::sync::Once;
 use std::time::Duration;

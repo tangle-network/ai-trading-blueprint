@@ -30,11 +30,10 @@ pub async fn stop_core(sandbox_id: &str, skip_docker: bool) -> Result<JsonRespon
     // Deactivate workflow
     if let Some(wf_id) = workflow_id {
         let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?
-            .update(&key, |e| {
-                e.active = false;
-                e.next_run_at = None;
-            });
+        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.update(&key, |e| {
+            e.active = false;
+            e.next_run_at = None;
+        });
     }
 
     // Set trading_active = false

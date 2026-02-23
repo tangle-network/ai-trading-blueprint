@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, Bytes, Uint, U256};
+use alloy::primitives::{Address, Bytes, U256, Uint};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
@@ -217,10 +217,7 @@ mod tests {
             extra: serde_json::json!({"fee_tier": 3000}),
         };
         let result = adapter.encode_action(&params).unwrap();
-        assert_eq!(
-            result.target,
-            UNISWAP_V3_ROUTER.parse::<Address>().unwrap()
-        );
+        assert_eq!(result.target, UNISWAP_V3_ROUTER.parse::<Address>().unwrap());
         // Verify ABI-encoded calldata starts with the correct selector
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, TOKEN_B.parse::<Address>().unwrap());

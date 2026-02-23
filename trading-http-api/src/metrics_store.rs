@@ -33,7 +33,9 @@ fn snapshot_key(bot_id: &str, ts: &DateTime<Utc>) -> String {
 
 pub fn record_snapshot(snapshot: MetricSnapshot) -> Result<(), String> {
     let key = snapshot_key(&snapshot.bot_id, &snapshot.timestamp);
-    snapshots()?.insert(key, snapshot).map_err(|e| e.to_string())
+    snapshots()?
+        .insert(key, snapshot)
+        .map_err(|e| e.to_string())
 }
 
 pub struct PaginatedSnapshots {
@@ -53,8 +55,8 @@ pub fn snapshots_for_bot(
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|s| s.bot_id == bid)
-        .filter(|s| from.map_or(true, |f| s.timestamp >= f))
-        .filter(|s| to.map_or(true, |t| s.timestamp <= t))
+        .filter(|s| from.is_none_or(|f| s.timestamp >= f))
+        .filter(|s| to.is_none_or(|t| s.timestamp <= t))
         .collect();
 
     // Sort by timestamp ascending (oldest first for time-series)

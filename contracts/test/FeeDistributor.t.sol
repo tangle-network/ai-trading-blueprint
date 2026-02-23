@@ -60,16 +60,15 @@ contract FeeDistributorTest is Setup {
         vm.prank(fdOwner);
         (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
-        // First settlement: HWM was 0, AUM is 10000 ether
-        // Perf fee = 10000 * 2000 / 10000 = 2000
-        assertEq(perfFee, 2000 ether);
+        // First settlement: HWM is initialized to currentAUM, so no perf fee on initial capital
+        assertEq(perfFee, 0, "No perf fee on first settlement - initial capital is not gains");
         // Mgmt fee = 0 (first settlement, lastSettled == block.timestamp)
         assertEq(mgmtFee, 0);
 
-        // Verify tokens actually transferred to FeeDistributor
-        assertEq(tokenA.balanceOf(address(feeDistributor)), 2000 ether);
+        // No fees transferred on first settlement
+        assertEq(tokenA.balanceOf(address(feeDistributor)), 0);
 
-        // HWM should be updated
+        // HWM should be set to initial AUM
         assertEq(feeDistributor.highWaterMark(address(vault)), 10000 ether);
         assertEq(feeDistributor.lastSettled(address(vault)), block.timestamp);
     }
@@ -124,16 +123,20 @@ contract FeeDistributorTest is Setup {
     function test_noFeesBelowHWM() public {
         address fdOwner = feeDistributor.owner();
 
-        // First settlement sets HWM to 10000
+        // First settlement sets HWM to 10000 (no fees taken)
         vm.prank(fdOwner);
         feeDistributor.settleFees(address(vault), address(tokenA));
+        assertEq(feeDistributor.highWaterMark(address(vault)), 10000 ether);
+
+        // Simulate loss: remove some tokens from vault
+        vm.prank(address(vault));
+        tokenA.transfer(address(1), 2000 ether);
 
         // Advance time
         vm.warp(block.timestamp + 30 days);
 
-        // Current AUM is now less than HWM (after fees were taken)
         uint256 currentAUM = tokenA.balanceOf(address(vault));
-        assertTrue(currentAUM < 10000 ether, "AUM should be below HWM after fee deduction");
+        assertTrue(currentAUM < 10000 ether, "AUM should be below HWM after loss");
 
         vm.prank(fdOwner);
         (uint256 perfFee,) = feeDistributor.settleFees(address(vault), address(tokenA));
@@ -168,8 +171,18 @@ contract FeeDistributorTest is Setup {
     function test_validatorFeeShare() public {
         address fdOwner = feeDistributor.owner();
 
+        // First settlement initializes HWM
+        vm.prank(fdOwner);
+        feeDistributor.settleFees(address(vault), address(tokenA));
+
+        // Simulate gains above HWM
+        tokenA.mint(address(vault), 5000 ether);
+        vm.warp(block.timestamp + 1 days);
+
+        // Second settlement produces real perf fees
         vm.prank(fdOwner);
         (uint256 perfFee,) = feeDistributor.settleFees(address(vault), address(tokenA));
+        assertTrue(perfFee > 0, "Should have perf fee from gains");
 
         // Validator share = perfFee * validatorFeeShareBps / BPS_DENOMINATOR
         uint256 expectedValidatorShare = (perfFee * 3000) / 10000;
@@ -183,12 +196,20 @@ contract FeeDistributorTest is Setup {
     function test_withdrawFees() public {
         address fdOwner = feeDistributor.owner();
 
-        // Settle fees first
+        // First settlement initializes HWM (no fees)
+        vm.prank(fdOwner);
+        feeDistributor.settleFees(address(vault), address(tokenA));
+
+        // Simulate gains above HWM
+        tokenA.mint(address(vault), 5000 ether);
+        vm.warp(block.timestamp + 1 days);
+
+        // Second settlement produces real fees
         vm.prank(fdOwner);
         feeDistributor.settleFees(address(vault), address(tokenA));
 
         uint256 feeBalance = tokenA.balanceOf(address(feeDistributor));
-        assertTrue(feeBalance > 0);
+        assertTrue(feeBalance > 0, "Should have fees from gains above HWM");
 
         uint256 treasuryBalBefore = tokenA.balanceOf(owner);
 
@@ -202,12 +223,20 @@ contract FeeDistributorTest is Setup {
     function test_withdrawValidatorFees() public {
         address fdOwner = feeDistributor.owner();
 
-        // Settle fees to accumulate validator fees
+        // First settlement initializes HWM (no fees)
+        vm.prank(fdOwner);
+        feeDistributor.settleFees(address(vault), address(tokenA));
+
+        // Simulate gains above HWM
+        tokenA.mint(address(vault), 5000 ether);
+        vm.warp(block.timestamp + 1 days);
+
+        // Second settlement produces real perf fees → validator share
         vm.prank(fdOwner);
         feeDistributor.settleFees(address(vault), address(tokenA));
 
         uint256 valFees = feeDistributor.validatorFees(address(tokenA));
-        assertTrue(valFees > 0);
+        assertTrue(valFees > 0, "Should have validator fees from perf fee share");
 
         address validatorRecipient = makeAddr("validatorRecipient");
         uint256 recipientBalBefore = tokenA.balanceOf(validatorRecipient);

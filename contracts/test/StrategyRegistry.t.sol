@@ -219,4 +219,9 @@ contract StrategyRegistryTest is Setup {
         vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotFound.selector, 999));
         strategyRegistry.getStrategy(999);
     }
+
+    function test_constructor_revertsOnZeroAddress() public {
+        vm.expectRevert(StrategyRegistry.ZeroAddress.selector);
+        new StrategyRegistry(address(0));
+    }
 }

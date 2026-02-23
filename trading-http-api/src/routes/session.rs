@@ -3,15 +3,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{
-        sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
     },
     routing::{delete, get, patch, post},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,8 +63,8 @@ fn extract_owner_token(headers: &axum::http::HeaderMap) -> Result<String, (Statu
         .and_then(|v| v.to_str().ok())
         .ok_or((StatusCode::UNAUTHORIZED, "Missing auth token".into()))?;
 
-    let token = if header.starts_with("Bearer ") {
-        &header[7..]
+    let token = if let Some(stripped) = header.strip_prefix("Bearer ") {
+        stripped
     } else {
         header
     };
@@ -74,8 +73,10 @@ fn extract_owner_token(headers: &axum::http::HeaderMap) -> Result<String, (Statu
         return Err((StatusCode::UNAUTHORIZED, "Invalid session token".into()));
     }
 
-    session_auth::validate_owner_token(token)
-        .ok_or((StatusCode::UNAUTHORIZED, "Invalid or expired session token".into()))?;
+    session_auth::validate_owner_token(token).ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Invalid or expired session token".into(),
+    ))?;
 
     Ok(token.to_string())
 }
@@ -265,7 +266,10 @@ async fn list_messages(
     if let Ok(mut messages) = serde_json::from_slice::<Value>(&bytes) {
         enrich_message_sources(&mut messages, &bot_id);
         let enriched = serde_json::to_vec(&messages).unwrap_or_else(|_| bytes.to_vec());
-        Ok(Response::from_parts(parts, axum::body::Body::from(enriched)))
+        Ok(Response::from_parts(
+            parts,
+            axum::body::Body::from(enriched),
+        ))
     } else {
         Ok(Response::from_parts(parts, axum::body::Body::from(bytes)))
     }

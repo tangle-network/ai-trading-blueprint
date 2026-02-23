@@ -1,7 +1,7 @@
-use axum::{Router, routing::post, extract::State, Json};
+use crate::TradingApiState;
+use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::TradingApiState;
 
 #[derive(Deserialize)]
 pub struct PricesRequest {
@@ -28,14 +28,20 @@ async fn get_prices(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<PricesRequest>,
 ) -> Result<Json<PricesResponse>, (axum::http::StatusCode, String)> {
-    let prices = state.market_client.get_prices(&request.tokens).await
+    let prices = state
+        .market_client
+        .get_prices(&request.tokens)
+        .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    let entries = prices.into_iter().map(|p| PriceEntry {
-        token: p.token,
-        price_usd: p.price_usd.to_string(),
-        source: p.source,
-    }).collect();
+    let entries = prices
+        .into_iter()
+        .map(|p| PriceEntry {
+            token: p.token,
+            price_usd: p.price_usd.to_string(),
+            source: p.source,
+        })
+        .collect();
 
     Ok(Json(PricesResponse { prices: entries }))
 }

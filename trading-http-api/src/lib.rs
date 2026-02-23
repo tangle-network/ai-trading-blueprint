@@ -1,17 +1,17 @@
 pub mod auth;
+pub mod metrics_store;
 pub mod routes;
 pub mod session_auth;
 pub mod trade_store;
-pub mod metrics_store;
 
+use axum::Router;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use axum::Router;
 
-use trading_runtime::executor::TradeExecutor;
-use trading_runtime::validator_client::ValidatorClient;
-use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::PortfolioState;
+use trading_runtime::executor::TradeExecutor;
+use trading_runtime::market_data::MarketDataClient;
+use trading_runtime::validator_client::ValidatorClient;
 
 pub struct TradingApiState {
     pub market_client: MarketDataClient,
@@ -86,6 +86,7 @@ pub struct MultiBotTradingState {
     /// Minimum validator score for trade approval.
     pub min_validator_score: u32,
     /// Resolves a bearer token into a BotContext. Injected by the binary.
+    #[allow(clippy::type_complexity)]
     pub resolve_bot: Box<dyn Fn(&str) -> Option<BotContext> + Send + Sync>,
 }
 
@@ -97,9 +98,10 @@ pub struct MultiBotTradingState {
 pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     use axum::routing::get;
     Router::new()
-        .route("/health", get(|| async {
-            axum::Json(serde_json::json!({"status": "ok"}))
-        }))
+        .route(
+            "/health",
+            get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
+        )
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(

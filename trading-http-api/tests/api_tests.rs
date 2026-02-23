@@ -13,12 +13,12 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
-use trading_http_api::{MultiBotTradingState, BotContext, build_multi_bot_router};
+use trading_runtime::PortfolioState;
+use trading_runtime::executor::TradeExecutor;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::validator_client::ValidatorClient;
-use trading_runtime::executor::TradeExecutor;
-use trading_runtime::PortfolioState;
 
 const TEST_TOKEN: &str = "test-api-token-12345";
 
@@ -334,7 +334,10 @@ async fn test_cors_preflight_no_auth_needed() {
                 .uri("/execute")
                 .header("origin", "http://localhost:3000")
                 .header("access-control-request-method", "POST")
-                .header("access-control-request-headers", "authorization,content-type")
+                .header(
+                    "access-control-request-headers",
+                    "authorization,content-type",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -342,8 +345,16 @@ async fn test_cors_preflight_no_auth_needed() {
         .unwrap();
 
     assert_eq!(response.status(), 200);
-    assert!(response.headers().contains_key("access-control-allow-origin"));
-    assert!(response.headers().contains_key("access-control-allow-methods"));
+    assert!(
+        response
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
+    assert!(
+        response
+            .headers()
+            .contains_key("access-control-allow-methods")
+    );
 }
 
 #[tokio::test]
@@ -364,7 +375,11 @@ async fn test_cors_headers_on_normal_request() {
         .unwrap();
 
     assert_eq!(response.status(), 200);
-    assert!(response.headers().contains_key("access-control-allow-origin"));
+    assert!(
+        response
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
 }
 
 // ── Trade history tests ─────────────────────────────────────────────────────
@@ -391,7 +406,12 @@ async fn test_trade_persistence_paper_trade() {
         .unwrap();
 
     assert_eq!(exec_response.status(), 200);
-    let exec_body = exec_response.into_body().collect().await.unwrap().to_bytes();
+    let exec_body = exec_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let exec_json: serde_json::Value = serde_json::from_slice(&exec_body).unwrap();
     assert_eq!(exec_json["paper_trade"], true);
     let tx_hash = exec_json["tx_hash"].as_str().unwrap();
@@ -411,14 +431,24 @@ async fn test_trade_persistence_paper_trade() {
         .unwrap();
 
     assert_eq!(list_response.status(), 200);
-    let list_body = list_response.into_body().collect().await.unwrap().to_bytes();
+    let list_body = list_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let list_json: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
     let trades = list_json["trades"].as_array().unwrap();
     assert!(!trades.is_empty(), "Expected at least one trade");
 
     // Find our trade by tx_hash
-    let our_trade = trades.iter().find(|t| t["tx_hash"].as_str() == Some(tx_hash));
-    assert!(our_trade.is_some(), "Should find our paper trade in the list");
+    let our_trade = trades
+        .iter()
+        .find(|t| t["tx_hash"].as_str() == Some(tx_hash));
+    assert!(
+        our_trade.is_some(),
+        "Should find our paper trade in the list"
+    );
 
     let trade = our_trade.unwrap();
     assert_eq!(trade["action"], "swap");
@@ -461,7 +491,12 @@ async fn test_trade_detail_with_reasoning() {
         )
         .await
         .unwrap();
-    let list_body = list_response.into_body().collect().await.unwrap().to_bytes();
+    let list_body = list_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let list_json: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
     let trades = list_json["trades"].as_array().unwrap();
     assert!(!trades.is_empty());
@@ -481,14 +516,29 @@ async fn test_trade_detail_with_reasoning() {
         .unwrap();
 
     assert_eq!(detail_response.status(), 200);
-    let detail_body = detail_response.into_body().collect().await.unwrap().to_bytes();
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let detail: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
 
     assert_eq!(detail["id"], trade_id);
     let responses = detail["validation"]["responses"].as_array().unwrap();
     assert_eq!(responses.len(), 2);
-    assert!(responses[0]["reasoning"].as_str().unwrap().contains("market conditions"));
-    assert!(responses[1]["reasoning"].as_str().unwrap().contains("risk level"));
+    assert!(
+        responses[0]["reasoning"]
+            .as_str()
+            .unwrap()
+            .contains("market conditions")
+    );
+    assert!(
+        responses[1]["reasoning"]
+            .as_str()
+            .unwrap()
+            .contains("risk level")
+    );
 }
 
 #[tokio::test]
@@ -612,7 +662,12 @@ async fn test_metrics_snapshot_and_history() {
         .unwrap();
 
     assert_eq!(snap_response.status(), 200);
-    let snap_body = snap_response.into_body().collect().await.unwrap().to_bytes();
+    let snap_body = snap_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let snap_json: serde_json::Value = serde_json::from_slice(&snap_body).unwrap();
     assert_eq!(snap_json["recorded"], true);
     assert!(snap_json["timestamp"].as_str().is_some());
@@ -630,7 +685,12 @@ async fn test_metrics_snapshot_and_history() {
         .unwrap();
 
     assert_eq!(hist_response.status(), 200);
-    let hist_body = hist_response.into_body().collect().await.unwrap().to_bytes();
+    let hist_body = hist_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let hist_json: serde_json::Value = serde_json::from_slice(&hist_body).unwrap();
     let snapshots = hist_json["snapshots"].as_array().unwrap();
     assert!(!snapshots.is_empty());
@@ -671,7 +731,8 @@ async fn test_metrics_current() {
 fn multi_bot_state() -> Arc<MultiBotTradingState> {
     ensure_state_dir();
     Arc::new(MultiBotTradingState {
-        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
         validation_deadline_secs: 300,
         min_validator_score: 50,
@@ -816,7 +877,10 @@ async fn test_multi_bot_execute_paper_trade() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["paper_trade"], true);
     let tx_hash = json["tx_hash"].as_str().unwrap();
-    assert!(tx_hash.starts_with("0xpaper_"), "tx_hash should start with 0xpaper_, got: {tx_hash}");
+    assert!(
+        tx_hash.starts_with("0xpaper_"),
+        "tx_hash should start with 0xpaper_, got: {tx_hash}"
+    );
 }
 
 #[tokio::test]
@@ -866,7 +930,10 @@ async fn test_multi_bot_execute_rejects_unapproved() {
     assert_eq!(response.status(), 400);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8_lossy(&body);
-    assert!(body_str.contains("Validation not approved"), "Expected 'Validation not approved', got: {body_str}");
+    assert!(
+        body_str.contains("Validation not approved"),
+        "Expected 'Validation not approved', got: {body_str}"
+    );
 }
 
 // ── Edge case tests (Part 5b) ────────────────────────────────────────────
@@ -1060,7 +1127,10 @@ async fn test_multi_bot_validate_bad_action() {
     assert_eq!(response.status(), 400);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8_lossy(&body);
-    assert!(body_str.contains("Unknown action"), "Expected 'Unknown action' error, got: {body_str}");
+    assert!(
+        body_str.contains("Unknown action"),
+        "Expected 'Unknown action' error, got: {body_str}"
+    );
 }
 
 // ── Validator fan-out tests ─────────────────────────────────────────────────
@@ -1078,8 +1148,7 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
             if token == "bot-token-abc" {
                 Some(BotContext {
                     bot_id: "bot-validators".to_string(),
-                    vault_address: "0x0000000000000000000000000000000000000001"
-                        .to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
                     paper_trade: false,
                     chain_id: 31337,
                     rpc_url: "http://localhost:8545".to_string(),
@@ -1156,15 +1225,26 @@ async fn test_multi_bot_validate_with_mock_validators() {
     assert_eq!(json["approved"], true);
     assert_eq!(json["aggregate_score"], 85);
     let responses = json["validator_responses"].as_array().unwrap();
-    assert_eq!(responses.len(), 2, "Expected 2 validator responses, got {}", responses.len());
+    assert_eq!(
+        responses.len(),
+        2,
+        "Expected 2 validator responses, got {}",
+        responses.len()
+    );
 
     // Both validators should be present (order may vary)
     let validators: Vec<&str> = responses
         .iter()
         .map(|r| r["validator"].as_str().unwrap())
         .collect();
-    assert!(validators.contains(&"0xValidator1"), "Missing 0xValidator1 in {validators:?}");
-    assert!(validators.contains(&"0xValidator2"), "Missing 0xValidator2 in {validators:?}");
+    assert!(
+        validators.contains(&"0xValidator1"),
+        "Missing 0xValidator1 in {validators:?}"
+    );
+    assert!(
+        validators.contains(&"0xValidator2"),
+        "Missing 0xValidator2 in {validators:?}"
+    );
 
     // intent_hash should be present and non-empty
     let intent_hash = json["intent_hash"].as_str().unwrap();
@@ -1341,8 +1421,8 @@ async fn test_portfolio_state_with_positions() {
         let mut portfolio = state.portfolio.write().await;
         portfolio.positions.push(Position {
             token: "WETH".to_string(),
-            amount: Decimal::new(15, 1),       // 1.5
-            entry_price: Decimal::new(2400, 0), // 2400
+            amount: Decimal::new(15, 1),          // 1.5
+            entry_price: Decimal::new(2400, 0),   // 2400
             current_price: Decimal::new(2500, 0), // 2500
             unrealized_pnl: Decimal::new(150, 0), // +150
             protocol: "uniswap_v3".to_string(),
@@ -1383,7 +1463,12 @@ async fn test_portfolio_state_with_positions() {
 
     // Verify positions
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(positions.len(), 2, "Expected 2 positions, got {}", positions.len());
+    assert_eq!(
+        positions.len(),
+        2,
+        "Expected 2 positions, got {}",
+        positions.len()
+    );
 
     // Find WETH position
     let weth = positions.iter().find(|p| p["token"] == "WETH").unwrap();
@@ -1418,9 +1503,9 @@ async fn test_portfolio_pnl_reflects_losses() {
         let mut portfolio = state.portfolio.write().await;
         portfolio.positions.push(Position {
             token: "WETH".to_string(),
-            amount: Decimal::new(2, 0),          // 2.0 ETH
-            entry_price: Decimal::new(3000, 0),  // bought at 3000
-            current_price: Decimal::new(2200, 0), // now at 2200
+            amount: Decimal::new(2, 0),             // 2.0 ETH
+            entry_price: Decimal::new(3000, 0),     // bought at 3000
+            current_price: Decimal::new(2200, 0),   // now at 2200
             unrealized_pnl: Decimal::new(-1600, 0), // -1600 loss
             protocol: "uniswap_v3".to_string(),
             position_type: PositionType::Spot,

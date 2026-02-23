@@ -101,11 +101,7 @@ impl PolymarketAdapter {
     }
 
     /// Encode a redeem for resolved conditions.
-    fn encode_redeem(
-        &self,
-        collateral_token: Address,
-        condition_id: FixedBytes<32>,
-    ) -> Bytes {
+    fn encode_redeem(&self, collateral_token: Address, condition_id: FixedBytes<32>) -> Bytes {
         // Redeem both outcome slots
         let index_sets = vec![U256::from(1), U256::from(2)];
         let call = IConditionalTokens::redeemPositionsCall {
@@ -155,11 +151,7 @@ impl ProtocolAdapter for PolymarketAdapter {
 
         match params.action {
             Action::Buy => {
-                let calldata = self.encode_buy(
-                    params.token_in,
-                    condition_id,
-                    params.amount,
-                );
+                let calldata = self.encode_buy(params.token_in, condition_id, params.amount);
                 Ok(EncodedAction {
                     target: self.ctf_contract,
                     calldata,
@@ -169,11 +161,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                 })
             }
             Action::Sell => {
-                let calldata = self.encode_sell(
-                    params.token_in,
-                    condition_id,
-                    params.amount,
-                );
+                let calldata = self.encode_sell(params.token_in, condition_id, params.amount);
                 Ok(EncodedAction {
                     target: self.ctf_contract,
                     calldata,

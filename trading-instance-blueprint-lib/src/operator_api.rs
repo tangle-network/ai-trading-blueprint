@@ -4,8 +4,8 @@ use axum::{Json, Router};
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 
-use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
+use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 // ── Response types ──────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ impl From<sandbox_runtime::provision_progress::ProvisionStatus> for ProvisionPro
     fn from(p: sandbox_runtime::provision_progress::ProvisionStatus) -> Self {
         Self {
             call_id: p.call_id,
-            phase: serde_json::to_value(&p.phase)
+            phase: serde_json::to_value(p.phase)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_else(|| format!("{:?}", p.phase)),
@@ -331,14 +331,18 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
 
 async fn create_challenge() -> (StatusCode, Json<serde_json::Value>) {
     let challenge = sandbox_runtime::session_auth::create_challenge();
-    (StatusCode::OK, Json(serde_json::to_value(challenge).unwrap()))
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(challenge).unwrap()),
+    )
 }
 
 async fn create_session(
     Json(req): Json<SessionRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let token = sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
-        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
+    let token =
+        sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
+            .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
     Ok((StatusCode::OK, Json(serde_json::to_value(token).unwrap())))
 }
 
@@ -373,9 +377,13 @@ async fn provision_bot(
     use blueprint_sdk::alloy::primitives::{Address, U256};
 
     let request = trading_blueprint_lib::TradingProvisionRequest {
-        name: body.name.unwrap_or_else(|| format!("Instance Bot (service {service_id})")),
+        name: body
+            .name
+            .unwrap_or_else(|| format!("Instance Bot (service {service_id})")),
         strategy_type: body.strategy_type.unwrap_or_else(|| "dex".to_string()),
-        strategy_config_json: body.strategy_config_json.unwrap_or_else(|| "{}".to_string()),
+        strategy_config_json: body
+            .strategy_config_json
+            .unwrap_or_else(|| "{}".to_string()),
         risk_params_json: body.risk_params_json.unwrap_or_else(|| "{}".to_string()),
         factory_address: Address::ZERO,
         asset_token: Address::ZERO,
@@ -383,7 +391,9 @@ async fn provision_bot(
         required_signatures: U256::ZERO,
         chain_id: U256::from(1u64),
         rpc_url: String::new(),
-        trading_loop_cron: body.trading_loop_cron.unwrap_or_else(|| "0 */5 * * * *".to_string()),
+        trading_loop_cron: body
+            .trading_loop_cron
+            .unwrap_or_else(|| "0 */5 * * * *".to_string()),
         cpu_cores: 2,
         memory_mb: 2048,
         max_lifetime_days: 30,
@@ -411,8 +421,7 @@ async fn provision_bot(
     // Resolve bot_id and store singleton reference
     let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&output.sandbox_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    set_instance_bot_id(bot.id.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    set_instance_bot_id(bot.id.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     tracing::info!(
         "Instance provisioned via operator API: bot={}, sandbox={}, caller={caller}",
@@ -447,7 +456,12 @@ async fn configure_secrets(
     let env_json = if body.env_json.is_empty() {
         let mut env = serde_json::Map::new();
         let providers: &[(&str, &str, &str, &str)] = &[
-            ("ANTHROPIC_API_KEY", "anthropic", "claude-sonnet-4-20250514", "ANTHROPIC_API_KEY"),
+            (
+                "ANTHROPIC_API_KEY",
+                "anthropic",
+                "claude-sonnet-4-20250514",
+                "ANTHROPIC_API_KEY",
+            ),
             ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
         ];
         let mut found = false;
@@ -549,16 +563,24 @@ async fn run_now(
         return Err((StatusCode::CONFLICT, "Bot is not active".to_string()));
     }
 
-    let workflow_id = bot
-        .workflow_id
-        .ok_or_else(|| (StatusCode::CONFLICT, "Bot has no workflow configured".to_string()))?;
+    let workflow_id = bot.workflow_id.ok_or_else(|| {
+        (
+            StatusCode::CONFLICT,
+            "Bot has no workflow configured".to_string(),
+        )
+    })?;
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
     let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .get(&wf_key)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Workflow {workflow_id} not found"),
+            )
+        })?;
 
     let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
         .await
@@ -602,7 +624,10 @@ async fn update_config(
 
 // ── Metrics / trades helpers ────────────────────────────────────────────
 
-fn synthesize_metrics(bot: &TradingBotRecord, trades: &[serde_json::Value]) -> Vec<MetricsSnapshotResponse> {
+fn synthesize_metrics(
+    bot: &TradingBotRecord,
+    trades: &[serde_json::Value],
+) -> Vec<MetricsSnapshotResponse> {
     const INITIAL_VALUE: f64 = 10_000.0;
     let mut snapshots = Vec::new();
 
@@ -679,10 +704,18 @@ fn synthesize_metrics(bot: &TradingBotRecord, trades: &[serde_json::Value]) -> V
                 .unwrap_or("")
                 .to_string();
 
-            let dd = if hwm > 0.0 { ((hwm - val) / hwm) * 100.0 } else { 0.0 };
+            let dd = if hwm > 0.0 {
+                ((hwm - val) / hwm) * 100.0
+            } else {
+                0.0
+            };
 
             snapshots.push(MetricsSnapshotResponse {
-                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                timestamp: if ts.is_empty() {
+                    chrono::Utc::now().to_rfc3339()
+                } else {
+                    ts
+                },
                 bot_id: bot.id.clone(),
                 account_value_usd: val,
                 unrealized_pnl: unrealized,
@@ -716,7 +749,8 @@ async fn get_bot_metrics() -> Result<Json<BotMetricsResponse>, (StatusCode, Stri
     }))
 }
 
-async fn get_bot_metrics_history() -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
+async fn get_bot_metrics_history()
+-> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
     let snapshots = synthesize_metrics(&bot, &trades);
@@ -735,7 +769,8 @@ async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, 
     let entries: Vec<TradeEntryResponse> = trades
         .iter()
         .map(|t| {
-            let mid = t.get("market_id")
+            let mid = t
+                .get("market_id")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
                 .unwrap_or("");
@@ -748,7 +783,8 @@ async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, 
                 mid.to_string()
             };
 
-            let tid = t.get("id")
+            let tid = t
+                .get("id")
                 .map(|v| match v {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Number(n) => n.to_string(),
@@ -756,33 +792,44 @@ async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, 
                 })
                 .unwrap_or_else(|| mid_str.clone());
 
-            let question = t.get("question")
+            let question = t
+                .get("question")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
 
-            let side = t.get("side")
+            let side = t
+                .get("side")
                 .or_else(|| t.get("action"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("buy");
 
-            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
+            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy")
+            {
                 "buy"
             } else {
                 "sell"
             };
 
-            let amount = t.get("amount_usd")
+            let amount = t
+                .get("amount_usd")
                 .or_else(|| t.get("size"))
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
 
             let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let current_price = t
+                .get("current_price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(entry_price);
             let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let status = t
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
 
-            let ts = t.get("created_at")
+            let ts = t
+                .get("created_at")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -790,7 +837,11 @@ async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, 
             TradeEntryResponse {
                 id: tid.clone(),
                 bot_id: bot.id.clone(),
-                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                timestamp: if ts.is_empty() {
+                    chrono::Utc::now().to_rfc3339()
+                } else {
+                    ts
+                },
                 action: action.to_string(),
                 token_in: "USDC".to_string(),
                 token_out: question.chars().take(40).collect(),
@@ -838,20 +889,26 @@ async fn get_bot_portfolio() -> Result<Json<PortfolioStateResponse>, (StatusCode
     let positions: Vec<PortfolioPosition> = open_trades
         .iter()
         .map(|t| {
-            let mid = t.get("market_id")
+            let mid = t
+                .get("market_id")
                 .or_else(|| t.get("symbol"))
                 .map(|v| v.to_string())
                 .unwrap_or_default();
-            let question = t.get("question")
+            let question = t
+                .get("question")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
-            let amount = t.get("amount_usd")
+            let amount = t
+                .get("amount_usd")
                 .or_else(|| t.get("size"))
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
             let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let current_price = t
+                .get("current_price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(entry_price);
             let pnl_pct = if entry_price > 0.0 {
                 ((current_price - entry_price) / entry_price) * 100.0
             } else {
@@ -866,7 +923,11 @@ async fn get_bot_portfolio() -> Result<Json<PortfolioStateResponse>, (StatusCode
                 entry_price,
                 current_price,
                 pnl_percent: pnl_pct,
-                weight: if total_value > 0.0 { (amount / total_value) * 100.0 } else { 0.0 },
+                weight: if total_value > 0.0 {
+                    (amount / total_value) * 100.0
+                } else {
+                    0.0
+                },
             }
         })
         .collect();
@@ -880,7 +941,8 @@ async fn get_bot_portfolio() -> Result<Json<PortfolioStateResponse>, (StatusCode
 
 // ── Activation progress handler ─────────────────────────────────────────
 
-async fn get_activation_progress() -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
+async fn get_activation_progress() -> Result<Json<ActivationProgressResponse>, (StatusCode, String)>
+{
     let bot = resolve_singleton()?;
     let progress = state::get_activation(&bot.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
@@ -895,7 +957,10 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
     let all = sandbox_runtime::provision_progress::list_all_provisions()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ProvisionListResponse {
-        provisions: all.into_iter().map(ProvisionProgressResponse::from).collect(),
+        provisions: all
+            .into_iter()
+            .map(ProvisionProgressResponse::from)
+            .collect(),
     }))
 }
 
@@ -904,16 +969,19 @@ async fn get_provision(
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
     let progress = sandbox_runtime::provision_progress::get_provision(call_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No provision for call_id {call_id}")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("No provision for call_id {call_id}"),
+            )
+        })?;
 
     Ok(Json(ProvisionProgressResponse::from(progress)))
 }
 
 // ── Pricing handlers ────────────────────────────────────────────────────
 
-async fn pricing_quote(
-    Json(body): Json<PricingQuoteRequest>,
-) -> Json<serde_json::Value> {
+async fn pricing_quote(Json(body): Json<PricingQuoteRequest>) -> Json<serde_json::Value> {
     let blueprint_id = body.blueprint_id.as_deref().unwrap_or("0");
     let ttl_blocks = body.ttl_blocks.as_deref().unwrap_or("100");
     let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
@@ -940,9 +1008,7 @@ async fn pricing_quote(
     }))
 }
 
-async fn pricing_job_quote(
-    Json(body): Json<JobQuoteRequest>,
-) -> Json<serde_json::Value> {
+async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json::Value> {
     let service_id = body.service_id.as_deref().unwrap_or("0");
     let job_index = body.job_index.unwrap_or(0);
     let now = std::time::SystemTime::now()
@@ -976,13 +1042,15 @@ async fn debug_sandboxes() -> Json<serde_json::Value> {
             Ok(records) => {
                 let list: Vec<serde_json::Value> = records
                     .iter()
-                    .map(|r| serde_json::json!({
-                        "id": r.id,
-                        "container_id": &r.container_id[..r.container_id.len().min(12)],
-                        "sidecar_url": r.sidecar_url,
-                        "token_len": r.token.len(),
-                        "state": format!("{:?}", r.state),
-                    }))
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "container_id": &r.container_id[..r.container_id.len().min(12)],
+                            "sidecar_url": r.sidecar_url,
+                            "token_len": r.token.len(),
+                            "state": format!("{:?}", r.state),
+                        })
+                    })
                     .collect();
                 Json(serde_json::json!({ "count": list.len(), "sandboxes": list }))
             }
@@ -999,7 +1067,8 @@ async fn debug_workflows() -> Json<serde_json::Value> {
                 let list: Vec<serde_json::Value> = entries
                     .iter()
                     .map(|e| {
-                        let spec: Result<serde_json::Value, _> = serde_json::from_str(&e.workflow_json);
+                        let spec: Result<serde_json::Value, _> =
+                            serde_json::from_str(&e.workflow_json);
                         let sidecar_url = spec
                             .as_ref()
                             .ok()
@@ -1037,7 +1106,12 @@ async fn debug_run_now() -> Result<Json<serde_json::Value>, (StatusCode, String)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .get(&wf_key)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Workflow {workflow_id} not found"),
+            )
+        })?;
 
     let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
         .await

@@ -40,8 +40,11 @@ pub fn should_initiate_wind_down_at(bot: &TradingBotRecord, now: u64) -> bool {
         return false; // Already stopped
     }
 
-    let max_lifetime_secs =
-        if bot.max_lifetime_days == 0 { 30 } else { bot.max_lifetime_days } * 86400;
+    let max_lifetime_secs = if bot.max_lifetime_days == 0 {
+        30
+    } else {
+        bot.max_lifetime_days
+    } * 86400;
     let expires_at = bot.created_at + max_lifetime_secs;
     let remaining = expires_at.saturating_sub(now);
 

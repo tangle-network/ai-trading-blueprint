@@ -33,9 +33,7 @@ pub fn load_bytecode(contract_name: &str) -> Vec<u8> {
     } else if std::path::Path::new(&fallback).exists() {
         fallback
     } else {
-        panic!(
-            "Cannot find artifact for {contract_name} in {out_dir}. Run `forge build` first."
-        );
+        panic!("Cannot find artifact for {contract_name} in {out_dir}. Run `forge build` first.");
     };
 
     let json: serde_json::Value =
@@ -56,10 +54,9 @@ pub async fn deploy_contract(
 ) -> Address {
     let mut deploy_data = bytecode;
     deploy_data.extend_from_slice(&constructor_args);
-    let mut tx = alloy::rpc::types::TransactionRequest::default()
-        .input(alloy::rpc::types::TransactionInput::both(Bytes::from(
-            deploy_data,
-        )));
+    let mut tx = alloy::rpc::types::TransactionRequest::default().input(
+        alloy::rpc::types::TransactionInput::both(Bytes::from(deploy_data)),
+    );
     tx.to = Some(TxKind::Create);
     let pending = provider
         .send_transaction(tx)
@@ -87,17 +84,13 @@ pub async fn deploy_trade_validator(
     let vault_address = Address::from([0xAA; 20]);
 
     let tv = TradeValidator::new(tv_addr, provider);
-    tv.configureVault(
-        vault_address,
-        signers,
-        U256::from(required_sigs),
-    )
-    .send()
-    .await
-    .expect("configureVault send")
-    .get_receipt()
-    .await
-    .expect("configureVault receipt");
+    tv.configureVault(vault_address, signers, U256::from(required_sigs))
+        .send()
+        .await
+        .expect("configureVault send")
+        .get_receipt()
+        .await
+        .expect("configureVault receipt");
 
     // Verify
     let req_sigs = tv

@@ -1,10 +1,6 @@
 use std::sync::LazyLock;
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-};
+use axum::{Json, extract::State, http::StatusCode};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
@@ -113,11 +109,19 @@ pub async fn verify(
         return Err((StatusCode::BAD_REQUEST, "Challenge expired".into()));
     }
 
-    let challenge_text = format!("Sign to chat with bot {}:\n{}", pending.bot_id, pending.nonce);
+    let challenge_text = format!(
+        "Sign to chat with bot {}:\n{}",
+        pending.bot_id, pending.nonce
+    );
 
     // Parse signature
     let sig_bytes = hex::decode(body.signature.strip_prefix("0x").unwrap_or(&body.signature))
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid signature hex: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid signature hex: {e}"),
+            )
+        })?;
 
     let signature = alloy::signers::Signature::try_from(sig_bytes.as_slice())
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid signature: {e}")))?;
@@ -143,9 +147,7 @@ pub async fn verify(
     if !is_operator && !is_submitter {
         return Err((
             StatusCode::FORBIDDEN,
-            format!(
-                "Recovered address {recovered_str} is not authorized for this bot",
-            ),
+            format!("Recovered address {recovered_str} is not authorized for this bot",),
         ));
     }
 

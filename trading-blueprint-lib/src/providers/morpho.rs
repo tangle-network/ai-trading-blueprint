@@ -77,7 +77,10 @@ mod tests {
     #[test]
     fn test_morpho_expert_prompt_has_address() {
         let p = MorphoProvider;
-        assert!(p.expert_prompt().contains("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"));
+        assert!(
+            p.expert_prompt()
+                .contains("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb")
+        );
     }
 
     #[test]

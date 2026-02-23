@@ -51,15 +51,9 @@ pub async fn provision_core(
     let op_ctx = crate::context::operator_context();
 
     // 3. Resolve validator endpoints via discovery module
-    let validator_service_ids_slice: Vec<u64> = request
-        .validator_service_ids
-        .iter()
-        .copied()
-        .collect();
-    let validator_endpoints = crate::discovery::discover_validator_endpoints(
-        &validator_service_ids_slice,
-    )
-    .await;
+    let validator_service_ids_slice: Vec<u64> = request.validator_service_ids.to_vec();
+    let validator_endpoints =
+        crate::discovery::discover_validator_endpoints(&validator_service_ids_slice).await;
 
     // 4. Resolve config from operator context or env
     let chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
@@ -102,10 +96,7 @@ pub async fn provision_core(
         "STRATEGY_CONFIG".into(),
         serde_json::Value::String(request.strategy_config_json.clone()),
     );
-    env.insert(
-        "RPC_URL".into(),
-        serde_json::Value::String(rpc_url.clone()),
-    );
+    env.insert("RPC_URL".into(), serde_json::Value::String(rpc_url.clone()));
     env.insert(
         "CHAIN_ID".into(),
         serde_json::Value::String(chain_id.to_string()),
@@ -142,8 +133,7 @@ pub async fn provision_core(
 
     let record = if let Some(r) = mock_sandbox {
         // Store mock sandbox so activate/wipe can look it up
-        let _ = sandbox_runtime::runtime::sandboxes()
-            .map(|s| s.insert(r.id.clone(), r.clone()));
+        let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(r.id.clone(), r.clone()));
         r
     } else {
         let params = CreateSandboxParams {
@@ -158,10 +148,14 @@ pub async fn provision_core(
             ssh_public_key: String::new(),
             web_terminal_enabled: false,
             max_lifetime_seconds: {
-                let days = if request.max_lifetime_days == 0 { 30 } else { request.max_lifetime_days };
+                let days = if request.max_lifetime_days == 0 {
+                    30
+                } else {
+                    request.max_lifetime_days
+                };
                 days * 86400
             },
-            idle_timeout_seconds: 0,          // No idle timeout for trading bots
+            idle_timeout_seconds: 0, // No idle timeout for trading bots
             cpu_cores: request.cpu_cores,
             memory_mb: request.memory_mb,
             disk_gb: 10,
@@ -187,13 +181,13 @@ pub async fn provision_core(
     }
 
     // 8. Build TradingBotRecord — always awaiting secrets
-    let validator_service_ids: Vec<u64> = request
-        .validator_service_ids
-        .iter()
-        .copied()
-        .collect();
+    let validator_service_ids: Vec<u64> = request.validator_service_ids.to_vec();
 
-    let max_lifetime_days = if request.max_lifetime_days == 0 { 30 } else { request.max_lifetime_days };
+    let max_lifetime_days = if request.max_lifetime_days == 0 {
+        30
+    } else {
+        request.max_lifetime_days
+    };
 
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
@@ -252,7 +246,10 @@ pub async fn provision_core(
         tracing::warn!("Provision progress update failed: {e}");
     }
 
-    tracing::info!("Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}", record.id);
+    tracing::info!(
+        "Bot {bot_id} provisioned (awaiting secrets). Sandbox: {}",
+        record.id
+    );
 
     // 9. Return result — vault_address=ZERO because the vault doesn't exist yet.
     //    The BSM creates it on-chain in _handleProvisionResult when this result is submitted.
@@ -276,5 +273,7 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
-    Ok(TangleResult(provision_core(request, None, call_id, service_id, caller_str, None).await?))
+    Ok(TangleResult(
+        provision_core(request, None, call_id, service_id, caller_str, None).await?,
+    ))
 }

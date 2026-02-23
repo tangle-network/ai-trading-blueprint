@@ -83,7 +83,7 @@ impl ValidatorClient {
             .iter()
             .map(|endpoint| {
                 let client = self.client.clone();
-                let url = format!("{}/validate", endpoint);
+                let url = format!("{endpoint}/validate");
                 let body = body.clone();
                 let timeout = self.timeout;
 

@@ -5,10 +5,7 @@ use trading_runtime::TradeIntent;
 #[derive(Debug, Clone)]
 pub enum AiProvider {
     /// Anthropic API (Claude models)
-    Anthropic {
-        api_key: String,
-        model: String,
-    },
+    Anthropic { api_key: String, model: String },
     /// Zhipu AI / Z.ai (GLM models) — Z.ai PaaS API
     /// Provider ID: zai-coding-plan
     Zai {
@@ -147,9 +144,7 @@ pub async fn evaluate_risk(
     let prompt = build_prompt(intent, strategy_context);
 
     match provider {
-        AiProvider::Anthropic { api_key, model } => {
-            call_anthropic(&prompt, api_key, model).await
-        }
+        AiProvider::Anthropic { api_key, model } => call_anthropic(&prompt, api_key, model).await,
         AiProvider::Zai {
             api_key,
             model,
@@ -158,11 +153,7 @@ pub async fn evaluate_risk(
     }
 }
 
-async fn call_anthropic(
-    prompt: &str,
-    api_key: &str,
-    model: &str,
-) -> Result<ScoringResult, String> {
+async fn call_anthropic(prompt: &str, api_key: &str, model: &str) -> Result<ScoringResult, String> {
     let client = reqwest::Client::new();
 
     let response = client
@@ -272,13 +263,19 @@ mod tests {
     #[test]
     fn test_strategy_context_for_prediction_subtypes() {
         for subtype in &[
-            "prediction_politics", "prediction_crypto", "prediction_war",
-            "prediction_trending", "prediction_celebrity",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
         ] {
             let ctx = strategy_context_for(subtype);
             assert!(ctx.is_some(), "{subtype} must return Some context");
             let ctx = ctx.unwrap();
-            assert!(ctx.contains("Polymarket"), "{subtype} context must mention Polymarket");
+            assert!(
+                ctx.contains("Polymarket"),
+                "{subtype} context must mention Polymarket"
+            );
             assert!(ctx.contains("USDC"), "{subtype} context must mention USDC");
         }
     }
@@ -292,8 +289,8 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_context() {
-        use trading_runtime::intent::TradeIntentBuilder;
         use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
 
         let intent = TradeIntentBuilder::new()
             .strategy_id("test")

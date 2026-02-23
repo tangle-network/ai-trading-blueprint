@@ -119,6 +119,7 @@ impl VaultClient {
     /// Encode an execute call (trade through the vault with multisig validation).
     ///
     /// Uses the `ExecuteParams` struct matching the on-chain TradingVault contract.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_execute(
         &self,
         target: &str,
@@ -183,15 +184,10 @@ impl VaultClient {
     }
 
     /// Encode a getBalance call: `getBalance(address token)`
-    pub fn encode_get_balance(
-        &self,
-        token: &str,
-    ) -> Result<EncodedTransaction, TradingError> {
+    pub fn encode_get_balance(&self, token: &str) -> Result<EncodedTransaction, TradingError> {
         let token_addr = Self::parse_address(token)?;
 
-        let call = ITradingVault::getBalanceCall {
-            token: token_addr,
-        };
+        let call = ITradingVault::getBalanceCall { token: token_addr };
 
         Ok(EncodedTransaction {
             to: self.vault_address.clone(),

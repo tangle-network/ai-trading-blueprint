@@ -15,9 +15,9 @@ use blueprint_sdk::runner::BlueprintRunner;
 use blueprint_sdk::runner::config::BlueprintEnvironment;
 use blueprint_sdk::runner::tangle::config::TangleConfig;
 use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
-use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_blueprint_lib::JOB_WORKFLOW_TICK;
 use trading_blueprint_lib::context::TradingOperatorContext;
+use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 
 #[cfg(feature = "qos")]
 use blueprint_qos::QoSServiceBuilder;
@@ -93,7 +93,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
                 tracing::info!(
                     "Trading QoS heartbeat: service_id={}, blueprint_id={}, interval={}s",
-                    hb_config.service_id, hb_config.blueprint_id, hb_config.interval_secs,
+                    hb_config.service_id,
+                    hb_config.blueprint_id,
+                    hb_config.interval_secs,
                 );
 
                 builder = builder
@@ -204,10 +206,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(50);
 
-    let strategy_registry_address =
-        std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
-    let fee_distributor_address =
-        std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
+    let strategy_registry_address = std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
+    let fee_distributor_address = std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
 
     // Clone values needed by the trading HTTP API server before moving into context.
     let private_key_for_api = private_key.clone();
@@ -255,8 +255,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         });
 
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(gc_interval));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(gc_interval));
             loop {
                 interval.tick().await;
                 sandbox_runtime::reaper::gc_tick().await;
@@ -272,11 +271,27 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .unwrap_or(3600); // Default: every hour
 
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(fee_interval));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(fee_interval));
             loop {
                 interval.tick().await;
                 trading_blueprint_lib::fees::settle_all_fees().await;
+            }
+        });
+    }
+
+    // ── 6b2. Spawn periodic subscription billing ────────────────────────────
+    {
+        let billing_interval: u64 = std::env::var("BILLING_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600); // Default: every hour
+
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(billing_interval));
+            loop {
+                interval.tick().await;
+                trading_blueprint_lib::fees::bill_all_subscriptions().await;
             }
         });
     }
@@ -308,8 +323,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .unwrap_or(9100);
 
         // Resolve validator endpoints from env (shared across all bots)
-        let validator_eps: Vec<String> =
-            trading_blueprint_lib::discovery::endpoints_from_env();
+        let validator_eps: Vec<String> = trading_blueprint_lib::discovery::endpoints_from_env();
 
         let trading_state = std::sync::Arc::new(trading_http_api::MultiBotTradingState {
             operator_private_key: private_key_for_api,
@@ -332,9 +346,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         let router = trading_http_api::build_multi_bot_router(trading_state);
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
             .await
-            .map_err(|e| {
-                blueprint_sdk::Error::Other(format!("Trading API bind failed: {e}"))
-            })?;
+            .map_err(|e| blueprint_sdk::Error::Other(format!("Trading API bind failed: {e}")))?;
         tracing::info!("Trading HTTP API listening on 0.0.0.0:{port}");
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, router).await {
@@ -376,8 +388,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     let x402_producer = {
         use blueprint_sdk::x402::{X402Config, X402Gateway};
 
-        let x402_config_path = std::env::var("X402_CONFIG_PATH")
-            .unwrap_or_else(|_| "config/x402.toml".to_string());
+        let x402_config_path =
+            std::env::var("X402_CONFIG_PATH").unwrap_or_else(|_| "config/x402.toml".to_string());
 
         if std::path::Path::new(&x402_config_path).exists() {
             match X402Config::from_toml(&x402_config_path) {
@@ -402,7 +414,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                             Some((gateway, producer))
                         }
                         Err(e) => {
-                            tracing::error!("Failed to create x402 gateway: {e} — continuing without x402");
+                            tracing::error!(
+                                "Failed to create x402 gateway: {e} — continuing without x402"
+                            );
                             None
                         }
                     }
@@ -420,8 +434,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     // ── 8b. Webhook gateway (optional — only if config exists) ──────────────
     let webhook_producer = {
-        let webhook_config_path = std::env::var("WEBHOOK_CONFIG")
-            .unwrap_or_else(|_| "webhooks.toml".into());
+        let webhook_config_path =
+            std::env::var("WEBHOOK_CONFIG").unwrap_or_else(|_| "webhooks.toml".into());
 
         if std::path::Path::new(&webhook_config_path).exists() {
             match blueprint_webhooks::WebhookConfig::from_toml(&webhook_config_path) {
@@ -429,17 +443,23 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     wh_config.service_id = service_id;
                     match blueprint_webhooks::WebhookGateway::new(wh_config) {
                         Ok((gateway, producer)) => {
-                            tracing::info!("Webhook gateway initialized from {webhook_config_path}");
+                            tracing::info!(
+                                "Webhook gateway initialized from {webhook_config_path}"
+                            );
                             Some((gateway, producer))
                         }
                         Err(e) => {
-                            tracing::error!("Failed to create webhook gateway: {e} — continuing without webhooks");
+                            tracing::error!(
+                                "Failed to create webhook gateway: {e} — continuing without webhooks"
+                            );
                             None
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to parse webhook config: {e} — continuing without webhooks");
+                    tracing::error!(
+                        "Failed to parse webhook config: {e} — continuing without webhooks"
+                    );
                     None
                 }
             }
@@ -470,11 +490,11 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     "Starting Polymarket WebSocket producer"
                 );
 
-                Some(trading_blueprint_lib::polymarket_ws::PolymarketProducer::new(
-                    market_ids,
-                    threshold,
-                    service_id,
-                ))
+                Some(
+                    trading_blueprint_lib::polymarket_ws::PolymarketProducer::new(
+                        market_ids, threshold, service_id,
+                    ),
+                )
             } else {
                 None
             }

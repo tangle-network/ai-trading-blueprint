@@ -1,7 +1,11 @@
 use trading_blueprint_lib::state::{TradingBotRecord, bot_key, bots};
 
 /// Seed a `SandboxRecord` into the sandbox store.
-pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> sandbox_runtime::SandboxRecord {
+pub fn seed_sandbox_record(
+    id: &str,
+    sidecar_url: &str,
+    token: &str,
+) -> sandbox_runtime::SandboxRecord {
     let record = sandbox_runtime::SandboxRecord {
         id: id.to_string(),
         container_id: format!("container-{id}"),
@@ -111,9 +115,8 @@ pub fn seed_workflow(
     })
     .to_string();
 
-    let next_run =
-        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
-            .unwrap_or(None);
+    let next_run = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
+        .unwrap_or(None);
 
     let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
         id: workflow_id,

@@ -122,29 +122,24 @@ contract FullLifecycleTest is Setup {
     function _settleFees() internal {
         address fdOwner = feeDistributor.owner();
 
-        // Capture AUM before settlement (fees will reduce it)
-        uint256 tokenAAUM = tokenA.balanceOf(address(vault));
-
-        // First settlement establishes the baseline
+        // First settlement initializes HWM to current AUM — no perf fee on initial capital
         vm.prank(fdOwner);
         (uint256 perfFee1,) = feeDistributor.settleFees(address(vault), address(tokenA));
+        assertEq(perfFee1, 0, "No perf fee on first settlement - HWM initialized to AUM");
 
-        // HWM was 0, so gains = full AUM, perfFee = AUM * 20%
-        uint256 expectedPerfFee = (tokenAAUM * 2000) / 10000;
-        assertEq(perfFee1, expectedPerfFee, "Performance fee incorrect on first settlement");
-
-        // Verify tokens actually moved to FeeDistributor
-        assertTrue(tokenA.balanceOf(address(feeDistributor)) >= perfFee1, "Fee tokens should be in FeeDistributor");
-
-        // Advance time 30 days then settle again
+        // Simulate gains: mint tokens to vault so AUM exceeds HWM
+        tokenA.mint(address(vault), 5000 ether);
         vm.warp(block.timestamp + 30 days);
 
         vm.prank(fdOwner);
         (uint256 perfFee2, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
-        // No new gains since HWM was set, so perf fee = 0
-        assertEq(perfFee2, 0, "No perf fee when at or below HWM");
+        // Perf fee on the 5000 ether gain above HWM
+        assertTrue(perfFee2 > 0, "Should have perf fee from gains above HWM");
         assertTrue(mgmtFee > 0, "Management fee should be positive after 30 days");
+
+        // Verify tokens actually moved to FeeDistributor
+        assertTrue(tokenA.balanceOf(address(feeDistributor)) > 0, "Fee tokens should be in FeeDistributor");
     }
 
     function _redeemShares() internal {

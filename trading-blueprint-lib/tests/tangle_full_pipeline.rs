@@ -37,8 +37,14 @@ use trading_blueprint_lib::{
 };
 
 /// Extract raw key bytes from Anvil pre-funded accounts for validator indices.
-fn validator_key_bytes(anvil: &alloy::node_bindings::AnvilInstance, indices: &[usize]) -> Vec<Vec<u8>> {
-    indices.iter().map(|&i| anvil.keys()[i].to_bytes().to_vec()).collect()
+fn validator_key_bytes(
+    anvil: &alloy::node_bindings::AnvilInstance,
+    indices: &[usize],
+) -> Vec<Vec<u8>> {
+    indices
+        .iter()
+        .map(|&i| anvil.keys()[i].to_bytes().to_vec())
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -109,13 +115,9 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
         };
 
         let val_keys = validator_key_bytes(&anvil, &[3, 4, 5]);
-        let cluster = validators::start_validator_cluster(
-            &val_keys,
-            tv_addr,
-            vault_addr,
-            Some(ai_provider),
-        )
-        .await;
+        let cluster =
+            validators::start_validator_cluster(&val_keys, tv_addr, vault_addr, Some(ai_provider))
+                .await;
 
         for (i, (ep, addr)) in cluster
             .endpoints
@@ -204,23 +206,38 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             .await
             .context("POST /validate")?;
 
-        assert!(validate_resp.status().is_success(), "Validate should succeed");
+        assert!(
+            validate_resp.status().is_success(),
+            "Validate should succeed"
+        );
         let validate_body: serde_json::Value = validate_resp.json().await?;
 
         eprintln!("        approved={}", validate_body["approved"]);
-        eprintln!("        aggregate_score={}", validate_body["aggregate_score"]);
+        eprintln!(
+            "        aggregate_score={}",
+            validate_body["aggregate_score"]
+        );
 
         let validator_responses = validate_body["validator_responses"]
             .as_array()
             .context("missing validator_responses")?;
-        assert_eq!(validator_responses.len(), 3, "All 3 validators should respond");
+        assert_eq!(
+            validator_responses.len(),
+            3,
+            "All 3 validators should respond"
+        );
 
         for (i, vr) in validator_responses.iter().enumerate() {
             eprintln!(
                 "        Validator {}: score={}, reasoning={}",
                 i + 1,
                 vr["score"],
-                vr["reasoning"].as_str().unwrap_or("?").chars().take(80).collect::<String>()
+                vr["reasoning"]
+                    .as_str()
+                    .unwrap_or("?")
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
             );
             let sig = vr["signature"].as_str().unwrap_or("");
             let zero_sig = format!("0x{}", "00".repeat(65));
@@ -352,8 +369,14 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
         assert!(status_receipt.trading_active);
 
         // Verify we can see both blueprint handles
-        assert!(multi.handle("validator").is_some(), "Validator handle should exist");
-        eprintln!("        Validator blueprint handle confirmed (service_id={})", validator.service_id());
+        assert!(
+            multi.handle("validator").is_some(),
+            "Validator handle should exist"
+        );
+        eprintln!(
+            "        Validator blueprint handle confirmed (service_id={})",
+            validator.service_id()
+        );
 
         // NOTE: The seeded Tangle testnet only registers service 0. Submitting
         // jobs to service 1 (validator) reverts on-chain. The validator blueprint

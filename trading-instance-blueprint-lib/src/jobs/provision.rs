@@ -17,11 +17,9 @@ pub async fn instance_provision(
     Caller(_caller): Caller,
     TangleArg(_request): TangleArg<TradingProvisionRequest>,
 ) -> Result<TangleResult<TradingProvisionOutput>, String> {
-    Err(
-        "Instance provisioning is automatic. Use the operator API \
+    Err("Instance provisioning is automatic. Use the operator API \
          (POST /api/bot/provision) after service creation instead."
-            .to_string(),
-    )
+        .to_string())
 }
 
 /// Deprovision the singleton trading bot instance (Tangle handler).

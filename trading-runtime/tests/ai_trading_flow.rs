@@ -13,15 +13,15 @@
 //! - `forge build` to have been run (reads bytecode from contracts/out/)
 //! - Anvil available in PATH
 
+use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, Bytes, FixedBytes, TxKind, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::network::EthereumWallet;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
-use trading_runtime::validator_client::ValidatorClient;
-use trading_runtime::intent::TradeIntentBuilder;
 use trading_runtime::Action;
+use trading_runtime::intent::TradeIntentBuilder;
+use trading_runtime::validator_client::ValidatorClient;
 use trading_validator_lib::risk_evaluator::AiProvider;
 
 // ── Solidity bindings ────────────────────────────────────────────────────────
@@ -71,16 +71,31 @@ async fn deploy_contract(
 ) -> Address {
     let mut deploy_data = bytecode;
     deploy_data.extend_from_slice(&constructor_args);
-    let mut tx = alloy::rpc::types::TransactionRequest::default()
-        .input(alloy::rpc::types::TransactionInput::both(Bytes::from(deploy_data)));
+    let mut tx = alloy::rpc::types::TransactionRequest::default().input(
+        alloy::rpc::types::TransactionInput::both(Bytes::from(deploy_data)),
+    );
     tx.to = Some(TxKind::Create);
-    let pending = provider.send_transaction(tx).await.expect("deploy tx send failed");
-    let receipt = pending.get_receipt().await.expect("deploy tx receipt failed");
-    receipt.contract_address.expect("no contract address in receipt")
+    let pending = provider
+        .send_transaction(tx)
+        .await
+        .expect("deploy tx send failed");
+    let receipt = pending
+        .get_receipt()
+        .await
+        .expect("deploy tx receipt failed");
+    receipt
+        .contract_address
+        .expect("no contract address in receipt")
 }
 
 /// Call an OpenAI-compatible LLM API (Zhipu GLM-5).
-async fn call_llm(api_key: &str, endpoint: &str, model: &str, system: &str, user: &str) -> Result<String, String> {
+async fn call_llm(
+    api_key: &str,
+    endpoint: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+) -> Result<String, String> {
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
 
@@ -117,7 +132,9 @@ async fn call_llm(api_key: &str, endpoint: &str, model: &str, system: &str, user
     if !content.is_empty() {
         return Ok(content.to_string());
     }
-    let has_reasoning = message["reasoning_content"].as_str().map_or(false, |r| !r.is_empty());
+    let has_reasoning = message["reasoning_content"]
+        .as_str()
+        .map_or(false, |r| !r.is_empty());
     if has_reasoning {
         return Err("Model exhausted tokens on thinking — increase max_tokens".into());
     }
@@ -163,8 +180,7 @@ async fn test_ai_trading_flow() {
 
     let endpoint = std::env::var("AI_API_ENDPOINT")
         .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".to_string());
-    let model = std::env::var("AI_MODEL")
-        .unwrap_or_else(|_| "glm-4.7".to_string());
+    let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "glm-4.7".to_string());
 
     println!("\n============================================================");
     println!("  AI TRADING FLOW — End-to-End Integration Test");
@@ -182,20 +198,23 @@ async fn test_ai_trading_flow() {
         .wallet(deployer_wallet)
         .connect_http(rpc_url.parse().unwrap());
 
-    let tv_addr = deploy_contract(&deployer_provider, load_bytecode("TradeValidator"), vec![]).await;
+    let tv_addr =
+        deploy_contract(&deployer_provider, load_bytecode("TradeValidator"), vec![]).await;
     println!("       TradeValidator deployed at: {tv_addr}");
 
     // 3 validator keys from Anvil
-    let val_keys: Vec<PrivateKeySigner> = (3..6)
-        .map(|i| anvil.keys()[i].clone().into())
-        .collect();
+    let val_keys: Vec<PrivateKeySigner> = (3..6).map(|i| anvil.keys()[i].clone().into()).collect();
     let val_addrs: Vec<Address> = val_keys.iter().map(|k| k.address()).collect();
 
     let mock_vault = Address::from([0xAA; 20]);
     let tv = TradeValidator::new(tv_addr, &deployer_provider);
     tv.configureVault(mock_vault, val_addrs.clone(), U256::from(2))
-        .send().await.unwrap()
-        .get_receipt().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
     println!("       Vault configured: 2-of-3 multisig");
 
     // ── 2. Start 3 validator HTTP servers ────────────────────────────────────
@@ -219,7 +238,11 @@ async fn test_ai_trading_flow() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         validator_endpoints.push(format!("http://127.0.0.1:{port}"));
-        println!("       Validator {} at port {port} ({})", i + 1, val_addrs[i]);
+        println!(
+            "       Validator {} at port {port} ({})",
+            i + 1,
+            val_addrs[i]
+        );
 
         tokio::spawn(async move {
             axum::serve(listener, router).await.ok();
@@ -256,9 +279,12 @@ Vault balance: 10,000 USDC
 
 Analyze the market and generate trade recommendations.";
 
-    let llm_response = match call_llm(&api_key, &endpoint, &model, system_prompt, user_prompt).await {
+    let llm_response = match call_llm(&api_key, &endpoint, &model, system_prompt, user_prompt).await
+    {
         Ok(resp) => resp,
-        Err(e) if e.contains("429") || e.contains("Insufficient balance") || e.contains("quota") => {
+        Err(e)
+            if e.contains("429") || e.contains("Insufficient balance") || e.contains("quota") =>
+        {
             eprintln!("SKIPPING test_ai_trading_flow: Z.ai API quota/balance issue: {e}");
             eprintln!("Please recharge your ZAI account at https://open.bigmodel.cn");
             return;
@@ -277,7 +303,10 @@ Analyze the market and generate trade recommendations.";
     let recommendations: Vec<serde_json::Value> = serde_json::from_str(json_str)
         .unwrap_or_else(|e| panic!("Failed to parse LLM JSON: {e}\nRaw: {json_str}"));
 
-    assert!(!recommendations.is_empty(), "LLM should generate at least 1 recommendation");
+    assert!(
+        !recommendations.is_empty(),
+        "LLM should generate at least 1 recommendation"
+    );
 
     let mut intents = Vec::new();
     for (i, rec) in recommendations.iter().enumerate() {
@@ -294,9 +323,12 @@ Analyze the market and generate trade recommendations.";
         };
 
         let amount_str = rec["amount_in"].as_str().unwrap_or("100");
-        let amount: rust_decimal::Decimal = amount_str.parse().unwrap_or(rust_decimal::Decimal::new(100, 0));
+        let amount: rust_decimal::Decimal = amount_str
+            .parse()
+            .unwrap_or(rust_decimal::Decimal::new(100, 0));
         let min_out_str = rec["min_amount_out"].as_str().unwrap_or("0");
-        let min_out: rust_decimal::Decimal = min_out_str.parse().unwrap_or(rust_decimal::Decimal::ZERO);
+        let min_out: rust_decimal::Decimal =
+            min_out_str.parse().unwrap_or(rust_decimal::Decimal::ZERO);
 
         let intent = TradeIntentBuilder::new()
             .strategy_id("ai-glm5-dex")
@@ -310,8 +342,15 @@ Analyze the market and generate trade recommendations.";
             .unwrap();
 
         let reasoning = rec["reasoning"].as_str().unwrap_or("N/A");
-        println!("  Intent {}: {:?} {} {} → {} on {}",
-            i + 1, intent.action, intent.amount_in, intent.token_in, intent.token_out, intent.target_protocol);
+        println!(
+            "  Intent {}: {:?} {} {} → {} on {}",
+            i + 1,
+            intent.action,
+            intent.amount_in,
+            intent.token_in,
+            intent.token_out,
+            intent.target_protocol
+        );
         println!("    AI reasoning: {reasoning}");
 
         intents.push(intent);
@@ -340,23 +379,38 @@ Analyze the market and generate trade recommendations.";
         .await
         .expect("Validation should succeed");
 
-    assert_eq!(result.validator_responses.len(), 3, "All 3 validators should respond");
+    assert_eq!(
+        result.validator_responses.len(),
+        3,
+        "All 3 validators should respond"
+    );
 
     for (i, resp) in result.validator_responses.iter().enumerate() {
-        println!("  Validator {}: score={}, reasoning=\"{}\"",
-            i + 1, resp.score, resp.reasoning);
+        println!(
+            "  Validator {}: score={}, reasoning=\"{}\"",
+            i + 1,
+            resp.score,
+            resp.reasoning
+        );
         assert!(resp.signature.starts_with("0x"), "Signature should be hex");
         let zero_sig = format!("0x{}", "00".repeat(65));
-        assert_ne!(resp.signature, zero_sig, "Signature should not be all zeros");
+        assert_ne!(
+            resp.signature, zero_sig,
+            "Signature should not be all zeros"
+        );
     }
-    println!("\n  Aggregate: approved={}, average_score={}\n",
-        result.approved, result.aggregate_score);
+    println!(
+        "\n  Aggregate: approved={}, average_score={}\n",
+        result.approved, result.aggregate_score
+    );
 
     // ── 6. On-chain verification ─────────────────────────────────────────────
     println!("[6/6] Submitting signatures to on-chain TradeValidator...\n");
 
     let intent_hash_hex = &result.intent_hash;
-    let intent_hash_stripped = intent_hash_hex.strip_prefix("0x").unwrap_or(intent_hash_hex);
+    let intent_hash_stripped = intent_hash_hex
+        .strip_prefix("0x")
+        .unwrap_or(intent_hash_hex);
     let intent_hash_bytes = hex::decode(intent_hash_stripped).unwrap();
     let mut intent_hash = [0u8; 32];
     intent_hash.copy_from_slice(&intent_hash_bytes);
@@ -385,10 +439,20 @@ Analyze the market and generate trade recommendations.";
 
     println!("  Intent hash: {intent_hash_hex}");
     println!("  Signatures submitted: 2 of 3");
-    println!("  On-chain result: approved={}, validCount={}", on_chain.approved, on_chain.validCount);
+    println!(
+        "  On-chain result: approved={}, validCount={}",
+        on_chain.approved, on_chain.validCount
+    );
 
-    assert!(on_chain.approved, "On-chain validation should pass with 2-of-3 sigs");
-    assert_eq!(on_chain.validCount, U256::from(2), "Should have 2 valid signatures");
+    assert!(
+        on_chain.approved,
+        "On-chain validation should pass with 2-of-3 sigs"
+    );
+    assert_eq!(
+        on_chain.validCount,
+        U256::from(2),
+        "Should have 2 valid signatures"
+    );
 
     println!("\n============================================================");
     println!("  PASS — Full AI trading flow completed successfully");

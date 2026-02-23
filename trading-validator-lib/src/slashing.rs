@@ -11,7 +11,7 @@
 //! The flow: detect violation → encode evidence → call `proposeSlash()` on Tangle →
 //! dispute window opens → if not disputed, `onSlash` hook fires on-chain.
 
-use alloy::primitives::{keccak256, Address, B256};
+use alloy::primitives::{Address, B256, keccak256};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,11 +97,7 @@ pub struct SlashProposal {
 /// Encode a slash condition into an evidence hash for on-chain submission.
 ///
 /// The evidence hash is `keccak256(abi.encodePacked(condition_label, offender, service_id, evidence_data))`.
-pub fn encode_evidence(
-    condition: &SlashCondition,
-    offender: Address,
-    service_id: u64,
-) -> B256 {
+pub fn encode_evidence(condition: &SlashCondition, offender: Address, service_id: u64) -> B256 {
     let mut data = Vec::new();
     data.extend_from_slice(condition.label().as_bytes());
     data.extend_from_slice(offender.as_slice());
@@ -145,8 +141,7 @@ pub fn build_proposal(
     condition: SlashCondition,
 ) -> SlashProposal {
     let evidence_hash = encode_evidence(&condition, offender, service_id);
-    let evidence_json =
-        serde_json::to_string(&condition).unwrap_or_else(|_| "{}".to_string());
+    let evidence_json = serde_json::to_string(&condition).unwrap_or_else(|_| "{}".to_string());
 
     SlashProposal {
         service_id,
@@ -303,7 +298,10 @@ mod tests {
 
         let hash1 = encode_evidence(&condition, offender, 42);
         let hash2 = encode_evidence(&condition, offender, 42);
-        assert_eq!(hash1, hash2, "Same inputs should produce same evidence hash");
+        assert_eq!(
+            hash1, hash2,
+            "Same inputs should produce same evidence hash"
+        );
     }
 
     #[test]
@@ -378,7 +376,9 @@ mod tests {
 
         // Should detect the stale validator (elapsed=1000, interval=100, missed=9)
         assert!(
-            proposals.iter().any(|p| p.offender == stale_addr.parse::<Address>().unwrap()),
+            proposals
+                .iter()
+                .any(|p| p.offender == stale_addr.parse::<Address>().unwrap()),
             "Should detect stale validator"
         );
 
@@ -403,7 +403,9 @@ mod tests {
         let proposals = check_liveness_violations(42, 2000, 100);
 
         assert!(
-            !proposals.iter().any(|p| p.offender == fresh_addr.parse::<Address>().unwrap()),
+            !proposals
+                .iter()
+                .any(|p| p.offender == fresh_addr.parse::<Address>().unwrap()),
             "Should not propose slash for fresh validator"
         );
 
@@ -426,7 +428,9 @@ mod tests {
         let proposals = check_liveness_violations(42, 2000, 100);
 
         assert!(
-            !proposals.iter().any(|p| p.offender == inactive_addr.parse::<Address>().unwrap()),
+            !proposals
+                .iter()
+                .any(|p| p.offender == inactive_addr.parse::<Address>().unwrap()),
             "Should not propose slash for inactive validator"
         );
 

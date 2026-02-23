@@ -11,9 +11,9 @@ use blueprint_sdk::runner::BlueprintRunner;
 use blueprint_sdk::runner::config::BlueprintEnvironment;
 use blueprint_sdk::runner::tangle::config::TangleConfig;
 use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
+use trading_blueprint_lib::context::TradingOperatorContext;
 use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_tee_instance_blueprint_lib::{JOB_WORKFLOW_TICK, init_tee_backend, tee_router};
-use trading_blueprint_lib::context::TradingOperatorContext;
 
 #[tokio::main]
 #[allow(clippy::result_large_err)]
@@ -82,10 +82,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(50);
 
-    let strategy_registry_address =
-        std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
-    let fee_distributor_address =
-        std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
+    let strategy_registry_address = std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
+    let fee_distributor_address = std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
 
     let ctx = TradingOperatorContext {
         operator_address,
@@ -116,7 +114,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 5b. Log instance provisioning state ─────────────────────────────
     match trading_instance_blueprint_lib::get_instance_bot_id() {
         Ok(Some(id)) => tracing::info!("TEE instance bot already provisioned: {id}"),
-        Ok(None) => tracing::info!("TEE instance not provisioned — waiting for operator API trigger (POST /api/bot/provision)"),
+        Ok(None) => tracing::info!(
+            "TEE instance not provisioned — waiting for operator API trigger (POST /api/bot/provision)"
+        ),
         Err(e) => tracing::warn!("TEE instance state check failed: {e}"),
     }
 
@@ -143,11 +143,27 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .unwrap_or(3600);
 
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(fee_interval));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(fee_interval));
             loop {
                 interval.tick().await;
                 trading_blueprint_lib::fees::settle_all_fees().await;
+            }
+        });
+    }
+
+    // ── 6b. Spawn periodic subscription billing ────────────────────────────
+    {
+        let billing_interval: u64 = std::env::var("BILLING_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600);
+
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(billing_interval));
+            loop {
+                interval.tick().await;
+                trading_blueprint_lib::fees::bill_all_subscriptions().await;
             }
         });
     }
@@ -216,7 +232,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     {
                         Ok(_) => {
                             let _ = trading_instance_blueprint_lib::clear_instance_bot_id();
-                            tracing::info!("Shutdown: deprovisioned TEE sandbox {}", bot.sandbox_id);
+                            tracing::info!(
+                                "Shutdown: deprovisioned TEE sandbox {}",
+                                bot.sandbox_id
+                            );
                         }
                         Err(e) => tracing::error!("Shutdown: failed to deprovision: {e}"),
                     }

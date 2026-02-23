@@ -19,6 +19,7 @@ contract VaultShare is ERC20, AccessControl {
     error VaultAlreadyLinked(address vault);
     error VaultNotLinked(address vault);
     error ZeroAddress();
+    error StaleOraclePrice(address asset);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -136,6 +137,7 @@ contract VaultShare is ERC20, AccessControl {
                 uint256 balance = IERC20(vaultAsset).balanceOf(vault);
                 if (balance > 0) {
                     (uint256 price, uint8 dec) = oracle.getPrice(vaultAsset);
+                    if (price == 0) revert StaleOraclePrice(vaultAsset);
                     nav += (balance * price) / (10 ** dec);
                 }
             }

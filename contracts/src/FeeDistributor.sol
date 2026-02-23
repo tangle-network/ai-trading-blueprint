@@ -159,9 +159,13 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         uint256 currentAUM = IERC20(feeToken).balanceOf(vault);
         uint256 lastSettledTime = lastSettled[vault];
 
-        // Initialize lastSettled on first call
+        // Initialize lastSettled and HWM on first call — initial capital is NOT "gains"
         if (lastSettledTime == 0) {
             lastSettledTime = block.timestamp;
+            if (highWaterMark[vault] == 0) {
+                highWaterMark[vault] = currentAUM;
+                emit HighWaterMarkUpdated(vault, currentAUM);
+            }
         }
 
         // Calculate fees

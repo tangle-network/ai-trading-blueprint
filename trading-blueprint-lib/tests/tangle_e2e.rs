@@ -12,8 +12,8 @@
 
 mod common;
 
-use alloy::node_bindings::Anvil;
 use alloy::network::EthereumWallet;
+use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, U256};
 use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
@@ -29,8 +29,14 @@ use trading_blueprint_lib::{
 };
 
 /// Extract raw key bytes from Anvil pre-funded accounts for validator indices.
-fn validator_key_bytes(anvil: &alloy::node_bindings::AnvilInstance, indices: &[usize]) -> Vec<Vec<u8>> {
-    indices.iter().map(|&i| anvil.keys()[i].to_bytes().to_vec()).collect()
+fn validator_key_bytes(
+    anvil: &alloy::node_bindings::AnvilInstance,
+    indices: &[usize],
+) -> Vec<Vec<u8>> {
+    indices
+        .iter()
+        .map(|&i| anvil.keys()[i].to_bytes().to_vec())
+        .collect()
 }
 
 use common::contract_deployer;
@@ -80,10 +86,7 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
         eprintln!("[setup] Starting 3 real validator servers...");
         let val_keys = validator_key_bytes(&anvil, &[3, 4, 5]);
         let cluster = validators::start_validator_cluster(
-            &val_keys,
-            tv_addr,
-            vault_addr,
-            None, // policy-only scoring (no AI key needed)
+            &val_keys, tv_addr, vault_addr, None, // policy-only scoring (no AI key needed)
         )
         .await;
 
@@ -145,7 +148,10 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
         );
         assert!(!sandbox_id.is_empty(), "sandbox_id should not be empty");
         // Two-phase provisioning: workflow_id=0 means "awaiting secrets injection"
-        assert_eq!(provision_receipt.workflow_id, 0, "workflow_id should be 0 (awaiting secrets)");
+        assert_eq!(
+            provision_receipt.workflow_id, 0,
+            "workflow_id should be 0 (awaiting secrets)"
+        );
 
         // ── 6a. JOB_STATUS (4) — verify "awaiting secrets" state ──────
         eprintln!("[test] Submitting JOB_STATUS (pre-activation)...");
@@ -166,7 +172,10 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             status_receipt.state, status_receipt.trading_active
         );
         // Before secrets injection, bot is inactive
-        assert!(!status_receipt.trading_active, "bot should be inactive before secrets");
+        assert!(
+            !status_receipt.trading_active,
+            "bot should be inactive before secrets"
+        );
         assert_eq!(status_receipt.sandbox_id, sandbox_id);
 
         // ── 6b. Activate with secrets (HTTP API path, not on-chain) ──
@@ -207,17 +216,27 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             tee_config: None,
         };
         let mut user_env = serde_json::Map::new();
-        user_env.insert("ANTHROPIC_API_KEY".to_string(), serde_json::json!("test-key"));
+        user_env.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            serde_json::json!("test-key"),
+        );
         let activate_result = trading_blueprint_lib::jobs::activate_bot_with_secrets(
             &bot.id,
             user_env,
             Some(mock_sb),
         )
         .await;
-        assert!(activate_result.is_ok(), "activation should succeed: {:?}", activate_result.err());
+        assert!(
+            activate_result.is_ok(),
+            "activation should succeed: {:?}",
+            activate_result.err()
+        );
         let activate_out = activate_result.unwrap();
         eprintln!("        workflow_id={}", activate_out.workflow_id);
-        assert!(activate_out.workflow_id > 0, "workflow_id should be set after activation");
+        assert!(
+            activate_out.workflow_id > 0,
+            "workflow_id should be set after activation"
+        );
 
         // ── 6c. JOB_STATUS (4) — verify active state ─────────────────
         eprintln!("[test] Submitting JOB_STATUS (post-activation)...");
@@ -232,7 +251,10 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             "        state={}, trading_active={}",
             status_receipt2.state, status_receipt2.trading_active
         );
-        assert!(status_receipt2.trading_active, "bot should be active after secrets injection");
+        assert!(
+            status_receipt2.trading_active,
+            "bot should be active after secrets injection"
+        );
         assert_eq!(status_receipt2.sandbox_id, sandbox_id);
 
         // ── 7. JOB_CONFIGURE (1) ────────────────────────────────────────
@@ -342,8 +364,7 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
 
     // ── Start 3 validator servers ───────────────────────────────────
     let val_keys = validator_key_bytes(&anvil, &[3, 4, 5]);
-    let cluster =
-        validators::start_validator_cluster(&val_keys, tv_addr, vault_addr, None).await;
+    let cluster = validators::start_validator_cluster(&val_keys, tv_addr, vault_addr, None).await;
 
     // ── Build a trade intent and validate ───────────────────────────
     // Use real well-known mainnet token addresses (WETH → USDC)
@@ -370,7 +391,10 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
         .await
         .expect("Validation should succeed");
 
-    eprintln!("Aggregate score: {}, approved: {}", result.aggregate_score, result.approved);
+    eprintln!(
+        "Aggregate score: {}, approved: {}",
+        result.aggregate_score, result.approved
+    );
     assert_eq!(result.validator_responses.len(), 3);
 
     // All signatures should be real EIP-712
@@ -410,10 +434,16 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
         .await
         .unwrap();
 
-    assert!(on_chain.approved, "On-chain validation should pass with 2-of-3");
+    assert!(
+        on_chain.approved,
+        "On-chain validation should pass with 2-of-3"
+    );
     assert_eq!(on_chain.validCount, U256::from(2));
 
-    eprintln!("On-chain verified: approved={}, validCount={}", on_chain.approved, on_chain.validCount);
+    eprintln!(
+        "On-chain verified: approved={}, validCount={}",
+        on_chain.approved, on_chain.validCount
+    );
     Ok(())
 }
 
@@ -447,14 +477,13 @@ async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
             })
             .collect();
 
-        let (_tv_addr, vault_addr) = contract_deployer::deploy_trade_validator(
-            &deployer_provider,
-            val_addrs.clone(),
-            2,
-        )
-        .await;
+        let (_tv_addr, vault_addr) =
+            contract_deployer::deploy_trade_validator(&deployer_provider, val_addrs.clone(), 2)
+                .await;
 
-        unsafe { std::env::set_var("TRADING_API_URL", "http://127.0.0.1:9100"); }
+        unsafe {
+            std::env::set_var("TRADING_API_URL", "http://127.0.0.1:9100");
+        }
         common::setup_sidecar_env();
 
         let Some(harness) = common::spawn_harness().await? else {
@@ -497,9 +526,15 @@ async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
                 "        sandbox_id={}, workflow_id={}, vault={}",
                 receipt.sandbox_id, receipt.workflow_id, receipt.vault_address
             );
-            assert!(!receipt.sandbox_id.is_empty(), "{strategy} sandbox_id empty");
+            assert!(
+                !receipt.sandbox_id.is_empty(),
+                "{strategy} sandbox_id empty"
+            );
             // Two-phase provisioning: workflow_id=0 means "awaiting secrets"
-            assert_eq!(receipt.workflow_id, 0, "{strategy} workflow_id should be 0 (awaiting secrets)");
+            assert_eq!(
+                receipt.workflow_id, 0,
+                "{strategy} workflow_id should be 0 (awaiting secrets)"
+            );
 
             // Verify the bot record has the correct strategy type
             let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&receipt.sandbox_id)

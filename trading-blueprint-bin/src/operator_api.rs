@@ -80,6 +80,7 @@ pub struct BotDetailResponse {
     pub max_lifetime_days: u64,
     pub trading_api_url: String,
     #[serde(skip_serializing)]
+    #[allow(dead_code)]
     pub trading_api_token: String,
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
@@ -137,7 +138,7 @@ impl From<sandbox_runtime::provision_progress::ProvisionStatus> for ProvisionPro
     fn from(p: sandbox_runtime::provision_progress::ProvisionStatus) -> Self {
         Self {
             call_id: p.call_id,
-            phase: serde_json::to_value(&p.phase)
+            phase: serde_json::to_value(p.phase)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_else(|| format!("{:?}", p.phase)),
@@ -314,16 +315,24 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/run-now", post(run_now))
         .route("/api/bots/{bot_id}/config", patch(update_config))
         .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
-        .route("/api/bots/{bot_id}/metrics/history", get(get_bot_metrics_history))
+        .route(
+            "/api/bots/{bot_id}/metrics/history",
+            get(get_bot_metrics_history),
+        )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
         .route("/api/bots/{bot_id}/portfolio/state", get(get_bot_portfolio))
-        .route("/api/bots/{bot_id}/activation-progress", get(get_activation_progress))
+        .route(
+            "/api/bots/{bot_id}/activation-progress",
+            get(get_activation_progress),
+        )
         // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
-        // Pricing (RFQ) endpoints — operators serve these for service creation + job pricing
+        // Pricing endpoints — subscription config + billing status
         .route("/pricing/quote", post(pricing_quote))
         .route("/pricing/job-quote", post(pricing_job_quote))
+        .route("/api/pricing/config", get(get_pricing_config))
+        .route("/api/pricing/billing/{service_id}", get(get_billing_status))
         // Debug endpoints (no auth — test mode only)
         .route("/api/debug/sandboxes", get(debug_sandboxes))
         .route("/api/debug/workflows", get(debug_workflows))
@@ -335,18 +344,27 @@ pub fn build_operator_router() -> Router {
 
 async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
     let challenge = sandbox_runtime::session_auth::create_challenge();
-    let value = serde_json::to_value(challenge)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Serialization error: {e}")))?;
+    let value = serde_json::to_value(challenge).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Serialization error: {e}"),
+        )
+    })?;
     Ok((StatusCode::OK, Json(value)))
 }
 
 async fn create_session(
     Json(req): Json<SessionRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let token = sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
-        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
-    let value = serde_json::to_value(token)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Serialization error: {e}")))?;
+    let token =
+        sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
+            .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
+    let value = serde_json::to_value(token).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Serialization error: {e}"),
+        )
+    })?;
     Ok((StatusCode::OK, Json(value)))
 }
 
@@ -364,7 +382,12 @@ async fn list_bots(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
         let bots: Vec<BotSummary> = bot.into_iter().map(BotSummary::from_record).collect();
         let total = bots.len();
-        return Ok(Json(BotListResponse { bots, total, limit, offset }));
+        return Ok(Json(BotListResponse {
+            bots,
+            total,
+            limit,
+            offset,
+        }));
     }
 
     let result = if let Some(ref operator) = query.operator {
@@ -377,7 +400,11 @@ async fn list_bots(
 
     let paginated = result.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let mut bots: Vec<BotSummary> = paginated.bots.into_iter().map(BotSummary::from_record).collect();
+    let mut bots: Vec<BotSummary> = paginated
+        .bots
+        .into_iter()
+        .map(BotSummary::from_record)
+        .collect();
 
     // Optional status filter (active/inactive)
     if let Some(ref status) = query.status {
@@ -407,7 +434,6 @@ async fn configure_secrets(
     Path(bot_id): Path<String>,
     Json(body): Json<ConfigureSecretsRequest>,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
-
     let bot = resolve_bot(&bot_id)?;
 
     // Verify caller is the bot's submitter
@@ -426,7 +452,12 @@ async fn configure_secrets(
         let mut env = serde_json::Map::new();
         // Try each supported AI provider in order of preference
         let providers: &[(&str, &str, &str, &str)] = &[
-            ("ANTHROPIC_API_KEY", "anthropic", "claude-sonnet-4-20250514", "ANTHROPIC_API_KEY"),
+            (
+                "ANTHROPIC_API_KEY",
+                "anthropic",
+                "claude-sonnet-4-20250514",
+                "ANTHROPIC_API_KEY",
+            ),
             ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
         ];
         let mut found = false;
@@ -471,7 +502,6 @@ async fn wipe_secrets(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
-
     let bot = resolve_bot(&bot_id)?;
 
     if !bot.submitter_address.is_empty()
@@ -557,16 +587,24 @@ async fn run_now(
         return Err((StatusCode::CONFLICT, "Bot is not active".to_string()));
     }
 
-    let workflow_id = bot
-        .workflow_id
-        .ok_or_else(|| (StatusCode::CONFLICT, "Bot has no workflow configured".to_string()))?;
+    let workflow_id = bot.workflow_id.ok_or_else(|| {
+        (
+            StatusCode::CONFLICT,
+            "Bot has no workflow configured".to_string(),
+        )
+    })?;
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
     let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .get(&wf_key)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Workflow {workflow_id} not found"),
+            )
+        })?;
 
     let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
         .await
@@ -622,7 +660,10 @@ fn resolve_bot(bot_id: &str) -> Result<TradingBotRecord, (StatusCode, String)> {
 
 /// Synthesize metrics history from per-bot trade data.
 /// Returns a time series of account value snapshots.
-fn synthesize_metrics(bot: &TradingBotRecord, trades: &[serde_json::Value]) -> Vec<MetricsSnapshotResponse> {
+fn synthesize_metrics(
+    bot: &TradingBotRecord,
+    trades: &[serde_json::Value],
+) -> Vec<MetricsSnapshotResponse> {
     const INITIAL_VALUE: f64 = 10_000.0;
     let mut snapshots = Vec::new();
 
@@ -702,10 +743,18 @@ fn synthesize_metrics(bot: &TradingBotRecord, trades: &[serde_json::Value]) -> V
                 .unwrap_or("")
                 .to_string();
 
-            let dd = if hwm > 0.0 { ((hwm - val) / hwm) * 100.0 } else { 0.0 };
+            let dd = if hwm > 0.0 {
+                ((hwm - val) / hwm) * 100.0
+            } else {
+                0.0
+            };
 
             snapshots.push(MetricsSnapshotResponse {
-                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                timestamp: if ts.is_empty() {
+                    chrono::Utc::now().to_rfc3339()
+                } else {
+                    ts
+                },
                 bot_id: bot.id.clone(),
                 account_value_usd: val,
                 unrealized_pnl: unrealized,
@@ -765,7 +814,8 @@ async fn get_bot_trades(
     let entries: Vec<TradeEntryResponse> = trades
         .iter()
         .map(|t| {
-            let mid = t.get("market_id")
+            let mid = t
+                .get("market_id")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
                 .unwrap_or("");
@@ -778,7 +828,8 @@ async fn get_bot_trades(
                 mid.to_string()
             };
 
-            let tid = t.get("id")
+            let tid = t
+                .get("id")
                 .map(|v| match v {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Number(n) => n.to_string(),
@@ -786,33 +837,44 @@ async fn get_bot_trades(
                 })
                 .unwrap_or_else(|| mid_str.clone());
 
-            let question = t.get("question")
+            let question = t
+                .get("question")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
 
-            let side = t.get("side")
+            let side = t
+                .get("side")
                 .or_else(|| t.get("action"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("buy");
 
-            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
+            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy")
+            {
                 "buy"
             } else {
                 "sell"
             };
 
-            let amount = t.get("amount_usd")
+            let amount = t
+                .get("amount_usd")
                 .or_else(|| t.get("size"))
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
 
             let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let current_price = t
+                .get("current_price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(entry_price);
             let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let status = t
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
 
-            let ts = t.get("created_at")
+            let ts = t
+                .get("created_at")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -820,7 +882,11 @@ async fn get_bot_trades(
             TradeEntryResponse {
                 id: tid.clone(),
                 bot_id: bot.id.clone(),
-                timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                timestamp: if ts.is_empty() {
+                    chrono::Utc::now().to_rfc3339()
+                } else {
+                    ts
+                },
                 action: action.to_string(),
                 token_in: "USDC".to_string(),
                 token_out: question.chars().take(40).collect(),
@@ -870,20 +936,26 @@ async fn get_bot_portfolio(
     let positions: Vec<PortfolioPosition> = open_trades
         .iter()
         .map(|t| {
-            let mid = t.get("market_id")
+            let mid = t
+                .get("market_id")
                 .or_else(|| t.get("symbol"))
                 .map(|v| v.to_string())
                 .unwrap_or_default();
-            let question = t.get("question")
+            let question = t
+                .get("question")
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
-            let amount = t.get("amount_usd")
+            let amount = t
+                .get("amount_usd")
                 .or_else(|| t.get("size"))
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
             let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t.get("current_price").and_then(|v| v.as_f64()).unwrap_or(entry_price);
+            let current_price = t
+                .get("current_price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(entry_price);
             let pnl_pct = if entry_price > 0.0 {
                 ((current_price - entry_price) / entry_price) * 100.0
             } else {
@@ -898,7 +970,11 @@ async fn get_bot_portfolio(
                 entry_price,
                 current_price,
                 pnl_percent: pnl_pct,
-                weight: if total_value > 0.0 { (amount / total_value) * 100.0 } else { 0.0 },
+                weight: if total_value > 0.0 {
+                    (amount / total_value) * 100.0
+                } else {
+                    0.0
+                },
             }
         })
         .collect();
@@ -917,7 +993,12 @@ async fn get_activation_progress(
 ) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
     let progress = state::get_activation(&bot_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No activation progress for bot {bot_id}")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("No activation progress for bot {bot_id}"),
+            )
+        })?;
 
     Ok(Json(ActivationProgressResponse::from(progress)))
 }
@@ -930,13 +1011,15 @@ async fn debug_sandboxes() -> Json<serde_json::Value> {
             Ok(records) => {
                 let list: Vec<serde_json::Value> = records
                     .iter()
-                    .map(|r| serde_json::json!({
-                        "id": r.id,
-                        "container_id": &r.container_id[..r.container_id.len().min(12)],
-                        "sidecar_url": r.sidecar_url,
-                        "token_len": r.token.len(),
-                        "state": format!("{:?}", r.state),
-                    }))
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "container_id": &r.container_id[..r.container_id.len().min(12)],
+                            "sidecar_url": r.sidecar_url,
+                            "token_len": r.token.len(),
+                            "state": format!("{:?}", r.state),
+                        })
+                    })
                     .collect();
                 Json(serde_json::json!({ "count": list.len(), "sandboxes": list }))
             }
@@ -953,7 +1036,8 @@ async fn debug_workflows() -> Json<serde_json::Value> {
                 let list: Vec<serde_json::Value> = entries
                     .iter()
                     .map(|e| {
-                        let spec: Result<serde_json::Value, _> = serde_json::from_str(&e.workflow_json);
+                        let spec: Result<serde_json::Value, _> =
+                            serde_json::from_str(&e.workflow_json);
                         let sidecar_url = spec
                             .as_ref()
                             .ok()
@@ -993,7 +1077,12 @@ async fn debug_run_now(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .get(&wf_key)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workflow {workflow_id} not found")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Workflow {workflow_id} not found"),
+            )
+        })?;
 
     let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
         .await
@@ -1015,14 +1104,21 @@ async fn debug_run_now(
     })))
 }
 
-// ── Pricing handlers (RFQ for service creation + per-job quotes) ─────────
+// ── Pricing handlers ─────────────────────────────────────────────────────
+//
+// Service creation quotes are handled by the pricing engine gRPC server
+// (separate process). These REST endpoints provide subscription info and
+// billing status for operator dashboards and integrations.
 
 #[derive(Deserialize)]
 struct PricingQuoteRequest {
+    #[allow(dead_code)]
     blueprint_id: Option<String>,
+    #[allow(dead_code)]
     ttl_blocks: Option<String>,
     #[allow(dead_code)]
     proof_of_work: Option<String>,
+    #[allow(dead_code)]
     challenge_timestamp: Option<String>,
     #[allow(dead_code)]
     resource_requirements: Option<serde_json::Value>,
@@ -1030,73 +1126,144 @@ struct PricingQuoteRequest {
 
 #[derive(Deserialize)]
 struct JobQuoteRequest {
+    #[allow(dead_code)]
     service_id: Option<String>,
     job_index: Option<u32>,
     #[allow(dead_code)]
     proof_of_work: Option<String>,
+    #[allow(dead_code)]
     challenge_timestamp: Option<String>,
 }
 
-/// Returns a zero-cost signed quote for local development.
-/// In production, this would compute resource pricing and sign with the operator key.
-async fn pricing_quote(
-    Json(body): Json<PricingQuoteRequest>,
-) -> Json<serde_json::Value> {
-    let blueprint_id = body.blueprint_id.as_deref().unwrap_or("0");
-    let ttl_blocks = body.ttl_blocks.as_deref().unwrap_or("100");
-    let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let expiry = now + 3600;
-
+/// Returns subscription pricing info.
+///
+/// Service creation quotes are signed by the pricing engine gRPC server
+/// (separate process). This REST endpoint returns informational pricing
+/// config for integrations that don't use gRPC.
+async fn pricing_quote(Json(_body): Json<PricingQuoteRequest>) -> Json<serde_json::Value> {
+    let pricing_engine_endpoint = std::env::var("PRICING_ENGINE_ENDPOINT").unwrap_or_default();
     let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
 
     Json(serde_json::json!({
+        "pricing_model": "subscription",
         "operator": operator_address,
-        "total_cost": "0",
-        "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-        "cost_rate": 0.0,
-        "details": {
-            "blueprint_id": blueprint_id,
-            "ttl_blocks": ttl_blocks,
-            "total_cost": "0",
-            "timestamp": timestamp,
-            "expiry": expiry.to_string(),
-            "security_commitments": [],
+        "note": "Service creation quotes are served by the pricing engine gRPC endpoint. Use the gRPC GetPrice RPC for signed EIP-712 quotes.",
+        "pricing_engine_grpc": pricing_engine_endpoint,
+        "job_multipliers": {
+            "provision": 50,
+            "configure": 2,
+            "start_trading": 1,
+            "stop_trading": 1,
+            "status": 0,
+            "deprovision": 1,
+            "extend": 10,
         },
     }))
 }
 
-/// Returns a zero-cost per-job quote for local development.
-async fn pricing_job_quote(
-    Json(body): Json<JobQuoteRequest>,
-) -> Json<serde_json::Value> {
-    let service_id = body.service_id.as_deref().unwrap_or("0");
+/// Returns per-job pricing info.
+///
+/// Under subscription pricing, all jobs are covered by the service subscription.
+/// No per-job payment is required.
+async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json::Value> {
     let job_index = body.job_index.unwrap_or(0);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let expiry = now + 3600;
-    let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
+    let multipliers = [50, 2, 1, 1, 0, 1, 10]; // PRICE_MULT_* from contract
+    let multiplier = multipliers.get(job_index as usize).copied().unwrap_or(0);
 
+    Json(serde_json::json!({
+        "pricing_model": "subscription",
+        "job_index": job_index,
+        "per_job_cost": "0",
+        "multiplier": multiplier,
+        "note": "All jobs are covered by the service subscription. No per-job payment required.",
+    }))
+}
+
+/// Returns the operator's pricing configuration.
+async fn get_pricing_config() -> Json<serde_json::Value> {
+    let subscription_rate =
+        std::env::var("SUBSCRIPTION_RATE").unwrap_or_else(|_| "1000000000".to_string());
+    let subscription_interval: u64 = std::env::var("SUBSCRIPTION_INTERVAL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(86400);
+    let pricing_engine_endpoint = std::env::var("PRICING_ENGINE_ENDPOINT").unwrap_or_default();
     let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
 
     Json(serde_json::json!({
         "operator": operator_address,
-        "total_cost": "0",
-        "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-        "cost_rate": 0.0,
-        "details": {
-            "service_id": service_id,
-            "job_index": job_index,
-            "price": "0",
-            "timestamp": timestamp,
-            "expiry": expiry.to_string(),
+        "pricing_model": "subscription",
+        "subscription_rate": subscription_rate,
+        "subscription_interval": subscription_interval,
+        "job_multipliers": {
+            "provision": 50,
+            "configure": 2,
+            "start_trading": 1,
+            "stop_trading": 1,
+            "status": 0,
+            "deprovision": 1,
+            "extend": 10,
         },
+        "pricing_engine_grpc": pricing_engine_endpoint,
     }))
+}
+
+/// Returns billing status for a specific service.
+async fn get_billing_status(
+    Path(service_id): Path<u64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let tangle_address: alloy_primitives::Address = std::env::var("TANGLE_CONTRACT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "TANGLE_CONTRACT not configured".to_string(),
+            )
+        })?;
+
+    let ctx = trading_blueprint_lib::context::operator_context().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Operator context not initialized".to_string(),
+        )
+    })?;
+
+    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let chain_id: u64 = std::env::var("CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(31337);
+
+    let chain = trading_runtime::chain::ChainClient::new(&rpc_url, &ctx.private_key, chain_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("ChainClient error: {e}"),
+            )
+        })?;
+
+    let escrow =
+        trading_blueprint_lib::on_chain::get_service_escrow(&chain, tangle_address, service_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let billable = trading_blueprint_lib::on_chain::get_billable_services(
+        &chain,
+        tangle_address,
+        vec![service_id],
+    )
+    .await
+    .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "service_id": service_id,
+        "escrow_token": format!("{}", escrow.token),
+        "escrow_balance": escrow.balance.to_string(),
+        "total_deposited": escrow.total_deposited.to_string(),
+        "total_released": escrow.total_released.to_string(),
+        "is_billable": billable.contains(&service_id),
+    })))
 }
 
 // ── Provision handlers ───────────────────────────────────────────────────
@@ -1105,7 +1272,10 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
     let all = sandbox_runtime::provision_progress::list_all_provisions()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ProvisionListResponse {
-        provisions: all.into_iter().map(ProvisionProgressResponse::from).collect(),
+        provisions: all
+            .into_iter()
+            .map(ProvisionProgressResponse::from)
+            .collect(),
     }))
 }
 
@@ -1114,7 +1284,12 @@ async fn get_provision(
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
     let progress = sandbox_runtime::provision_progress::get_provision(call_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("No provision for call_id {call_id}")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("No provision for call_id {call_id}"),
+            )
+        })?;
 
     Ok(Json(ProvisionProgressResponse::from(progress)))
 }
@@ -1453,9 +1628,7 @@ mod tests {
             call_id: 0,
             service_id: 0,
         };
-        store
-            .insert(state::bot_key("wd-bot"), bot)
-            .unwrap();
+        store.insert(state::bot_key("wd-bot"), bot).unwrap();
 
         let app = build_operator_router();
         let response = app

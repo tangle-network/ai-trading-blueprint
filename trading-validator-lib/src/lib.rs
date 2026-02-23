@@ -158,8 +158,13 @@ pub fn get_all_validators() -> Result<HashMap<String, ValidatorState>, String> {
 
 /// Get metrics for a specific operator.
 pub fn get_validator_metrics(operator: &str) -> Result<ValidatorMetrics, String> {
-    let guard = validator_metrics_store().lock().map_err(|e| e.to_string())?;
-    Ok(guard.get(operator).cloned().unwrap_or_else(ValidatorMetrics::new))
+    let guard = validator_metrics_store()
+        .lock()
+        .map_err(|e| e.to_string())?;
+    Ok(guard
+        .get(operator)
+        .cloned()
+        .unwrap_or_else(ValidatorMetrics::new))
 }
 
 /// Update metrics for a specific operator via a closure.
@@ -167,7 +172,9 @@ pub fn update_validator_metrics<F>(operator: &str, f: F) -> Result<(), String>
 where
     F: FnOnce(&mut ValidatorMetrics),
 {
-    let mut guard = validator_metrics_store().lock().map_err(|e| e.to_string())?;
+    let mut guard = validator_metrics_store()
+        .lock()
+        .map_err(|e| e.to_string())?;
     let metrics = guard
         .entry(operator.to_string())
         .or_insert_with(ValidatorMetrics::new);
@@ -210,7 +217,16 @@ pub fn get_all_vault_configs() -> Result<HashMap<String, VaultValidatorConfig>, 
 /// Tangle protocol's `onRegister`, `onUnregister`, and `onSlash` hooks.
 pub fn router() -> Router {
     Router::new()
-        .route(JOB_UPDATE_REPUTATION, jobs::update_reputation::handle_update_reputation.layer(TangleLayer))
-        .route(JOB_UPDATE_CONFIG, jobs::update_config::handle_update_config.layer(TangleLayer))
-        .route(JOB_LIVENESS, jobs::liveness::handle_liveness.layer(TangleLayer))
+        .route(
+            JOB_UPDATE_REPUTATION,
+            jobs::update_reputation::handle_update_reputation.layer(TangleLayer),
+        )
+        .route(
+            JOB_UPDATE_CONFIG,
+            jobs::update_config::handle_update_config.layer(TangleLayer),
+        )
+        .route(
+            JOB_LIVENESS,
+            jobs::liveness::handle_liveness.layer(TangleLayer),
+        )
 }

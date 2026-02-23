@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{parse_address_or, ActionParams, EncodedAction, ProtocolAdapter};
+use super::{ActionParams, EncodedAction, ProtocolAdapter, parse_address_or};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -60,9 +60,7 @@ impl GmxV2Adapter {
             exchange_router: GMX_V2_EXCHANGE_ROUTER
                 .parse()
                 .expect("valid gmx exchange router"),
-            order_vault: GMX_V2_ORDER_VAULT
-                .parse()
-                .expect("valid gmx order vault"),
+            order_vault: GMX_V2_ORDER_VAULT.parse().expect("valid gmx order vault"),
         }
     }
 
@@ -100,11 +98,7 @@ impl GmxV2Adapter {
                 sizeDeltaUsd: size_delta_usd,
                 initialCollateralDeltaAmount: U256::ZERO,
                 triggerPrice: U256::ZERO,
-                acceptablePrice: if is_long {
-                    U256::MAX
-                } else {
-                    U256::ZERO
-                },
+                acceptablePrice: if is_long { U256::MAX } else { U256::ZERO },
                 executionFee: U256::ZERO,
                 callbackGasLimit: U256::ZERO,
                 minOutputAmount: U256::ZERO,
@@ -143,13 +137,8 @@ impl ProtocolAdapter for GmxV2Adapter {
 
         match params.action {
             Action::OpenLong => {
-                let calldata = self.encode_create_order(
-                    market,
-                    params.token_in,
-                    params.amount,
-                    true,
-                    true,
-                );
+                let calldata =
+                    self.encode_create_order(market, params.token_in, params.amount, true, true);
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -159,13 +148,8 @@ impl ProtocolAdapter for GmxV2Adapter {
                 })
             }
             Action::OpenShort => {
-                let calldata = self.encode_create_order(
-                    market,
-                    params.token_in,
-                    params.amount,
-                    false,
-                    true,
-                );
+                let calldata =
+                    self.encode_create_order(market, params.token_in, params.amount, false, true);
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -175,13 +159,8 @@ impl ProtocolAdapter for GmxV2Adapter {
                 })
             }
             Action::CloseLong => {
-                let calldata = self.encode_create_order(
-                    market,
-                    params.token_in,
-                    params.amount,
-                    true,
-                    false,
-                );
+                let calldata =
+                    self.encode_create_order(market, params.token_in, params.amount, true, false);
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -191,13 +170,8 @@ impl ProtocolAdapter for GmxV2Adapter {
                 })
             }
             Action::CloseShort => {
-                let calldata = self.encode_create_order(
-                    market,
-                    params.token_in,
-                    params.amount,
-                    false,
-                    false,
-                );
+                let calldata =
+                    self.encode_create_order(market, params.token_in, params.amount, false, false);
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,

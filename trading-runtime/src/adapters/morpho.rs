@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{parse_address_or, ActionParams, EncodedAction, ProtocolAdapter};
+use super::{ActionParams, EncodedAction, ProtocolAdapter, parse_address_or};
 use crate::error::TradingError;
 use crate::types::Action;
 

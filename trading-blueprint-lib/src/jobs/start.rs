@@ -30,10 +30,9 @@ pub async fn start_core(sandbox_id: &str, skip_docker: bool) -> Result<JsonRespo
     // Activate workflow
     if let Some(wf_id) = workflow_id {
         let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?
-            .update(&key, |e| {
-                e.active = true;
-            });
+        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.update(&key, |e| {
+            e.active = true;
+        });
     }
 
     // Set trading_active

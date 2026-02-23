@@ -23,8 +23,7 @@ pub async fn instance_prompt(
     };
 
     let resp =
-        ai_agent_sandbox_blueprint_lib::run_prompt_request(&sandbox_request, &record.token)
-            .await?;
+        ai_agent_sandbox_blueprint_lib::run_prompt_request(&sandbox_request, &record.token).await?;
 
     Ok(TangleResult(InstancePromptResponse {
         success: resp.success,

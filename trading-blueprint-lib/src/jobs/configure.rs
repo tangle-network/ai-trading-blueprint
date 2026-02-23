@@ -19,7 +19,8 @@ pub async fn configure_core(
     crate::state::bots()?
         .update(&bot_key(&bot_id), |b| {
             if !new_strategy_config.trim().is_empty() {
-                if let Ok(config) = serde_json::from_str::<serde_json::Value>(&new_strategy_config) {
+                if let Ok(config) = serde_json::from_str::<serde_json::Value>(&new_strategy_config)
+                {
                     // Check for paper_trade toggle in strategy config
                     if let Some(paper_val) = config.get("paper_trade").and_then(|v| v.as_bool()) {
                         b.paper_trade = paper_val;
@@ -28,8 +29,7 @@ pub async fn configure_core(
                 }
             }
             if !new_risk_params.trim().is_empty() {
-                b.risk_params =
-                    serde_json::from_str(&new_risk_params).unwrap_or_default();
+                b.risk_params = serde_json::from_str(&new_risk_params).unwrap_or_default();
             }
         })
         .map_err(|e| format!("Failed to update bot: {e}"))?;
@@ -61,22 +61,19 @@ fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u
     let profile_json = serde_json::to_string(&profile).unwrap_or_default();
 
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
-    let updated = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .and_then(|store| {
-            store
-                .update(&wf_key, |entry| {
-                    if let Ok(mut wf) =
-                        serde_json::from_str::<serde_json::Value>(&entry.workflow_json)
-                    {
-                        wf["backend_profile_json"] =
-                            serde_json::Value::String(profile_json.clone());
-                        if let Ok(json_str) = serde_json::to_string(&wf) {
-                            entry.workflow_json = json_str;
-                        }
+    let updated = ai_agent_sandbox_blueprint_lib::workflows::workflows().and_then(|store| {
+        store
+            .update(&wf_key, |entry| {
+                if let Ok(mut wf) = serde_json::from_str::<serde_json::Value>(&entry.workflow_json)
+                {
+                    wf["backend_profile_json"] = serde_json::Value::String(profile_json.clone());
+                    if let Ok(json_str) = serde_json::to_string(&wf) {
+                        entry.workflow_json = json_str;
                     }
-                })
-                .map_err(|e| e.to_string())
-        });
+                }
+            })
+            .map_err(|e| e.to_string())
+    });
 
     match updated {
         Ok(true) => {
@@ -94,10 +91,7 @@ fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u
             );
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to rebuild workflow profile for bot {}: {e}",
-                bot.id
-            );
+            tracing::warn!("Failed to rebuild workflow profile for bot {}: {e}", bot.id);
         }
     }
 }

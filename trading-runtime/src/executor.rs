@@ -5,12 +5,8 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 
 use crate::adapters::{
-    ActionParams, EncodedAction, ProtocolAdapter,
-    aave_v3::AaveV3Adapter,
-    gmx_v2::GmxV2Adapter,
-    morpho::MorphoAdapter,
-    polymarket::PolymarketAdapter,
-    uniswap_v3::UniswapV3Adapter,
+    ActionParams, EncodedAction, ProtocolAdapter, aave_v3::AaveV3Adapter, gmx_v2::GmxV2Adapter,
+    morpho::MorphoAdapter, polymarket::PolymarketAdapter, uniswap_v3::UniswapV3Adapter,
     vertex::VertexAdapter,
 };
 use crate::chain::ChainClient;
@@ -45,7 +41,8 @@ impl TradeExecutor {
         private_key: &str,
         chain_id: u64,
     ) -> Result<Self, TradingError> {
-        let vault_client = VaultClient::new(vault_address.to_string(), rpc_url.to_string(), chain_id);
+        let vault_client =
+            VaultClient::new(vault_address.to_string(), rpc_url.to_string(), chain_id);
         let chain_client = ChainClient::new(rpc_url, private_key, chain_id)?;
         Ok(Self {
             vault_client,
@@ -71,21 +68,23 @@ impl TradeExecutor {
         let adapter = get_adapter(&intent.target_protocol)?;
 
         // 2. Build ActionParams from the intent
-        let token_in: Address = intent
-            .token_in
-            .parse()
-            .map_err(|e| TradingError::AdapterError {
-                protocol: intent.target_protocol.clone(),
-                message: format!("Invalid token_in address: {e}"),
-            })?;
+        let token_in: Address =
+            intent
+                .token_in
+                .parse()
+                .map_err(|e| TradingError::AdapterError {
+                    protocol: intent.target_protocol.clone(),
+                    message: format!("Invalid token_in address: {e}"),
+                })?;
 
-        let token_out: Address = intent
-            .token_out
-            .parse()
-            .map_err(|e| TradingError::AdapterError {
-                protocol: intent.target_protocol.clone(),
-                message: format!("Invalid token_out address: {e}"),
-            })?;
+        let token_out: Address =
+            intent
+                .token_out
+                .parse()
+                .map_err(|e| TradingError::AdapterError {
+                    protocol: intent.target_protocol.clone(),
+                    message: format!("Invalid token_out address: {e}"),
+                })?;
 
         // Convert Decimal amounts to U256 (treating as raw token units)
         let amount = decimal_to_u256(&intent.amount_in)?;
@@ -110,12 +109,7 @@ impl TradeExecutor {
         let intent_hash = parse_intent_hash(&validation.intent_hash)?;
 
         // 6. Compute deadline as U256
-        let deadline = U256::from(
-            intent
-                .deadline
-                .timestamp()
-                .max(0) as u64,
-        );
+        let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
 
         // 7. Encode vault.execute()
         let tx = self.vault_client.encode_execute(

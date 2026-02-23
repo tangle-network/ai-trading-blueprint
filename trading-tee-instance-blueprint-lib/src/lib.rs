@@ -8,6 +8,13 @@ pub mod jobs;
 
 // Re-export from base instance blueprint.
 pub use trading_instance_blueprint_lib::{
+    // ABI types
+    InstanceExecRequest,
+    InstanceExecResponse,
+    InstancePromptRequest,
+    InstancePromptResponse,
+    InstanceTaskRequest,
+    InstanceTaskResponse,
     // Job IDs
     JOB_CONFIGURE,
     JOB_DEPROVISION,
@@ -19,35 +26,20 @@ pub use trading_instance_blueprint_lib::{
     JOB_STOP_TRADING,
     JOB_TASK,
     JOB_WORKFLOW_TICK,
-    // ABI types
-    InstanceExecRequest,
-    InstanceExecResponse,
-    InstancePromptRequest,
-    InstancePromptResponse,
-    InstanceTaskRequest,
-    InstanceTaskResponse,
     JsonResponse,
+    // Types
+    TradingBotRecord,
     TradingConfigureRequest,
     TradingControlRequest,
     TradingProvisionOutput,
     TradingProvisionRequest,
     TradingStatusResponse,
-    // Types
-    TradingBotRecord,
     // Modules
     auth,
-    context,
-    reaper,
-    runtime,
-    store,
-    tangle,
-    tee,
     // Instance state
     clear_instance_bot_id,
+    context,
     get_instance_bot_id,
-    instance_store,
-    require_instance_bot,
-    set_instance_bot_id,
     // Reused job handlers
     instance_configure,
     instance_exec,
@@ -55,7 +47,15 @@ pub use trading_instance_blueprint_lib::{
     instance_start,
     instance_status,
     instance_stop,
+    instance_store,
     instance_task,
+    reaper,
+    require_instance_bot,
+    runtime,
+    set_instance_bot_id,
+    store,
+    tangle,
+    tee,
 };
 
 use blueprint_sdk::Job;

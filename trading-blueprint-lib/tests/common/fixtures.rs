@@ -1,5 +1,5 @@
-use trading_blueprint_lib::state::{TradingBotRecord, bot_key, bots};
 use trading_blueprint_lib::SandboxRecord;
+use trading_blueprint_lib::state::{TradingBotRecord, bot_key, bots};
 
 /// Seed a `SandboxRecord` into the sandbox store.
 pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxRecord {
@@ -96,9 +96,8 @@ pub fn seed_workflow(
     })
     .to_string();
 
-    let next_run =
-        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
-            .unwrap_or(None);
+    let next_run = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
+        .unwrap_or(None);
 
     let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
         id: workflow_id,
@@ -126,17 +125,20 @@ pub fn seed_workflow(
 
 /// Seed a complete trading bot with sandbox, bot record, and workflow.
 /// Returns `(bot_id, sandbox_id, workflow_id)`.
-pub fn seed_full_bot(
-    strategy_type: &str,
-    sidecar_url: &str,
-) -> (String, String, u64) {
+pub fn seed_full_bot(strategy_type: &str, sidecar_url: &str) -> (String, String, u64) {
     let sandbox_id = format!("sandbox-{}", uuid::Uuid::new_v4());
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
     let workflow_id = chrono::Utc::now().timestamp() as u64;
     let token = "test-token";
 
     seed_sandbox_record(&sandbox_id, sidecar_url, token);
-    seed_bot_record(&bot_id, &sandbox_id, strategy_type, "0xAABBCCDD", Some(workflow_id));
+    seed_bot_record(
+        &bot_id,
+        &sandbox_id,
+        strategy_type,
+        "0xAABBCCDD",
+        Some(workflow_id),
+    );
     seed_workflow(workflow_id, sidecar_url, token, "0 */5 * * * *");
 
     (bot_id, sandbox_id, workflow_id)

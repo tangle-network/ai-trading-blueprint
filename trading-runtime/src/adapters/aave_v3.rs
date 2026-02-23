@@ -126,8 +126,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                 })
             }
             Action::Borrow => {
-                let calldata =
-                    self.encode_borrow(params.token_out, params.amount, rate_mode);
+                let calldata = self.encode_borrow(params.token_out, params.amount, rate_mode);
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
@@ -137,8 +136,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                 })
             }
             Action::Repay => {
-                let calldata =
-                    self.encode_repay(params.token_in, params.amount, rate_mode);
+                let calldata = self.encode_repay(params.token_in, params.amount, rate_mode);
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,

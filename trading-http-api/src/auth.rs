@@ -1,3 +1,5 @@
+use crate::TradingApiState;
+use crate::session_auth;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
@@ -5,8 +7,6 @@ use axum::{
     response::Response,
 };
 use std::sync::Arc;
-use crate::TradingApiState;
-use crate::session_auth;
 
 pub async fn auth_middleware(
     State(state): State<Arc<TradingApiState>>,
@@ -16,10 +16,7 @@ pub async fn auth_middleware(
     let path = request.uri().path();
 
     // Skip auth for health check and session auth endpoints
-    if path == "/health"
-        || path == "/session/auth/challenge"
-        || path == "/session/auth/verify"
-    {
+    if path == "/health" || path == "/session/auth/challenge" || path == "/session/auth/verify" {
         return Ok(next.run(request).await);
     }
 

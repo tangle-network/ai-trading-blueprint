@@ -360,4 +360,159 @@ contract TradingVaultTest is Setup {
         assertTrue(vault.executedIntents(hash1));
         assertTrue(vault.executedIntents(hash2));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DEPOSIT LOCKUP TESTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_depositLockup_blocksEarlyWithdraw() public {
+        // Admin sets 1 day lockup
+        vm.prank(owner);
+        vault.setDepositLockup(1 days);
+        assertEq(vault.depositLockupDuration(), 1 days);
+
+        // User deposits
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Immediate withdraw reverts
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.WithdrawalLocked.selector, block.timestamp + 1 days));
+        vault.withdraw(500 ether, user, user);
+
+        // Immediate redeem also reverts
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.WithdrawalLocked.selector, block.timestamp + 1 days));
+        vault.redeem(500 ether, user, user);
+    }
+
+    function test_depositLockup_allowsAfterDuration() public {
+        vm.prank(owner);
+        vault.setDepositLockup(1 days);
+
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Advance past lockup
+        vm.warp(block.timestamp + 1 days + 1);
+
+        // Withdraw succeeds
+        vm.prank(user);
+        vault.withdraw(500 ether, user, user);
+        assertEq(shareToken.balanceOf(user), 500 ether);
+    }
+
+    function test_depositLockup_resetsOnNewDeposit() public {
+        vm.prank(owner);
+        vault.setDepositLockup(1 days);
+
+        // Start at a known timestamp
+        vm.warp(100000);
+
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+        // lockup expires at 100000 + 86400 = 186400
+
+        // Advance 23 hours
+        vm.warp(100000 + 23 hours);
+
+        // New deposit resets the lockup timer
+        vm.prank(user);
+        vault.deposit(500 ether, user);
+        // lockup now expires at (100000 + 23h) + 86400
+
+        uint256 secondDepositTime = block.timestamp;
+
+        // Advance 23 hours from second deposit
+        vm.warp(secondDepositTime + 23 hours);
+
+        // Still locked (second deposit was 23h ago, lockup is 24h)
+        vm.prank(user);
+        vm.expectRevert();
+        vault.withdraw(500 ether, user, user);
+
+        // Advance past lockup from second deposit
+        vm.warp(secondDepositTime + 1 days + 1);
+
+        // Now succeeds
+        vm.prank(user);
+        vault.withdraw(500 ether, user, user);
+    }
+
+    function test_depositLockup_zeroMeansNoLockup() public {
+        // Default is 0 (no lockup)
+        assertEq(vault.depositLockupDuration(), 0);
+
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Immediate withdraw works
+        vm.prank(user);
+        vault.withdraw(500 ether, user, user);
+        assertEq(shareToken.balanceOf(user), 500 ether);
+    }
+
+    function test_depositLockup_perDepositorIsolation() public {
+        vm.prank(owner);
+        vault.setDepositLockup(1 days);
+
+        // User deposits first
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Advance 2 days
+        vm.warp(block.timestamp + 2 days);
+
+        // Owner deposits (starts their own lockup)
+        vm.prank(owner);
+        vault.deposit(1000 ether, owner);
+
+        // User can withdraw (past lockup)
+        vm.prank(user);
+        vault.withdraw(500 ether, user, user);
+
+        // Owner cannot (just deposited)
+        vm.prank(owner);
+        vm.expectRevert();
+        vault.withdraw(500 ether, owner, owner);
+    }
+
+    function test_depositLockup_fairnessScenario() public {
+        // THE EXACT SCENARIO THE USER DESCRIBED:
+        // User A deposits, positions taken, User B deposits liquid,
+        // User A tries to immediately withdraw B's liquidity
+
+        vm.prank(owner);
+        vault.setDepositLockup(1 days);
+
+        // User A deposits 1000
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Simulate trading gains: vault now has 1500 (500 profit)
+        tokenA.mint(address(vault), 500 ether);
+
+        // User B (owner) deposits 1000 at the higher share price
+        vm.prank(owner);
+        vault.deposit(1000 ether, owner);
+
+        // User A tries to immediately withdraw profit using B's liquidity
+        // This should FAIL because A's lockup was reset... wait no,
+        // A deposited earlier. Let's check: A deposited at t=0, lockup is 1 day.
+        // A's lockup is still active because we haven't warped past 1 day.
+        vm.prank(user);
+        vm.expectRevert();
+        vault.withdraw(500 ether, user, user);
+
+        // After lockup expires, withdrawal is allowed
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(user);
+        vault.withdraw(500 ether, user, user);
+    }
+
+    function test_depositLockup_onlyAdminCanSet() public {
+        vm.prank(user);
+        vm.expectRevert();
+        vault.setDepositLockup(1 days);
+    }
 }

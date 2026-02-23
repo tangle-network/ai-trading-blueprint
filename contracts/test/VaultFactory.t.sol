@@ -182,4 +182,69 @@ contract VaultFactoryTest is Setup {
         assertTrue(actual != address(0));
         assertEq(vaultFactory.vaultServiceId(actual), serviceId);
     }
+
+    function test_oracleZeroPrice_reverts() public {
+        // Set up multi-asset vault with oracle
+        uint64 serviceId = 10;
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+
+        (address usdcVault, address shareAddr) = vaultFactory.createVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test", "oTST", bytes32("oracle-salt")
+        );
+
+        // Deploy oracle and set it on the share token
+        MockOracle orc = new MockOracle();
+        VaultShare share = VaultShare(shareAddr);
+
+        // VaultFactory is the admin of the share token, grant admin to this test
+        vm.startPrank(address(vaultFactory));
+        share.grantRole(share.DEFAULT_ADMIN_ROLE(), address(this));
+        vm.stopPrank();
+        share.setOracle(address(orc));
+
+        // Deposit so vault has a balance
+        vm.startPrank(user);
+        tokenA.approve(usdcVault, type(uint256).max);
+        TradingVault(payable(usdcVault)).deposit(1000 ether, user);
+        vm.stopPrank();
+
+        // Oracle returns price=0 for tokenA -- should revert
+        orc.setPrice(address(tokenA), 0, 8);
+        vm.expectRevert(abi.encodeWithSelector(VaultShare.StaleOraclePrice.selector, address(tokenA)));
+        share.totalNAV();
+    }
+
+    function test_oracleValidPrice_works() public {
+        uint64 serviceId = 11;
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+
+        (address usdcVault, address shareAddr) = vaultFactory.createVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test2", "oTST2", bytes32("oracle-salt2")
+        );
+
+        MockOracle orc = new MockOracle();
+        VaultShare share = VaultShare(shareAddr);
+
+        vm.startPrank(address(vaultFactory));
+        share.grantRole(share.DEFAULT_ADMIN_ROLE(), address(this));
+        vm.stopPrank();
+        share.setOracle(address(orc));
+
+        vm.startPrank(user);
+        tokenA.approve(usdcVault, type(uint256).max);
+        TradingVault(payable(usdcVault)).deposit(1000 ether, user);
+        vm.stopPrank();
+
+        // Oracle returns valid price: $2000 per token, 8 decimals
+        orc.setPrice(address(tokenA), 2000e8, 8);
+        uint256 nav = share.totalNAV();
+        // 1000e18 * 2000e8 / 1e8 = 2000000e18
+        assertEq(nav, 2000000 ether);
+    }
 }

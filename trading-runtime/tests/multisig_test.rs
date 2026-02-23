@@ -4,10 +4,10 @@
 //!
 //! Requires `forge build` to have been run first (reads bytecode from contracts/out/).
 
+use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, Bytes, FixedBytes, TxKind, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::network::EthereumWallet;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
 use trading_runtime::validator_client::ValidatorClient;
@@ -59,12 +59,21 @@ async fn deploy_contract(
 ) -> Address {
     let mut deploy_data = bytecode;
     deploy_data.extend_from_slice(&constructor_args);
-    let mut tx = alloy::rpc::types::TransactionRequest::default()
-        .input(alloy::rpc::types::TransactionInput::both(Bytes::from(deploy_data)));
+    let mut tx = alloy::rpc::types::TransactionRequest::default().input(
+        alloy::rpc::types::TransactionInput::both(Bytes::from(deploy_data)),
+    );
     tx.to = Some(TxKind::Create);
-    let pending = provider.send_transaction(tx).await.expect("deploy tx send failed");
-    let receipt = pending.get_receipt().await.expect("deploy tx receipt failed");
-    receipt.contract_address.expect("no contract address in receipt")
+    let pending = provider
+        .send_transaction(tx)
+        .await
+        .expect("deploy tx send failed");
+    let receipt = pending
+        .get_receipt()
+        .await
+        .expect("deploy tx receipt failed");
+    receipt
+        .contract_address
+        .expect("no contract address in receipt")
 }
 
 #[tokio::test]
@@ -91,11 +100,8 @@ async fn test_multisig_validator_fanout() {
         .connect_http(rpc_url.parse().unwrap());
 
     // ── 2. Deploy TradeValidator ────────────────────────────────────────────
-    let tv_addr = deploy_contract(
-        &deployer_provider,
-        load_bytecode("TradeValidator"),
-        vec![],
-    ).await;
+    let tv_addr =
+        deploy_contract(&deployer_provider, load_bytecode("TradeValidator"), vec![]).await;
 
     let tv = TradeValidator::new(tv_addr, &deployer_provider);
 
@@ -113,7 +119,11 @@ async fn test_multisig_validator_fanout() {
     .await
     .unwrap();
 
-    let req_sigs = tv.getRequiredSignatures(mock_vault_addr).call().await.unwrap();
+    let req_sigs = tv
+        .getRequiredSignatures(mock_vault_addr)
+        .call()
+        .await
+        .unwrap();
     assert_eq!(req_sigs, U256::from(2), "Should require 2-of-3");
 
     // ── 3. Spawn 3 validator HTTP servers on random ports ────────────────────
@@ -173,13 +183,20 @@ async fn test_multisig_validator_fanout() {
         .await
         .expect("Validation should succeed");
 
-    assert_eq!(result.validator_responses.len(), 3, "All 3 validators should respond");
+    assert_eq!(
+        result.validator_responses.len(),
+        3,
+        "All 3 validators should respond"
+    );
 
     // All validators should have produced real (non-zero) signatures
     for resp in &result.validator_responses {
         assert!(resp.signature.starts_with("0x"), "Signature should be hex");
         let zero_sig = format!("0x{}", "00".repeat(65));
-        assert_ne!(resp.signature, zero_sig, "Signature should not be all zeros");
+        assert_ne!(
+            resp.signature, zero_sig,
+            "Signature should not be all zeros"
+        );
         assert_eq!(
             resp.signature.len(),
             2 + 65 * 2,
@@ -189,7 +206,9 @@ async fn test_multisig_validator_fanout() {
 
     // ── 5. Submit signatures to on-chain TradeValidator for verification ─────
     let intent_hash_hex = &result.intent_hash;
-    let intent_hash_stripped = intent_hash_hex.strip_prefix("0x").unwrap_or(intent_hash_hex);
+    let intent_hash_stripped = intent_hash_hex
+        .strip_prefix("0x")
+        .unwrap_or(intent_hash_hex);
     let intent_hash_bytes = hex::decode(intent_hash_stripped).unwrap();
     let mut intent_hash = [0u8; 32];
     intent_hash.copy_from_slice(&intent_hash_bytes);
@@ -217,7 +236,10 @@ async fn test_multisig_validator_fanout() {
         .await
         .unwrap();
 
-    assert!(on_chain_result.approved, "On-chain validation should pass with 2-of-3 sigs");
+    assert!(
+        on_chain_result.approved,
+        "On-chain validation should pass with 2-of-3 sigs"
+    );
     assert_eq!(
         on_chain_result.validCount,
         U256::from(2),

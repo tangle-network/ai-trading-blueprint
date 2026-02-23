@@ -1,7 +1,7 @@
 use alloy::primitives::{Address, B256};
+use axum::Json;
 use axum::extract::State;
 use axum::routing::post;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -278,8 +278,8 @@ mod tests {
     #[tokio::test]
     async fn test_validate_with_signer() {
         use alloy::primitives::keccak256;
-        use trading_runtime::intent::TradeIntentBuilder;
         use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
 
         let contract_addr: Address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
             .parse()
@@ -357,8 +357,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_without_signer() {
-        use trading_runtime::intent::TradeIntentBuilder;
         use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
 
         let server = ValidatorServer::new(9090);
         let app = server.router();
@@ -411,8 +411,8 @@ mod tests {
     }
 
     fn make_test_intent_json() -> serde_json::Value {
-        use trading_runtime::intent::TradeIntentBuilder;
         use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
 
         let intent = TradeIntentBuilder::new()
             .strategy_id("test")
@@ -452,6 +452,9 @@ mod tests {
         });
 
         let req: ValidateRequest = serde_json::from_value(json).unwrap();
-        assert!(req.strategy_type.is_none(), "strategy_type should default to None");
+        assert!(
+            req.strategy_type.is_none(),
+            "strategy_type should default to None"
+        );
     }
 }

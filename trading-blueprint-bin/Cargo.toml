@@ -21,6 +21,7 @@ x402 = ["blueprint-sdk/x402"]
 [dependencies]
 trading-blueprint-lib = { path = "../trading-blueprint-lib" }
 trading-http-api = { path = "../trading-http-api" }
+trading-runtime = { path = "../trading-runtime" }
 ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
 sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
 blueprint-producers-extra = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", features = ["cron"] }

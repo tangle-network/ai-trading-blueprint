@@ -15,9 +15,7 @@
 /// the `VALIDATOR_ENDPOINTS` environment variable.
 ///
 /// Returns a list of HTTP endpoint URLs (e.g., `["http://validator1:9090"]`).
-pub async fn discover_validator_endpoints(
-    validator_service_ids: &[u64],
-) -> Vec<String> {
+pub async fn discover_validator_endpoints(validator_service_ids: &[u64]) -> Vec<String> {
     // 1. Try on-chain discovery for each service ID
     let mut endpoints = Vec::new();
 

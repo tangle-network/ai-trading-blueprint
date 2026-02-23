@@ -1,6 +1,6 @@
-use alloy::primitives::{keccak256, Address, B256, U256};
-use alloy::signers::local::PrivateKeySigner;
+use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::signers::SignerSync;
+use alloy::signers::local::PrivateKeySigner;
 
 /// EIP-712 domain constants for TradeValidator contract
 const DOMAIN_NAME: &str = "TradeValidator";
@@ -161,7 +161,9 @@ mod tests {
             .parse()
             .unwrap();
 
-        let (sig_bytes, addr) = signer.sign_validation(intent_hash, vault, 85, 9999999999).unwrap();
+        let (sig_bytes, addr) = signer
+            .sign_validation(intent_hash, vault, 85, 9999999999)
+            .unwrap();
         assert_eq!(sig_bytes.len(), 65);
         assert_eq!(addr, signer.address());
 
@@ -181,9 +183,16 @@ mod tests {
             .parse()
             .unwrap();
 
-        let (sig1, _) = signer.sign_validation(intent_hash, vault, 85, 1000000).unwrap();
-        let (sig2, _) = signer.sign_validation(intent_hash, vault, 85, 1000000).unwrap();
-        assert_eq!(sig1, sig2, "Signatures should be deterministic for same input");
+        let (sig1, _) = signer
+            .sign_validation(intent_hash, vault, 85, 1000000)
+            .unwrap();
+        let (sig2, _) = signer
+            .sign_validation(intent_hash, vault, 85, 1000000)
+            .unwrap();
+        assert_eq!(
+            sig1, sig2,
+            "Signatures should be deterministic for same input"
+        );
     }
 
     #[test]
@@ -203,6 +212,9 @@ mod tests {
         let (sig2, _) = signer
             .sign_validation(keccak256("intent-b"), vault, 85, 1000000)
             .unwrap();
-        assert_ne!(sig1, sig2, "Different inputs should produce different signatures");
+        assert_ne!(
+            sig1, sig2,
+            "Different inputs should produce different signatures"
+        );
     }
 }

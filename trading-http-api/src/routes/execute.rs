@@ -1,13 +1,13 @@
-use axum::{Router, routing::post, extract::State, Json};
+use crate::trade_store::{self, StoredValidation, StoredValidatorResponse, TradeRecord};
+use crate::{MultiBotTradingState, TradingApiState};
 use axum::extract::Request;
 use axum::http::StatusCode;
+use axum::{Json, Router, extract::State, routing::post};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::{TradingApiState, MultiBotTradingState};
-use crate::trade_store::{self, TradeRecord, StoredValidation, StoredValidatorResponse};
-use trading_runtime::{TradeIntentBuilder, ValidationResult, ValidatorResponse};
 use trading_runtime::executor::TradeExecutor;
+use trading_runtime::{TradeIntentBuilder, ValidationResult, ValidatorResponse};
 
 use super::validate::parse_action;
 
@@ -72,16 +72,28 @@ async fn execute(
     Json(request): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, (axum::http::StatusCode, String)> {
     if !request.validation.approved {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Validation not approved".into()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Validation not approved".into(),
+        ));
     }
 
     let action = parse_action(&request.intent.action)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
 
-    let amount_in: rust_decimal::Decimal = request.intent.amount_in.parse()
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid amount_in: {e}")))?;
-    let min_amount_out: rust_decimal::Decimal = request.intent.min_amount_out.parse()
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid min_amount_out: {e}")))?;
+    let amount_in: rust_decimal::Decimal = request.intent.amount_in.parse().map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in: {e}"),
+        )
+    })?;
+    let min_amount_out: rust_decimal::Decimal =
+        request.intent.min_amount_out.parse().map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Invalid min_amount_out: {e}"),
+            )
+        })?;
 
     // Build intent to validate encoding works regardless of paper mode
     let intent = TradeIntentBuilder::new()
@@ -99,8 +111,11 @@ async fn execute(
         approved: request.validation.approved,
         aggregate_score: request.validation.aggregate_score,
         intent_hash: request.validation.intent_hash.clone(),
-        validator_responses: request.validation.validator_responses.iter().map(|r| {
-            ValidatorResponse {
+        validator_responses: request
+            .validation
+            .validator_responses
+            .iter()
+            .map(|r| ValidatorResponse {
                 validator: r.validator.clone(),
                 score: r.score,
                 reasoning: r.reasoning.clone(),
@@ -108,16 +123,19 @@ async fn execute(
                 chain_id: r.chain_id,
                 verifying_contract: r.verifying_contract.clone(),
                 validated_at: r.validated_at.clone(),
-            }
-        }).collect(),
+            })
+            .collect(),
     };
 
     let stored_validation = StoredValidation {
         approved: request.validation.approved,
         aggregate_score: request.validation.aggregate_score,
         intent_hash: request.validation.intent_hash.clone(),
-        responses: request.validation.validator_responses.iter().map(|r| {
-            StoredValidatorResponse {
+        responses: request
+            .validation
+            .validator_responses
+            .iter()
+            .map(|r| StoredValidatorResponse {
                 validator: r.validator.clone(),
                 score: r.score,
                 reasoning: r.reasoning.clone(),
@@ -125,8 +143,8 @@ async fn execute(
                 chain_id: r.chain_id,
                 verifying_contract: r.verifying_contract.clone(),
                 validated_at: r.validated_at.clone(),
-            }
-        }).collect(),
+            })
+            .collect(),
     };
 
     // Paper trade mode: log the trade without on-chain execution
@@ -171,7 +189,10 @@ async fn execute(
         }));
     }
 
-    let outcome = state.executor.execute_validated_trade(&intent, &validation).await
+    let outcome = state
+        .executor
+        .execute_validated_trade(&intent, &validation)
+        .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let trade_id = uuid::Uuid::new_v4().to_string();
@@ -209,8 +230,10 @@ fn build_stored_validation(v: &ValidationPayload) -> StoredValidation {
         approved: v.approved,
         aggregate_score: v.aggregate_score,
         intent_hash: v.intent_hash.clone(),
-        responses: v.validator_responses.iter().map(|r| {
-            StoredValidatorResponse {
+        responses: v
+            .validator_responses
+            .iter()
+            .map(|r| StoredValidatorResponse {
                 validator: r.validator.clone(),
                 score: r.score,
                 reasoning: r.reasoning.clone(),
@@ -218,8 +241,8 @@ fn build_stored_validation(v: &ValidationPayload) -> StoredValidation {
                 chain_id: r.chain_id,
                 verifying_contract: r.verifying_contract.clone(),
                 validated_at: r.validated_at.clone(),
-            }
-        }).collect(),
+            })
+            .collect(),
     }
 }
 
@@ -244,13 +267,19 @@ async fn execute_multi_bot(
         return Err((StatusCode::BAD_REQUEST, "Validation not approved".into()));
     }
 
-    let action = parse_action(&req.intent.action)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let action = parse_action(&req.intent.action).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    let amount_in: rust_decimal::Decimal = req.intent.amount_in.parse()
+    let amount_in: rust_decimal::Decimal = req
+        .intent
+        .amount_in
+        .parse()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid amount_in: {e}")))?;
-    let min_amount_out: rust_decimal::Decimal = req.intent.min_amount_out.parse()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid min_amount_out: {e}")))?;
+    let min_amount_out: rust_decimal::Decimal = req.intent.min_amount_out.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid min_amount_out: {e}"),
+        )
+    })?;
 
     let intent = TradeIntentBuilder::new()
         .strategy_id(&req.intent.strategy_id)
@@ -312,8 +341,11 @@ async fn execute_multi_bot(
         approved: req.validation.approved,
         aggregate_score: req.validation.aggregate_score,
         intent_hash: req.validation.intent_hash.clone(),
-        validator_responses: req.validation.validator_responses.iter().map(|r| {
-            ValidatorResponse {
+        validator_responses: req
+            .validation
+            .validator_responses
+            .iter()
+            .map(|r| ValidatorResponse {
                 validator: r.validator.clone(),
                 score: r.score,
                 reasoning: r.reasoning.clone(),
@@ -321,8 +353,8 @@ async fn execute_multi_bot(
                 chain_id: r.chain_id,
                 verifying_contract: r.verifying_contract.clone(),
                 validated_at: r.validated_at.clone(),
-            }
-        }).collect(),
+            })
+            .collect(),
     };
 
     let executor = TradeExecutor::new(
@@ -330,9 +362,17 @@ async fn execute_multi_bot(
         &bot.rpc_url,
         &state.operator_private_key,
         bot.chain_id,
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Executor init failed: {e}")))?;
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Executor init failed: {e}"),
+        )
+    })?;
 
-    let outcome = executor.execute_validated_trade(&intent, &validation).await
+    let outcome = executor
+        .execute_validated_trade(&intent, &validation)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let trade_id = uuid::Uuid::new_v4().to_string();

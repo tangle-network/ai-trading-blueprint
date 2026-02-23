@@ -31,7 +31,6 @@ pub struct StrategyPack {
     pub default_cron: String,
 
     // ── New fields ──────────────────────────────────────────────────────
-
     /// Which providers compose this strategy.
     pub provider_ids: Vec<&'static str>,
     /// Cross-protocol strategy logic that doesn't belong to any single provider.
@@ -233,7 +232,11 @@ fn polymarket_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -251,7 +254,11 @@ fn polymarket_politics_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -269,7 +276,11 @@ fn polymarket_crypto_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -287,7 +298,11 @@ fn polymarket_war_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -305,7 +320,11 @@ fn polymarket_trending_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -323,7 +342,11 @@ fn polymarket_celebrity_pack() -> StrategyPack {
         max_turns: 20,
         timeout_ms: 240_000,
         default_cron: "0 */15 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -341,7 +364,12 @@ fn dex_pack() -> StrategyPack {
         max_turns: 12,
         timeout_ms: 150_000,
         default_cron: "0 */5 * * * *".into(),
-        prompt_blocks: vec![BLOCK_DATA_PIPELINE, BLOCK_TA_INDICATORS, BLOCK_SELF_CRITIQUE, BLOCK_POSITION_SIZING],
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_TA_INDICATORS,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_POSITION_SIZING,
+        ],
     }
 }
 
@@ -1380,29 +1408,47 @@ mod tests {
         let pack = get_pack("prediction").unwrap();
         assert!(pack.system_prompt.contains("gamma-api.polymarket.com"));
         assert!(pack.system_prompt.contains("clob.polymarket.com"));
-        assert!(pack.system_prompt.contains("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"));
-        assert!(pack.system_prompt.contains("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"));
+        assert!(
+            pack.system_prompt
+                .contains("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E")
+        );
+        assert!(
+            pack.system_prompt
+                .contains("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+        );
     }
 
     #[test]
     fn test_dex_pack_has_uniswap_addresses() {
         let pack = get_pack("dex").unwrap();
-        assert!(pack.system_prompt.contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")); // WETH
-        assert!(pack.system_prompt.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")); // USDC
+        assert!(
+            pack.system_prompt
+                .contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+        ); // WETH
+        assert!(
+            pack.system_prompt
+                .contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+        ); // USDC
         assert!(pack.system_prompt.contains("uniswap_v3"));
     }
 
     #[test]
     fn test_yield_pack_has_aave_addresses() {
         let pack = get_pack("yield").unwrap();
-        assert!(pack.system_prompt.contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")); // Aave Pool
+        assert!(
+            pack.system_prompt
+                .contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
+        ); // Aave Pool
         assert!(pack.system_prompt.contains("Morpho"));
     }
 
     #[test]
     fn test_perp_pack_has_gmx_addresses() {
         let pack = get_pack("perp").unwrap();
-        assert!(pack.system_prompt.contains("0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8")); // GMX Router
+        assert!(
+            pack.system_prompt
+                .contains("0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8")
+        ); // GMX Router
         assert!(pack.system_prompt.contains("Vertex"));
     }
 
@@ -1426,7 +1472,14 @@ mod tests {
     #[test]
     fn test_multi_pack_has_all_protocols() {
         let pack = get_pack("multi").unwrap();
-        for proto in &["uniswap_v3", "aave_v3", "gmx_v2", "morpho", "vertex", "polymarket"] {
+        for proto in &[
+            "uniswap_v3",
+            "aave_v3",
+            "gmx_v2",
+            "morpho",
+            "vertex",
+            "polymarket",
+        ] {
             assert!(
                 pack.system_prompt.contains(proto),
                 "multi pack missing protocol: {proto}"
@@ -1438,17 +1491,32 @@ mod tests {
     fn test_common_setup_creates_db() {
         let cmds = common_setup_commands();
         let joined = cmds.join(" ");
-        assert!(joined.contains("trading.db"), "setup must create trading.db");
+        assert!(
+            joined.contains("trading.db"),
+            "setup must create trading.db"
+        );
         assert!(joined.contains("CREATE TABLE"), "setup must create tables");
-        assert!(joined.contains("phase.json"), "setup must create phase tracker");
+        assert!(
+            joined.contains("phase.json"),
+            "setup must create phase tracker"
+        );
     }
 
     #[test]
     fn test_all_packs_have_common_setup() {
         for pack_type in &[
-            "prediction", "prediction_politics", "prediction_crypto",
-            "prediction_war", "prediction_trending", "prediction_celebrity",
-            "dex", "yield", "perp", "volatility", "mm", "multi",
+            "prediction",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
+            "dex",
+            "yield",
+            "perp",
+            "volatility",
+            "mm",
+            "multi",
         ] {
             let pack = get_pack(pack_type).unwrap();
             let joined = pack.setup_commands.join(" ");
@@ -1497,9 +1565,14 @@ mod tests {
         let profile = pack.build_agent_profile(&test_config());
         let obj = profile.as_object().unwrap();
 
-        assert!(obj.get("systemPrompt").is_none(), "profile must not set systemPrompt");
+        assert!(
+            obj.get("systemPrompt").is_none(),
+            "profile must not set systemPrompt"
+        );
         let resources = obj.get("resources").expect("profile must have resources");
-        let instructions = resources.get("instructions").expect("resources must have instructions");
+        let instructions = resources
+            .get("instructions")
+            .expect("resources must have instructions");
         assert!(instructions.get("content").is_some());
         assert_eq!(instructions["name"], "trading-instructions.md");
     }
@@ -1508,18 +1581,31 @@ mod tests {
     fn test_build_agent_profile_has_workspace_awareness() {
         let pack = get_pack("dex").unwrap();
         let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
-        assert!(content.contains("persistent"), "instructions must mention persistent workspace");
-        assert!(content.contains("/home/agent/"), "instructions must reference /home/agent/");
-        assert!(content.contains("coding agent"), "instructions must identify agent as a coding agent");
+        assert!(
+            content.contains("persistent"),
+            "instructions must mention persistent workspace"
+        );
+        assert!(
+            content.contains("/home/agent/"),
+            "instructions must reference /home/agent/"
+        );
+        assert!(
+            content.contains("coding agent"),
+            "instructions must identify agent as a coding agent"
+        );
     }
 
     #[test]
     fn test_build_agent_profile_permissions() {
         let pack = get_pack("yield").unwrap();
         let profile = pack.build_agent_profile(&test_config());
-        let perm = profile.get("permission").expect("profile must have permission");
+        let perm = profile
+            .get("permission")
+            .expect("profile must have permission");
 
         assert_eq!(perm["bash"], "allow");
         assert_eq!(perm["edit"], "allow");
@@ -1541,7 +1627,9 @@ mod tests {
         let obj = profile.as_object().unwrap();
 
         assert!(obj.get("systemPrompt").is_none());
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
         assert!(content.contains("/home/agent/"));
         assert!(content.contains("multi-strategy"));
         assert_eq!(profile["permission"]["bash"], "allow");
@@ -1553,9 +1641,14 @@ mod tests {
         let pack = get_pack("prediction").unwrap();
         let config = test_config();
         let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
-        assert!(content.contains("http://test-api:9100"), "must contain API URL");
+        assert!(
+            content.contains("http://test-api:9100"),
+            "must contain API URL"
+        );
         assert!(content.contains("test-token"), "must contain bearer token");
         assert!(content.contains("0xVAULT"), "must contain vault address");
         assert!(content.contains("31337"), "must contain chain ID");
@@ -1603,13 +1696,27 @@ mod tests {
     fn test_profile_instructions_have_autonomy() {
         let pack = get_pack("dex").unwrap();
         let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
-        assert!(content.contains("coding agent"), "must mention coding agent identity");
+        assert!(
+            content.contains("coding agent"),
+            "must mention coding agent identity"
+        );
         assert!(content.contains("SQLite"), "must mention SQLite");
-        assert!(content.contains("Iteration Protocol"), "must have iteration protocol");
-        assert!(content.contains("phase.json"), "must reference phase tracker");
-        assert!(content.contains("Tool Building"), "must have tool building section");
+        assert!(
+            content.contains("Iteration Protocol"),
+            "must have iteration protocol"
+        );
+        assert!(
+            content.contains("phase.json"),
+            "must reference phase tracker"
+        );
+        assert!(
+            content.contains("Tool Building"),
+            "must have tool building section"
+        );
     }
 
     // ── New tests for provider composition ──────────────────────────────
@@ -1619,8 +1726,11 @@ mod tests {
     #[test]
     fn test_prediction_subpacks_use_polymarket_provider() {
         for pack_type in &[
-            "prediction_politics", "prediction_crypto", "prediction_war",
-            "prediction_trending", "prediction_celebrity",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
         ] {
             let pack = get_pack(pack_type).unwrap();
             assert!(
@@ -1637,8 +1747,11 @@ mod tests {
     #[test]
     fn test_prediction_subpacks_have_polymarket_api_urls() {
         for pack_type in &[
-            "prediction_politics", "prediction_crypto", "prediction_war",
-            "prediction_trending", "prediction_celebrity",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
         ] {
             let pack = get_pack(pack_type).unwrap();
             assert!(
@@ -1668,17 +1781,26 @@ mod tests {
 
         let trending = get_pack("prediction_trending").unwrap();
         assert!(!trending.strategy_methodology.is_empty());
-        assert!(trending.system_prompt.contains("trending") || trending.system_prompt.contains("Trending"));
+        assert!(
+            trending.system_prompt.contains("trending")
+                || trending.system_prompt.contains("Trending")
+        );
 
         let celebrity = get_pack("prediction_celebrity").unwrap();
         assert!(!celebrity.strategy_methodology.is_empty());
-        assert!(celebrity.system_prompt.contains("GoldDerby") || celebrity.system_prompt.contains("goldderby"));
+        assert!(
+            celebrity.system_prompt.contains("GoldDerby")
+                || celebrity.system_prompt.contains("goldderby")
+        );
     }
 
     #[test]
     fn test_prediction_general_has_methodology() {
         let pack = get_pack("prediction").unwrap();
-        assert!(!pack.strategy_methodology.is_empty(), "prediction pack must have non-empty methodology");
+        assert!(
+            !pack.strategy_methodology.is_empty(),
+            "prediction pack must have non-empty methodology"
+        );
         assert!(pack.system_prompt.contains("Top 50") || pack.system_prompt.contains("top 50"));
     }
 
@@ -1686,8 +1808,11 @@ mod tests {
     fn test_prediction_subpacks_handle_price_move_event() {
         let config = test_config();
         for pack_type in &[
-            "prediction_politics", "prediction_crypto", "prediction_war",
-            "prediction_trending", "prediction_celebrity",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
         ] {
             let pack = get_pack(pack_type).unwrap();
             let prompt = pack.build_event_prompt(
@@ -1707,9 +1832,18 @@ mod tests {
     #[test]
     fn test_packs_have_provider_ids() {
         for pack_type in &[
-            "prediction", "prediction_politics", "prediction_crypto",
-            "prediction_war", "prediction_trending", "prediction_celebrity",
-            "dex", "yield", "perp", "volatility", "mm", "multi",
+            "prediction",
+            "prediction_politics",
+            "prediction_crypto",
+            "prediction_war",
+            "prediction_trending",
+            "prediction_celebrity",
+            "dex",
+            "yield",
+            "perp",
+            "volatility",
+            "mm",
+            "multi",
         ] {
             let pack = get_pack(pack_type).unwrap();
             assert!(
@@ -1788,7 +1922,10 @@ mod tests {
             &serde_json::json!({}),
             &config,
         );
-        assert!(prompt.is_none(), "yield pack should not handle unknown events");
+        assert!(
+            prompt.is_none(),
+            "yield pack should not handle unknown events"
+        );
     }
 
     #[test]
@@ -1816,7 +1953,10 @@ mod tests {
     fn test_multi_pack_has_allocation_methodology() {
         let pack = get_pack("multi").unwrap();
         assert!(pack.system_prompt.contains("Capital Allocation Model"));
-        assert!(pack.system_prompt.contains("Cross-Strategy Signal Integration"));
+        assert!(
+            pack.system_prompt
+                .contains("Cross-Strategy Signal Integration")
+        );
     }
 
     #[test]
@@ -1827,7 +1967,9 @@ mod tests {
             "expert_knowledge_override": "Focus exclusively on US election markets."
         });
         let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
         assert!(
             content.contains("Focus exclusively on US election markets"),
@@ -1847,7 +1989,9 @@ mod tests {
             "custom_instructions": "Always check ETH/USDC pair first."
         });
         let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
         assert!(
             content.contains("Always check ETH/USDC pair first"),
@@ -1864,7 +2008,9 @@ mod tests {
         let pack = get_pack("prediction").unwrap();
         let config = test_config(); // strategy_config = {}
         let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"].as_str().unwrap();
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
 
         assert!(
             !content.contains("Operator Strategy Override"),
@@ -1890,7 +2036,9 @@ mod tests {
         }
         // Generic profile gets no blocks
         let generic = build_generic_agent_profile("perp", &config);
-        let g = generic["resources"]["instructions"]["content"].as_str().unwrap();
+        let g = generic["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
         assert!(!g.contains(BLOCK_DATA_PIPELINE));
     }
 }

@@ -30,7 +30,9 @@ impl HeartbeatConsumer for ValidatorHeartbeatConsumer {
         let status_code = status.status_code;
         let ts = status.timestamp;
         Box::pin(async move {
-            tracing::info!("Validator heartbeat: service={service_id} status={status_code} ts={ts}");
+            tracing::info!(
+                "Validator heartbeat: service={service_id} status={status_code} ts={ts}"
+            );
             Ok(())
         })
     }
@@ -87,7 +89,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
                 tracing::info!(
                     "Validator QoS heartbeat: service_id={}, blueprint_id={}, interval={}s",
-                    hb_config.service_id, hb_config.blueprint_id, hb_config.interval_secs,
+                    hb_config.service_id,
+                    hb_config.blueprint_id,
+                    hb_config.interval_secs,
                 );
 
                 builder = builder
@@ -122,9 +126,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                             loop {
                                 interval.tick().await;
                                 // Get metrics for the local operator
-                                let operator_addr = trading_validator_lib::context::operator_context()
-                                    .map(|ctx| format!("{}", ctx.operator_address))
-                                    .unwrap_or_else(|| "unknown".to_string());
+                                let operator_addr =
+                                    trading_validator_lib::context::operator_context()
+                                        .map(|ctx| format!("{}", ctx.operator_address))
+                                        .unwrap_or_else(|| "unknown".to_string());
 
                                 if let Ok(metrics) =
                                     trading_validator_lib::get_validator_metrics(&operator_addr)

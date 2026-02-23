@@ -16,8 +16,8 @@ use trading_blueprint_lib::jobs::{
 };
 use trading_blueprint_lib::state::{bot_key, bots, find_bot_by_sandbox, get_bot};
 use trading_instance_blueprint_lib::{
-    TradingProvisionRequest,
-    clear_instance_bot_id, get_instance_bot_id, require_instance_bot, set_instance_bot_id,
+    TradingProvisionRequest, clear_instance_bot_id, get_instance_bot_id, require_instance_bot,
+    set_instance_bot_id,
 };
 
 use common::fixtures;
@@ -97,9 +97,16 @@ async fn test_instance_provision_creates_singleton() {
     let sandbox_id = sandbox.id.clone();
 
     let request = make_provision_request("instance-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 100, 0, "0xINSTCALLER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        100,
+        0,
+        "0xINSTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.sandbox_id, sandbox_id);
     assert_eq!(output.workflow_id, 0, "two-phase: workflow_id should be 0");
@@ -143,7 +150,8 @@ async fn test_instance_deprovision_clears_singleton() {
     let wf_id = chrono::Utc::now().timestamp_millis() as u64 + 1000;
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
 
-    bots().unwrap()
+    bots()
+        .unwrap()
         .update(&bot_key(&bot_id), |b| {
             b.workflow_id = Some(wf_id);
         })
@@ -211,8 +219,7 @@ async fn test_instance_status_returns_singleton_state() {
     assert_eq!(response.sandbox_id, sandbox_id);
     assert!(response.trading_active);
 
-    let portfolio: serde_json::Value =
-        serde_json::from_str(&response.portfolio_json).unwrap();
+    let portfolio: serde_json::Value = serde_json::from_str(&response.portfolio_json).unwrap();
     assert_eq!(portfolio["strategy_type"], "prediction");
 
     let _ = clear_instance_bot_id();
@@ -228,7 +235,8 @@ async fn test_instance_start_stop_lifecycle() {
     let wf_id = chrono::Utc::now().timestamp_millis() as u64 + 2000;
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
 
-    bots().unwrap()
+    bots()
+        .unwrap()
         .update(&bot_key(&bot_id), |b| {
             b.workflow_id = Some(wf_id);
         })
@@ -274,7 +282,10 @@ async fn test_instance_all_strategies() {
     let _dir = common::init_test_env();
     let _lock = common::HARNESS_LOCK.lock().await;
 
-    for (idx, strategy) in ["dex", "yield", "perp", "prediction", "multi"].iter().enumerate() {
+    for (idx, strategy) in ["dex", "yield", "perp", "prediction", "multi"]
+        .iter()
+        .enumerate()
+    {
         let _ = clear_instance_bot_id();
 
         let sb_id = format!("inst-sb-strat-{strategy}");
@@ -316,9 +327,16 @@ async fn test_instance_two_phase_provision_e2e() {
     let sandbox = mock_sandbox("inst-2phase-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("instance-2phase", "dex");
-    let output = provision_core(request, Some(sandbox), 300, 0, "0xINST2PHASE".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        300,
+        0,
+        "0xINST2PHASE".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.workflow_id, 0);
 

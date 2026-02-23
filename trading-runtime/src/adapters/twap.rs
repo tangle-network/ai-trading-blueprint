@@ -41,10 +41,7 @@ impl TwapAdapter {
     }
 
     /// Split a trade into TWAP slices
-    pub fn split_into_slices(
-        &self,
-        params: &ActionParams,
-    ) -> Result<Vec<TwapSlice>, TradingError> {
+    pub fn split_into_slices(&self, params: &ActionParams) -> Result<Vec<TwapSlice>, TradingError> {
         if self.num_slices == 0 {
             return Err(TradingError::ConfigError(
                 "TWAP num_slices must be > 0".into(),

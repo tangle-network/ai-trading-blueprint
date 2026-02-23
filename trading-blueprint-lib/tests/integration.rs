@@ -102,20 +102,42 @@ async fn test_provision_creates_records() {
     let sandbox_id = sandbox.id.clone();
 
     let request = make_provision_request("test-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.sandbox_id, sandbox_id);
-    assert_eq!(output.workflow_id, 0, "two-phase: workflow_id should be 0 (awaiting secrets)");
-    assert_eq!(output.vault_address, Address::ZERO, "two-phase: vault created on-chain later, not during provision");
+    assert_eq!(
+        output.workflow_id, 0,
+        "two-phase: workflow_id should be 0 (awaiting secrets)"
+    );
+    assert_eq!(
+        output.vault_address,
+        Address::ZERO,
+        "two-phase: vault created on-chain later, not during provision"
+    );
 
     // Verify bot record was stored in awaiting-secrets state
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     assert_eq!(bot.sandbox_id, sandbox_id);
     assert_eq!(bot.strategy_type, "dex");
-    assert!(!bot.trading_active, "two-phase: bot should be inactive until secrets are pushed");
+    assert!(
+        !bot.trading_active,
+        "two-phase: bot should be inactive until secrets are pushed"
+    );
     assert_eq!(bot.submitter_address, "0xTESTCALLER");
     assert_eq!(bot.chain_id, 31337);
-    assert_eq!(bot.workflow_id, None, "two-phase: no workflow until activation");
+    assert_eq!(
+        bot.workflow_id, None,
+        "two-phase: no workflow until activation"
+    );
 }
 
 #[tokio::test]
@@ -178,8 +200,7 @@ async fn test_status_returns_state() {
     assert!(response.trading_active);
 
     // Verify portfolio JSON content
-    let portfolio: serde_json::Value =
-        serde_json::from_str(&response.portfolio_json).unwrap();
+    let portfolio: serde_json::Value = serde_json::from_str(&response.portfolio_json).unwrap();
     assert_eq!(portfolio["strategy_type"], "perp");
     assert_eq!(portfolio["vault_address"], "0xDD");
     assert_eq!(portfolio["workflow_id"], wf_id);
@@ -294,12 +315,22 @@ async fn test_bot_lifecycle_transitions() {
     let sandbox = mock_sandbox("sb-lifecycle-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("lifecycle-bot", "multi");
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let _output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
     let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
     assert!(!bot.trading_active, "two-phase: bot starts inactive");
 
     // Simulate activation (normally done via operator API + activate_bot_with_secrets)
-    bots().unwrap()
+    bots()
+        .unwrap()
         .update(&bot_key(&bot.id), |b| {
             b.trading_active = true;
         })
@@ -334,10 +365,22 @@ async fn test_provision_returns_zero_workflow_id() {
 
     let sandbox = mock_sandbox("sb-cron-1");
     let request = make_provision_request("cron-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     // Two-phase: provision never creates workflows — that happens in activate_bot_with_secrets
-    assert_eq!(output.workflow_id, 0, "provision should return workflow_id=0");
+    assert_eq!(
+        output.workflow_id, 0,
+        "provision should return workflow_id=0"
+    );
 
     // No workflow should exist
     let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(0);
@@ -345,7 +388,10 @@ async fn test_provision_returns_zero_workflow_id() {
         .unwrap()
         .get(&wf_key)
         .unwrap();
-    assert!(wf.is_none(), "no workflow should be stored during provision");
+    assert!(
+        wf.is_none(),
+        "no workflow should be stored during provision"
+    );
 }
 
 #[tokio::test]
@@ -392,12 +438,24 @@ async fn test_system_prompt_includes_api_info() {
 
     let prompt = build_system_prompt("dex", &config);
 
-    assert!(prompt.contains("http://test-api:9100"), "Should contain API URL");
-    assert!(prompt.contains("secret-token-xyz"), "Should contain bearer token");
+    assert!(
+        prompt.contains("http://test-api:9100"),
+        "Should contain API URL"
+    );
+    assert!(
+        prompt.contains("secret-token-xyz"),
+        "Should contain bearer token"
+    );
     assert!(prompt.contains("0xVAULT"), "Should contain vault address");
     assert!(prompt.contains("31337"), "Should contain chain ID");
-    assert!(prompt.contains("Uniswap V3"), "DEX strategy should mention Uniswap");
-    assert!(prompt.contains("/validate"), "Should list validate endpoint");
+    assert!(
+        prompt.contains("Uniswap V3"),
+        "DEX strategy should mention Uniswap"
+    );
+    assert!(
+        prompt.contains("/validate"),
+        "Should list validate endpoint"
+    );
     assert!(prompt.contains("/execute"), "Should list execute endpoint");
 }
 
@@ -454,7 +512,16 @@ async fn test_bot_record_has_new_fields() {
 
     let sandbox = mock_sandbox("sb-new-fields-1");
     let request = make_provision_request("new-fields-bot", "yield");
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let _output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     let bot = find_bot_by_sandbox("sb-new-fields-1").unwrap();
     // New fields should have default values (no operator context, no validator service IDs)
@@ -468,7 +535,16 @@ async fn test_provision_uses_requested_lifetime() {
 
     let sandbox = mock_sandbox("sb-lifetime-90");
     let request = make_provision_request_with_lifetime("lifetime-bot", "dex", 90);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let _output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-90").unwrap();
     assert_eq!(bot.max_lifetime_days, 90);
@@ -480,7 +556,16 @@ async fn test_provision_defaults_to_30_days() {
 
     let sandbox = mock_sandbox("sb-lifetime-default");
     let request = make_provision_request_with_lifetime("default-bot", "dex", 0);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let _output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     let bot = find_bot_by_sandbox("sb-lifetime-default").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -493,7 +578,16 @@ async fn test_extend_increases_lifetime() {
     // Provision with 30 days
     let sandbox = mock_sandbox("sb-extend-1");
     let request = make_provision_request_with_lifetime("extend-bot", "dex", 30);
-    let _output = provision_core(request, Some(sandbox), 0, 0, "0xTESTCALLER".to_string(), None).await.unwrap();
+    let _output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     let bot = find_bot_by_sandbox("sb-extend-1").unwrap();
     assert_eq!(bot.max_lifetime_days, 30);
@@ -736,7 +830,9 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             "strategy {strategy} should not set systemPrompt directly"
         );
         assert!(
-            profile["resources"]["instructions"]["content"].as_str().is_some(),
+            profile["resources"]["instructions"]["content"]
+                .as_str()
+                .is_some(),
             "strategy {strategy} should have resources.instructions.content"
         );
     }
@@ -779,7 +875,9 @@ async fn test_build_pack_agent_profile_integration() {
     assert_eq!(profile["description"], "DeFi Yield Optimization");
 
     // Content checks
-    let instructions = profile["resources"]["instructions"]["content"].as_str().unwrap();
+    let instructions = profile["resources"]["instructions"]["content"]
+        .as_str()
+        .unwrap();
     assert!(instructions.contains("Aave V3"));
     assert!(instructions.contains("Morpho"));
     assert!(instructions.contains("0xVAULT_YIELD"));
@@ -802,9 +900,16 @@ async fn test_two_phase_provision_e2e() {
     let sandbox = mock_sandbox("sb-2phase-1");
     let sandbox_id = sandbox.id.clone();
     let request = make_provision_request("two-phase-bot", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xSUBMITTER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xSUBMITTER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     // Verify: workflow_id=0 signals awaiting secrets
     assert_eq!(output.workflow_id, 0);
@@ -855,8 +960,7 @@ async fn test_two_phase_provision_e2e() {
     assert_eq!(bot.workflow_id, Some(result.workflow_id));
 
     // Verify: workflow was created
-    let wf_key =
-        ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
+    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
     let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
         .unwrap()
         .get(&wf_key)
@@ -869,7 +973,12 @@ async fn test_two_phase_provision_e2e() {
     // Verify: workflow JSON contains sidecar info
     let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
     assert!(wf_json["sidecar_url"].as_str().is_some());
-    assert!(wf_json["prompt"].as_str().unwrap().contains("Trading iteration"));
+    assert!(
+        wf_json["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("Trading iteration")
+    );
 
     // ── Phase 2b: Double-activate should fail ──────────────────────────────
     let err = activate_bot_with_secrets(
@@ -991,16 +1100,14 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
         assert!(result.workflow_id > 0);
 
         // Verify workflow has correct prompt content
-        let wf_key =
-            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(result.workflow_id);
         let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
             .unwrap()
             .get(&wf_key)
             .unwrap()
             .expect("workflow should exist");
 
-        let wf_json: serde_json::Value =
-            serde_json::from_str(&wf.workflow_json).unwrap();
+        let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
         let prompt = wf_json["prompt"].as_str().unwrap();
         assert!(
             prompt.contains("Trading iteration") || prompt.contains("trading"),
@@ -1035,20 +1142,16 @@ async fn test_provision_empty_name_still_works() {
 
     let sandbox = mock_sandbox("sb-empty-name-1");
     let request = make_provision_request("", "dex");
-    let output = provision_core(
-        request,
-        Some(sandbox),
-        0,
-        0,
-        "0xCALLER".to_string(),
-        None,
-    )
-    .await
-    .unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
+        .await
+        .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-name-1").unwrap();
-    assert!(!bot.id.is_empty(), "bot_id should be generated even with empty name");
+    assert!(
+        !bot.id.is_empty(),
+        "bot_id should be generated even with empty name"
+    );
 }
 
 #[tokio::test]
@@ -1060,16 +1163,9 @@ async fn test_provision_empty_strategy_config() {
     request.strategy_config_json = String::new();
     request.risk_params_json = String::new();
 
-    let output = provision_core(
-        request,
-        Some(sandbox),
-        0,
-        0,
-        "0xCALLER".to_string(),
-        None,
-    )
-    .await
-    .unwrap();
+    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
+        .await
+        .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-cfg-1").unwrap();

@@ -1,7 +1,7 @@
-use axum::{Router, routing::get, Json};
+use crate::TradingApiState;
+use axum::{Json, Router, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
-use crate::TradingApiState;
 
 #[derive(Serialize)]
 pub struct AdaptersResponse {

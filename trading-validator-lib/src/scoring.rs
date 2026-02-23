@@ -118,8 +118,8 @@ fn record_metrics(score: u32, latency_ms: u64, ai_failed: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trading_runtime::intent::TradeIntentBuilder;
     use trading_runtime::Action;
+    use trading_runtime::intent::TradeIntentBuilder;
 
     #[tokio::test]
     async fn test_policy_score_all_pass() {

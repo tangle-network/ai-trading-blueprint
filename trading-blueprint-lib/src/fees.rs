@@ -1,7 +1,7 @@
-//! Periodic fee settlement logic.
+//! Periodic fee settlement and subscription billing logic.
 //!
-//! Iterates over active trading bots and calls `FeeDistributor.settleFees()`
-//! for each one that has a configured vault and fee distributor address.
+//! - `settle_all_fees()` — calls `FeeDistributor.settleFees()` for each active bot
+//! - `bill_all_subscriptions()` — calls `ITangleServices.billSubscription()` for the operator's service
 
 use alloy::primitives::Address;
 
@@ -62,7 +62,10 @@ pub async fn settle_all_fees() {
         ) {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!("Fee settlement skipped for {}: ChainClient error: {e}", bot.id);
+                tracing::warn!(
+                    "Fee settlement skipped for {}: ChainClient error: {e}",
+                    bot.id
+                );
                 continue;
             }
         };
@@ -82,14 +85,76 @@ pub async fn settle_all_fees() {
             .await
         {
             Ok((perf, mgmt)) => {
-                tracing::info!(
-                    "Fee settlement for {}: perf={perf}, mgmt={mgmt}",
-                    bot.id
-                );
+                tracing::info!("Fee settlement for {}: perf={perf}, mgmt={mgmt}", bot.id);
             }
             Err(e) => {
                 tracing::warn!("Fee settlement failed for {}: {e}", bot.id);
             }
+        }
+    }
+}
+
+/// Bill subscription for the operator's service on the Tangle protocol.
+///
+/// Called periodically from the main binary's background task loop.
+/// Uses `getBillableServices()` to check if billing is due, then calls
+/// `billSubscription()` if the interval has elapsed.
+///
+/// Requires `TANGLE_CONTRACT` env var and a valid private key.
+/// Gracefully returns (no-op) if unconfigured.
+pub async fn bill_all_subscriptions() {
+    let tangle_address: Address = match std::env::var("TANGLE_CONTRACT") {
+        Ok(s) if !s.is_empty() => match s.parse() {
+            Ok(addr) => addr,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+
+    let ctx = match crate::context::operator_context() {
+        Some(c) => c,
+        None => return,
+    };
+
+    if ctx.private_key.is_empty() {
+        return;
+    }
+
+    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
+
+    let chain_id: u64 = std::env::var("CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(31337);
+
+    let chain = match trading_runtime::chain::ChainClient::new(&rpc_url, &ctx.private_key, chain_id)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Subscription billing skipped: ChainClient error: {e}");
+            return;
+        }
+    };
+
+    let service_id = ctx.service_id;
+
+    // Check if the service is billable before sending a tx
+    match crate::on_chain::get_billable_services(&chain, tangle_address, vec![service_id]).await {
+        Ok(billable) if billable.contains(&service_id) => {
+            match crate::on_chain::bill_subscription(&chain, tangle_address, service_id).await {
+                Ok(()) => {
+                    tracing::info!("Subscription billed for service {service_id}");
+                }
+                Err(e) => {
+                    tracing::warn!("Subscription billing failed for service {service_id}: {e}");
+                }
+            }
+        }
+        Ok(_) => {
+            tracing::debug!("Service {service_id} not yet billable — skipping");
+        }
+        Err(e) => {
+            tracing::warn!("getBillableServices failed: {e}");
         }
     }
 }

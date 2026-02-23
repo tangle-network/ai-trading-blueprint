@@ -82,5 +82,4 @@ mod tests {
         };
         assert!(p.build_event_prompt(&ctx).is_none());
     }
-
 }

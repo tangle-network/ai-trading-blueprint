@@ -19,7 +19,10 @@ pub async fn handle_liveness(
         "unknown".to_string()
     };
 
-    tracing::info!("Liveness heartbeat from operator {operator_addr} at timestamp: {}", proof.timestamp);
+    tracing::info!(
+        "Liveness heartbeat from operator {operator_addr} at timestamp: {}",
+        proof.timestamp
+    );
 
     // Update local state
     if let Ok(Some(mut state)) = crate::get_validator_state(&operator_addr) {
@@ -39,11 +42,8 @@ pub async fn handle_liveness(
         .and_then(|v| v.parse().ok())
         .unwrap_or(120);
 
-    let violations = crate::slashing::check_liveness_violations(
-        service_id,
-        proof.timestamp,
-        heartbeat_interval,
-    );
+    let violations =
+        crate::slashing::check_liveness_violations(service_id, proof.timestamp, heartbeat_interval);
 
     for proposal in &violations {
         tracing::warn!(

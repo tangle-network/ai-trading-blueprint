@@ -1,8 +1,8 @@
-use axum::{Router, routing::post, extract::State, Json};
+use crate::TradingApiState;
+use axum::{Json, Router, extract::State, routing::post};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::TradingApiState;
 
 #[derive(Deserialize)]
 pub struct CircuitBreakerRequest {
@@ -23,8 +23,12 @@ async fn check(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<CircuitBreakerRequest>,
 ) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
-    let max_drawdown: Decimal = request.max_drawdown_pct.parse()
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid max_drawdown_pct: {e}")))?;
+    let max_drawdown: Decimal = request.max_drawdown_pct.parse().map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid max_drawdown_pct: {e}"),
+        )
+    })?;
 
     let portfolio = state.portfolio.read().await;
     let should_break = portfolio.should_circuit_break(max_drawdown);

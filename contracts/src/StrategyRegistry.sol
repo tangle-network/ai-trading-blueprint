@@ -13,6 +13,7 @@ contract StrategyRegistry {
     error StrategyNotFound(uint256 strategyId);
     error StrategyNotActive(uint256 strategyId);
     error EmptyName();
+    error ZeroAddress();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -78,6 +79,7 @@ contract StrategyRegistry {
     // ═══════════════════════════════════════════════════════════════════════════
 
     constructor(address _owner) {
+        if (_owner == address(0)) revert ZeroAddress();
         owner = _owner;
         nextStrategyId = 1; // Start at 1 so 0 can be used as "not found"
     }

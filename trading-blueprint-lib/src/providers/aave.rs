@@ -128,7 +128,10 @@ mod tests {
     #[test]
     fn test_aave_expert_prompt_has_addresses() {
         let p = AaveV3Provider;
-        assert!(p.expert_prompt().contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"));
+        assert!(
+            p.expert_prompt()
+                .contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
+        );
     }
 
     #[test]

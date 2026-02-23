@@ -73,7 +73,10 @@ mod tests {
     #[test]
     fn test_vertex_expert_prompt_has_address() {
         let p = VertexProvider;
-        assert!(p.expert_prompt().contains("0xbbEE07B3e8121227AfCFe1E2B82772571571571"));
+        assert!(
+            p.expert_prompt()
+                .contains("0xbbEE07B3e8121227AfCFe1E2B82772571571571")
+        );
     }
 
     #[test]

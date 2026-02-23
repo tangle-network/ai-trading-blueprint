@@ -1,7 +1,7 @@
-use axum::{Router, routing::get, Json};
-use serde_json::{json, Value};
-use std::sync::Arc;
 use crate::TradingApiState;
+use axum::{Json, Router, routing::get};
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new().route("/health", get(health))

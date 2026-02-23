@@ -10,7 +10,7 @@
 
 use serde_json::json;
 
-use crate::state::{bot_key, bots, get_bot, update_activation_progress, clear_activation};
+use crate::state::{bot_key, bots, clear_activation, get_bot, update_activation_progress};
 
 /// Result of successful activation.
 #[derive(Debug)]
@@ -37,20 +37,26 @@ pub async fn activate_bot_with_secrets(
     // 1. Load and validate
     update_activation_progress(bot_id, "validating", "Loading bot configuration");
 
-    let bot = get_bot(bot_id)?
-        .ok_or_else(|| format!("Bot {bot_id} not found"))?;
+    let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
     if let Some(ref s) = sandbox {
         if s.has_user_secrets() {
             clear_activation(bot_id);
-            return Err("Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure.".to_string());
+            return Err(
+                "Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure."
+                    .to_string(),
+            );
         }
     }
 
     // 2. Inject user secrets into sandbox (sandbox-runtime merges base + user internally)
-    update_activation_progress(bot_id, "recreating_sidecar", "Recreating container with secrets");
+    update_activation_progress(
+        bot_id,
+        "recreating_sidecar",
+        "Recreating container with secrets",
+    );
 
     let is_mock = mock_sandbox.is_some();
     let record = if let Some(r) = mock_sandbox {
@@ -58,17 +64,12 @@ pub async fn activate_bot_with_secrets(
         let user_env_json = serde_json::to_string(&user_env).unwrap_or_default();
         let mut stored = r.clone();
         stored.user_env_json = user_env_json;
-        let _ = sandbox_runtime::runtime::sandboxes()
-            .map(|s| s.insert(stored.id.clone(), stored));
+        let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {
-        sandbox_runtime::secret_provisioning::inject_secrets(
-            &bot.sandbox_id,
-            user_env,
-            None,
-        )
-        .await
-        .map_err(|e| format!("Failed to inject secrets: {e}"))?
+        sandbox_runtime::secret_provisioning::inject_secrets(&bot.sandbox_id, user_env, None)
+            .await
+            .map_err(|e| format!("Failed to inject secrets: {e}"))?
     };
 
     // 3. Strategy pack setup (skip in test/mock mode)
@@ -85,7 +86,9 @@ pub async fn activate_bot_with_secrets(
                 env_json: String::new(),
                 timeout_ms: 300_000,
             };
-            if let Err(e) = ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &record.token).await {
+            if let Err(e) =
+                ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &record.token).await
+            {
                 tracing::warn!("Pack setup command failed (non-fatal): {cmd}: {e}");
             }
         }
@@ -128,12 +131,9 @@ pub async fn activate_bot_with_secrets(
             .unwrap_or_else(|| "0 */5 * * * *".to_string())
     };
 
-    let next_run = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
-        "cron",
-        &cron_config,
-        None,
-    )
-    .unwrap_or(None);
+    let next_run =
+        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &cron_config, None)
+            .unwrap_or(None);
 
     let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
         id: workflow_id,
@@ -166,7 +166,9 @@ pub async fn activate_bot_with_secrets(
         .map_err(|e| format!("Failed to update bot record: {e}"))?;
 
     update_activation_progress(bot_id, "complete", "Agent activated");
-    tracing::info!("Bot {bot_id} activated with secrets. Sandbox: {new_sandbox_id}, Workflow: {workflow_id}");
+    tracing::info!(
+        "Bot {bot_id} activated with secrets. Sandbox: {new_sandbox_id}, Workflow: {workflow_id}"
+    );
 
     // Clear activation progress after a brief delay so frontend can read the final state
     let bot_id_owned = bot_id.to_string();
@@ -192,8 +194,7 @@ pub async fn wipe_bot_secrets(
     bot_id: &str,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<(), String> {
-    let bot = get_bot(bot_id)?
-        .ok_or_else(|| format!("Bot {bot_id} not found"))?;
+    let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
@@ -206,8 +207,8 @@ pub async fn wipe_bot_secrets(
     // Stop and remove workflow
     if let Some(wf_id) = bot.workflow_id {
         let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-            .map(|store| store.remove(&key));
+        let _ =
+            ai_agent_sandbox_blueprint_lib::workflows::workflows().map(|store| store.remove(&key));
     }
 
     // Wipe user secrets — sandbox-runtime preserves base env automatically
@@ -215,8 +216,7 @@ pub async fn wipe_bot_secrets(
         // Store mock sandbox with cleared user_env_json
         let mut stored = r.clone();
         stored.user_env_json = String::new();
-        let _ = sandbox_runtime::runtime::sandboxes()
-            .map(|s| s.insert(stored.id.clone(), stored));
+        let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {
         sandbox_runtime::secret_provisioning::wipe_secrets(&bot.sandbox_id, None)

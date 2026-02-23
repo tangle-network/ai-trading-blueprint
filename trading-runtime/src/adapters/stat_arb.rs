@@ -38,7 +38,8 @@ pub enum StatArbDirection {
 pub struct StatArbEngine {
     /// Z-score threshold to enter a position
     entry_threshold: Decimal,
-    /// Z-score threshold to exit a position
+    /// Z-score threshold to exit a position (used by position manager, not signal generation)
+    #[allow(dead_code)]
     exit_threshold: Decimal,
     /// Minimum correlation for a pair to be considered
     min_correlation: Decimal,
@@ -86,19 +87,15 @@ impl StatArbEngine {
             StatArbDirection::LongSpread
         } else if z_score <= -self.entry_threshold {
             StatArbDirection::ShortSpread
-        } else if z_score.abs() <= self.exit_threshold {
-            StatArbDirection::Neutral
         } else {
             StatArbDirection::Neutral
         };
 
         // Confidence scales with z-score magnitude (capped at 1.0)
-        let confidence = (z_score.abs() / self.entry_threshold)
-            .min(Decimal::new(1, 0));
+        let confidence = (z_score.abs() / self.entry_threshold).min(Decimal::new(1, 0));
 
         // Suggested size: proportional to z-score, capped at 100%
-        let suggested_size_pct = (z_score.abs() * Decimal::new(25, 0))
-            .min(Decimal::new(100, 0));
+        let suggested_size_pct = (z_score.abs() * Decimal::new(25, 0)).min(Decimal::new(100, 0));
 
         Ok(StatArbSignal {
             pair: pair.clone(),
@@ -150,9 +147,9 @@ impl StatArbEngine {
 impl Default for StatArbEngine {
     fn default() -> Self {
         Self {
-            entry_threshold: Decimal::new(2, 0),     // 2.0 sigma
-            exit_threshold: Decimal::new(5, 1),      // 0.5 sigma
-            min_correlation: Decimal::new(7, 1),     // 0.7
+            entry_threshold: Decimal::new(2, 0),      // 2.0 sigma
+            exit_threshold: Decimal::new(5, 1),       // 0.5 sigma
+            min_correlation: Decimal::new(7, 1),      // 0.7
             max_half_life_hours: Decimal::new(72, 0), // 72 hours
         }
     }
@@ -193,9 +190,7 @@ mod tests {
         let engine = StatArbEngine::default();
         let pair = make_pair();
         // Current spread is 0.1 + 2.5 * 0.05 = 0.225 (z = 2.5, above entry of 2.0)
-        let signal = engine
-            .generate_signal(&pair, Decimal::new(225, 3))
-            .unwrap();
+        let signal = engine.generate_signal(&pair, Decimal::new(225, 3)).unwrap();
         assert_eq!(signal.direction, StatArbDirection::LongSpread);
         assert!(signal.z_score > Decimal::new(2, 0));
     }
@@ -205,9 +200,7 @@ mod tests {
         let engine = StatArbEngine::default();
         let pair = make_pair();
         // Current spread is 0.1 - 2.5 * 0.05 = -0.025 (z = -2.5)
-        let signal = engine
-            .generate_signal(&pair, Decimal::new(-25, 3))
-            .unwrap();
+        let signal = engine.generate_signal(&pair, Decimal::new(-25, 3)).unwrap();
         assert_eq!(signal.direction, StatArbDirection::ShortSpread);
     }
 
@@ -216,9 +209,7 @@ mod tests {
         let engine = StatArbEngine::default();
         let pair = make_pair();
         // Current spread is near mean (z ~ 0)
-        let signal = engine
-            .generate_signal(&pair, Decimal::new(1, 1))
-            .unwrap();
+        let signal = engine.generate_signal(&pair, Decimal::new(1, 1)).unwrap();
         assert_eq!(signal.direction, StatArbDirection::Neutral);
     }
 
@@ -231,8 +222,20 @@ mod tests {
             (0, 2, Decimal::new(3, 1)),  // ETH-DOGE: 0.3 (below threshold)
         ];
         let spread_stats = vec![
-            (0, 1, Decimal::new(1, 1), Decimal::new(5, 2), Decimal::new(24, 0)),
-            (0, 2, Decimal::new(5, 1), Decimal::new(2, 1), Decimal::new(48, 0)),
+            (
+                0,
+                1,
+                Decimal::new(1, 1),
+                Decimal::new(5, 2),
+                Decimal::new(24, 0),
+            ),
+            (
+                0,
+                2,
+                Decimal::new(5, 1),
+                Decimal::new(2, 1),
+                Decimal::new(48, 0),
+            ),
         ];
 
         let pairs = engine.detect_pairs(&tokens, &correlations, &spread_stats);

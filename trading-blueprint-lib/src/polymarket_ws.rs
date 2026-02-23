@@ -219,9 +219,8 @@ fn check_price_move(
 // WebSocket transport (tokio-tungstenite)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect_and_subscribe(
     url: &str,

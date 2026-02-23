@@ -108,8 +108,7 @@ impl ProtocolAdapter for VertexAdapter {
 
         match params.action {
             Action::OpenLong => {
-                let calldata =
-                    self.encode_place_order(product_id, params.amount, price, true);
+                let calldata = self.encode_place_order(product_id, params.amount, price, true);
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -119,8 +118,7 @@ impl ProtocolAdapter for VertexAdapter {
                 })
             }
             Action::OpenShort => {
-                let calldata =
-                    self.encode_place_order(product_id, params.amount, price, false);
+                let calldata = self.encode_place_order(product_id, params.amount, price, false);
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -131,8 +129,7 @@ impl ProtocolAdapter for VertexAdapter {
             }
             Action::CloseLong => {
                 // Close long = open short to flatten
-                let calldata =
-                    self.encode_place_order(product_id, params.amount, price, false);
+                let calldata = self.encode_place_order(product_id, params.amount, price, false);
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -143,8 +140,7 @@ impl ProtocolAdapter for VertexAdapter {
             }
             Action::CloseShort => {
                 // Close short = open long to flatten
-                let calldata =
-                    self.encode_place_order(product_id, params.amount, price, true);
+                let calldata = self.encode_place_order(product_id, params.amount, price, true);
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,

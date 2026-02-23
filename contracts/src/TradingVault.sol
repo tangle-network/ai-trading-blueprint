@@ -51,6 +51,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error WindDownBlocksExecute();
     error AssetBalanceDecreased(uint256 before, uint256 after_);
     error TargetNotWhitelisted(address target);
+    error WithdrawalLocked(uint256 unlockTime);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -63,6 +64,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event WindDownActivated(uint256 timestamp);
     event WindDownDeactivated(uint256 timestamp);
     event PositionUnwound(address indexed caller, address indexed target, uint256 assetGained);
+    event DepositLockupUpdated(uint256 duration);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -92,6 +94,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Timestamp when wind-down was activated (0 if not active)
     uint256 public windDownStartedAt;
+
+    /// @notice Minimum time (seconds) a depositor must wait after deposit before withdrawing.
+    ///         Prevents flash-deposit-withdraw attacks where a late depositor captures another
+    ///         depositor's illiquid gains. Default 0 (no lockup). Set by admin.
+    uint256 public depositLockupDuration;
+
+    /// @notice Tracks the most recent deposit timestamp per address for lockup enforcement.
+    mapping(address => uint256) public lastDepositTime;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -189,6 +199,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         shareToken.mint(receiver, shares);
 
+        // Track deposit time for lockup enforcement
+        lastDepositTime[receiver] = block.timestamp;
+
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
@@ -214,6 +227,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     {
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0)) revert ZeroAddress();
+        _enforceDepositLockup(owner_);
 
         shares = convertToShares(assets);
         if (shares == 0) revert ZeroShares();
@@ -246,6 +260,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     {
         if (shares == 0) revert ZeroShares();
         if (receiver == address(0)) revert ZeroAddress();
+        _enforceDepositLockup(owner_);
 
         assets = convertToAssets(shares);
         if (assets == 0) revert ZeroAmount();
@@ -471,8 +486,34 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // DEPOSIT LOCKUP CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Set the deposit lockup duration (seconds). Depositors must wait
+    ///         this long after their most recent deposit before withdrawing.
+    ///         Prevents flash-deposit-withdraw liquidity attacks.
+    /// @param duration Lockup duration in seconds (0 = no lockup, 86400 = 1 day)
+    function setDepositLockup(uint256 duration) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        depositLockupDuration = duration;
+        emit DepositLockupUpdated(duration);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // INTERNALS
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @dev Enforce deposit lockup: revert if the owner deposited too recently.
+    function _enforceDepositLockup(address owner_) internal view {
+        if (depositLockupDuration > 0) {
+            uint256 depositTime = lastDepositTime[owner_];
+            if (depositTime > 0) {
+                uint256 unlockTime = depositTime + depositLockupDuration;
+                if (block.timestamp < unlockTime) {
+                    revert WithdrawalLocked(unlockTime);
+                }
+            }
+        }
+    }
 
     /// @dev Check and spend share token allowance if caller is not the owner.
     ///      Uses VaultShare.spendAllowance() to atomically decrement the ERC-20

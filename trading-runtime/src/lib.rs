@@ -1,17 +1,18 @@
+pub mod adapters;
+pub mod chain;
+#[allow(clippy::too_many_arguments)]
+pub mod contracts;
 pub mod error;
-pub mod types;
+pub mod executor;
+pub mod fees;
 pub mod intent;
+pub mod market_data;
+pub mod portfolio;
+pub mod strategy;
+pub mod types;
 pub mod validator_client;
 pub mod vault_client;
-pub mod portfolio;
-pub mod market_data;
-pub mod fees;
-pub mod strategy;
-pub mod adapters;
-pub mod contracts;
-pub mod chain;
-pub mod executor;
 
 pub use error::TradingError;
-pub use types::*;
 pub use intent::TradeIntentBuilder;
+pub use types::*;

@@ -10,9 +10,9 @@ use blueprint_sdk::runner::BlueprintRunner;
 use blueprint_sdk::runner::config::BlueprintEnvironment;
 use blueprint_sdk::runner::tangle::config::TangleConfig;
 use blueprint_sdk::tangle::{TangleConsumer, TangleProducer};
+use trading_blueprint_lib::context::TradingOperatorContext;
 use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_instance_blueprint_lib::JOB_WORKFLOW_TICK;
-use trading_blueprint_lib::context::TradingOperatorContext;
 
 #[tokio::main]
 #[allow(clippy::result_large_err)]
@@ -74,10 +74,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(50);
 
-    let strategy_registry_address =
-        std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
-    let fee_distributor_address =
-        std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
+    let strategy_registry_address = std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
+    let fee_distributor_address = std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
 
     let ctx = TradingOperatorContext {
         operator_address,
@@ -108,7 +106,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 4b. Log instance provisioning state ─────────────────────────────
     match trading_instance_blueprint_lib::get_instance_bot_id() {
         Ok(Some(id)) => tracing::info!("Instance bot already provisioned: {id}"),
-        Ok(None) => tracing::info!("Instance not provisioned — waiting for operator API trigger (POST /api/bot/provision)"),
+        Ok(None) => tracing::info!(
+            "Instance not provisioned — waiting for operator API trigger (POST /api/bot/provision)"
+        ),
         Err(e) => tracing::warn!("Instance state check failed: {e}"),
     }
 
@@ -135,11 +135,27 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .unwrap_or(3600);
 
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(fee_interval));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(fee_interval));
             loop {
                 interval.tick().await;
                 trading_blueprint_lib::fees::settle_all_fees().await;
+            }
+        });
+    }
+
+    // ── 5c. Spawn periodic subscription billing ────────────────────────────
+    {
+        let billing_interval: u64 = std::env::var("BILLING_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600);
+
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(billing_interval));
+            loop {
+                interval.tick().await;
+                trading_blueprint_lib::fees::bill_all_subscriptions().await;
             }
         });
     }

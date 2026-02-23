@@ -50,9 +50,11 @@ fn main() {
         asset_token: "0xE8addD62feD354203d079926a8e563BC1A7FE81e"
             .parse()
             .unwrap(),
-        signers: vec!["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-            .parse()
-            .unwrap()],
+        signers: vec![
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+                .parse()
+                .unwrap(),
+        ],
         required_signatures: alloy::primitives::U256::from(1),
         chain_id: alloy::primitives::U256::from(31337u64),
         rpc_url: "".into(),
@@ -88,9 +90,6 @@ fn main() {
     }
 
     let params_encoded = correct.abi_encode_params();
-    println!(
-        "\nabi_encode_params length: {} bytes",
-        params_encoded.len()
-    );
+    println!("\nabi_encode_params length: {} bytes", params_encoded.len());
     println!("Params match input: {}", params_encoded == bytes);
 }

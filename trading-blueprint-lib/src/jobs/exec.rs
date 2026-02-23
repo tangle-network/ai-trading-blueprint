@@ -11,6 +11,7 @@ pub async fn exec(
     let record = sandbox_runtime::runtime::get_sandbox_by_url(&request.sidecar_url)
         .map_err(|e| e.to_string())?;
 
-    let response = ai_agent_sandbox_blueprint_lib::run_exec_request(&request, &record.token).await?;
+    let response =
+        ai_agent_sandbox_blueprint_lib::run_exec_request(&request, &record.token).await?;
     Ok(TangleResult(response))
 }

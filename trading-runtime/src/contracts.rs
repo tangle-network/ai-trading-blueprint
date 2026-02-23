@@ -87,6 +87,21 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface ITangleServices {
+        struct ServiceEscrow {
+            address token;
+            uint256 balance;
+            uint256 totalDeposited;
+            uint256 totalReleased;
+        }
+
+        function billSubscription(uint64 serviceId) external;
+        function billSubscriptionBatch(uint64[] calldata serviceIds) external returns (uint256 totalBilled, uint256 billedCount);
+        function getBillableServices(uint64[] calldata serviceIds) external view returns (uint64[] memory billable);
+        function getServiceEscrow(uint64 serviceId) external view returns (ServiceEscrow memory);
+    }
+
+    #[sol(rpc)]
     interface IStrategyRegistry {
         struct StrategyInfo {
             uint64 serviceId;

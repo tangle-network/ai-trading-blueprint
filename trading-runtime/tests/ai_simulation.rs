@@ -6,15 +6,15 @@
 //!
 //! Requires: `ZAI_API_KEY` set, `forge build` run, Anvil in PATH.
 
+use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, Bytes, FixedBytes, TxKind, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::network::EthereumWallet;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
-use trading_runtime::validator_client::ValidatorClient;
-use trading_runtime::intent::TradeIntentBuilder;
 use trading_runtime::Action;
+use trading_runtime::intent::TradeIntentBuilder;
+use trading_runtime::validator_client::ValidatorClient;
 use trading_validator_lib::risk_evaluator::AiProvider;
 
 sol! {
@@ -53,8 +53,9 @@ fn load_bytecode(contract_name: &str) -> Vec<u8> {
 }
 
 async fn deploy_contract(provider: &impl Provider, bytecode: Vec<u8>) -> Address {
-    let mut tx = alloy::rpc::types::TransactionRequest::default()
-        .input(alloy::rpc::types::TransactionInput::both(Bytes::from(bytecode)));
+    let mut tx = alloy::rpc::types::TransactionRequest::default().input(
+        alloy::rpc::types::TransactionInput::both(Bytes::from(bytecode)),
+    );
     tx.to = Some(TxKind::Create);
     let pending = provider.send_transaction(tx).await.unwrap();
     let receipt = pending.get_receipt().await.unwrap();
@@ -100,7 +101,9 @@ async fn call_llm(
     }
 
     // Coding API thinking mode: if content is empty, the model exhausted tokens on reasoning
-    let has_reasoning = message["reasoning_content"].as_str().map_or(false, |r| !r.is_empty());
+    let has_reasoning = message["reasoning_content"]
+        .as_str()
+        .map_or(false, |r| !r.is_empty());
     if has_reasoning {
         return Err("Model exhausted tokens on thinking — increase max_tokens".into());
     }
@@ -238,13 +241,15 @@ async fn test_ai_trading_simulation() {
     };
     let endpoint = std::env::var("AI_API_ENDPOINT")
         .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".to_string());
-    let model = std::env::var("AI_MODEL")
-        .unwrap_or_else(|_| "glm-4.7".to_string());
+    let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "glm-4.7".to_string());
 
     // Quick connectivity check before spinning up infrastructure
     println!("\n[pre] Checking Z.ai API connectivity...");
     match call_llm(&api_key, &endpoint, &model, "Reply with: ok", "ping").await {
-        Ok(r) => println!("[pre] API reachable. Response: {}\n", r.chars().take(50).collect::<String>()),
+        Ok(r) => println!(
+            "[pre] API reachable. Response: {}\n",
+            r.chars().take(50).collect::<String>()
+        ),
         Err(e) if e.contains("429") || e.contains("Insufficient") || e.contains("quota") => {
             eprintln!("SKIPPING: Z.ai quota/balance issue: {e}");
             return;
@@ -258,7 +263,10 @@ async fn test_ai_trading_simulation() {
     println!("================================================================");
     println!("  AI TRADING SIMULATION — Full Pipeline, No Mocks");
     println!("  Model: {model} | Provider: zai-coding-plan");
-    println!("  Iterations: {} market scenarios", market_scenarios().len());
+    println!(
+        "  Iterations: {} market scenarios",
+        market_scenarios().len()
+    );
     println!("================================================================\n");
 
     // ── Infrastructure ───────────────────────────────────────────────────────
@@ -279,7 +287,12 @@ async fn test_ai_trading_simulation() {
 
     let tv = TradeValidator::new(tv_addr, &deployer_provider);
     tv.configureVault(mock_vault, val_addrs.clone(), U256::from(2))
-        .send().await.unwrap().get_receipt().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
     println!("        Vault: {mock_vault} (2-of-3 multisig)");
 
     // ── Validators ───────────────────────────────────────────────────────────
@@ -302,14 +315,19 @@ async fn test_ai_trading_simulation() {
         let port = listener.local_addr().unwrap().port();
         validator_endpoints.push(format!("http://127.0.0.1:{port}"));
         println!("        Validator {} @ :{port} ({})", i + 1, val_addrs[i]);
-        tokio::spawn(async move { axum::serve(listener, router).await.ok(); });
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.ok();
+        });
     }
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let validator_client = ValidatorClient::new(validator_endpoints, 50)
         .with_timeout(std::time::Duration::from_secs(120));
     let deadline = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 7200;
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 7200;
 
     // ── Trading agent system prompt ──────────────────────────────────────────
     let system_prompt = "\
@@ -353,17 +371,21 @@ Respond with JSON only. No markdown, no extra text.";
         // Call LLM as trading agent
         println!("  [agent] Asking {model} for trade decision...");
         let t0 = std::time::Instant::now();
-        let llm_output = match call_llm(&api_key, &endpoint, &model, system_prompt, scenario.context).await {
-            Ok(r) => r,
-            Err(e) if e.contains("429") || e.contains("Insufficient") => {
-                eprintln!("  [agent] API quota hit at iteration {} — stopping simulation: {e}", iter + 1);
-                break;
-            }
-            Err(e) => {
-                eprintln!("  [agent] LLM error: {e}");
-                continue;
-            }
-        };
+        let llm_output =
+            match call_llm(&api_key, &endpoint, &model, system_prompt, scenario.context).await {
+                Ok(r) => r,
+                Err(e) if e.contains("429") || e.contains("Insufficient") => {
+                    eprintln!(
+                        "  [agent] API quota hit at iteration {} — stopping simulation: {e}",
+                        iter + 1
+                    );
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("  [agent] LLM error: {e}");
+                    continue;
+                }
+            };
         let agent_time = t0.elapsed();
         println!("  [agent] Response ({:.1}s):", agent_time.as_secs_f64());
         for line in llm_output.lines() {
@@ -373,8 +395,10 @@ Respond with JSON only. No markdown, no extra text.";
         // Check for hold decision
         if llm_output.contains("\"hold\"") {
             if let Ok(hold_json) = serde_json::from_str::<serde_json::Value>(llm_output.trim()) {
-                println!("\n  [agent] DECISION: HOLD — {}",
-                    hold_json["reasoning"].as_str().unwrap_or("no reason given"));
+                println!(
+                    "\n  [agent] DECISION: HOLD — {}",
+                    hold_json["reasoning"].as_str().unwrap_or("no reason given")
+                );
                 holds += 1;
                 continue;
             }
@@ -382,8 +406,10 @@ Respond with JSON only. No markdown, no extra text.";
             let cleaned = extract_json_array(&llm_output);
             if let Ok(hold_json) = serde_json::from_str::<serde_json::Value>(cleaned) {
                 if hold_json.get("action").and_then(|a| a.as_str()) == Some("hold") {
-                    println!("\n  [agent] DECISION: HOLD — {}",
-                        hold_json["reasoning"].as_str().unwrap_or("no reason given"));
+                    println!(
+                        "\n  [agent] DECISION: HOLD — {}",
+                        hold_json["reasoning"].as_str().unwrap_or("no reason given")
+                    );
                     holds += 1;
                     continue;
                 }
@@ -414,8 +440,10 @@ Respond with JSON only. No markdown, no extra text.";
                 Some(a) => a,
                 None => {
                     if action_str == "hold" {
-                        println!("\n  [agent] DECISION: HOLD — {}",
-                            rec["reasoning"].as_str().unwrap_or("no reason"));
+                        println!(
+                            "\n  [agent] DECISION: HOLD — {}",
+                            rec["reasoning"].as_str().unwrap_or("no reason")
+                        );
                         holds += 1;
                         continue;
                     }
@@ -425,9 +453,12 @@ Respond with JSON only. No markdown, no extra text.";
             };
 
             let amount_str = rec["amount_in"].as_str().unwrap_or("100");
-            let amount: rust_decimal::Decimal = amount_str.parse().unwrap_or(rust_decimal::Decimal::new(100, 0));
+            let amount: rust_decimal::Decimal = amount_str
+                .parse()
+                .unwrap_or(rust_decimal::Decimal::new(100, 0));
             let min_out_str = rec["min_amount_out"].as_str().unwrap_or("0");
-            let min_out: rust_decimal::Decimal = min_out_str.parse().unwrap_or(rust_decimal::Decimal::ZERO);
+            let min_out: rust_decimal::Decimal =
+                min_out_str.parse().unwrap_or(rust_decimal::Decimal::ZERO);
             let token_in = rec["token_in"].as_str().unwrap_or("USDC").to_string();
             let token_out = rec["token_out"].as_str().unwrap_or("ETH").to_string();
             let protocol = rec["target_protocol"].as_str().unwrap_or("uniswap_v3");
@@ -444,13 +475,23 @@ Respond with JSON only. No markdown, no extra text.";
                 .build()
                 .unwrap();
 
-            println!("\n  [trade {}] {:?} {} {} -> {} on {}", j + 1,
-                intent.action, amount, token_in, token_out, protocol);
+            println!(
+                "\n  [trade {}] {:?} {} {} -> {} on {}",
+                j + 1,
+                intent.action,
+                amount,
+                token_in,
+                token_out,
+                protocol
+            );
 
             // Fan out to validators
             println!("  [validators] Scoring with {model}...");
             let t1 = std::time::Instant::now();
-            let result = match validator_client.validate(&intent, &format!("{mock_vault}"), deadline).await {
+            let result = match validator_client
+                .validate(&intent, &format!("{mock_vault}"), deadline)
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("  [validators] Validation failed: {e}");
@@ -461,11 +502,20 @@ Respond with JSON only. No markdown, no extra text.";
 
             let mut v_scores = Vec::new();
             for (vi, vr) in result.validator_responses.iter().enumerate() {
-                println!("    Validator {}: score={} | {}", vi + 1, vr.score, vr.reasoning);
+                println!(
+                    "    Validator {}: score={} | {}",
+                    vi + 1,
+                    vr.score,
+                    vr.reasoning
+                );
                 v_scores.push(vr.score);
             }
-            println!("  [validators] Done ({:.1}s) — avg={}, approved={}",
-                val_time.as_secs_f64(), result.aggregate_score, result.approved);
+            println!(
+                "  [validators] Done ({:.1}s) — avg={}, approved={}",
+                val_time.as_secs_f64(),
+                result.aggregate_score,
+                result.approved
+            );
 
             // On-chain verification
             println!("  [on-chain] Submitting 2-of-3 signatures...");
@@ -491,12 +541,20 @@ Respond with JSON only. No markdown, no extra text.";
                     scores,
                     U256::from(deadline),
                 )
-                .call().await.unwrap();
+                .call()
+                .await
+                .unwrap();
 
             let valid_count: u64 = on_chain.validCount.try_into().unwrap_or(0);
-            println!("  [on-chain] approved={}, validCount={}", on_chain.approved, valid_count);
+            println!(
+                "  [on-chain] approved={}, validCount={}",
+                on_chain.approved, valid_count
+            );
 
-            assert!(on_chain.approved, "On-chain should approve with 2-of-3 valid sigs");
+            assert!(
+                on_chain.approved,
+                "On-chain should approve with 2-of-3 valid sigs"
+            );
 
             all_trades.push(TradeRecord {
                 iteration: iter + 1,
@@ -525,17 +583,25 @@ Respond with JSON only. No markdown, no extra text.";
     println!("  SIMULATION SUMMARY");
     println!("================================================================");
     println!("  Model: {model} | Provider: zai-coding-plan");
-    println!("  Iterations: {} | Holds: {} | Trades executed: {}",
-        scenarios.len(), holds, all_trades.len());
+    println!(
+        "  Iterations: {} | Holds: {} | Trades executed: {}",
+        scenarios.len(),
+        holds,
+        all_trades.len()
+    );
     println!();
 
     if !all_trades.is_empty() {
-        println!("  {:<4} {:<8} {:<8} {:<8} {:<10} {:<18} {:<8} {:<8}",
-            "#", "Action", "In", "Out", "Amount", "Validator Scores", "Avg", "Chain");
+        println!(
+            "  {:<4} {:<8} {:<8} {:<8} {:<10} {:<18} {:<8} {:<8}",
+            "#", "Action", "In", "Out", "Amount", "Validator Scores", "Avg", "Chain"
+        );
         println!("  {}", "-".repeat(74));
 
         for t in &all_trades {
-            let scores_str = t.validator_scores.iter()
+            let scores_str = t
+                .validator_scores
+                .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -544,9 +610,17 @@ Respond with JSON only. No markdown, no extra text.";
             } else {
                 "FAIL".to_string()
             };
-            println!("  {:<4} {:<8} {:<8} {:<8} {:<10} {:<18} {:<8} {:<8}",
-                t.iteration, t.action, t.token_in, t.token_out, t.amount,
-                scores_str, t.avg_score, chain_status);
+            println!(
+                "  {:<4} {:<8} {:<8} {:<8} {:<10} {:<18} {:<8} {:<8}",
+                t.iteration,
+                t.action,
+                t.token_in,
+                t.token_out,
+                t.amount,
+                scores_str,
+                t.avg_score,
+                chain_status
+            );
         }
         println!();
 
@@ -562,6 +636,8 @@ Respond with JSON only. No markdown, no extra text.";
     println!("================================================================\n");
 
     // At least verify the infrastructure worked
-    assert!(all_trades.len() + holds > 0,
-        "Simulation should have processed at least one iteration");
+    assert!(
+        all_trades.len() + holds > 0,
+        "Simulation should have processed at least one iteration"
+    );
 }

@@ -5,8 +5,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::trade_store;
 use crate::TradingApiState;
+use crate::trade_store;
 
 #[derive(Deserialize)]
 pub struct TradeListQuery {

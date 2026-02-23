@@ -11,8 +11,8 @@
 
 mod common;
 
-use alloy::node_bindings::Anvil;
 use alloy::network::EthereumWallet;
+use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, U256};
 use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
@@ -24,8 +24,7 @@ use tokio::time::timeout;
 use trading_instance_blueprint_lib::{
     JOB_CONFIGURE, JOB_DEPROVISION, JOB_PROVISION, JOB_START_TRADING, JOB_STATUS, JOB_STOP_TRADING,
     JsonResponse, TradingConfigureRequest, TradingControlRequest, TradingProvisionOutput,
-    TradingProvisionRequest, TradingStatusResponse,
-    clear_instance_bot_id, get_instance_bot_id,
+    TradingProvisionRequest, TradingStatusResponse, clear_instance_bot_id, get_instance_bot_id,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -138,7 +137,9 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
             .await;
         // This should either error or return an error-encoded response
         if dup_result.is_ok() {
-            eprintln!("        Note: duplicate provision returned Ok (handler may encode error in output)");
+            eprintln!(
+                "        Note: duplicate provision returned Ok (handler may encode error in output)"
+            );
         } else {
             eprintln!("        Duplicate provision correctly rejected");
         }
@@ -232,7 +233,10 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
 
         // Verify singleton was cleared
         let after = get_instance_bot_id().expect("store read");
-        assert!(after.is_none(), "Singleton should be cleared after deprovision");
+        assert!(
+            after.is_none(),
+            "Singleton should be cleared after deprovision"
+        );
 
         eprintln!("\n[done] Instance lifecycle completed successfully!");
         harness.shutdown().await;

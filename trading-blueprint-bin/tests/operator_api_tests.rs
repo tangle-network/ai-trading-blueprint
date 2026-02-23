@@ -6,7 +6,7 @@
 
 use axum::body::Body;
 use http_body_util::BodyExt;
-use hyper::Request;
+use hyper::{Request, StatusCode};
 use once_cell::sync::Lazy;
 use tower::ServiceExt;
 
@@ -147,8 +147,14 @@ async fn test_auth_challenge_returns_nonce_and_message() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json["nonce"].is_string(), "challenge should contain nonce");
-    assert!(json["message"].is_string(), "challenge should contain message");
-    assert!(json["expires_at"].is_number(), "challenge should contain expires_at");
+    assert!(
+        json["message"].is_string(),
+        "challenge should contain message"
+    );
+    assert!(
+        json["expires_at"].is_number(),
+        "challenge should contain expires_at"
+    );
 }
 
 #[tokio::test]
@@ -199,11 +205,7 @@ async fn test_protected_routes_reject_no_auth() {
             .await
             .unwrap();
 
-        assert_eq!(
-            response.status(),
-            401,
-            "{method} {uri} should require auth"
-        );
+        assert_eq!(response.status(), 401, "{method} {uri} should require auth");
     }
 }
 
@@ -284,7 +286,10 @@ async fn test_get_bot_detail() {
     assert_eq!(json["chain_id"], 31337);
     assert_eq!(json["max_lifetime_days"], 30);
     // trading_api_token should be excluded from serialization
-    assert!(json["trading_api_token"].is_null(), "token should not be serialized");
+    assert!(
+        json["trading_api_token"].is_null(),
+        "token should not be serialized"
+    );
 }
 
 #[tokio::test]
@@ -332,7 +337,10 @@ async fn test_start_bot_auth_resolves_bot() {
     assert_ne!(status, 401, "Should pass auth");
     assert_ne!(status, 403, "Should pass submitter check");
     assert_ne!(status, 404, "Bot should be found");
-    assert!(status == 200 || status == 500, "Expected 200 (best-effort Docker) or 500, got {status}");
+    assert!(
+        status == 200 || status == 500,
+        "Expected 200 (best-effort Docker) or 500, got {status}"
+    );
 }
 
 #[tokio::test]
@@ -359,7 +367,10 @@ async fn test_stop_bot_auth_resolves_bot() {
     assert_ne!(status, 401, "Should pass auth");
     assert_ne!(status, 403, "Should pass submitter check");
     assert_ne!(status, 404, "Bot should be found");
-    assert!(status == 200 || status == 500, "Expected 200 (best-effort Docker) or 500, got {status}");
+    assert!(
+        status == 200 || status == 500,
+        "Expected 200 (best-effort Docker) or 500, got {status}"
+    );
 }
 
 #[tokio::test]
@@ -664,9 +675,9 @@ async fn test_pricing_quote() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["total_cost"], "0");
-    assert!(json["signature"].is_string());
-    assert!(json["details"].is_object());
+    assert_eq!(json["pricing_model"], "subscription");
+    assert!(json["job_multipliers"].is_object());
+    assert_eq!(json["job_multipliers"]["provision"], 50);
 }
 
 #[tokio::test]
@@ -693,8 +704,54 @@ async fn test_pricing_job_quote() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["total_cost"], "0");
-    assert!(json["details"]["job_index"].is_number());
+    assert_eq!(json["pricing_model"], "subscription");
+    assert_eq!(json["per_job_cost"], "0");
+    assert_eq!(json["job_index"], 0);
+    assert_eq!(json["multiplier"], 50); // provision = 50x
+}
+
+#[tokio::test]
+async fn test_pricing_config() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/pricing/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["pricing_model"], "subscription");
+    assert!(json["subscription_rate"].is_string());
+    assert!(json["subscription_interval"].is_number());
+    assert!(json["job_multipliers"].is_object());
+    assert_eq!(json["job_multipliers"]["provision"], 50);
+    assert_eq!(json["job_multipliers"]["status"], 0);
+}
+
+#[tokio::test]
+async fn test_billing_status_requires_tangle_contract() {
+    let _dir = init_test_env();
+    // TANGLE_CONTRACT is not set, so billing status should return 503
+    unsafe { std::env::remove_var("TANGLE_CONTRACT") };
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/pricing/billing/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,13 +917,20 @@ async fn test_configure_secrets_correct_submitter_reaches_activation() {
     assert_ne!(status, 401, "Should pass auth");
     assert_ne!(status, 403, "Should pass submitter check");
     assert_ne!(status, 404, "Bot should be found");
-    assert_eq!(status, 500, "Expected 500 from sandbox/activation layer (no Docker container)");
+    assert_eq!(
+        status, 500,
+        "Expected 500 from sandbox/activation layer (no Docker container)"
+    );
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let err = String::from_utf8_lossy(&body);
     // The error should mention activation/sandbox, not auth
     assert!(
-        err.contains("Bot") || err.contains("sandbox") || err.contains("secrets") || err.contains("inject") || err.contains("activate"),
+        err.contains("Bot")
+            || err.contains("sandbox")
+            || err.contains("secrets")
+            || err.contains("inject")
+            || err.contains("activate"),
         "Error should be from activation layer, got: {err}"
     );
 }
@@ -897,7 +961,11 @@ async fn test_wipe_secrets_requires_existing_secrets() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let err = String::from_utf8_lossy(&body);
     assert!(
-        err.contains("no secrets") || err.contains("has no") || err.contains("Bot") || err.contains("Sandbox") || err.contains("not found"),
+        err.contains("no secrets")
+            || err.contains("has no")
+            || err.contains("Bot")
+            || err.contains("Sandbox")
+            || err.contains("not found"),
         "Error should be from sandbox/secrets layer, got: {err}"
     );
 }

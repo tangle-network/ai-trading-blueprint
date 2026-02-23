@@ -1,10 +1,10 @@
+pub mod adapters;
+pub mod circuit;
+pub mod execute;
 pub mod health;
 pub mod market_data;
-pub mod portfolio;
-pub mod validate;
-pub mod execute;
-pub mod circuit;
-pub mod adapters;
 pub mod metrics;
-pub mod trades;
+pub mod portfolio;
 pub mod session;
+pub mod trades;
+pub mod validate;

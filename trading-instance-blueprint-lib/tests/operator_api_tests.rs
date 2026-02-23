@@ -127,11 +127,7 @@ async fn test_protected_routes_reject_no_auth() {
             .await
             .unwrap();
 
-        assert_eq!(
-            response.status(),
-            401,
-            "{method} {uri} should require auth"
-        );
+        assert_eq!(response.status(), 401, "{method} {uri} should require auth");
     }
 }
 
@@ -502,13 +498,20 @@ async fn test_configure_secrets_correct_submitter_reaches_activation() {
     assert_ne!(status, 401, "Should pass auth");
     assert_ne!(status, 403, "Should pass submitter check");
     assert_ne!(status, 404, "Bot should be found");
-    assert_eq!(status, 500, "Expected 500 from sandbox/activation layer (no Docker container)");
+    assert_eq!(
+        status, 500,
+        "Expected 500 from sandbox/activation layer (no Docker container)"
+    );
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let err = String::from_utf8_lossy(&body);
     // The error should mention activation/sandbox, not auth
     assert!(
-        err.contains("Bot") || err.contains("sandbox") || err.contains("secrets") || err.contains("inject") || err.contains("activate"),
+        err.contains("Bot")
+            || err.contains("sandbox")
+            || err.contains("secrets")
+            || err.contains("inject")
+            || err.contains("activate"),
         "Error should be from activation layer, got: {err}"
     );
 
@@ -544,7 +547,11 @@ async fn test_wipe_secrets_requires_existing_secrets() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let err = String::from_utf8_lossy(&body);
     assert!(
-        err.contains("no secrets") || err.contains("has no") || err.contains("Bot") || err.contains("Sandbox") || err.contains("not found"),
+        err.contains("no secrets")
+            || err.contains("has no")
+            || err.contains("Bot")
+            || err.contains("Sandbox")
+            || err.contains("not found"),
         "Error should be from sandbox/secrets layer, got: {err}"
     );
 
