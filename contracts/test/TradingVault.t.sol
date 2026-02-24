@@ -146,14 +146,15 @@ contract TradingVaultTest is Setup {
         // Simulate gains: mint more tokens directly to vault (doubling the NAV)
         tokenA.mint(address(vault), 1000 ether);
 
-        // Now NAV = 2000, supply = 1000, so 1 share = 2 tokens
+        // Now NAV = 2000, supply = 1000, so 1 share ~= 2 tokens
+        // Virtual offset introduces up to 1 wei rounding (favors vault - prevents donation attacks)
         uint256 assetsPerShare = vault.convertToAssets(1 ether);
-        assertEq(assetsPerShare, 2 ether);
+        assertApproxEqAbs(assetsPerShare, 2 ether, 1);
 
-        // New deposit should get fewer shares: 2000 * 1000 / 2000 = 1000
+        // New deposit should get fewer shares: ~1000 (within 1 wei due to virtual offset)
         vm.prank(owner);
         uint256 newShares = vault.deposit(2000 ether, owner);
-        assertEq(newShares, 1000 ether);
+        assertApproxEqAbs(newShares, 1000 ether, 1);
     }
 
     function test_execute() public {

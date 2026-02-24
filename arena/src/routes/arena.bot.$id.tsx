@@ -12,6 +12,7 @@ import { ChatTab } from '~/components/bot-detail/ChatTab';
 import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { TerminalTab } from '~/components/bot-detail/TerminalTab';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
+import { ErrorBoundary } from '~/components/ErrorBoundary';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -102,11 +103,15 @@ export default function BotDetailPage() {
           </TabsContent>
 
           <TabsContent value="chat" className="mt-6">
-            <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+            <ErrorBoundary>
+              <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+            </ErrorBoundary>
           </TabsContent>
 
           <TabsContent value="terminal" className="mt-6">
-            <TerminalTab botId={bot.id} />
+            <ErrorBoundary>
+              <TerminalTab botId={bot.id} />
+            </ErrorBoundary>
           </TabsContent>
 
           <TabsContent value="controls" className="mt-6">

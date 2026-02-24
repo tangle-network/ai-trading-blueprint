@@ -8,6 +8,9 @@ import { publicClient } from '@tangle/blueprint-ui';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
+/** Max time (ms) a provision can stay in job_submitted/job_processing before timing out */
+const PROVISION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
 /**
  * ABI for decoding TradingProvisionOutput struct.
  *
@@ -228,6 +231,15 @@ export function useProvisionWatcher() {
             return;
           }
           for (const prov of submitted) {
+            // Timeout stale provisions
+            const elapsed = Date.now() - prov.createdAt;
+            if (elapsed > PROVISION_TIMEOUT_MS) {
+              updateProvision(prov.id, {
+                phase: 'failed',
+                errorMessage: 'Provision timed out after 30 minutes',
+              });
+              continue;
+            }
             try {
               const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
               if (!res.ok) continue;

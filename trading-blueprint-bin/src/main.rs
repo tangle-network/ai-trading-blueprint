@@ -531,14 +531,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .await;
 
     if let Err(e) = result {
-        tracing::error!("Runner failed: {e:?}");
-        // Keep the operator API server alive even when the runner fails.
-        // Background tasks (API server, reaper, GC) are tokio tasks that
-        // would be dropped if main() returns.
-        tracing::info!("Runner exited but operator API server continues running");
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-        }
+        tracing::error!("Runner failed fatally: {e:?}");
+        std::process::exit(1);
     }
 
     Ok(())

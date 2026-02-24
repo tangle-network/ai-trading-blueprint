@@ -227,10 +227,8 @@ contract PolicyEngine is Ownable2Step {
                 return false;
             }
 
-            // Record this trade timestamp
-            if (timestamps.length == 0) {
-                timestamps.push(block.timestamp);
-            } else {
+            // Record this trade timestamp (circular buffer pre-allocated in initializeVault)
+            if (timestamps.length > 0) {
                 timestamps[policy.tradeTimestampIndex] = block.timestamp;
                 policy.tradeTimestampIndex = (policy.tradeTimestampIndex + 1) % timestamps.length;
             }

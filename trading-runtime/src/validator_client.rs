@@ -47,7 +47,12 @@ impl ValidatorClient {
             endpoints,
             threshold,
             client: reqwest::Client::new(),
-            timeout: std::time::Duration::from_secs(10),
+            timeout: std::time::Duration::from_secs(
+                std::env::var("VALIDATOR_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(120),
+            ),
         }
     }
 

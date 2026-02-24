@@ -156,19 +156,23 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         return _asset.balanceOf(address(this));
     }
 
+    /// @dev Virtual offset to mitigate ERC-4626 inflation/donation attacks.
+    ///      Adding 1 to supply and 1 to NAV ensures the first depositor cannot
+    ///      manipulate share price via direct token transfer to the vault.
+    ///      See: OpenZeppelin ERC4626 virtual shares pattern.
+    uint256 private constant _VIRTUAL_OFFSET = 1;
+
     /// @inheritdoc IERC7575
     function convertToShares(uint256 assets) public view override returns (uint256) {
-        uint256 supply = shareToken.totalSupply();
-        uint256 nav = shareToken.totalNAV();
-        if (supply == 0 || nav == 0) return assets; // 1:1 when empty
+        uint256 supply = shareToken.totalSupply() + _VIRTUAL_OFFSET;
+        uint256 nav = shareToken.totalNAV() + _VIRTUAL_OFFSET;
         return (assets * supply) / nav;
     }
 
     /// @inheritdoc IERC7575
     function convertToAssets(uint256 shares) public view override returns (uint256) {
-        uint256 supply = shareToken.totalSupply();
-        if (supply == 0) return shares; // 1:1 when empty
-        uint256 nav = shareToken.totalNAV();
+        uint256 supply = shareToken.totalSupply() + _VIRTUAL_OFFSET;
+        uint256 nav = shareToken.totalNAV() + _VIRTUAL_OFFSET;
         return (shares * nav) / supply;
     }
 
@@ -298,6 +302,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
+        if (params.minOutput == 0) revert ZeroAmount();
 
         // 0. Intent deduplication — prevents multiple operators executing the same trade
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);

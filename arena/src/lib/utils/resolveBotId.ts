@@ -32,8 +32,12 @@ export async function resolveBotId(
   // Strategy 2: lookup by on-chain call_id + service_id (most reliable)
   if (opts.callId != null && opts.serviceId != null) {
     try {
+      const params = new URLSearchParams({
+        call_id: String(opts.callId),
+        service_id: String(opts.serviceId),
+      });
       const res = await fetch(
-        `${operatorApiUrl}/api/bots?call_id=${opts.callId}&service_id=${opts.serviceId}`,
+        `${operatorApiUrl}/api/bots?${params}`,
       );
       if (res.ok) {
         const data = await res.json();
