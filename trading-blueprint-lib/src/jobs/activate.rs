@@ -17,6 +17,11 @@ use crate::state::{bot_key, bots, clear_activation, get_bot, update_activation_p
 pub struct ActivateResult {
     pub sandbox_id: String,
     pub workflow_id: u64,
+    /// Trading API bearer token (set during provision, returned here so callers
+    /// don't need a redundant re-read of the bot record).
+    pub trading_api_token: String,
+    /// Trading API URL (e.g. `http://host:port`).
+    pub trading_api_url: String,
 }
 
 /// Activate a bot that is awaiting secrets.
@@ -157,6 +162,8 @@ pub async fn activate_bot_with_secrets(
 
     // 5. Update bot record
     let new_sandbox_id = record.id.clone();
+    let trading_api_token = bot.trading_api_token.clone();
+    let trading_api_url = bot.trading_api_url.clone();
     bots()?
         .update(&bot_key(bot_id), |b| {
             b.sandbox_id.clone_from(&new_sandbox_id);
@@ -180,6 +187,8 @@ pub async fn activate_bot_with_secrets(
     Ok(ActivateResult {
         sandbox_id: new_sandbox_id,
         workflow_id,
+        trading_api_token,
+        trading_api_url,
     })
 }
 

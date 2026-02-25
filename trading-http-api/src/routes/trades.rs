@@ -1,12 +1,12 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::TradingApiState;
 use crate::trade_store;
+use crate::{MultiBotTradingState, TradingApiState};
 
 #[derive(Deserialize)]
 pub struct TradeListQuery {
@@ -28,6 +28,13 @@ pub fn router() -> Router<Arc<TradingApiState>> {
         .route("/trades/{trade_id}", get(get_trade))
 }
 
+/// Router for multi-bot mode (state = MultiBotTradingState, bot resolved from extensions).
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
+    Router::new()
+        .route("/trades", get(list_trades_multi_bot))
+        .route("/trades/{trade_id}", get(get_trade))
+}
+
 async fn list_trades(
     State(state): State<Arc<TradingApiState>>,
     Query(query): Query<TradeListQuery>,
@@ -36,6 +43,24 @@ async fn list_trades(
     let offset = query.offset.unwrap_or(0);
 
     let result = trade_store::trades_for_bot(&state.bot_id, limit, offset)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(TradeListResponse {
+        trades: result.trades,
+        total: result.total,
+        limit,
+        offset,
+    }))
+}
+
+async fn list_trades_multi_bot(
+    Extension(bot): Extension<crate::BotContext>,
+    Query(query): Query<TradeListQuery>,
+) -> Result<Json<TradeListResponse>, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+
+    let result = trade_store::trades_for_bot(&bot.bot_id, limit, offset)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(TradeListResponse {

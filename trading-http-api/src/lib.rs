@@ -104,6 +104,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         )
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
+        .merge(routes::trades::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,

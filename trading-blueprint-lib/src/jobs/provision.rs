@@ -64,12 +64,21 @@ pub async fn provision_core(
         request.rpc_url.clone()
     };
 
-    // Vault will be created on-chain in onJobResult — we don't know the address yet
-    let vault_address = String::new();
+    // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().
+    // Store factory_address as a placeholder so validators have a valid address for
+    // EIP-712 signing.  The BSM updates this to the real vault address on-chain.
+    let vault_address = format!("{:#x}", request.factory_address);
 
-    // Trading API URL points to the shared HTTP API running in the binary
-    let trading_api_url = std::env::var("TRADING_API_URL")
-        .unwrap_or_else(|_| "http://host.docker.internal:9100".to_string());
+    // Trading API URL points to the shared HTTP API running in the binary.
+    // Constructed from SIDECAR_PUBLIC_HOST (how containers reach the host) and
+    // TRADING_API_PORT (the actual port the trading API binds to).
+    // TRADING_API_URL overrides both if explicitly set.
+    let trading_api_url = std::env::var("TRADING_API_URL").unwrap_or_else(|_| {
+        let host = std::env::var("SIDECAR_PUBLIC_HOST")
+            .unwrap_or_else(|_| "host.docker.internal".to_string());
+        let port = std::env::var("TRADING_API_PORT").unwrap_or_else(|_| "9100".to_string());
+        format!("http://{host}:{port}")
+    });
 
     // 5. Resolve operator address early (needed in both env and bot record)
     let operator_address = op_ctx

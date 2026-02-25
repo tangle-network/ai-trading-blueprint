@@ -258,6 +258,76 @@ Every trade passes through **3 independent validation layers**:
 2. **3 Validator nodes** — is this trade safe? (policy checks + AI scoring + EIP-712 signatures, 2-of-3 must approve)
 3. **On-chain PolicyEngine + TradeValidator** — hard limits (whitelists, position caps, leverage, rate limiting) + cryptographic signature verification
 
+## Validator Signer Resolution & Multisig
+
+The signer set and threshold for each bot's vault are determined at provision time and enforced on-chain during every trade. Here's the full flow:
+
+### 1. Provision Request (off-chain → on-chain)
+
+`TradingProvisionRequest` includes `signers: address[]` and `required_signatures: uint8`. The frontend typically sends **empty signers** (relying on the default).
+
+### 2. Signer Resolution (`TradingBlueprint._handleProvisionResult`)
+
+```
+if request.signers.length > 0:
+    signers = request.signers           ← explicit override
+    threshold = request.required_signatures
+else:
+    signers = _serviceOperators[serviceId]  ← all registered operators
+    threshold = 1                           ← 1-of-n default
+```
+
+This means a single-operator service gets **1-of-1** by default. Multi-operator services get **1-of-n** (any operator can approve). Explicit signers allow stricter configurations like 2-of-3.
+
+### 3. Vault Creation (`VaultFactory.createBotVault`)
+
+Constraints enforced:
+- `signers.length > 0` (at least one signer)
+- `requiredSigs > 0` (threshold must be positive)
+- `requiredSigs <= signers.length` (can't require more sigs than signers)
+- No duplicate addresses, no zero addresses
+
+Creates a `TradingVault` and calls `TradeValidator.configureVault()`.
+
+### 4. Validator Configuration (`TradeValidator.configureVault`)
+
+Stores per-vault config:
+```solidity
+vaultConfigs[vault] = VaultConfig({
+    signers: signers,
+    requiredSignatures: requiredSigs,
+    active: true
+});
+```
+
+Only callable by the VaultFactory (enforced via `onlyFactory` modifier).
+
+### 5. Trade Execution (`TradingVault.execute → TradeValidator.validateWithSignatures`)
+
+Every `vault.execute()` call passes `signatures[]` and `scores[]`. The TradeValidator:
+1. Recovers signer addresses from EIP-712 signatures over `(intentHash, vault, score, deadline)`
+2. Checks each recovered address against the vault's registered signer set
+3. Counts valid signatures — requires `validCount >= requiredSignatures`
+4. Verifies deadline hasn't passed
+
+```
+Intent → 3 validators sign → vault.execute(params, sigs, scores)
+                                  │
+                          TradeValidator.validateWithSignatures()
+                                  │
+                          recover signers from EIP-712
+                          check against vaultConfigs[vault].signers
+                          require validCount >= requiredSignatures
+                          require block.timestamp <= deadline
+```
+
+### Key Design Decisions
+
+- **Default is permissive** (1-of-n) — every operator can independently approve trades without coordination
+- **Explicit signers enable strict multisig** — set `required_signatures: 2` with 3 signers for 2-of-3
+- **Signers are immutable per vault** — changing requires a new provision (new vault)
+- **`BotVaultSkipped` event** (not revert) emitted on vault creation failure — prevents bricking the service
+
 ## Session Management & Auth
 
 - **Operator API auth**: EIP-191 challenge-response → PASETO v4.local tokens (1hr TTL)
