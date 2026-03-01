@@ -133,19 +133,19 @@
               ┌─────────────┼──────────────────┐
               │             │                  │
               ▼             ▼                  ▼
-  ┌──────────────┐ ┌──────────────┐ ┌────────────────┐
-  │ Protocol     │ │ Vault Client │ │ Chain Client   │
-  │ Adapter      │ │              │ │                │
-  │              │ │ encode       │ │ submit tx      │
-  │ uniswap_v3  │ │ execute()    │ │ wait receipt   │
-  │ aave_v3     │ │ calldata     │ │                │
-  │ gmx_v2      │ │              │ │ → tx_hash      │
-  │ morpho      │ └──────┬───────┘ │ → block_number │
-  │ vertex      │        │         │ → gas_used     │
-  │ polymarket   │        │         └───────┬────────┘
-  │ twap        │        │                 │
-  └──────────────┘        │                 │
-                          ▼                 ▼
+  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
+  │ Protocol     │ │ Vault Client │ │ Chain Client      │
+  │ Adapter      │ │              │ │                   │
+  │              │ │ encode       │ │ submit tx         │
+  │ uniswap_v3  │ │ execute()    │ │ wait receipt      │
+  │ aave_v3     │ │ calldata     │ │                   │
+  │ gmx_v2      │ │              │ │ → tx_hash         │
+  │ morpho      │ └──────┬───────┘ │ → block_number    │
+  │ vertex      │        │         │ → gas_used        │
+  │ polymarket  │        │         └─────────┬─────────┘
+  │ twap        │        │                   │
+  └──────────────┘        │                   │
+                          ▼                   ▼
   ════════════════════════════════════════════════════════════════
                      EVM BLOCKCHAIN (Anvil / Mainnet)
   ════════════════════════════════════════════════════════════════
