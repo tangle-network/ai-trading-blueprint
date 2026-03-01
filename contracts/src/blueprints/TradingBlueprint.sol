@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "tnt-core/BlueprintServiceManagerBase.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
+import {PolicyEngine} from "../PolicyEngine.sol";
+import {FeeDistributor} from "../FeeDistributor.sol";
 
 /// @title TradingBlueprint
 /// @notice Single trading blueprint for all strategy types.
@@ -94,6 +96,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint256 requiredSignatures;
         string name;
         string symbol;
+        PolicyEngine.PolicyConfig policyConfig;
+        FeeDistributor.FeeConfig feeConfig;
+        uint256 maxCollateralBps;
     }
 
     mapping(uint64 => ServiceRequestConfig) internal _pendingRequests;
@@ -113,6 +118,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         address[] signers;
         uint256 requiredSigs;
         string name;
+        PolicyEngine.PolicyConfig policyConfig;
+        FeeDistributor.FeeConfig feeConfig;
+        uint256 maxCollateralBps;
     }
 
     /// @dev Provision inputs stored during onJobCall for use in _handleProvisionResult.
@@ -127,6 +135,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     error VaultFactoryNotSet();
     error InvalidLifetimeDays();
     error BaseRateTooLarge(uint256 baseRate, uint256 maxBaseRate);
+    error NotProvisioned(uint64 serviceId);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -162,8 +171,11 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
     /// @notice Called when a consumer requests a service.
     /// @dev Stores vault configuration from requestInputs for use in onServiceInitialized.
-    ///      requestInputs ABI-encodes: (address assetToken, address[] signers,
-    ///      uint256 requiredSignatures, string name, string symbol)
+    ///      requestInputs is the full TradingProvisionRequest tuple from createServiceFromQuotes:
+    ///      (string name, string strategyType, string strategyConfigJson, string riskParamsJson,
+    ///       address factoryAddress, address assetToken, address[] signers, uint256 requiredSigs,
+    ///       uint256 chainId, string rpcUrl, string cron, uint64 cpuCores, uint64 memoryMb,
+    ///       uint64 maxLifetimeDays, uint64[] validatorServiceIds, uint256 maxCollateralBps)
     function onRequest(
         uint64 requestId,
         address requester,
@@ -174,21 +186,48 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint256
     ) external payable override onlyFromTangle {
         if (requestInputs.length > 0) {
-            (
-                address assetToken,
-                address[] memory signers,
-                uint256 requiredSigs,
-                string memory name,
-                string memory symbol
-            ) = abi.decode(requestInputs, (address, address[], uint256, string, string));
+            // Handle tuple wrapping: viem encodes structs with 0x20 offset prefix
+            bytes calldata inner = requestInputs;
+            if (requestInputs.length > 32) {
+                uint256 firstWord = uint256(bytes32(requestInputs[0:32]));
+                if (firstWord == 0x20) {
+                    inner = requestInputs[32:];
+                }
+            }
+
+            // Decode TradingProvisionRequest — same layout as _storeProvisionInputs
+            (string memory name_,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,, uint256 maxCollateralBps_) = abi.decode(
+                inner,
+                (
+                    string,
+                    string,
+                    string,
+                    string,
+                    address,
+                    address,
+                    address[],
+                    uint256,
+                    uint256,
+                    string,
+                    string,
+                    uint64,
+                    uint64,
+                    uint64,
+                    uint64[],
+                    uint256
+                )
+            );
 
             _pendingRequests[requestId] = ServiceRequestConfig({
                 requester: requester,
                 assetToken: assetToken,
                 signers: signers,
                 requiredSignatures: requiredSigs,
-                name: name,
-                symbol: symbol
+                name: name_,
+                symbol: "",
+                policyConfig: _defaultPolicyConfig(),
+                feeConfig: _defaultFeeConfig(),
+                maxCollateralBps: maxCollateralBps_
             });
         }
     }
@@ -269,7 +308,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                 requiredSigs,
                 name_,
                 symbol_,
-                salt
+                salt,
+                cfg.policyConfig,
+                cfg.feeConfig
             );
 
         // Store in both instance-level and per-bot (callId=0) mappings
@@ -286,6 +327,11 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         // Grant CREATOR_ROLE to the service requester
         if (cfg.requester != address(0)) {
             IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, cfg.requester);
+        }
+
+        // Configure CLOB collateral cap if requested
+        if (cfg.maxCollateralBps > 0) {
+            ITradingVault(vault).setMaxCollateralBps(cfg.maxCollateralBps);
         }
 
         emit BotVaultDeployed(serviceId, 0, vault, shareToken);
@@ -398,7 +444,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             _storeProvisionInputs(serviceId, jobCallId, inputs);
         } else {
             // All non-provision jobs require the service to be provisioned
-            require(instanceProvisioned[serviceId], "Not provisioned");
+            if (!instanceProvisioned[serviceId]) revert NotProvisioned(serviceId);
             if (job == JOB_EXTEND) {
                 (, uint64 additionalDays) = abi.decode(inputs, (string, uint64));
                 if (additionalDays == 0) revert InvalidLifetimeDays();
@@ -460,8 +506,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
         // Decode TradingProvisionRequest to extract vault config fields
         // Layout: (name, strategy_type, strategy_config_json, risk_params_json,
-        //          factory_address, asset_token, signers, required_signatures, ...)
-        (string memory botName,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,) = abi.decode(
+        //          factory_address, asset_token, signers, required_signatures, ...,
+        //          max_collateral_bps)
+        (string memory botName,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,, uint256 maxCollBps) = abi.decode(
             inner,
             (
                 string,
@@ -478,12 +525,22 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                 uint64,
                 uint64,
                 uint64,
-                uint64[]
+                uint64[],
+                uint256
             )
         );
 
+        ServiceRequestConfig memory svcCfg = _serviceConfigs[serviceId];
         _pendingProvisions[serviceId][jobCallId] =
-            PendingProvision({assetToken: assetToken, signers: signers, requiredSigs: requiredSigs, name: botName});
+            PendingProvision({
+                assetToken: assetToken,
+                signers: signers,
+                requiredSigs: requiredSigs,
+                name: botName,
+                policyConfig: svcCfg.policyConfig,
+                feeConfig: svcCfg.feeConfig,
+                maxCollateralBps: maxCollBps
+            });
     }
 
     /// @notice Creates a per-bot vault when a provision job completes.
@@ -542,7 +599,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                 requiredSigs,
                 botName,
                 symbol,
-                salt
+                salt,
+                pp.policyConfig,
+                pp.feeConfig
             );
 
         botVaults[serviceId][jobCallId] = vault;
@@ -559,10 +618,23 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             IAccessControl(vault).grantRole(VAULT_CREATOR_ROLE, svcCfg.requester);
         }
 
+        // Configure CLOB collateral cap if requested
+        if (pp.maxCollateralBps > 0) {
+            ITradingVault(vault).setMaxCollateralBps(pp.maxCollateralBps);
+        }
+
         // Cleanup stored inputs
         delete _pendingProvisions[serviceId][jobCallId];
 
         emit BotVaultDeployed(serviceId, jobCallId, vault, shareToken);
+    }
+
+    function _defaultPolicyConfig() internal pure returns (PolicyEngine.PolicyConfig memory) {
+        return PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500});
+    }
+
+    function _defaultFeeConfig() internal pure returns (FeeDistributor.FeeConfig memory) {
+        return FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000});
     }
 
     /// @dev Convert uint64 to decimal string (for share token symbols).
@@ -595,7 +667,9 @@ interface IVaultFactory {
         uint256 requiredSigs,
         string calldata name,
         string calldata symbol,
-        bytes32 salt
+        bytes32 salt,
+        PolicyEngine.PolicyConfig calldata policyConfig,
+        FeeDistributor.FeeConfig calldata feeConfig
     ) external returns (address vault, address shareToken);
 
     function createBotVault(
@@ -607,8 +681,15 @@ interface IVaultFactory {
         uint256 requiredSigs,
         string calldata name,
         string calldata symbol,
-        bytes32 salt
+        bytes32 salt,
+        PolicyEngine.PolicyConfig calldata policyConfig,
+        FeeDistributor.FeeConfig calldata feeConfig
     ) external returns (address vault, address shareToken);
 
     function getServiceVaults(uint64 serviceId) external view returns (address[] memory);
+}
+
+/// @notice Minimal interface for TradingVault collateral configuration
+interface ITradingVault {
+    function setMaxCollateralBps(uint256 bps) external;
 }

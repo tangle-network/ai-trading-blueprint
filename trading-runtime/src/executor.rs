@@ -1,16 +1,23 @@
 //! Trade execution pipeline — wires adapters, vault encoding, and chain
 //! submission into a single `execute_validated_trade` call.
+//!
+//! Includes pre-submission transaction simulation to detect malicious payloads
+//! before they hit the chain.
 
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 
 use crate::adapters::{
     ActionParams, EncodedAction, ProtocolAdapter, aave_v3::AaveV3Adapter, gmx_v2::GmxV2Adapter,
-    morpho::MorphoAdapter, polymarket::PolymarketAdapter, uniswap_v3::UniswapV3Adapter,
-    vertex::VertexAdapter,
+    morpho::MorphoAdapter, polymarket::PolymarketAdapter, twap::TwapAdapter,
+    uniswap_v3::UniswapV3Adapter, vertex::VertexAdapter,
 };
 use crate::chain::ChainClient;
 use crate::error::TradingError;
+use crate::simulator::{
+    SimulationRequest, TransactionSimulator,
+    risk_analyzer::{TradeContext, analyze_simulation},
+};
 use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::VaultClient;
 
@@ -22,10 +29,11 @@ pub struct TransactionOutcome {
     pub gas_used: Option<u128>,
 }
 
-/// Wires adapter encoding → vault execute encoding → chain transaction submission.
+/// Wires adapter encoding → simulation → vault execute encoding → chain transaction submission.
 pub struct TradeExecutor {
     vault_client: VaultClient,
     chain_client: ChainClient,
+    simulator: Option<Box<dyn TransactionSimulator>>,
 }
 
 impl TradeExecutor {
@@ -44,10 +52,57 @@ impl TradeExecutor {
         let vault_client =
             VaultClient::new(vault_address.to_string(), rpc_url.to_string(), chain_id);
         let chain_client = ChainClient::new(rpc_url, private_key, chain_id)?;
+        let sim_config = crate::simulator::SimulatorConfig::from_env();
+        let simulator = crate::simulator::create_simulator(rpc_url.to_string(), &sim_config);
         Ok(Self {
             vault_client,
             chain_client,
+            simulator: Some(simulator),
         })
+    }
+
+    /// Create an executor without transaction simulation.
+    pub fn new_without_simulation(
+        vault_address: &str,
+        rpc_url: &str,
+        private_key: &str,
+        chain_id: u64,
+    ) -> Result<Self, TradingError> {
+        let vault_client =
+            VaultClient::new(vault_address.to_string(), rpc_url.to_string(), chain_id);
+        let chain_client = ChainClient::new(rpc_url, private_key, chain_id)?;
+        Ok(Self {
+            vault_client,
+            chain_client,
+            simulator: None,
+        })
+    }
+
+    /// Create an executor using a shared `ChainClient`.
+    ///
+    /// Use this in multi-bot mode to share a single provider across requests.
+    /// Alloy's `NonceFiller` manages nonces per-provider, so a shared provider
+    /// serializes nonce allocation and prevents duplicates from concurrent requests.
+    pub fn with_shared_chain_client(
+        vault_address: &str,
+        rpc_url: &str,
+        chain_id: u64,
+        chain_client: ChainClient,
+    ) -> Self {
+        let vault_client =
+            VaultClient::new(vault_address.to_string(), rpc_url.to_string(), chain_id);
+        let sim_config = crate::simulator::SimulatorConfig::from_env();
+        let simulator = crate::simulator::create_simulator(rpc_url.to_string(), &sim_config);
+        Self {
+            vault_client,
+            chain_client,
+            simulator: Some(simulator),
+        }
+    }
+
+    /// Get a reference to the underlying chain client.
+    pub fn chain_client(&self) -> &ChainClient {
+        &self.chain_client
     }
 
     /// Execute a validated trade on-chain.
@@ -90,6 +145,13 @@ impl TradeExecutor {
         let amount = decimal_to_u256(&intent.amount_in)?;
         let min_output = decimal_to_u256(&intent.min_amount_out)?;
 
+        // Resolve vault address from the vault client
+        let vault_address: Address = self
+            .vault_client
+            .vault_address
+            .parse()
+            .map_err(|e| TradingError::VaultError(format!("Invalid vault address: {e}")))?;
+
         let params = ActionParams {
             action: intent.action.clone(),
             token_in,
@@ -97,10 +159,88 @@ impl TradeExecutor {
             amount,
             min_output,
             extra: intent.metadata.clone(),
+            vault_address,
         };
 
         // 3. Encode the action
         let encoded: EncodedAction = adapter.encode_action(&params)?;
+
+        // 3b. Simulate the transaction before execution
+        if let Some(ref simulator) = self.simulator {
+            let sim_request = SimulationRequest {
+                from: vault_address,
+                to: encoded.target,
+                data: encoded.calldata.clone(),
+                value: encoded.value,
+                block_number: None,
+                token_addresses: vec![token_in, token_out],
+                balance_check_account: Some(vault_address),
+            };
+
+            match simulator.simulate(sim_request).await {
+                Ok(sim_result) => {
+                    let risk = analyze_simulation(
+                        &sim_result,
+                        &TradeContext {
+                            vault_address,
+                            token_in,
+                            token_out,
+                            amount_in: params.amount,
+                            min_output: params.min_output,
+                            known_protocol_addresses: adapter.known_addresses(),
+                        },
+                    );
+
+                    if !risk.safe {
+                        tracing::error!(
+                            risk_score = risk.risk_score,
+                            warnings = ?risk.warnings,
+                            "Transaction simulation detected suspicious behavior — rejecting trade"
+                        );
+                        return Err(TradingError::SimulationRejected {
+                            risk_score: risk.risk_score,
+                            warnings: risk
+                                .warnings
+                                .iter()
+                                .map(|w| w.to_string())
+                                .collect(),
+                        });
+                    }
+
+                    tracing::info!(
+                        risk_score = risk.risk_score,
+                        gas_used = sim_result.gas_used,
+                        "Simulation passed — proceeding with execution"
+                    );
+                }
+                Err(e) => {
+                    // Simulation failure is not fatal — log and proceed
+                    tracing::warn!("Transaction simulation failed (non-fatal): {e}");
+                }
+            }
+        }
+
+        // 3c. Execute pre-calls (e.g., ERC20 approvals) before the main vault call
+        for pre_call in &encoded.pre_calls {
+            let pre_target: Address = pre_call.target;
+            let pre_request = alloy::rpc::types::TransactionRequest::default()
+                .to(pre_target)
+                .input(pre_call.calldata.clone().into())
+                .value(pre_call.value);
+
+            let pre_pending = self
+                .chain_client
+                .provider
+                .send_transaction(pre_request)
+                .await
+                .map_err(|e| {
+                    TradingError::VaultError(format!("Pre-call send failed: {e}"))
+                })?;
+
+            pre_pending.get_receipt().await.map_err(|e| {
+                TradingError::VaultError(format!("Pre-call receipt failed: {e}"))
+            })?;
+        }
 
         // 4. Collect validator signatures and scores
         let (signatures, scores) = collect_validator_data(validation)?;
@@ -166,6 +306,17 @@ pub fn get_adapter(protocol: &str) -> Result<Box<dyn ProtocolAdapter + Send>, Tr
         "morpho" => Ok(Box::new(MorphoAdapter::new())),
         "vertex" => Ok(Box::new(VertexAdapter::new())),
         "polymarket" => Ok(Box::new(PolymarketAdapter::new())),
+        "twap_uniswap_v3" => {
+            let inner = Box::new(UniswapV3Adapter::new());
+            // Default: 4 slices, 60s interval. Callers can override via metadata.
+            let num_slices = 4;
+            let interval_secs = 60;
+            Ok(Box::new(TwapAdapter::new(inner, num_slices, interval_secs)))
+        }
+        "polymarket_clob" => Err(TradingError::AdapterError {
+            protocol: "polymarket_clob".into(),
+            message: "CLOB trades bypass the vault executor — route through execute_clob_trade()".into(),
+        }),
         other => Err(TradingError::AdapterError {
             protocol: other.to_string(),
             message: "Unknown protocol".to_string(),
@@ -176,9 +327,17 @@ pub fn get_adapter(protocol: &str) -> Result<Box<dyn ProtocolAdapter + Send>, Tr
 /// Convert `rust_decimal::Decimal` to `U256`.
 ///
 /// Treats the decimal value as a raw integer (truncates fractional part).
+/// Logs a warning if non-zero fractional digits are dropped.
 fn decimal_to_u256(d: &rust_decimal::Decimal) -> Result<U256, TradingError> {
-    // Truncate to integer
-    let int_str = d.trunc().to_string();
+    let truncated = d.trunc();
+    if *d != truncated {
+        tracing::warn!(
+            original = %d,
+            truncated = %truncated,
+            "Decimal→U256 truncated fractional part"
+        );
+    }
+    let int_str = truncated.to_string();
     // Handle negative values
     if int_str.starts_with('-') {
         return Err(TradingError::VaultError(
@@ -239,6 +398,13 @@ mod tests {
         assert!(get_adapter("uniswap_v3").is_ok());
         assert!(get_adapter("aave_v3").is_ok());
         assert!(get_adapter("gmx_v2").is_ok());
+        assert!(get_adapter("twap_uniswap_v3").is_ok());
+    }
+
+    #[test]
+    fn test_get_adapter_clob_rejected() {
+        let err = get_adapter("polymarket_clob").err().expect("should error");
+        assert!(err.to_string().contains("bypass"), "{err}");
     }
 
     #[test]

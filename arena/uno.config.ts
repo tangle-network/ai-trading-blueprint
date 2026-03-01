@@ -328,6 +328,9 @@ export default defineConfig({
     'i-ph:user',
     'i-ph:plus',
     'i-ph:gear',
+    // Blueprint selector icons (dynamic via bp.icon)
+    'i-ph:cloud',
+    'i-ph:shield-check',
     // @tangle/agent-ui icons
     'i-ph:check-circle',
     'i-ph:terminal-window',

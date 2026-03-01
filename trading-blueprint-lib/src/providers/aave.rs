@@ -20,7 +20,7 @@ impl TradingProvider for AaveV3Provider {
     }
 
     fn setup_commands(&self) -> Vec<String> {
-        vec!["pip install web3 2>/dev/null".into()]
+        vec![] // Agent installs npm packages during bootstrap
     }
 
     fn required_env_vars(&self) -> &[&'static str] {

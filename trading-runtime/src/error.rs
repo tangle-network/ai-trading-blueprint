@@ -23,6 +23,9 @@ pub enum TradingError {
     #[error("Adapter error: {protocol} — {message}")]
     AdapterError { protocol: String, message: String },
 
+    #[error("CLOB error ({protocol}): {message}")]
+    ClobError { protocol: String, message: String },
+
     #[error("Market data unavailable: {0}")]
     MarketDataUnavailable(String),
 
@@ -43,6 +46,12 @@ pub enum TradingError {
 
     #[error("Timeout: {0}")]
     Timeout(String),
+
+    #[error("Simulation rejected (risk_score={risk_score}): {}", warnings.join("; "))]
+    SimulationRejected {
+        risk_score: u32,
+        warnings: Vec<String>,
+    },
 }
 
 impl From<reqwest::Error> for TradingError {

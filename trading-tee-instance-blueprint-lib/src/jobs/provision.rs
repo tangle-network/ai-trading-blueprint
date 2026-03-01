@@ -33,11 +33,12 @@ pub async fn tee_deprovision(
     TangleArg(_request): TangleArg<TradingControlRequest>,
 ) -> Result<TangleResult<JsonResponse>, String> {
     let bot = require_instance_bot()?;
-    let backend = tee_backend();
+    let backend = tee_backend().map_err(|e| format!("TEE backend error: {e}"))?;
+    let backend_ref: &dyn sandbox_runtime::tee::TeeBackend = backend.as_ref();
     let response = trading_blueprint_lib::jobs::deprovision_core(
         &bot.sandbox_id,
         false,
-        Some(backend.as_ref()),
+        Some(backend_ref),
     )
     .await?;
     clear_instance_bot_id()?;

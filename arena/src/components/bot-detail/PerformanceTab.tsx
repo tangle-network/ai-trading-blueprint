@@ -5,6 +5,7 @@ import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { useBotMetrics } from '~/lib/hooks/useBotApi';
+import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 
 interface PerformanceTabProps {
   bot: Bot;
@@ -16,7 +17,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
   const chartTheme = useChartTheme();
 
   // Try loading real metrics from bot API
-  const { data: apiMetrics } = useBotMetrics(bot.id);
+  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id);
 
   // Use API metrics for sparkline if available, otherwise use bot.sparklineData
   const sparklineData = useMemo(() => {
@@ -141,6 +142,26 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
       color: '',
     },
   ];
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Performance (30D)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-[320px] w-full" />
+          </CardContent>
+        </Card>
+        <div className="grid sm:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

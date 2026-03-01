@@ -23,6 +23,7 @@ export function FilterBar({ search, onSearchChange, timePeriod, onTimePeriodChan
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           className="pl-9"
+          aria-label="Search bots or strategies"
         />
       </div>
 

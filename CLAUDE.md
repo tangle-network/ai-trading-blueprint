@@ -25,6 +25,31 @@ The Manager uses a multi-step pipeline to find and spawn blueprints. When tests 
 ### Test infrastructure ordering matters
 Integration tests with multiple infrastructure components (Anvil, validators, Manager, binary) have ordering constraints. Document why components start in a particular order. When a component needs config from another (e.g., validators need the contract address for EIP-712 signing), either pre-compute deterministic values or accept partial coverage with clear comments about what's covered elsewhere.
 
+### Shared UI package ownership (required for UI changes)
+Use these boundaries whenever editing `arena/src`:
+
+- `@tangle/blueprint-ui`:
+  - Chain and contract primitives (`publicClient`, address/chain helpers, ABI exports)
+  - Blueprint infra hooks and stores (operators, quotes, provisioning, tx/session state)
+  - Reusable design-system components/layout primitives
+- `@tangle/agent-ui`:
+  - Agent chat/session UX (message rendering, run grouping, tool previews)
+  - Sidecar auth/session helpers and PTY terminal integration
+  - Generic agent-facing UI utilities from `@tangle/agent-ui/primitives`
+- App-local (`arena/src/**`):
+  - Trading-specific workflows, copy, route composition, bot/vault domain logic
+
+When duplication appears across Arena and Sandbox UIs:
+- If logic is chain/infra-oriented and app-agnostic, move to `@tangle/blueprint-ui`.
+- If logic is agent/chat/session/terminal-oriented, move to `@tangle/agent-ui`.
+- If logic is product-specific, keep it app-local.
+
+PR gate before merging UI changes:
+- Search for near-duplicate code in both UIs (`jscpd` or targeted `rg`).
+- If the same pattern exists in both apps and exceeds roughly 20 lines, either extract it now or document why extraction is deferred.
+- Suggested command:
+  - `npx jscpd --min-lines 8 --min-tokens 80 --format ts,tsx --ignore "**/node_modules/**,**/.next/**,**/dist/**,**/build/**" /home/drew/code/blueprint-ui/src /home/drew/code/ai-agent-sandbox-blueprint/packages/agent-ui/src /home/drew/code/ai-agent-sandbox-blueprint/ui/src /home/drew/code/ai-trading-blueprints/arena/src`
+
 ## Running E2E Tests
 
 ### Prerequisites

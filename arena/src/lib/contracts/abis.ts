@@ -16,7 +16,22 @@ export const tradingVaultAbi = [
   { type: 'function', name: 'deposit', inputs: [{ name: 'assets', type: 'uint256' }, { name: 'receiver', type: 'address' }], outputs: [{ name: 'shares', type: 'uint256' }], stateMutability: 'nonpayable' },
   { type: 'function', name: 'redeem', inputs: [{ name: 'shares', type: 'uint256' }, { name: 'receiver', type: 'address' }, { name: 'owner_', type: 'address' }], outputs: [{ name: 'assets', type: 'uint256' }], stateMutability: 'nonpayable' },
   { type: 'function', name: 'paused', inputs: [], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
+  // Collateral views
+  { type: 'function', name: 'totalOutstandingCollateral', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'operatorCollateral', inputs: [{ name: 'operator', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'maxCollateralBps', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'availableCollateral', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+  // Collateral admin
+  { type: 'function', name: 'setMaxCollateralBps', inputs: [{ name: 'bps', type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'writeDownCollateral', inputs: [{ name: 'operator_', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
+  // Access control
+  { type: 'function', name: 'DEFAULT_ADMIN_ROLE', inputs: [], outputs: [{ name: '', type: 'bytes32' }], stateMutability: 'view' },
+  { type: 'function', name: 'hasRole', inputs: [{ name: 'role', type: 'bytes32' }, { name: 'account', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
+  // Events
   { type: 'event', name: 'TradeExecuted', inputs: [{ name: 'target', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }, { name: 'outputGained', type: 'uint256', indexed: false }, { name: 'outputToken', type: 'address', indexed: false }, { name: 'intentHash', type: 'bytes32', indexed: true }], anonymous: false },
+  { type: 'event', name: 'CollateralReleased', inputs: [{ name: 'operator', type: 'address', indexed: true }, { name: 'amount', type: 'uint256', indexed: false }, { name: 'recipient', type: 'address', indexed: true }, { name: 'intentHash', type: 'bytes32', indexed: true }], anonymous: false },
+  { type: 'event', name: 'CollateralReturned', inputs: [{ name: 'operator', type: 'address', indexed: true }, { name: 'amount', type: 'uint256', indexed: false }, { name: 'credited', type: 'uint256', indexed: false }], anonymous: false },
+  { type: 'event', name: 'CollateralWrittenDown', inputs: [{ name: 'operator', type: 'address', indexed: true }, { name: 'amount', type: 'uint256', indexed: false }], anonymous: false },
 ] as const;
 
 export const erc20Abi = [

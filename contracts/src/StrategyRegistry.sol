@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
+
 /// @title StrategyRegistry
 /// @notice Strategy catalog and discovery for trading strategies
-contract StrategyRegistry {
+contract StrategyRegistry is Ownable2Step {
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    error OnlyOwner();
     error OnlyStrategyOwner();
     error StrategyNotFound(uint256 strategyId);
     error StrategyNotActive(uint256 strategyId);
     error EmptyName();
-    error ZeroAddress();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -44,8 +44,6 @@ contract StrategyRegistry {
     // STATE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    address public owner;
-
     /// @notice Auto-incrementing strategy ID counter
     uint256 public nextStrategyId;
 
@@ -58,11 +56,6 @@ contract StrategyRegistry {
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
     // ═══════════════════════════════════════════════════════════════════════════
-
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert OnlyOwner();
-        _;
-    }
 
     modifier onlyStrategyOwner(uint256 strategyId) {
         if (strategies[strategyId].owner != msg.sender) revert OnlyStrategyOwner();
@@ -78,9 +71,7 @@ contract StrategyRegistry {
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    constructor(address _owner) {
-        if (_owner == address(0)) revert ZeroAddress();
-        owner = _owner;
+    constructor(address _owner) Ownable(_owner) {
         nextStrategyId = 1; // Start at 1 so 0 can be used as "not found"
     }
 
@@ -146,10 +137,10 @@ contract StrategyRegistry {
         emit StrategyDeactivated(strategyId);
     }
 
-    /// @notice Update a strategy's metrics
+    /// @notice Update a strategy's metrics (AUM and cumulative PnL)
     /// @param strategyId The strategy ID
-    /// @param aum The current AUM
-    /// @param pnl The current PnL
+    /// @param aum The current assets under management (in deposit token units)
+    /// @param pnl The cumulative profit/loss (negative for losses)
     function updateMetrics(uint256 strategyId, uint256 aum, int256 pnl)
         external
         strategyExists(strategyId)

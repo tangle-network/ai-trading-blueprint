@@ -217,6 +217,67 @@ impl VaultClient {
             value: "0".into(),
         })
     }
+
+    /// Encode a releaseCollateral call for CLOB trading.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_release_collateral(
+        &self,
+        amount: &str,
+        recipient: &str,
+        intent_hash: [u8; 32],
+        deadline: U256,
+        signatures: Vec<Vec<u8>>,
+        scores: Vec<U256>,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let amount_u256 = Self::parse_u256(amount)?;
+        let recipient_addr = Self::parse_address(recipient)?;
+        let sig_bytes: Vec<Bytes> = signatures.into_iter().map(Bytes::from).collect();
+
+        let call = ITradingVault::releaseCollateralCall {
+            amount: amount_u256,
+            recipient: recipient_addr,
+            intentHash: FixedBytes::from(intent_hash),
+            deadline,
+            signatures: sig_bytes,
+            scores,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: "0".into(),
+        })
+    }
+
+    /// Encode a returnCollateral call.
+    pub fn encode_return_collateral(&self, amount: &str) -> Result<EncodedTransaction, TradingError> {
+        let amount_u256 = Self::parse_u256(amount)?;
+
+        let call = ITradingVault::returnCollateralCall {
+            amount: amount_u256,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: "0".into(),
+        })
+    }
+
+    /// Encode a setMaxCollateralBps call.
+    pub fn encode_set_max_collateral_bps(&self, bps: &str) -> Result<EncodedTransaction, TradingError> {
+        let bps_u256 = Self::parse_u256(bps)?;
+
+        let call = ITradingVault::setMaxCollateralBpsCall {
+            bps: bps_u256,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: "0".into(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -277,5 +338,41 @@ mod tests {
         let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
         let result = client.encode_deposit("not-a-number", TEST_RECEIVER);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_release_collateral() {
+        let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
+        let tx = client
+            .encode_release_collateral(
+                "1000000",
+                TEST_RECEIVER,
+                [0u8; 32],
+                U256::from(9999999),
+                vec![vec![0u8; 65], vec![0u8; 65]],
+                vec![U256::from(80), U256::from(75)],
+            )
+            .unwrap();
+        assert_eq!(tx.to, TEST_VAULT);
+        assert!(tx.data.len() >= 4);
+        assert_eq!(tx.value, "0");
+    }
+
+    #[test]
+    fn test_encode_return_collateral() {
+        let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
+        let tx = client.encode_return_collateral("1000000").unwrap();
+        assert_eq!(tx.to, TEST_VAULT);
+        assert!(tx.data.len() >= 4);
+        assert_eq!(tx.value, "0");
+    }
+
+    #[test]
+    fn test_encode_set_max_collateral_bps() {
+        let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
+        let tx = client.encode_set_max_collateral_bps("5000").unwrap();
+        assert_eq!(tx.to, TEST_VAULT);
+        assert!(tx.data.len() >= 4);
+        assert_eq!(tx.value, "0");
     }
 }

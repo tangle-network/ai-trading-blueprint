@@ -38,6 +38,8 @@ pub fn seed_sandbox_record(
         stack: String::new(),
         owner: String::new(),
         tee_config: None,
+        extra_ports: std::collections::HashMap::new(),
+        tee_attestation_json: None,
     };
     record
 }

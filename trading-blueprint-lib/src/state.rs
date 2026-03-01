@@ -102,7 +102,7 @@ pub fn update_activation_progress(bot_id: &str, phase: &str, detail: &str) {
             .map(|p| p.started_at)
             .unwrap_or(now);
 
-        let _ = store.insert(
+        if let Err(e) = store.insert(
             activation_key(bot_id),
             ActivationProgress {
                 bot_id: bot_id.to_string(),
@@ -111,7 +111,9 @@ pub fn update_activation_progress(bot_id: &str, phase: &str, detail: &str) {
                 started_at,
                 updated_at: now,
             },
-        );
+        ) {
+            tracing::error!(bot_id, phase, "Failed to persist activation progress: {e}");
+        }
     }
 }
 
@@ -272,8 +274,26 @@ pub fn load_bot_trades(bot_id: &str) -> Vec<serde_json::Value> {
         .join("bot-trades")
         .join(format!("{bot_id}.json"));
     match std::fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Ok(data) => match serde_json::from_str(&data) {
+            Ok(trades) => trades,
+            Err(e) => {
+                tracing::error!(
+                    bot_id = %bot_id,
+                    path = %path.display(),
+                    "Corrupted trade data for bot: {e}"
+                );
+                Vec::new()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => {
+            tracing::error!(
+                bot_id = %bot_id,
+                path = %path.display(),
+                "Failed to read trade data file: {e}"
+            );
+            Vec::new()
+        }
     }
 }
 

@@ -132,10 +132,10 @@ async fn polymarket_ws_loop(
 
                                 let parts = Parts::new(JOB_WEBHOOK_EVENT);
                                 let job_call = JobCall::from_parts(parts, Bytes::from(body));
-                                call_id_counter += 1;
+                                call_id_counter = call_id_counter.saturating_add(1);
 
                                 if tx.send(job_call).is_err() {
-                                    tracing::info!(
+                                    tracing::error!(
                                         "Producer channel closed, stopping Polymarket WS"
                                     );
                                     return;

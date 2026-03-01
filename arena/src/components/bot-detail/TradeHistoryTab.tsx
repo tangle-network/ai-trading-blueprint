@@ -2,11 +2,57 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
-import { ValidatorCard, CopyButton, truncateAddress } from './shared/ValidatorComponents';
+import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { SkeletonTableRow } from '~/components/ui/Skeleton';
+import { VENUE_CONFIG } from '~/lib/types/trade';
+import type { TradeVenue } from '~/lib/types/trade';
 
 interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
+}
+
+function VenueBadge({ venue }: { venue: TradeVenue }) {
+  const config = VENUE_CONFIG[venue];
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-data font-semibold ${config.color}`}>
+      <span className={`${config.icon} text-sm`} />
+      {config.label}
+    </span>
+  );
+}
+
+const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
+  1: { name: 'Etherscan', base: 'https://etherscan.io/tx/' },
+  137: { name: 'Polygonscan', base: 'https://polygonscan.com/tx/' },
+  42161: { name: 'Arbiscan', base: 'https://arbiscan.io/tx/' },
+  8453: { name: 'Basescan', base: 'https://basescan.org/tx/' },
+  10: { name: 'Optimistic', base: 'https://optimistic.etherscan.io/tx/' },
+  31337: { name: 'Local', base: '' },
+};
+
+function explorerUrl(txHash: string, chainId?: number): string | null {
+  if (!chainId || chainId === 31337) return null;
+  const explorer = EXPLORER_URLS[chainId];
+  return explorer ? `${explorer.base}${txHash}` : null;
+}
+
+function TradeTableHead() {
+  return (
+    <TableHeader>
+      <TableRow className="hover:bg-transparent">
+        <TableHead>Time</TableHead>
+        <TableHead>Action</TableHead>
+        <TableHead className="hidden sm:table-cell">Venue</TableHead>
+        <TableHead>Pair</TableHead>
+        <TableHead className="text-right">Amount</TableHead>
+        <TableHead className="text-right">Price</TableHead>
+        <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
+        <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
+        <TableHead>Status</TableHead>
+      </TableRow>
+    </TableHeader>
+  );
 }
 
 function truncateHash(hash: string): string {
@@ -20,10 +66,14 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
 
   if (isLoading) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-        <div className="i-ph:arrow-clockwise text-3xl mb-3 mx-auto text-arena-elements-textTertiary animate-spin" />
-        Loading trades...
-      </div>
+      <Table>
+        <TradeTableHead />
+        <TableBody>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <SkeletonTableRow key={i} cols={9} />
+          ))}
+        </TableBody>
+      </Table>
     );
   }
 
@@ -38,17 +88,7 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
 
   return (
     <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead>Time</TableHead>
-          <TableHead>Action</TableHead>
-          <TableHead>Pair</TableHead>
-          <TableHead className="text-right">Amount</TableHead>
-          <TableHead className="text-right">Price</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
-          <TableHead>Status</TableHead>
-        </TableRow>
-      </TableHeader>
+      <TradeTableHead />
       <TableBody>
         {trades.map((trade) => {
           const responses = trade.validation?.responses ?? [];
@@ -63,8 +103,19 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
               key={trade.id}
               className={hasValidation ? 'cursor-pointer' : ''}
               onClick={() => hasValidation && setExpandedId(isExpanded ? null : trade.id)}
+              {...(hasValidation ? {
+                role: 'button' as const,
+                tabIndex: 0,
+                'aria-expanded': isExpanded,
+                onKeyDown: (e: React.KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setExpandedId(isExpanded ? null : trade.id);
+                  }
+                },
+              } : {})}
             >
-              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 7 : undefined}>
+              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 9 : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-2" onClick={(e) => e.stopPropagation()}>
@@ -79,6 +130,7 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                       <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'} className="text-xs">
                         {trade.action.toUpperCase()}
                       </Badge>
+                      <VenueBadge venue={trade.venue} />
                       <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
                         {trade.tokenIn}/{trade.tokenOut}
                       </span>
@@ -127,6 +179,13 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                       </m.div>
                     </AnimatePresence>
 
+                    {/* Simulation detail */}
+                    {trade.validation?.simulation && (
+                      <div className="mt-3">
+                        <SimulationDetail simulation={trade.validation.simulation} />
+                      </div>
+                    )}
+
                     {/* Reasoning fallback */}
                     {responses.length === 0 && trade.validatorReasoning && (
                       <div className="mt-2 px-1">
@@ -152,6 +211,9 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                     <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
                       {trade.action.toUpperCase()}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <VenueBadge venue={trade.venue} />
                   </TableCell>
                   <TableCell className="font-display font-medium text-sm">
                     {trade.tokenIn}/{trade.tokenOut}
@@ -192,6 +254,13 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                       )}
                     </div>
                   </TableCell>
+                  <TableCell className="text-center hidden md:table-cell">
+                    {trade.validation?.simulation ? (
+                      <SimulationBadge simulation={trade.validation.simulation} />
+                    ) : (
+                      <span className="text-arena-elements-textTertiary font-data text-xs">-</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <Badge
@@ -210,11 +279,26 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                           trade.status
                         )}
                       </Badge>
-                      {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (
-                        <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
-                          {truncateHash(trade.txHash)}
-                        </span>
-                      )}
+                      {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (() => {
+                        const url = explorerUrl(trade.txHash!, trade.chainId);
+                        return url ? (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
+                            title={trade.txHash}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {truncateHash(trade.txHash!)}
+                            <span className="i-ph:arrow-square-out text-[10px]" />
+                          </a>
+                        ) : (
+                          <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+                            {truncateHash(trade.txHash!)}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </TableCell>
                 </>

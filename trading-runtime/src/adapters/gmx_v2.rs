@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter, parse_address_or};
+use super::{encode_erc20_approve, parse_address_or, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -79,6 +79,7 @@ impl GmxV2Adapter {
         size_delta_usd: U256,
         is_long: bool,
         is_increase: bool,
+        vault: Address,
     ) -> Bytes {
         let order_type = if is_increase {
             ORDER_TYPE_MARKET_INCREASE
@@ -88,8 +89,8 @@ impl GmxV2Adapter {
 
         let call = IExchangeRouter::createOrderCall {
             params: IExchangeRouter::CreateOrderParams {
-                receiver: Address::ZERO,
-                cancellationReceiver: Address::ZERO,
+                receiver: vault,
+                cancellationReceiver: vault,
                 callbackContract: Address::ZERO,
                 uiFeeReceiver: Address::ZERO,
                 market,
@@ -129,55 +130,97 @@ impl ProtocolAdapter for GmxV2Adapter {
         SUPPORTED_CHAINS.to_vec()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        vec![self.exchange_router, self.order_vault]
+    }
+
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
+        validate_vault_address(params, "gmx_v2")?;
+
         let market = parse_address_or(
             params.extra.get("market"),
             "0x0000000000000000000000000000000000000000",
-        );
+        )?;
 
         match params.action {
             Action::OpenLong => {
-                let calldata =
-                    self.encode_create_order(market, params.token_in, params.amount, true, true);
+                let calldata = self.encode_create_order(
+                    market,
+                    params.token_in,
+                    params.amount,
+                    true,
+                    true,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.exchange_router,
+                        params.amount,
+                    )],
                 })
             }
             Action::OpenShort => {
-                let calldata =
-                    self.encode_create_order(market, params.token_in, params.amount, false, true);
+                let calldata = self.encode_create_order(
+                    market,
+                    params.token_in,
+                    params.amount,
+                    false,
+                    true,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.exchange_router,
+                        params.amount,
+                    )],
                 })
             }
             Action::CloseLong => {
-                let calldata =
-                    self.encode_create_order(market, params.token_in, params.amount, true, false);
+                let calldata = self.encode_create_order(
+                    market,
+                    params.token_in,
+                    params.amount,
+                    true,
+                    false,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             Action::CloseShort => {
-                let calldata =
-                    self.encode_create_order(market, params.token_in, params.amount, false, false);
+                let calldata = self.encode_create_order(
+                    market,
+                    params.token_in,
+                    params.amount,
+                    false,
+                    false,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -195,6 +238,7 @@ mod tests {
     const TOKEN_WETH: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_USDC: &str = "0x0000000000000000000000000000000000000002";
     const ETH_USD_MARKET: &str = "0x0000000000000000000000000000000000000099";
+    const VAULT: &str = "0x0000000000000000000000000000000000000088";
 
     #[test]
     fn test_protocol_id() {
@@ -218,6 +262,7 @@ mod tests {
             amount: U256::from(50_000_000_000u64),
             min_output: U256::ZERO,
             extra: serde_json::json!({"market": ETH_USD_MARKET}),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(
@@ -225,6 +270,7 @@ mod tests {
             GMX_V2_EXCHANGE_ROUTER.parse::<Address>().unwrap()
         );
         assert!(result.calldata.len() > 4);
+        assert_eq!(result.pre_calls.len(), 1);
     }
 
     #[test]
@@ -237,6 +283,7 @@ mod tests {
             amount: U256::from(25_000_000_000u64),
             min_output: U256::ZERO,
             extra: serde_json::json!({"market": ETH_USD_MARKET}),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(
@@ -255,6 +302,7 @@ mod tests {
             amount: U256::from(100u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
         };
         assert!(adapter.encode_action(&params).is_err());
     }

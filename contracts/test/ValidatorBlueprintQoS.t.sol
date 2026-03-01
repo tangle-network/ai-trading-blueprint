@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/blueprints/ValidatorBlueprint.sol";
+import "tnt-core/BlueprintServiceManagerBase.sol";
 
 /// @title ValidatorBlueprintQoSTest
 /// @notice Tests for ValidatorBlueprint: registration via protocol hooks,
@@ -73,7 +74,9 @@ contract ValidatorBlueprintQoSTest is Test {
     }
 
     function test_onRegister_onlyFromTangle() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+        ));
         blueprint.onRegister{value: 0}(operator1, abi.encode(serviceId));
     }
 

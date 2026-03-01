@@ -68,6 +68,7 @@ sol! {
         uint64 memory_mb;
         uint64 max_lifetime_days;
         uint64[] validator_service_ids;
+        uint256 max_collateral_bps;
     }
 
     struct TradingExtendRequest {

@@ -20,7 +20,7 @@ impl TradingProvider for PolymarketProvider {
     }
 
     fn setup_commands(&self) -> Vec<String> {
-        vec!["pip install py-clob-client 2>/dev/null".into()]
+        vec![] // Tools are pre-built and deployed during activation
     }
 
     fn required_env_vars(&self) -> &[&'static str] {
@@ -253,9 +253,9 @@ mod tests {
     }
 
     #[test]
-    fn test_polymarket_setup_commands_non_empty() {
+    fn test_polymarket_setup_commands_empty() {
+        // Tools are pre-built and deployed via activate.rs, not provider setup_commands
         let p = PolymarketProvider;
-        assert!(!p.setup_commands().is_empty());
-        assert!(p.setup_commands()[0].contains("py-clob-client"));
+        assert!(p.setup_commands().is_empty());
     }
 }

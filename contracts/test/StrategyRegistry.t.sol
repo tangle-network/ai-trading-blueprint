@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./helpers/Setup.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract StrategyRegistryTest is Setup {
     function setUp() public override {
@@ -221,7 +222,7 @@ contract StrategyRegistryTest is Setup {
     }
 
     function test_constructor_revertsOnZeroAddress() public {
-        vm.expectRevert(StrategyRegistry.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
         new StrategyRegistry(address(0));
     }
 }

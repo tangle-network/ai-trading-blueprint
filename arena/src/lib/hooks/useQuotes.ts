@@ -3,7 +3,7 @@ import { createClient } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
 import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
 import { type Address, sha256 as viemSha256, toHex } from 'viem';
-import type { DiscoveredOperator } from '@tangle/blueprint-ui';
+import { resolveOperatorRpc, type DiscoveredOperator } from '@tangle/blueprint-ui';
 import {
   PricingEngine,
   GetPriceRequestSchema,
@@ -154,32 +154,6 @@ function mapQuoteDetails(
       securityCommitments,
     },
   };
-}
-
-/** Rewrite an operator's registered RPC address so the browser can reach it.
- *  Mirrors the logic in chains.ts: if the RPC hostname looks non-routable
- *  (e.g. `operator1.local`) and we're accessing the page from a different host,
- *  swap the RPC hostname to match the page hostname. Also ensures http:// prefix. */
-function resolveOperatorRpc(raw: string): string {
-  if (typeof window === 'undefined') return raw;
-  // Ensure protocol prefix so URL constructor works
-  const withProto = raw.includes('://') ? raw : `http://${raw}`;
-  try {
-    const url = new URL(withProto);
-    const pageHost = window.location.hostname;
-    // Non-routable: .local, plain hostnames without dots, 127.x, localhost
-    const isNonRoutable =
-      url.hostname.endsWith('.local') ||
-      !url.hostname.includes('.') ||
-      url.hostname === '127.0.0.1' ||
-      url.hostname === 'localhost';
-    if (isNonRoutable && pageHost !== url.hostname) {
-      url.hostname = pageHost;
-    }
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return withProto;
-  }
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────

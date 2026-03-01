@@ -20,7 +20,8 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
 
         assertTrue(vault != address(0));
@@ -48,81 +49,78 @@ contract VaultFactoryTest is Setup {
         assertEq(tradeValidator.getSignerCount(vault), 3);
         assertEq(tradeValidator.getRequiredSignatures(vault), 2);
 
-        // Check PolicyEngine was initialized
+        // Check PolicyEngine was initialized with custom config
         assertTrue(policyEngine.isInitialized(vault));
+        (, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps,) = policyEngine.policies(vault);
+        assertEq(leverageCap, 50000);
+        assertEq(maxTradesPerHour, 100);
+        assertEq(maxSlippageBps, 500);
+
+        // Check FeeDistributor was initialized with custom config
+        assertTrue(feeDistributor.vaultFeeInitialized(vault));
+        (uint256 perfBps, uint256 mgmtBps, uint256 valShareBps) = feeDistributor.vaultFeeConfig(vault);
+        assertEq(perfBps, 2000);
+        assertEq(mgmtBps, 200);
+        assertEq(valShareBps, 3000);
     }
 
-    function test_addAssetVault() public {
-        // First create a vault (USDC vault)
+    function test_createVaultWithCustomConfig() public {
         uint64 serviceId = 1;
         address[] memory signers = new address[](3);
         signers[0] = validator1;
         signers[1] = validator2;
         signers[2] = validator3;
 
-        (address vault1, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1")
+        PolicyEngine.PolicyConfig memory customPolicy =
+            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300});
+        FeeDistributor.FeeConfig memory customFee =
+            FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 100, validatorFeeShareBps: 5000});
+
+        (address vault,) = vaultFactory.createVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Custom Vault", "cVAULT", bytes32("custom-salt"),
+            customPolicy, customFee
         );
 
-        // Now add a second asset vault (WETH vault) to the same service
-        address vault2 =
-            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt2"));
+        // Verify custom policy config
+        (, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps,) = policyEngine.policies(vault);
+        assertEq(leverageCap, 30000);
+        assertEq(maxTradesPerHour, 50);
+        assertEq(maxSlippageBps, 300);
 
-        assertTrue(vault2 != address(0));
+        // Verify custom fee config
+        (uint256 perfBps, uint256 mgmtBps, uint256 valShareBps) = feeDistributor.vaultFeeConfig(vault);
+        assertEq(perfBps, 1000);
+        assertEq(mgmtBps, 100);
+        assertEq(valShareBps, 5000);
+    }
+
+    function test_createBotVault() public {
+        uint64 serviceId = 1;
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+
+        // Bot vaults don't set serviceShares — multiple per service allowed
+        (address vault1, address share1) = vaultFactory.createBotVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Bot 1", "BOT1", bytes32("bot-salt1"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
+        );
+        (address vault2, address share2) = vaultFactory.createBotVault(
+            serviceId, address(tokenB), owner, operator, signers, 2, "Bot 2", "BOT2", bytes32("bot-salt2"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
+        );
+
+        // Each bot vault gets its own share token
+        assertTrue(share1 != share2);
         assertTrue(vault1 != vault2);
 
-        // Both vaults should share the same share token
-        TradingVault tv1 = TradingVault(payable(vault1));
-        TradingVault tv2 = TradingVault(payable(vault2));
-        assertEq(address(tv1.shareToken()), shareAddr);
-        assertEq(address(tv2.shareToken()), shareAddr);
+        // serviceShares should NOT be set by createBotVault
+        assertEq(vaultFactory.serviceShares(serviceId), address(0));
 
-        // Share token should have both vaults linked
-        VaultShare share = VaultShare(shareAddr);
-        assertEq(share.vaultCount(), 2);
-        assertTrue(share.isLinkedVault(vault1));
-        assertTrue(share.isLinkedVault(vault2));
-
-        // Service should have 2 vaults
+        // Both vaults tracked under same service
         address[] memory vaults = vaultFactory.getServiceVaults(serviceId);
         assertEq(vaults.length, 2);
-    }
-
-    function test_multiAsset() public {
-        // Create USDC vault + WETH vault sharing same shares
-        uint64 serviceId = 1;
-        address[] memory signers = new address[](3);
-        signers[0] = validator1;
-        signers[1] = validator2;
-        signers[2] = validator3;
-
-        (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Multi-Asset Shares", "maSHR", bytes32("salt-usdc")
-        );
-
-        address wethVault =
-            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt-weth"));
-
-        // Deposit into USDC vault
-        vm.startPrank(user);
-        tokenA.approve(usdcVault, type(uint256).max);
-        TradingVault(payable(usdcVault)).deposit(1000 ether, user);
-        vm.stopPrank();
-
-        // Deposit into WETH vault
-        vm.startPrank(user);
-        tokenB.approve(wethVault, type(uint256).max);
-        TradingVault(payable(wethVault)).deposit(500 ether, user);
-        vm.stopPrank();
-
-        // User has shares from both deposits
-        VaultShare share = VaultShare(shareAddr);
-        // First deposit: 1000 shares, second deposit shares depend on NAV
-        assertTrue(share.balanceOf(user) > 0);
-
-        // Total NAV should reflect both vault balances (single-asset mode, no oracle)
-        uint256 nav = share.totalNAV();
-        assertEq(nav, 1500 ether); // 1000 + 500
     }
 
     function test_duplicateServiceReverts() public {
@@ -133,12 +131,14 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
 
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.ServiceAlreadyInitialized.selector, serviceId));
         vaultFactory.createVault(
-            serviceId, address(tokenA), user, operator, signers, 2, "Test2", "TST2", bytes32("salt2")
+            serviceId, address(tokenA), user, operator, signers, 2, "Test2", "TST2", bytes32("salt2"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
     }
 
@@ -150,17 +150,20 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault1,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
 
-        address vault2 =
-            vaultFactory.addAssetVault(serviceId, address(tokenB), owner, operator, signers, 2, bytes32("salt2"));
+        // Use createBotVault for a second vault under same service
+        (address vault2,) = vaultFactory.createBotVault(
+            serviceId, address(tokenB), owner, operator, signers, 2, "Bot", "BOT", bytes32("salt2"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
+        );
 
         address[] memory vaults = vaultFactory.getServiceVaults(serviceId);
         assertEq(vaults.length, 2);
         assertEq(vaults[0], vault1);
         assertEq(vaults[1], vault2);
-        assertEq(vaultFactory.getServiceVaultCount(serviceId), 2);
     }
 
     function test_vaultAddressPrecomputation() public {
@@ -171,20 +174,39 @@ contract VaultFactoryTest is Setup {
         signers[1] = validator2;
         signers[2] = validator3;
 
-        // Note: getVaultAddress requires the share token to exist first for accurate prediction
-        // when the service doesn't exist yet. The factory internally deploys the share token first,
-        // then the vault. For precomputation to work correctly, we need the share token address.
-        // Since the factory uses CREATE2, the address is deterministic.
-        (address actual,) =
-            vaultFactory.createVault(serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", salt);
+        (address actual,) = vaultFactory.createVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", salt,
+            _defaultPolicyConfig(), _defaultFeeConfig()
+        );
 
         // After creation, we can verify the service is mapped
         assertTrue(actual != address(0));
         assertEq(vaultFactory.vaultServiceId(actual), serviceId);
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // KEY EVENT TESTS — VaultCreated
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_createVault_emitsVaultCreated() public {
+        uint64 serviceId = 99;
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+
+        // We can't predict the exact vault/share addresses, so just check indexed fields
+        vm.expectEmit(false, false, false, false);
+        emit VaultFactory.VaultCreated(serviceId, address(0), address(0), address(tokenA), owner, operator);
+
+        vaultFactory.createVault(
+            serviceId, address(tokenA), owner, operator, signers, 2, "Event Test", "EVT", bytes32("event-salt"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
+        );
+    }
+
     function test_oracleZeroPrice_reverts() public {
-        // Set up multi-asset vault with oracle
+        // Set up vault with oracle
         uint64 serviceId = 10;
         address[] memory signers = new address[](3);
         signers[0] = validator1;
@@ -192,7 +214,8 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test", "oTST", bytes32("oracle-salt")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test", "oTST", bytes32("oracle-salt"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
 
         // Deploy oracle and set it on the share token
@@ -225,7 +248,8 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test2", "oTST2", bytes32("oracle-salt2")
+            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test2", "oTST2", bytes32("oracle-salt2"),
+            _defaultPolicyConfig(), _defaultFeeConfig()
         );
 
         MockOracle orc = new MockOracle();

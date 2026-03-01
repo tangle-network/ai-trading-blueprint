@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "./helpers/Setup.sol";
 import "../src/blueprints/TradingBlueprint.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
+import "tnt-core/BlueprintServiceManagerBase.sol";
 
 /// @title TradingBlueprintMultiOpTest
 /// @notice Tests for TradingBlueprint multi-operator model, vault auto-deploy,
@@ -43,6 +44,9 @@ contract TradingBlueprintMultiOpTest is Setup {
         vm.prank(tangleCore);
         blueprint.setVaultFactory(address(vaultFactory));
 
+        // Authorize blueprint as a factory caller
+        vaultFactory.setAuthorizedCaller(address(blueprint), true);
+
         // Cache constants
         JOB_PROVISION = blueprint.JOB_PROVISION();
         JOB_CONFIGURE = blueprint.JOB_CONFIGURE();
@@ -63,13 +67,26 @@ contract TradingBlueprintMultiOpTest is Setup {
         signers[0] = validator1;
         signers[1] = validator2;
         signers[2] = validator3;
+        uint64[] memory validatorIds = new uint64[](0);
 
+        // Full TradingProvisionRequest tuple (matches frontend encoding)
         return abi.encode(
+            "Test Vault",    // name
+            "",              // strategyType
+            "",              // strategyConfigJson
+            "",              // riskParamsJson
+            address(0),      // factoryAddress (unused)
             address(tokenA), // assetToken
-            signers, // signers
-            uint256(2), // requiredSignatures (2-of-3)
-            "Test Vault", // name
-            "tVLT" // symbol
+            signers,         // signers
+            uint256(2),      // requiredSignatures (2-of-3)
+            uint256(0),      // chainId
+            "",              // rpcUrl
+            "",              // cron
+            uint64(0),       // cpuCores
+            uint64(0),       // memoryMb
+            uint64(0),       // maxLifetimeDays
+            validatorIds,    // validatorServiceIds
+            uint256(0)       // maxCollateralBps
         );
     }
 
@@ -366,7 +383,7 @@ contract TradingBlueprintMultiOpTest is Setup {
     function test_nonProvisionJob_requiresProvisioned() public {
         // JOB_CONFIGURE requires instanceProvisioned
         vm.prank(tangleCore);
-        vm.expectRevert("Not provisioned");
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.NotProvisioned.selector, serviceId));
         blueprint.onJobCall{value: 0}(serviceId, JOB_CONFIGURE, 1, "");
     }
 
@@ -375,17 +392,23 @@ contract TradingBlueprintMultiOpTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_onJobCall_onlyFromTangle() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+        ));
         blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, "");
     }
 
     function test_onJobResult_onlyFromTangle() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+        ));
         blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, "", "");
     }
 
     function test_setVaultFactory_onlyFromTangle() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+        ));
         blueprint.setVaultFactory(address(0xBEEF));
     }
 
@@ -470,7 +493,7 @@ contract TradingBlueprintMultiOpTest is Setup {
     function test_unknownJob_requiresProvisioned() public {
         // Jobs beyond JOB_EXTEND (e.g. job 15) also require instanceProvisioned
         vm.prank(tangleCore);
-        vm.expectRevert("Not provisioned");
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.NotProvisioned.selector, serviceId));
         blueprint.onJobCall{value: 0}(serviceId, 15, 1, "");
 
         // After provisioning, unknown jobs pass through
@@ -676,7 +699,9 @@ contract TradingBlueprintMultiOpTest is Setup {
             uint256(1), // requiredSigs
             "Test Bot",
             "tBOT",
-            bytes32("test-salt")
+            bytes32("test-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -697,7 +722,9 @@ contract TradingBlueprintMultiOpTest is Setup {
             uint256(3), // requiredSigs > signers.length
             "Test Bot",
             "tBOT",
-            bytes32("test-salt")
+            bytes32("test-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 }

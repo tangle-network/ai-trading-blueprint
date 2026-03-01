@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
@@ -52,6 +53,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error AssetBalanceDecreased(uint256 before, uint256 after_);
     error TargetNotWhitelisted(address target);
     error WithdrawalLocked(uint256 unlockTime);
+    error DepositAssetBelowReserve();
+    error ExcessiveDrawdown();
+    error InvalidBps();
+    error InsufficientLiquidity(uint256 requested, uint256 available);
+    error ExceedsCollateralLimit(uint256 requested, uint256 available);
+    error CollateralNotEnabled();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -65,6 +72,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event WindDownDeactivated(uint256 timestamp);
     event PositionUnwound(address indexed caller, address indexed target, uint256 assetGained);
     event DepositLockupUpdated(uint256 duration);
+    event HeldTokenDecimalMismatch(address indexed token, uint8 tokenDecimals, uint8 assetDecimals);
+    event DepositAssetReserveBpsUpdated(uint256 bps);
+    event AdminUnwindMaxDrawdownBpsUpdated(uint256 bps);
+    event CollateralReleased(address indexed operator, uint256 amount, address indexed recipient, bytes32 indexed intentHash);
+    event CollateralReturned(address indexed operator, uint256 amount, uint256 credited);
+    event CollateralWrittenDown(address indexed operator, uint256 amount);
+    event MaxCollateralBpsUpdated(uint256 bps);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -104,6 +118,24 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     mapping(address => uint256) public lastDepositTime;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // MULTI-ASSET NAV TRACKING
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    uint256 public constant MAX_HELD_TOKENS = 20;
+    address[] public heldTokens;
+    mapping(address => bool) public isHeldToken;
+    uint256 public depositAssetReserveBps;
+    uint256 public adminUnwindMaxDrawdownBps;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CLOB COLLATERAL MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    uint256 public totalOutstandingCollateral;
+    mapping(address => uint256) public operatorCollateral;
+    uint256 public maxCollateralBps; // 0 = disabled (default)
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -132,9 +164,6 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (operator != address(0)) {
             _grantRole(OPERATOR_ROLE, operator);
         }
-
-        // Approve fee distributor to pull fees from this vault
-        IERC20(assetToken).approve(address(_feeDistributor), type(uint256).max);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -147,13 +176,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @inheritdoc IERC7575
-    function asset() external view override returns (address) {
+    function asset() public view override returns (address) {
         return address(_asset);
     }
 
     /// @inheritdoc IERC7575
     function totalAssets() public view override returns (uint256) {
-        return _asset.balanceOf(address(this));
+        return IERC20(asset()).balanceOf(address(this)) + positionsValue() + totalOutstandingCollateral;
     }
 
     /// @dev Virtual offset to mitigate ERC-4626 inflation/donation attacks.
@@ -177,6 +206,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @inheritdoc IERC7575
+    /// @return Maximum depositable assets (0 when paused, type(uint256).max otherwise)
     function maxDeposit(address) external view override returns (uint256) {
         return paused() ? 0 : type(uint256).max;
     }
@@ -203,25 +233,38 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         shareToken.mint(receiver, shares);
 
-        // Track deposit time for lockup enforcement
-        lastDepositTime[receiver] = block.timestamp;
+        // Track deposit time for lockup enforcement.
+        // Only set for self-deposits to prevent griefing: an attacker depositing
+        // 1 wei to a victim's address must not reset the victim's lockup timer.
+        if (msg.sender == receiver) {
+            lastDepositTime[receiver] = block.timestamp;
+        }
 
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
     /// @inheritdoc IERC7575
-    function maxWithdraw(address owner_) external view override returns (uint256) {
+    /// @return Maximum withdrawable assets (capped by entitled shares and available liquidity)
+    function maxWithdraw(address owner_) public view override returns (uint256) {
         if (paused()) return 0;
-        uint256 shares = shareToken.balanceOf(owner_);
-        return convertToAssets(shares);
+        if (_isDepositLocked(owner_)) return 0;
+        uint256 entitled = convertToAssets(shareToken.balanceOf(owner_));
+        uint256 liquid = liquidAssets();
+        return entitled < liquid ? entitled : liquid;
     }
 
     /// @inheritdoc IERC7575
+    /// @dev Rounds UP to ensure the caller burns at least enough shares.
+    ///      ERC-4626 requires: previewWithdraw >= actual shares burned.
     function previewWithdraw(uint256 assets) external view override returns (uint256) {
-        return convertToShares(assets);
+        uint256 supply = shareToken.totalSupply() + _VIRTUAL_OFFSET;
+        uint256 nav = shareToken.totalNAV() + _VIRTUAL_OFFSET;
+        return (assets * supply + nav - 1) / nav;
     }
 
     /// @inheritdoc IERC7575
+    /// @dev Rounds shares UP (ceiling division) per ERC-4626 spec:
+    ///      withdraw must burn at least enough shares to cover the requested assets.
     function withdraw(uint256 assets, address receiver, address owner_)
         external
         override
@@ -233,8 +276,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (receiver == address(0)) revert ZeroAddress();
         _enforceDepositLockup(owner_);
 
-        shares = convertToShares(assets);
+        // Round UP: burn more shares to protect the vault from rounding exploits
+        uint256 supply = shareToken.totalSupply() + _VIRTUAL_OFFSET;
+        uint256 nav = shareToken.totalNAV() + _VIRTUAL_OFFSET;
+        shares = (assets * supply + nav - 1) / nav;
         if (shares == 0) revert ZeroShares();
+
+        uint256 liquid = liquidAssets();
+        if (assets > liquid) revert InsufficientLiquidity(assets, liquid);
 
         _spendShareAllowance(owner_, shares);
         shareToken.burn(owner_, shares);
@@ -244,9 +293,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @inheritdoc IERC7575
-    function maxRedeem(address owner_) external view override returns (uint256) {
+    function maxRedeem(address owner_) public view override returns (uint256) {
         if (paused()) return 0;
-        return shareToken.balanceOf(owner_);
+        if (_isDepositLocked(owner_)) return 0;
+        uint256 ownerShares = shareToken.balanceOf(owner_);
+        uint256 liquid = liquidAssets();
+        uint256 liquidShares = convertToShares(liquid);
+        return ownerShares < liquidShares ? ownerShares : liquidShares;
     }
 
     /// @inheritdoc IERC7575
@@ -268,6 +321,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
         assets = convertToAssets(shares);
         if (assets == 0) revert ZeroAmount();
+
+        uint256 liquid = liquidAssets();
+        if (assets > liquid) revert InsufficientLiquidity(assets, liquid);
 
         _spendShareAllowance(owner_, shares);
         shareToken.burn(owner_, shares);
@@ -355,7 +411,119 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 outputGained = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
+        _addHeldToken(params.outputToken);
+
+        if (depositAssetReserveBps > 0) {
+            uint256 total = totalAssets();
+            uint256 depositBalance = IERC20(asset()).balanceOf(address(this));
+            if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
+        }
+
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CLOB COLLATERAL MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Release vault collateral to an operator's EOA for off-chain CLOB trading.
+    /// @dev Same security model as execute(): OPERATOR_ROLE + m-of-n validator sigs + intent dedup.
+    ///      Outstanding collateral is tracked in totalAssets() so share price stays stable.
+    /// @param amount Amount of deposit asset to release
+    /// @param recipient Address to receive the collateral (typically operator's EOA)
+    /// @param intentHash Unique hash for intent deduplication
+    /// @param deadline EIP-712 signature deadline
+    /// @param signatures Validator signatures
+    /// @param scores Validator scores
+    function releaseCollateral(
+        uint256 amount,
+        address recipient,
+        bytes32 intentHash,
+        uint256 deadline,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (amount == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+        if (maxCollateralBps == 0) revert CollateralNotEnabled();
+
+        // Intent deduplication
+        if (executedIntents[intentHash]) revert IntentAlreadyExecuted(intentHash);
+        executedIntents[intentHash] = true;
+
+        // BPS cap: totalOutstanding + amount <= totalAssets * maxCollateralBps / 10000
+        // Use totalAssets() which already includes current totalOutstandingCollateral
+        uint256 maxAllowed = totalAssets() * maxCollateralBps / 10000;
+        if (totalOutstandingCollateral + amount > maxAllowed) {
+            revert ExceedsCollateralLimit(amount, maxAllowed - totalOutstandingCollateral);
+        }
+
+        // Validator signature check (same m-of-n as trades)
+        _checkValidators(intentHash, signatures, scores, deadline);
+
+        // CEI: update state before transfer
+        totalOutstandingCollateral += amount;
+        operatorCollateral[msg.sender] += amount;
+
+        _asset.safeTransfer(recipient, amount);
+
+        emit CollateralReleased(msg.sender, amount, recipient, intentHash);
+    }
+
+    /// @notice Return collateral to the vault. Permissionless — anyone can return funds.
+    /// @dev Credits against the sender's outstanding collateral. Any excess above
+    ///      outstanding is profit that increases vault NAV (share price goes up).
+    /// @param amount Amount of deposit asset to return
+    function returnCollateral(uint256 amount) external nonReentrant {
+        if (amount == 0) revert ZeroAmount();
+
+        _asset.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Credit against sender's outstanding, capped at their actual outstanding
+        uint256 outstanding = operatorCollateral[msg.sender];
+        uint256 credited = amount < outstanding ? amount : outstanding;
+
+        if (credited > 0) {
+            operatorCollateral[msg.sender] -= credited;
+            totalOutstandingCollateral -= credited;
+        }
+
+        emit CollateralReturned(msg.sender, amount, credited);
+    }
+
+    /// @notice Write down unreturnable collateral (admin acknowledges loss).
+    /// @dev Reduces outstanding tracking → totalAssets() drops → share price drops.
+    ///      LPs absorb the loss through reduced share value.
+    /// @param operator_ The operator whose collateral to write down
+    /// @param amount Amount to write down (capped at actual outstanding)
+    function writeDownCollateral(address operator_, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 outstanding = operatorCollateral[operator_];
+        uint256 actual = amount < outstanding ? amount : outstanding;
+        if (actual == 0) return;
+
+        operatorCollateral[operator_] -= actual;
+        totalOutstandingCollateral -= actual;
+
+        emit CollateralWrittenDown(operator_, actual);
+    }
+
+    /// @notice Enable/configure the collateral BPS cap.
+    /// @dev 0 = disabled (default for existing vaults), 5000 = 50% of NAV.
+    /// @param bps Max outstanding collateral as basis points of totalAssets
+    function setMaxCollateralBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (bps > 10000) revert InvalidBps();
+        maxCollateralBps = bps;
+        emit MaxCollateralBpsUpdated(bps);
+    }
+
+    /// @notice Available collateral: min(BPS cap headroom, liquid deposit asset balance).
+    function availableCollateral() external view returns (uint256) {
+        if (maxCollateralBps == 0) return 0;
+        uint256 maxAllowed = totalAssets() * maxCollateralBps / 10000;
+        uint256 headroom = maxAllowed > totalOutstandingCollateral ? maxAllowed - totalOutstandingCollateral : 0;
+        uint256 liquid = IERC20(asset()).balanceOf(address(this));
+        return headroom < liquid ? headroom : liquid;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -437,10 +605,22 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             revert TargetNotWhitelisted(target);
         }
 
+        uint256 totalBefore = totalAssets();
+        uint256 assetBefore = _asset.balanceOf(address(this));
+
         (bool success,) = target.call{value: value}(data);
         if (!success) revert ExecutionFailed();
 
-        emit PositionUnwound(msg.sender, target, 0);
+        if (adminUnwindMaxDrawdownBps > 0) {
+            uint256 totalAfter = totalAssets();
+            if (totalBefore > 0 && totalAfter * 10000 < totalBefore * (10000 - adminUnwindMaxDrawdownBps)) {
+                revert ExcessiveDrawdown();
+            }
+        }
+
+        uint256 assetAfter = _asset.balanceOf(address(this));
+        uint256 gained = assetAfter > assetBefore ? assetAfter - assetBefore : 0;
+        emit PositionUnwound(msg.sender, target, gained);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -470,10 +650,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // CIRCUIT BREAKER
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /// @notice Pause the vault, blocking deposits, withdrawals, redeems, and executions
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Unpause the vault, re-enabling all operations
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
@@ -503,20 +685,127 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         emit DepositLockupUpdated(duration);
     }
 
+    /// @notice Approve a specific fee allowance for the FeeDistributor (admin only)
+    /// @dev Uses forceApprove (SafeERC20) to handle tokens with non-standard approve behavior
+    function approveFeeAllowance(uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        IERC20(asset()).forceApprove(address(feeDistributor), amount);
+    }
+
+    /// @notice Set the minimum deposit asset reserve ratio (in BPS)
+    /// @dev When non-zero, execute() reverts if the deposit asset balance falls below
+    ///      this percentage of totalAssets after a trade. Prevents over-allocation to positions.
+    /// @param bps Reserve ratio in basis points (0 = no reserve, 5000 = 50%)
+    function setDepositAssetReserveBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (bps > 10000) revert InvalidBps();
+        depositAssetReserveBps = bps;
+        emit DepositAssetReserveBpsUpdated(bps);
+    }
+
+    /// @notice Set the maximum total-asset drawdown allowed per adminUnwind call (in BPS)
+    /// @dev When non-zero, adminUnwind() reverts if totalAssets decreases by more than this
+    ///      percentage. Limits the damage a CREATOR_ROLE holder can do in a single unwind.
+    ///      Default 0 means no drawdown limit — set a value for defense-in-depth.
+    /// @param bps Max drawdown in basis points (0 = unrestricted, 500 = 5%)
+    function setAdminUnwindMaxDrawdownBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (bps > 10000) revert InvalidBps();
+        adminUnwindMaxDrawdownBps = bps;
+        emit AdminUnwindMaxDrawdownBpsUpdated(bps);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MULTI-ASSET POSITION TRACKING
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Sum of held-token balances (raw units, same-decimal assumption).
+    /// @dev Only accurate when all held tokens share the deposit asset's decimals.
+    ///      Multi-asset vaults with mixed decimals should use VaultShare.totalNAV()
+    ///      with an oracle for USD-normalized valuation instead.
+    function positionsValue() public view returns (uint256 total) {
+        for (uint256 i = 0; i < heldTokens.length; i++) {
+            total += IERC20(heldTokens[i]).balanceOf(address(this));
+        }
+    }
+
+    /// @notice Get the list of non-deposit tokens held by this vault
+    function getHeldTokens() external view returns (address[] memory) {
+        return heldTokens;
+    }
+
+    /// @notice Number of non-deposit tokens currently held by this vault
+    function heldTokenCount() external view returns (uint256) {
+        return heldTokens.length;
+    }
+
+    /// @notice Deposit asset balance available for immediate withdrawal
+    function liquidAssets() public view returns (uint256) {
+        return IERC20(asset()).balanceOf(address(this));
+    }
+
+    /// @notice Replace the held token list (OPERATOR only). Skips the deposit asset and enforces MAX_HELD_TOKENS.
+    function updateHeldTokens(address[] calldata tokens) external onlyRole(OPERATOR_ROLE) {
+        // Clear existing
+        for (uint256 i = 0; i < heldTokens.length; i++) {
+            isHeldToken[heldTokens[i]] = false;
+        }
+        delete heldTokens;
+        // Add new (skip deposit asset, enforce max)
+        address depositAsset = asset();
+        for (uint256 i = 0; i < tokens.length && i < MAX_HELD_TOKENS; i++) {
+            if (tokens[i] != depositAsset && !isHeldToken[tokens[i]]) {
+                heldTokens.push(tokens[i]);
+                isHeldToken[tokens[i]] = true;
+            }
+        }
+    }
+
+    /// @notice Remove a single held token from the tracking list (OPERATOR only)
+    function removeHeldToken(address token) external onlyRole(OPERATOR_ROLE) {
+        _removeHeldToken(token);
+    }
+
+    function _addHeldToken(address token) internal {
+        if (token == address(0) || token == asset() || isHeldToken[token] || heldTokens.length >= MAX_HELD_TOKENS) return;
+        heldTokens.push(token);
+        isHeldToken[token] = true;
+
+        // Warn if decimals don't match — positionsValue() sums raw balances
+        try IERC20Metadata(token).decimals() returns (uint8 tokenDec) {
+            try IERC20Metadata(asset()).decimals() returns (uint8 assetDec) {
+                if (tokenDec != assetDec) {
+                    emit HeldTokenDecimalMismatch(token, tokenDec, assetDec);
+                }
+            } catch {}
+        } catch {}
+    }
+
+    function _removeHeldToken(address token) internal {
+        if (!isHeldToken[token]) return;
+        isHeldToken[token] = false;
+        for (uint256 i = 0; i < heldTokens.length; i++) {
+            if (heldTokens[i] == token) {
+                heldTokens[i] = heldTokens[heldTokens.length - 1];
+                heldTokens.pop();
+                break;
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // INTERNALS
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /// @dev Check if an address is currently within the deposit lockup period (view).
+    function _isDepositLocked(address owner_) internal view returns (bool) {
+        if (depositLockupDuration == 0) return false;
+        uint256 depositTime = lastDepositTime[owner_];
+        if (depositTime == 0) return false;
+        return block.timestamp < depositTime + depositLockupDuration;
+    }
+
     /// @dev Enforce deposit lockup: revert if the owner deposited too recently.
     function _enforceDepositLockup(address owner_) internal view {
-        if (depositLockupDuration > 0) {
-            uint256 depositTime = lastDepositTime[owner_];
-            if (depositTime > 0) {
-                uint256 unlockTime = depositTime + depositLockupDuration;
-                if (block.timestamp < unlockTime) {
-                    revert WithdrawalLocked(unlockTime);
-                }
-            }
+        if (_isDepositLocked(owner_)) {
+            revert WithdrawalLocked(lastDepositTime[owner_] + depositLockupDuration);
         }
     }
 

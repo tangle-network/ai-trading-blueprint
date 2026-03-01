@@ -1,13 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Input,
+  Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
+import { SecretsProviderFields, type SecretsEnvVar } from '~/components/secrets/SecretsProviderFields';
 import { updateProvision } from '~/lib/stores/provisions';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
-  AI_PROVIDERS,
   buildEnvForProvider,
   ACTIVATION_LABELS,
   DEFAULT_AI_PROVIDER,
@@ -36,13 +36,11 @@ export function SecretsModal({
   const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
   const [provider, setProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
-  const [extraEnvs, setExtraEnvs] = useState<{ id: number; key: string; value: string }[]>([]);
+  const [extraEnvs, setExtraEnvs] = useState<SecretsEnvVar[]>([]);
   const envIdRef = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
   const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
-
-  const providerConfig = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0];
 
   const [lookupError, setLookupError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -89,7 +87,16 @@ export function SecretsModal({
 
     if (pollRef.current) clearInterval(pollRef.current);
     let pollFailures = 0;
+    const pollStart = Date.now();
+    const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes hard cap
     pollRef.current = setInterval(async () => {
+      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+        if (pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+        return;
+      }
       try {
         const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
         if (res.ok) {
@@ -195,103 +202,17 @@ export function SecretsModal({
             </div>
           )}
 
-          {/* Provider selector */}
-          <div role="group" aria-label="AI Provider">
-            <span className="text-sm font-display font-medium text-arena-elements-textPrimary block mb-1.5">
-              AI Provider
-            </span>
-            <div className="flex gap-2">
-              {AI_PROVIDERS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => {
-                    setProvider(p.id);
-                    if (p.id === defaultProvider && DEFAULT_AI_API_KEY) {
-                      setApiKey(DEFAULT_AI_API_KEY);
-                    } else {
-                      setApiKey('');
-                    }
-                  }}
-                  className={`flex-1 px-3 py-2 rounded-md text-sm font-data border transition-colors ${
-                    provider === p.id
-                      ? 'border-violet-500 bg-violet-500/10 text-arena-elements-textPrimary'
-                      : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 text-arena-elements-textSecondary hover:border-arena-elements-borderColorActive'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-arena-elements-textTertiary mt-1">
-              Model: {providerConfig.modelName}
-            </p>
-          </div>
-
-          <div>
-            <label htmlFor="secrets-api-key" className="text-sm font-display font-medium text-arena-elements-textPrimary block mb-1.5">
-              API Key <span className="text-crimson-400">*</span>
-            </label>
-            <Input
-              id="secrets-api-key"
-              type="password"
-              placeholder={providerConfig.placeholder}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            {apiKey && DEFAULT_AI_API_KEY && apiKey === DEFAULT_AI_API_KEY && (
-              <p className="text-xs text-emerald-500 mt-1">
-                Pre-filled from local config
-              </p>
-            )}
-          </div>
-
-          {/* Extra env vars */}
-          {extraEnvs.map((env, i) => (
-            <div key={env.id} className="flex gap-2">
-              <Input
-                placeholder="KEY"
-                value={env.key}
-                onChange={(e) => {
-                  const updated = [...extraEnvs];
-                  updated[i] = { ...env, key: e.target.value };
-                  setExtraEnvs(updated);
-                }}
-                className="flex-1"
-              />
-              <Input
-                type="password"
-                placeholder="value"
-                value={env.value}
-                onChange={(e) => {
-                  const updated = [...extraEnvs];
-                  updated[i] = { ...env, value: e.target.value };
-                  setExtraEnvs(updated);
-                }}
-                className="flex-1"
-              />
-              <button
-                type="button"
-                onClick={() => setExtraEnvs(extraEnvs.filter((_, j) => j !== i))}
-                className="text-arena-elements-textTertiary hover:text-crimson-400 transition-colors px-1"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          ))}
-
-          <button
-            type="button"
-            onClick={() => {
-              envIdRef.current += 1;
-              setExtraEnvs([...extraEnvs, { id: envIdRef.current, key: '', value: '' }]);
-            }}
-            className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
-          >
-            + Add environment variable
-          </button>
+          <SecretsProviderFields
+            provider={provider}
+            setProvider={setProvider}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            extraEnvs={extraEnvs}
+            setExtraEnvs={setExtraEnvs}
+            envIdRef={envIdRef}
+            defaultProvider={defaultProvider}
+            variant="modal"
+          />
 
           {/* Activation progress */}
           {isSubmitting && activationPhase && (

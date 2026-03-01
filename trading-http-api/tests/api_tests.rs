@@ -16,6 +16,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
+
+/// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
+const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 use trading_runtime::executor::TradeExecutor;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::validator_client::ValidatorClient;
@@ -60,6 +63,9 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
         submitter_address: String::new(),
         sidecar_url: String::new(),
         sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: None,
+        clob_client: None,
     })
 }
 
@@ -68,6 +74,8 @@ fn auth_header() -> String {
 }
 
 fn execute_body() -> String {
+    // Unique intent hash per call to avoid dedup collisions across tests.
+    let unique_hash = format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
     serde_json::to_string(&serde_json::json!({
         "intent": {
             "strategy_id": "test-strat",
@@ -81,7 +89,7 @@ fn execute_body() -> String {
         "validation": {
             "approved": true,
             "aggregate_score": 85,
-            "intent_hash": "0xabc123",
+            "intent_hash": unique_hash,
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -750,6 +758,8 @@ fn multi_bot_state() -> Arc<MultiBotTradingState> {
                 None
             }
         }),
+        clob_client: None,
+        chain_client: None,
     })
 }
 
@@ -901,7 +911,7 @@ async fn test_multi_bot_execute_rejects_unapproved() {
         "validation": {
             "approved": false,
             "aggregate_score": 30,
-            "intent_hash": "0xabc123",
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -970,7 +980,7 @@ async fn test_execute_missing_intent() {
         "validation": {
             "approved": true,
             "aggregate_score": 85,
-            "intent_hash": "0xabc123",
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": []
         }
     }))
@@ -1158,6 +1168,8 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
                 None
             }
         }),
+        clob_client: None,
+        chain_client: None,
     })
 }
 
@@ -1184,7 +1196,7 @@ async fn test_multi_bot_validate_with_mock_validators() {
         .and(path("/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "score": 80,
-            "signature": "0xsig_v1",
+            "signature": TEST_SIG,
             "reasoning": "Reasonable risk-reward ratio",
             "validator": "0xValidator1"
         })))
@@ -1195,7 +1207,7 @@ async fn test_multi_bot_validate_with_mock_validators() {
         .and(path("/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "score": 90,
-            "signature": "0xsig_v2",
+            "signature": TEST_SIG,
             "reasoning": "Strong market signal with low volatility",
             "validator": "0xValidator2"
         })))
@@ -1261,7 +1273,7 @@ async fn test_multi_bot_validate_below_threshold() {
         .and(path("/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "score": 20,
-            "signature": "0xsig_low1",
+            "signature": TEST_SIG,
             "reasoning": "Extreme volatility detected",
             "validator": "0xValidator1"
         })))
@@ -1272,7 +1284,7 @@ async fn test_multi_bot_validate_below_threshold() {
         .and(path("/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "score": 30,
-            "signature": "0xsig_low2",
+            "signature": TEST_SIG,
             "reasoning": "Insufficient liquidity for this trade size",
             "validator": "0xValidator2"
         })))
@@ -1316,7 +1328,7 @@ async fn test_multi_bot_validate_partial_failure() {
         .and(path("/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "score": 90,
-            "signature": "0xsig_good",
+            "signature": TEST_SIG,
             "reasoning": "Trade parameters look solid",
             "validator": "0xValidatorOK"
         })))
@@ -1544,4 +1556,687 @@ async fn test_portfolio_pnl_reflects_losses() {
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0]["unrealized_pnl"], "-1600");
     assert_eq!(positions[0]["current_price"], "2200");
+}
+
+// ── Polymarket CLOB integration tests ────────────────────────────────────────
+
+/// Multi-bot execute with target_protocol="polymarket_clob" routes through the
+/// ClobClient instead of vault.execute(). Uses a mock CLOB server.
+#[tokio::test]
+async fn test_multi_bot_clob_execute() {
+    ensure_state_dir();
+
+    // Mock CLOB server: order endpoint only (credentials pre-supplied, caches pre-populated)
+    let clob_mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/order"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "orderID": "clob-order-12345",
+            "status": "LIVE",
+            "success": true,
+            "errorMsg": null,
+            "makingAmount": "100",
+            "takingAmount": "65",
+            "transactionHashes": [],
+            "tradeIds": []
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    // Create ClobClient with pre-supplied credentials (skips L1 auth)
+    use trading_runtime::polymarket_clob::ClobClient;
+    let clob_client = ClobClient::with_config(
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock.uri(),
+        Some(ClobClient::test_credentials()),
+    )
+    .expect("clob client");
+
+    // Pre-populate SDK caches to avoid HTTP lookups during order building
+    clob_client.configure_token_cache("48328953829", "0.01", false, 0).await.unwrap();
+
+    let state = Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(|token: &str| {
+            if token == "bot-token-abc" {
+                Some(BotContext {
+                    bot_id: "bot-clob".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    paper_trade: false,
+                    chain_id: 137,
+                    rpc_url: "http://localhost:8545".to_string(),
+                    validator_endpoints: vec![],
+                })
+            } else {
+                None
+            }
+        }),
+        clob_client: Some(Arc::new(clob_client)),
+        chain_client: None,
+    });
+
+    let app = build_multi_bot_router(state);
+
+    let execute_body = serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "0x0000000000000000000000000000000000000000",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.65,
+                "order_type": "GTC"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 75,
+            "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "validator_responses": [{
+                "validator": "0xValidator1",
+                "score": 75,
+                "reasoning": "Market has clear trend",
+                "signature": format!("0x{}", "cc".repeat(65))
+            }]
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        200,
+        "CLOB execute should succeed"
+    );
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // tx_hash has clob: prefix
+    let tx_hash = json["tx_hash"].as_str().unwrap();
+    assert!(
+        tx_hash.starts_with("clob:"),
+        "Expected clob: prefix, got {tx_hash}"
+    );
+
+    // clob_order_id is populated
+    assert_eq!(json["clob_order_id"], "clob-order-12345");
+
+    // Not a paper trade, no block number
+    assert_eq!(json["paper_trade"], false);
+    assert!(json["block_number"].is_null());
+}
+
+/// Execute with polymarket_clob but no ClobClient configured → 503.
+#[tokio::test]
+async fn test_multi_bot_clob_execute_not_configured() {
+    ensure_state_dir();
+
+    let state = Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(|token: &str| {
+            if token == "bot-token-abc" {
+                Some(BotContext {
+                    bot_id: "bot-no-clob".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    paper_trade: false,
+                    chain_id: 137,
+                    rpc_url: "http://localhost:8545".to_string(),
+                    validator_endpoints: vec![],
+                })
+            } else {
+                None
+            }
+        }),
+        clob_client: None, // not configured
+        chain_client: None,
+    });
+
+    let app = build_multi_bot_router(state);
+
+    let execute_body = serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "0x0000000000000000000000000000000000000000",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.65
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 75,
+            "intent_hash": format!("0x{}", "de".repeat(32)),
+            "validator_responses": [{
+                "validator": "0xV1",
+                "score": 75,
+                "reasoning": "ok",
+                "signature": format!("0x{}", "ee".repeat(65))
+            }]
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        503,
+        "Should be SERVICE_UNAVAILABLE when CLOB client not configured"
+    );
+}
+
+/// CLOB execute with missing metadata.token_id → 400.
+#[tokio::test]
+async fn test_multi_bot_clob_execute_missing_metadata() {
+    ensure_state_dir();
+
+    let clob_mock = MockServer::start().await;
+    let clob_client = trading_runtime::polymarket_clob::ClobClient::with_config(
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock.uri(),
+        None,
+    )
+    .expect("clob client");
+
+    let state = Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(|token: &str| {
+            if token == "bot-token-abc" {
+                Some(BotContext {
+                    bot_id: "bot-bad-meta".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    paper_trade: false,
+                    chain_id: 137,
+                    rpc_url: "http://localhost:8545".to_string(),
+                    validator_endpoints: vec![],
+                })
+            } else {
+                None
+            }
+        }),
+        clob_client: Some(Arc::new(clob_client)),
+        chain_client: None,
+    });
+
+    let app = build_multi_bot_router(state);
+
+    // Missing metadata.token_id
+    let execute_body = serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "0x0000000000000000000000000000000000000000",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "price": 0.65
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 75,
+            "intent_hash": format!("0x{}", "ff".repeat(32)),
+            "validator_responses": [{
+                "validator": "0xV1",
+                "score": 75,
+                "reasoning": "ok",
+                "signature": format!("0x{}", "aa".repeat(65))
+            }]
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        400,
+        "Should be BAD_REQUEST when token_id missing"
+    );
+}
+
+// ── CLOB route tests ─────────────────────────────────────────────────────────
+
+/// Create a test state with CLOB client configured against a wiremock server.
+async fn test_state_with_clob(
+    mock_uri: &str,
+    clob_mock_uri: &str,
+) -> Arc<TradingApiState> {
+    use trading_runtime::polymarket_clob::ClobClient;
+
+    ensure_state_dir();
+
+    let clob_client = ClobClient::with_config(
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock_uri.to_string(),
+        Some(ClobClient::test_credentials()),
+    )
+    .expect("clob client");
+
+    Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(mock_uri.to_string()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:8545",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: TEST_TOKEN.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id: "test-bot".to_string(),
+        paper_trade: false,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: None,
+        clob_client: Some(Arc::new(clob_client)),
+    })
+}
+
+#[tokio::test]
+async fn test_clob_config_endpoint() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    // Mock the auth derive endpoint (CLOB client needs this for initial auth).
+    Mock::given(method("GET"))
+        .and(path("/auth/derive-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "apiKey": "00000000-0000-0000-0000-000000000000",
+            "secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "passphrase": "test-passphrase"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let state = test_state_with_clob(&mock.uri(), &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/clob/config")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify Polygon mainnet contract addresses.
+    assert_eq!(
+        json["exchange"],
+        "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+    );
+    assert_eq!(
+        json["collateral"],
+        "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+    );
+    assert!(json["neg_risk_exchange"].is_string());
+    assert!(json["neg_risk_adapter"].is_string());
+}
+
+#[tokio::test]
+async fn test_clob_not_configured_returns_503() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    // All CLOB routes should return 503 when clob_client is None.
+    for path in &["/clob/config", "/clob/orders", "/clob/midpoint?token_id=123"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(*path)
+                    .header("authorization", auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            503,
+            "{path} should return 503 when CLOB not configured"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_clob_get_order() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    // Mock /data/order/{id}
+    // SDK uses ts_seconds for created_at (integer) and TimestampSeconds<String>
+    // for expiration (string).
+    Mock::given(method("GET"))
+        .and(path("/data/order/order-abc-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "order-abc-123",
+            "status": "LIVE",
+            "owner": "00000000-0000-0000-0000-000000000000",
+            "maker_address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "12345",
+            "side": "BUY",
+            "original_size": "100.0",
+            "size_matched": "25.0",
+            "price": "0.65",
+            "associate_trades": [],
+            "outcome": "Yes",
+            "created_at": 1740000000,
+            "expiration": "1750000000",
+            "order_type": "GTC"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let state = test_state_with_clob(&mock.uri(), &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/clob/order?order_id=order-abc-123")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["id"], "order-abc-123");
+    assert_eq!(json["status"], "LIVE");
+    assert_eq!(json["price"], "0.65");
+    assert_eq!(json["size_matched"], "25.0");
+}
+
+#[tokio::test]
+async fn test_clob_get_open_orders() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/data/orders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [
+                {
+                    "id": "order-1",
+                    "status": "LIVE",
+                    "owner": "00000000-0000-0000-0000-000000000000",
+                    "maker_address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                    "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+                    "asset_id": "12345",
+                    "side": "BUY",
+                    "original_size": "100.0",
+                    "size_matched": "0",
+                    "price": "0.50",
+                    "associate_trades": [],
+                    "outcome": "Yes",
+                    "created_at": 1740000000,
+                    "expiration": "1750000000",
+                    "order_type": "GTC"
+                }
+            ],
+            "next_cursor": "LTE=",
+            "limit": 50,
+            "count": 1
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let state = test_state_with_clob(&mock.uri(), &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/clob/orders")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let orders: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0]["id"], "order-1");
+    assert_eq!(orders[0]["price"], "0.50");
+}
+
+#[tokio::test]
+async fn test_clob_get_midpoint() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/midpoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "mid": "0.6500"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let state = test_state_with_clob(&mock.uri(), &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/clob/midpoint?token_id=48328953829")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["token_id"], "48328953829");
+    assert_eq!(json["midpoint"], "0.6500");
+}
+
+#[tokio::test]
+async fn test_clob_get_book() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    // SDK's OrderBookSummaryResponse requires: market (B256), asset_id (U256),
+    // timestamp (millisecond string), min_order_size, neg_risk, tick_size.
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.64", "size": "500.0"},
+                {"price": "0.63", "size": "300.0"}
+            ],
+            "asks": [
+                {"price": "0.66", "size": "400.0"},
+                {"price": "0.67", "size": "200.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let state = test_state_with_clob(&mock.uri(), &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/clob/book?token_id=48328953829")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["bids"].as_array().unwrap().len(), 2);
+    assert_eq!(json["asks"].as_array().unwrap().len(), 2);
+    assert_eq!(json["bids"][0]["price"], "0.64");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLLATERAL ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_collateral_status_default() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    // GET /collateral/status — no RPC configured in test state, should return 503
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/collateral/status")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Test state has no rpc_url → 503 Service Unavailable
+    assert_eq!(response.status(), 503);
+}
+
+#[tokio::test]
+async fn test_collateral_release_requires_auth() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/collateral/release")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn test_collateral_return_requires_auth() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/collateral/return")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
 }

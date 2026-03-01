@@ -70,12 +70,19 @@ pub async fn provision_core(
     let vault_address = format!("{:#x}", request.factory_address);
 
     // Trading API URL points to the shared HTTP API running in the binary.
-    // Constructed from SIDECAR_PUBLIC_HOST (how containers reach the host) and
-    // TRADING_API_PORT (the actual port the trading API binds to).
-    // TRADING_API_URL overrides both if explicitly set.
+    // TRADING_API_URL overrides if explicitly set, otherwise:
+    // - SIDECAR_NETWORK_HOST=true → container shares host network → use 127.0.0.1
+    // - Otherwise → use host.docker.internal (added via --add-host in sandbox-runtime)
     let trading_api_url = std::env::var("TRADING_API_URL").unwrap_or_else(|_| {
-        let host = std::env::var("SIDECAR_PUBLIC_HOST")
-            .unwrap_or_else(|_| "host.docker.internal".to_string());
+        let host_network = std::env::var("SIDECAR_NETWORK_HOST")
+            .map_or(false, |v| v == "true" || v == "1");
+        let host = std::env::var("SIDECAR_PUBLIC_HOST").unwrap_or_else(|_| {
+            if host_network {
+                "127.0.0.1".to_string()
+            } else {
+                "host.docker.internal".to_string()
+            }
+        });
         let port = std::env::var("TRADING_API_PORT").unwrap_or_else(|_| "9100".to_string());
         format!("http://{host}:{port}")
     });
@@ -171,6 +178,7 @@ pub async fn provision_core(
             tee_config: None,
             owner: String::new(),
             user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
+            port_mappings: Vec::new(),
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
@@ -204,8 +212,14 @@ pub async fn provision_core(
         vault_address: vault_address.clone(),
         share_token: String::new(),
         strategy_type: request.strategy_type.clone(),
-        strategy_config: serde_json::from_str(&request.strategy_config_json).unwrap_or_default(),
-        risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_default(),
+        strategy_config: serde_json::from_str(&request.strategy_config_json).unwrap_or_else(|e| {
+            tracing::warn!("Invalid strategy_config_json (using empty): {e}");
+            serde_json::Value::Object(Default::default())
+        }),
+        risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_else(|e| {
+            tracing::warn!("Invalid risk_params_json (using empty): {e}");
+            serde_json::Value::Object(Default::default())
+        }),
         chain_id,
         rpc_url,
         trading_api_url,

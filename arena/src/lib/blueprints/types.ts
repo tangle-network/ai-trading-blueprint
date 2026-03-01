@@ -49,4 +49,6 @@ export interface ProvisionParams {
   memoryMb: bigint;
   maxLifetimeDays: bigint;
   validatorServiceIds: bigint[];
+  /** Max vault collateral for CLOB trading (basis points, 0 = disabled) */
+  maxCollateralBps: bigint;
 }

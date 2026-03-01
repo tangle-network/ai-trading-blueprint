@@ -30,6 +30,7 @@ export function ServiceCard({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
       >
         <div className={`i-ph:cube text-base shrink-0 ${

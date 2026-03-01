@@ -220,13 +220,15 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             tracing::info!("Shutting down trading TEE instance blueprint");
 
             // Deprovision singleton with TEE backend so enclave is torn down.
-            let tee = trading_tee_instance_blueprint_lib::tee_backend();
             match trading_instance_blueprint_lib::require_instance_bot() {
                 Ok(bot) => {
+                    let tee_opt = trading_tee_instance_blueprint_lib::tee_backend()
+                        .ok()
+                        .map(|b| b.as_ref() as &dyn sandbox_runtime::tee::TeeBackend);
                     match trading_blueprint_lib::jobs::deprovision_core(
                         &bot.sandbox_id,
                         false,
-                        Some(tee.as_ref()),
+                        tee_opt,
                     )
                     .await
                     {

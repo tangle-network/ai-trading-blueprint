@@ -35,6 +35,9 @@ export function DepositForm({
   const [amount, setAmount] = useState('');
   // Track that we just approved — skip needsApproval check until refetch completes
   const [justApproved, setJustApproved] = useState(false);
+  // Ref to current amount so approval effect always reads the latest value
+  const amountRef = useRef(amount);
+  amountRef.current = amount;
 
   const approve = useApprove();
   const deposit = useDeposit();
@@ -69,12 +72,13 @@ export function DepositForm({
       setJustApproved(true);
       onSuccess(); // refetch allowance
 
-      // Auto-proceed to deposit
-      if (amount && parseFloat(amount) > 0) {
-        deposit.deposit(vaultAddress, amount, assetDecimals);
+      // Auto-proceed to deposit using ref to avoid stale closure
+      const currentAmount = amountRef.current;
+      if (currentAmount && parseFloat(currentAmount) > 0) {
+        deposit.deposit(vaultAddress, currentAmount, assetDecimals);
       }
     }
-  }, [approve.isSuccess]);
+  }, [approve.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle deposit success
   useEffect(() => {
@@ -181,6 +185,7 @@ export function DepositForm({
                   type="button"
                   onClick={() => setAmount(userAssetBalanceFormatted.toString())}
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
+                  aria-label="Set maximum deposit"
                 >
                   Balance: {userAssetBalanceFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                 </button>
@@ -199,7 +204,10 @@ export function DepositForm({
           </div>
           {sharesReceived && (
             <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-emerald-700/5 dark:bg-emerald-500/5 border border-emerald-700/10 dark:border-emerald-500/10">
-              <span className="text-sm text-arena-elements-textSecondary font-data">You'll receive</span>
+              <span className="text-sm text-arena-elements-textSecondary font-data flex items-center gap-1.5">
+                <div className="i-ph:arrow-right text-xs text-arena-elements-textTertiary" />
+                You'll receive
+              </span>
               <span className="text-sm font-data font-bold text-arena-elements-icon-success">~{sharesReceived} shares</span>
             </div>
           )}

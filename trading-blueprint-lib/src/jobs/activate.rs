@@ -83,6 +83,10 @@ pub async fn activate_bot_with_secrets(
     if is_mock {
         // Mock sandbox — skip exec commands
     } else if let Some(ref p) = pack {
+        // Wait for sidecar HTTP server to be ready (container just recreated).
+        // Without this, setup commands get ConnectionReset.
+        wait_for_sidecar_health(&record.sidecar_url, 20).await;
+
         for cmd in &p.setup_commands {
             let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
                 sidecar_url: record.sidecar_url.clone(),
@@ -96,6 +100,23 @@ pub async fn activate_bot_with_secrets(
             {
                 tracing::warn!("Pack setup command failed (non-fatal): {cmd}: {e}");
             }
+        }
+    }
+
+    // 3b. Deploy pre-built trading tools (skip in test/mock mode)
+    if !is_mock {
+        update_activation_progress(bot_id, "deploying_tools", "Installing pre-built trading tools");
+        if let Err(e) = write_prebuilt_tools(
+            &record.sidecar_url,
+            &record.token,
+            &bot.strategy_type,
+            &bot.trading_api_url,
+            &bot.trading_api_token,
+            &bot.operator_address,
+        )
+        .await
+        {
+            tracing::warn!("Pre-built tool deployment failed (non-fatal): {e}");
         }
     }
 
@@ -123,7 +144,7 @@ pub async fn activate_bot_with_secrets(
         "prompt": loop_prompt,
         "session_id": format!("trading-{bot_id}"),
         "max_turns": pack.as_ref().map(|p| p.max_turns).filter(|&t| t > 0).unwrap_or(10),
-        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(120_000),
+        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(600_000),
         "sidecar_token": record.token,
         "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
     });
@@ -190,6 +211,169 @@ pub async fn activate_bot_with_secrets(
         trading_api_token,
         trading_api_url,
     })
+}
+
+/// Wait for the sidecar's HTTP server to respond to health checks.
+/// Polls `/health` every second until a 200 response or `max_secs` elapsed.
+async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
+    let url = match sandbox_runtime::http::build_url(sidecar_url, "/health") {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    let client = match sandbox_runtime::util::http_client() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    for _ in 0..max_secs {
+        match client.get(url.clone()).send().await {
+            Ok(r) if r.status().is_success() => {
+                tracing::debug!("Sidecar health check passed");
+                return;
+            }
+            _ => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    tracing::warn!("Sidecar health check timed out after {max_secs}s — proceeding anyway");
+}
+
+/// Deploy pre-built trading tools to the sidecar filesystem.
+///
+/// Writes smart, self-contained tools that do the heavy lifting so the agent
+/// can focus on decision-making. Common tools for all strategies + strategy-specific tools.
+/// Also writes `/home/agent/config/api.json` so tools can call the Trading HTTP API.
+async fn write_prebuilt_tools(
+    sidecar_url: &str,
+    token: &str,
+    strategy_type: &str,
+    api_url: &str,
+    api_token: &str,
+    operator_address: &str,
+) -> Result<(), String> {
+    // Write API config so tools can find the Trading HTTP API
+    let config_json = serde_json::json!({
+        "api_url": api_url,
+        "token": api_token,
+        "operator_address": operator_address,
+    })
+    .to_string();
+    write_file_to_sidecar(sidecar_url, token, "/home/agent/config/api.json", &config_json).await?;
+
+    // Common tools (all strategies)
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/api-client.js",
+        include_str!("../prompts/tools/api_client.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/update-phase.js",
+        include_str!("../prompts/tools/update_phase.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/log-decision.js",
+        include_str!("../prompts/tools/log_decision.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/write-metrics.js",
+        include_str!("../prompts/tools/write_metrics.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/get-portfolio.js",
+        include_str!("../prompts/tools/get_portfolio.js"),
+    )
+    .await?;
+
+    // Strategy-specific smart tools
+    if strategy_type.starts_with("prediction") || strategy_type == "mm" {
+        // Smart analyzer: scans markets, fetches prices, filters to actionable opportunities
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/analyze-opportunities.js",
+            include_str!("../prompts/tools/analyze_opportunities.js"),
+        )
+        .await?;
+        // One-command trade executor: circuit-breaker → validate → execute → log
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/submit-trade.js",
+            include_str!("../prompts/tools/submit_trade.js"),
+        )
+        .await?;
+        // Order management: check fills, identify stale orders
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/check-orders.js",
+            include_str!("../prompts/tools/check_orders.js"),
+        )
+        .await?;
+        // CLOB collateral management (release/return vault funds for off-chain trading)
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/manage-collateral.js",
+            include_str!("../prompts/tools/manage_collateral.js"),
+        )
+        .await?;
+        // Keep legacy tools for fallback (agent can use either)
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/scan-markets.js",
+            include_str!("../prompts/tools/scan_markets.js"),
+        )
+        .await?;
+        write_file_to_sidecar(
+            sidecar_url,
+            token,
+            "/home/agent/tools/check-prices.js",
+            include_str!("../prompts/tools/check_prices.js"),
+        )
+        .await?;
+    }
+
+    tracing::info!("Deployed pre-built trading tools for strategy: {strategy_type}");
+    Ok(())
+}
+
+/// Write a file to the sidecar filesystem via the exec API.
+///
+/// Uses an environment variable to pass content, avoiding shell escaping issues.
+async fn write_file_to_sidecar(
+    sidecar_url: &str,
+    token: &str,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: format!(
+            r#"node -e "require('fs').writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
+        ),
+        cwd: String::new(),
+        env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
+        timeout_ms: 30_000,
+    };
+    ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
+        .await
+        .map_err(|e| format!("Failed to write {path}: {e}"))?;
+    tracing::debug!("Wrote pre-built tool: {path}");
+    Ok(())
 }
 
 /// Remove secrets from a bot: stop workflow, wipe user secrets from sidecar.

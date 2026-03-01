@@ -6,7 +6,7 @@ function encodeProvision(params: ProvisionParams): `0x${string}` {
   // Instance uses the same ABI as cloud (TradingProvisionRequest is shared)
   return encodeAbiParameters(
     parseAbiParameters(
-      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[])',
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
     ),
     [
       [
@@ -25,6 +25,7 @@ function encodeProvision(params: ProvisionParams): `0x${string}` {
         params.memoryMb,
         params.maxLifetimeDays,
         params.validatorServiceIds,
+        params.maxCollateralBps,
       ],
     ],
   );
@@ -34,7 +35,7 @@ export const tradingInstance: TradingBlueprintDef = {
   id: 'trading-instance',
   name: 'Trading Instance',
   description: 'Single dedicated bot per service — one agent, one strategy, full focus. Best for individual traders.',
-  icon: 'i-lucide-user',
+  icon: 'i-ph:user',
   color: 'teal',
   blueprintId: import.meta.env.VITE_INSTANCE_BLUEPRINT_ID ?? '0',
   isFleet: false,

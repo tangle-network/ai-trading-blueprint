@@ -10,26 +10,25 @@ pub fn build_pack_agent_profile(
     pack.build_agent_profile(config)
 }
 
-/// Phase-aware loop prompt that drives the agent's iteration cycle.
+/// Compact loop prompt that drives each trading iteration.
+///
+/// Designed to be completable in 3-5 turns: scan → decide → act → update.
+/// All heavy lifting is in the pre-built tools — the agent just makes decisions.
 pub fn build_pack_loop_prompt(pack: &packs::StrategyPack) -> String {
-    let timeout_secs = pack.timeout_ms / 1000;
     format!(
-        "Trading iteration tick. Strategy: {name}.\n\n\
-         1. Read /home/agent/state/phase.json for current phase and iteration.\n\
-         2. Review your learning history before acting:\n\
-            - `sqlite3 /home/agent/data/trading.db \"SELECT category, insight, confidence, times_confirmed FROM memory ORDER BY updated_at DESC LIMIT 10\"`\n\
-            - Read /home/agent/memory/insights.jsonl (last 20 lines) for recent insights.\n\
-            - Check recent signal accuracy: `sqlite3 /home/agent/data/trading.db \"SELECT type, direction, outcome, confidence FROM signals ORDER BY created_at DESC LIMIT 10\"`\n\n\
-         Phase protocol:\n\
-         - bootstrap (iteration 0): Build tools, discover markets, populate DB → set \"research\"\n\
-         - research: Run scanners, update data, generate signals. Use past signal accuracy to weight new signals. → \"trading\" if actionable signals found\n\
-         - trading: Circuit breaker → validate → execute → log → \"reflect\"\n\
-         - reflect: P&L calc, compare predictions vs outcomes, update signal outcomes in DB, write insights to memory table + insights.jsonl → \"research\"\n\n\
-         Update phase.json after. Write metrics to /home/agent/metrics/latest.json.\n\
-         You have {max_turns} turns and {timeout}s. Run existing tools, don't rebuild.",
+        "Trading tick ({name}). Run these steps:\n\n\
+         1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
+         2. `node /home/agent/tools/get-portfolio.js` — shows your current positions and recent trades\n\
+         3. `node /home/agent/tools/manage-collateral.js --action status` — check CLOB collateral (outstanding, available)\n\
+            If no collateral released yet and CLOB trades needed: `--action release --amount <amount>`\n\
+         4. `node /home/agent/tools/check-orders.js --cancel-stale 4` — check fills on open orders, flag stale orders older than 4h\n\
+         5. For each opportunity with edge: estimate your probability, calculate edge = your_prob - market_price. If |edge| > 5%, trade:\n\
+            `node /home/agent/tools/submit-trade.js --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+            (price is optional — auto-fetched from CLOB midpoint if omitted)\n\
+         6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+         If no edge found, skip step 5. Be decisive — you have {max_turns} turns.",
         name = pack.name,
         max_turns = pack.max_turns,
-        timeout = timeout_secs,
     )
 }
 
@@ -48,11 +47,24 @@ Authorization: Bearer {token}
 - POST /portfolio/state — Get current portfolio positions
 - POST /validate — Submit a trade intent for validator approval
   Body: {{ "strategy_id": "...", "action": "swap", "token_in": "0x...", "token_out": "0x...", "amount_in": "1000", "min_amount_out": "950", "target_protocol": "uniswap_v3" }}
-- POST /execute — Execute an approved trade on-chain
+- POST /execute — Execute an approved trade on-chain (or via CLOB for polymarket_clob)
   Body: {{ "intent": {{...}}, "validation": {{...}} }}
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
+
+### Polymarket CLOB Endpoints
+- GET /clob/midpoint?token_id=<id> — Get midpoint price for a CLOB token
+- GET /clob/book?token_id=<id> — Get order book (bids/asks)
+- GET /clob/order?order_id=<id> — Check status of a placed order
+- GET /clob/orders — List all open orders (optional: ?market=<id>&asset_id=<id>)
+- GET /clob/config — Get Polymarket contract addresses and operator address
+- POST /clob/approve?neg_risk=false — Approve CTFExchange to spend collateral (one-time)
+
+### Collateral Management (CLOB)
+- POST /collateral/release — Release vault funds for off-chain CLOB trading (requires validator sigs)
+- POST /collateral/return — Return funds to vault after CLOB trading
+- GET /collateral/status — Query outstanding collateral (total, per-operator, available, cap)
 
 ## Configuration
 - Vault Address: {vault}
@@ -87,7 +99,7 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
         "Execute one trading loop iteration for your {strategy_type} strategy.\n\n\
          Before acting, review your learning history:\n\
          - Read /home/agent/state/phase.json for current phase\n\
-         - `sqlite3 /home/agent/data/trading.db \"SELECT category, insight, confidence FROM memory ORDER BY updated_at DESC LIMIT 10\"`\n\
+         - Read /home/agent/data/trading.json and review the memory array (last 10 entries)\n\
          - Read /home/agent/memory/insights.jsonl (last 20 lines)\n\n\
          Then follow your system instructions:\n\
          1. Fetch current market prices\n\
@@ -113,6 +125,7 @@ pub fn build_wind_down_prompt(bot: &crate::state::TradingBotRecord) -> String {
          Your trading bot is approaching its TTL expiry. You MUST close all open positions \
          and return capital to the vault. DO NOT open any new positions.\n\n\
          Steps:\n\
+         0. `node /home/agent/tools/manage-collateral.js --action return-all` — return all outstanding CLOB collateral to vault\n\
          1. POST /portfolio/state to get all current positions\n\
          2. For each open position, generate a close/unwind trade intent\n\
          3. POST /validate for each closing trade\n\
@@ -147,9 +160,10 @@ Target protocols: gmx_v2, vertex
 Look for: momentum signals, funding rate arbitrage, mean reversion setups."#;
 
 const PREDICTION_FRAGMENT: &str = r#"You are a prediction market specialist.
-Focus on: event-based trading on prediction markets.
-Target protocols: polymarket
-Look for: mispriced events, arbitrage between markets, information edges."#;
+Focus on: event-based trading on prediction markets via the CLOB order book.
+Target protocol: polymarket_clob (limit orders on Polymarket's off-chain order book)
+Look for: mispriced events, arbitrage between markets, information edges.
+Your trades are submitted as limit orders to the CLOB. Use the /clob/book endpoint to check depth before trading."#;
 
 pub(crate) const VOLATILITY_FRAGMENT: &str = r#"You are a volatility trading specialist.
 Focus on: realized vs implied volatility spreads, delta-neutral strategies.
@@ -199,45 +213,37 @@ mod tests {
     }
 
     #[test]
-    fn test_loop_prompt_is_phase_aware() {
+    fn test_loop_prompt_references_smart_tools() {
         let pack = packs::get_pack("prediction").unwrap();
         let prompt = build_pack_loop_prompt(&pack);
 
         assert!(
-            prompt.contains("phase.json"),
-            "loop prompt must reference phase.json"
+            prompt.contains("analyze-opportunities.js"),
+            "loop prompt must reference analyze-opportunities tool"
         );
         assert!(
-            prompt.contains("bootstrap"),
-            "loop prompt must mention bootstrap phase"
+            prompt.contains("get-portfolio.js"),
+            "loop prompt must reference get-portfolio tool"
         );
         assert!(
-            prompt.contains("research"),
-            "loop prompt must mention research phase"
+            prompt.contains("manage-collateral.js"),
+            "loop prompt must reference manage-collateral tool"
         );
         assert!(
-            prompt.contains("trading"),
-            "loop prompt must mention trading phase"
+            prompt.contains("check-orders.js"),
+            "loop prompt must reference check-orders tool"
         );
         assert!(
-            prompt.contains("reflect"),
-            "loop prompt must mention reflect phase"
+            prompt.contains("submit-trade.js"),
+            "loop prompt must reference submit-trade tool"
         );
         assert!(
-            prompt.contains("20 turns"),
+            prompt.contains("write-metrics.js"),
+            "loop prompt must reference write-metrics tool"
+        );
+        assert!(
+            prompt.contains("30 turns"),
             "loop prompt must include max_turns"
-        );
-        assert!(
-            prompt.contains("insights.jsonl"),
-            "loop prompt must reference insights"
-        );
-        assert!(
-            prompt.contains("memory"),
-            "loop prompt must reference memory table"
-        );
-        assert!(
-            prompt.contains("signal accuracy"),
-            "loop prompt must reference signal accuracy"
         );
     }
 

@@ -130,6 +130,7 @@ export function WithdrawForm({
                   type="button"
                   onClick={() => setShares(userSharesFormatted.toString())}
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
+                  aria-label="Set maximum withdrawal"
                 >
                   Balance: {userSharesFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                 </button>
@@ -147,7 +148,10 @@ export function WithdrawForm({
           </div>
           {valueReceived && (
             <div className="flex items-center justify-between px-3.5 py-2.5 rounded-lg bg-crimson-500/5 border border-crimson-500/10">
-              <span className="text-sm text-arena-elements-textSecondary font-data">You'll receive</span>
+              <span className="text-sm text-arena-elements-textSecondary font-data flex items-center gap-1.5">
+                <div className="i-ph:arrow-right text-xs text-arena-elements-textTertiary" />
+                You'll receive
+              </span>
               <span className="text-base font-data font-bold text-arena-elements-textPrimary">
                 ~{valueReceived} {assetSymbol}
               </span>

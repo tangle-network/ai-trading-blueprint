@@ -43,6 +43,7 @@ fn make_provision_request(name: &str, strategy: &str) -> TradingProvisionRequest
         memory_mb: 4096,
         max_lifetime_days: 30,
         validator_service_ids: vec![],
+        max_collateral_bps: U256::from(0),
     }
 }
 
@@ -79,6 +80,8 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         stack: String::new(),
         owner: String::new(),
         tee_config: None,
+        extra_ports: std::collections::HashMap::new(),
+        tee_attestation_json: None,
     }
 }
 

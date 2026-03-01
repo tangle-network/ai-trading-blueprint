@@ -1,5 +1,7 @@
 pub mod adapters;
 pub mod circuit;
+pub mod clob;
+pub mod collateral;
 pub mod execute;
 pub mod health;
 pub mod market_data;

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { Trade, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
+import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
+import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { getApiUrlForBot } from '~/lib/config/botRegistry';
 
@@ -32,6 +33,13 @@ interface ApiTrade {
       verifying_contract?: string;
       validated_at?: string;
     }>;
+    simulation?: {
+      success: boolean;
+      gas_used: number;
+      risk_score: number;
+      warnings: string[];
+      output_amount: string;
+    };
   };
 }
 
@@ -71,6 +79,14 @@ async function fetchBotApi<T>(apiUrl: string, path: string): Promise<T> {
 }
 
 function mapApiTrade(t: ApiTrade, botName: string): Trade {
+  const simulation: TradeSimulation | undefined = t.validation?.simulation ? {
+    success: t.validation.simulation.success,
+    gasUsed: t.validation.simulation.gas_used,
+    riskScore: t.validation.simulation.risk_score,
+    warnings: t.validation.simulation.warnings,
+    outputAmount: t.validation.simulation.output_amount,
+  } : undefined;
+
   const validation: TradeValidation | undefined = t.validation ? {
     approved: t.validation.approved,
     aggregateScore: t.validation.aggregate_score,
@@ -84,6 +100,7 @@ function mapApiTrade(t: ApiTrade, botName: string): Trade {
       verifyingContract: r.verifying_contract,
       validatedAt: r.validated_at,
     })),
+    simulation,
   } : undefined;
 
   return {
@@ -100,6 +117,9 @@ function mapApiTrade(t: ApiTrade, botName: string): Trade {
     status: t.paper_trade ? 'paper' : t.validation?.approved === false ? 'rejected' : t.tx_hash ? 'executed' : 'pending',
     txHash: t.tx_hash,
     paperTrade: t.paper_trade,
+    targetProtocol: t.target_protocol || undefined,
+    venue: protocolToVenue(t.target_protocol, t.paper_trade),
+    chainId: t.validation?.responses?.[0]?.chain_id,
     validatorScore: t.validation?.aggregate_score,
     validatorReasoning: t.validation?.responses?.[0]?.reasoning,
     validation,

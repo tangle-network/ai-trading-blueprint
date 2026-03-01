@@ -8,32 +8,13 @@ import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
 import { Badge, Identicon } from '@tangle/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
+import { SkeletonCard } from '~/components/ui/Skeleton';
+import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
-
-const strategyColors: Record<string, 'accent' | 'success' | 'amber' | 'default' | 'secondary'> = {
-  momentum: 'accent',
-  'mean-reversion': 'success',
-  arbitrage: 'amber',
-  'trend-following': 'secondary',
-  'market-making': 'default',
-  sentiment: 'accent',
-  dex: 'success',
-  prediction: 'accent',
-  prediction_politics: 'accent',
-  prediction_crypto: 'accent',
-  prediction_war: 'accent',
-  prediction_trending: 'accent',
-  prediction_celebrity: 'accent',
-  yield: 'amber',
-  perp: 'default',
-  volatility: 'secondary',
-  mm: 'default',
-  multi: 'accent',
-};
 
 function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
   return (
@@ -193,9 +174,10 @@ export default function IndexPage() {
       />
 
       {isLoading ? (
-        <div className="glass-card rounded-xl p-16 text-center">
-          <div className="i-ph:arrow-clockwise text-2xl text-arena-elements-textTertiary mb-3 mx-auto animate-spin" />
-          <p className="text-sm text-arena-elements-textSecondary">Loading...</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} className="h-[220px]" />
+          ))}
         </div>
       ) : sorted.length === 0 ? (
         <div className="glass-card rounded-xl p-16 text-center">

@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../../src/TradingVault.sol";
 import "../../src/VaultShare.sol";
 import "../../src/VaultFactory.sol";
+import "../../src/VaultDeployer.sol";
 import "../../src/PolicyEngine.sol";
 import "../../src/TradeValidator.sol";
 import "../../src/FeeDistributor.sol";
@@ -98,6 +99,7 @@ abstract contract Setup is Test {
     // ═══════════════════════════════════════════════════════════════════════════
 
     VaultFactory public vaultFactory;
+    VaultDeployer public vaultDeployer;
     PolicyEngine public policyEngine;
     TradeValidator public tradeValidator;
     FeeDistributor public feeDistributor;
@@ -133,9 +135,10 @@ abstract contract Setup is Test {
         tradeValidator = new TradeValidator();
         feeDistributor = new FeeDistributor(owner);
         vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
+        vaultDeployer = vaultFactory.deployer();
 
-        // Transfer ownership of PolicyEngine and TradeValidator to VaultFactory
-        // (since factory calls their onlyOwner functions: configureVault, initializeVault)
+        // Transfer ownership of PolicyEngine, TradeValidator, and FeeDistributor to VaultFactory
+        // (since factory calls their onlyOwner functions: configureVault, initializeVault, initializeVaultFees)
         policyEngine.transferOwnership(address(vaultFactory));
         vm.prank(address(vaultFactory));
         policyEngine.acceptOwnership();
@@ -143,6 +146,10 @@ abstract contract Setup is Test {
         tradeValidator.transferOwnership(address(vaultFactory));
         vm.prank(address(vaultFactory));
         tradeValidator.acceptOwnership();
+
+        feeDistributor.transferOwnership(address(vaultFactory));
+        vm.prank(address(vaultFactory));
+        feeDistributor.acceptOwnership();
 
         // Deploy StrategyRegistry (owned by owner)
         strategyRegistry = new StrategyRegistry(owner);
@@ -176,8 +183,18 @@ abstract contract Setup is Test {
             2, // 2-of-3
             "Test Vault Shares",
             "tvSHARE",
-            bytes32("test-salt")
+            bytes32("test-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
+    }
+
+    function _defaultPolicyConfig() internal pure returns (PolicyEngine.PolicyConfig memory) {
+        return PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500});
+    }
+
+    function _defaultFeeConfig() internal pure returns (FeeDistributor.FeeConfig memory) {
+        return FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000});
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

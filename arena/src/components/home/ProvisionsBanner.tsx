@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { Badge, Button, Card, CardContent } from '@tangle/blueprint-ui/components';
 import type { TrackedProvision } from '~/lib/stores/provisions';
+import { ElapsedTime } from '~/components/provision/TimelineStage';
 import {
   phaseLabel,
   PROVISION_STEPS,
@@ -10,21 +11,6 @@ import {
   isStuck,
   timeAgo,
 } from '~/lib/format';
-
-function ElapsedTime({ since }: { since: number }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const interval = setInterval(() => setElapsed(Math.floor((Date.now() - since) / 1000)), 1000);
-    return () => clearInterval(interval);
-  }, [since]);
-  const mins = Math.floor(elapsed / 60);
-  const secs = elapsed % 60;
-  return (
-    <span className="text-xs font-data text-arena-elements-textTertiary tabular-nums">
-      {mins > 0 ? `${mins}m ${secs.toString().padStart(2, '0')}s` : `${secs}s`}
-    </span>
-  );
-}
 
 export function ProvisionsBanner({
   provisions,

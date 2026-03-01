@@ -191,6 +191,15 @@ async fn test_protected_routes_reject_no_auth() {
         ("POST", "/api/bots/test/start"),
         ("POST", "/api/bots/test/stop"),
         ("POST", "/api/bots/test/run-now"),
+        ("GET", "/api/bots"),
+        ("GET", "/api/bots/test"),
+        ("GET", "/api/bots/test/metrics"),
+        ("GET", "/api/bots/test/metrics/history"),
+        ("GET", "/api/bots/test/trades"),
+        ("GET", "/api/bots/test/portfolio/state"),
+        ("GET", "/api/bots/test/activation-progress"),
+        ("GET", "/api/debug/sandboxes"),
+        ("GET", "/api/debug/workflows"),
     ];
 
     for (method, uri) in routes {
@@ -221,6 +230,7 @@ async fn test_list_bots_empty() {
         .oneshot(
             Request::builder()
                 .uri("/api/bots")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -244,6 +254,7 @@ async fn test_list_bots_returns_seeded() {
         .oneshot(
             Request::builder()
                 .uri("/api/bots")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -269,6 +280,7 @@ async fn test_get_bot_detail() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -300,6 +312,7 @@ async fn test_get_bot_not_found() {
         .oneshot(
             Request::builder()
                 .uri("/api/bots/nonexistent-bot-xyz")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -447,6 +460,7 @@ async fn test_get_bot_metrics() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/metrics", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -471,6 +485,7 @@ async fn test_get_bot_trades() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/trades", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -493,6 +508,7 @@ async fn test_get_bot_portfolio() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -517,6 +533,7 @@ async fn test_get_bot_metrics_history() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/metrics/history", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -543,6 +560,7 @@ async fn test_activation_progress_not_found() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/activation-progress", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -565,6 +583,7 @@ async fn test_activation_progress_returns_state() {
         .oneshot(
             Request::builder()
                 .uri(&format!("/api/bots/{}/activation-progress", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -766,6 +785,7 @@ async fn test_debug_sandboxes() {
         .oneshot(
             Request::builder()
                 .uri("/api/debug/sandboxes")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -787,6 +807,7 @@ async fn test_debug_workflows() {
         .oneshot(
             Request::builder()
                 .uri("/api/debug/workflows")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -815,6 +836,7 @@ async fn test_list_bots_filter_by_strategy() {
         .oneshot(
             Request::builder()
                 .uri("/api/bots?strategy=perp")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -843,6 +865,7 @@ async fn test_list_bots_filter_by_status() {
         .oneshot(
             Request::builder()
                 .uri("/api/bots?status=active")
+                .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
         )

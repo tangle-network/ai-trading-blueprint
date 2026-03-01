@@ -271,7 +271,7 @@ async fn test_ai_trading_simulation() {
 
     // ── Infrastructure ───────────────────────────────────────────────────────
     println!("[setup] Deploying on-chain infrastructure...");
-    let anvil = Anvil::new().try_spawn().expect("Anvil");
+    let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().expect("Anvil");
     let rpc_url = anvil.endpoint();
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
     let deployer_provider = ProviderBuilder::new()

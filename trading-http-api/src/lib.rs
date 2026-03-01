@@ -9,8 +9,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use trading_runtime::PortfolioState;
+use trading_runtime::chain::ChainClient;
 use trading_runtime::executor::TradeExecutor;
 use trading_runtime::market_data::MarketDataClient;
+use trading_runtime::polymarket_clob::ClobClient;
 use trading_runtime::validator_client::ValidatorClient;
 
 pub struct TradingApiState {
@@ -35,6 +37,12 @@ pub struct TradingApiState {
     pub sidecar_url: String,
     /// Bearer token for authenticating with the sidecar API.
     pub sidecar_token: String,
+    /// JSON-RPC URL for simulation (if available).
+    pub rpc_url: Option<String>,
+    /// Chain ID for simulation (defaults to 1 if not set).
+    pub chain_id: Option<u64>,
+    /// Polymarket CLOB client (None if not configured).
+    pub clob_client: Option<Arc<ClobClient>>,
 }
 
 pub fn build_router(state: Arc<TradingApiState>) -> Router {
@@ -44,6 +52,8 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .merge(routes::portfolio::router())
         .merge(routes::validate::router())
         .merge(routes::execute::router())
+        .merge(routes::clob::router())
+        .merge(routes::collateral::router())
         .merge(routes::circuit::router())
         .merge(routes::adapters::router())
         .merge(routes::metrics::router())
@@ -88,6 +98,15 @@ pub struct MultiBotTradingState {
     /// Resolves a bearer token into a BotContext. Injected by the binary.
     #[allow(clippy::type_complexity)]
     pub resolve_bot: Box<dyn Fn(&str) -> Option<BotContext> + Send + Sync>,
+    /// Polymarket CLOB client (None if not configured).
+    pub clob_client: Option<Arc<ClobClient>>,
+    /// Shared chain client for nonce serialization across concurrent requests.
+    ///
+    /// Alloy's `NonceFiller` tracks the pending nonce per-provider. A fresh
+    /// `ChainClient` per request would cause parallel requests to read the same
+    /// on-chain nonce, resulting in one transaction reverting. Sharing a single
+    /// `ChainClient` (cloned, which shares internal nonce state) prevents this.
+    pub chain_client: Option<ChainClient>,
 }
 
 /// Build a multi-bot trading HTTP API router.

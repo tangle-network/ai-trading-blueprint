@@ -337,7 +337,7 @@ pub fn build_operator_router() -> Router {
         .route("/pricing/job-quote", post(pricing_job_quote))
         .route("/api/pricing/config", get(get_pricing_config))
         .route("/api/pricing/billing/{service_id}", get(get_billing_status))
-        // Debug endpoints (no auth — test mode only)
+        // Debug endpoints (auth required)
         .route("/api/debug/sandboxes", get(debug_sandboxes))
         .route("/api/debug/workflows", get(debug_workflows))
         .route("/api/debug/run-now/{bot_id}", post(debug_run_now))
@@ -347,8 +347,9 @@ pub fn build_operator_router() -> Router {
 // ── Auth handlers ────────────────────────────────────────────────────────
 
 async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let challenge = sandbox_runtime::session_auth::create_challenge();
-    let value = serde_json::to_value(challenge).map_err(|e| {
+    let challenge = sandbox_runtime::session_auth::create_challenge()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Challenge error: {e}")))?;
+    let value = serde_json::to_value(&challenge).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Serialization error: {e}"),
@@ -375,6 +376,7 @@ async fn create_session(
 // ── Bot handlers ─────────────────────────────────────────────────────────
 
 async fn list_bots(
+    SessionAuth(_caller): SessionAuth,
     Query(query): Query<BotListQuery>,
 ) -> Result<Json<BotListResponse>, (StatusCode, String)> {
     let limit = query.limit.unwrap_or(50).min(200);
@@ -425,6 +427,7 @@ async fn list_bots(
 }
 
 async fn get_bot(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let record = resolve_bot(&bot_id)?;
@@ -781,6 +784,7 @@ fn synthesize_metrics(
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
 async fn get_bot_metrics(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
@@ -799,6 +803,7 @@ async fn get_bot_metrics(
 }
 
 async fn get_bot_metrics_history(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
     Query(_query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
@@ -809,112 +814,152 @@ async fn get_bot_metrics_history(
 }
 
 async fn get_bot_trades(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let trades = state::load_bot_trades(&bot.id);
     let protocol = if bot.strategy_type == "prediction" {
         "polymarket"
     } else {
         &bot.strategy_type
     };
 
-    let entries: Vec<TradeEntryResponse> = trades
-        .iter()
-        .map(|t| {
-            let mid = t
-                .get("market_id")
+    let mut entries: Vec<TradeEntryResponse> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Source 1: sidecar portfolio trades (bot-trades/{bot_id}.json)
+    let portfolio_trades = state::load_bot_trades(&bot.id);
+    for t in &portfolio_trades {
+        let mid = t
+            .get("market_id")
+            .or_else(|| t.get("symbol"))
+            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+            .unwrap_or("");
+        let mid_str = if mid.is_empty() {
+            t.get("market_id")
                 .or_else(|| t.get("symbol"))
-                .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
-                .unwrap_or("");
-            let mid_str = if mid.is_empty() {
-                t.get("market_id")
-                    .or_else(|| t.get("symbol"))
-                    .map(|v| v.to_string())
-                    .unwrap_or_default()
-            } else {
-                mid.to_string()
-            };
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        } else {
+            mid.to_string()
+        };
 
-            let tid = t
-                .get("id")
-                .map(|v| match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    _ => v.to_string(),
-                })
-                .unwrap_or_else(|| mid_str.clone());
+        let tid = t
+            .get("id")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => v.to_string(),
+            })
+            .unwrap_or_else(|| mid_str.clone());
 
-            let question = t
-                .get("question")
-                .or_else(|| t.get("symbol"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown");
+        let question = t
+            .get("question")
+            .or_else(|| t.get("symbol"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
 
-            let side = t
-                .get("side")
-                .or_else(|| t.get("action"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("buy");
+        let side = t
+            .get("side")
+            .or_else(|| t.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("buy");
 
-            let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy")
-            {
+        let action =
+            if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
                 "buy"
             } else {
                 "sell"
             };
 
-            let amount = t
-                .get("amount_usd")
-                .or_else(|| t.get("size"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+        let amount = t
+            .get("amount_usd")
+            .or_else(|| t.get("size"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
 
-            let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t
-                .get("current_price")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(entry_price);
-            let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let status = t
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+        let entry_price = t
+            .get("entry_price")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let current_price = t
+            .get("current_price")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(entry_price);
+        let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let status = t
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
-            let ts = t
-                .get("created_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+        let ts = t
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-            TradeEntryResponse {
-                id: tid.clone(),
-                bot_id: bot.id.clone(),
-                timestamp: if ts.is_empty() {
-                    chrono::Utc::now().to_rfc3339()
-                } else {
-                    ts
-                },
-                action: action.to_string(),
-                token_in: "USDC".to_string(),
-                token_out: question.chars().take(40).collect(),
-                amount_in: amount.to_string(),
-                min_amount_out: entry_price.to_string(),
-                target_protocol: protocol.to_string(),
-                tx_hash: format!("0xpaper_{}", &tid[..tid.len().min(16)]),
-                paper_trade: true,
-                status: status.to_string(),
-                pnl,
-                entry_price,
-                current_price,
+        seen_ids.insert(tid.clone());
+        entries.push(TradeEntryResponse {
+            id: tid.clone(),
+            bot_id: bot.id.clone(),
+            timestamp: if ts.is_empty() {
+                chrono::Utc::now().to_rfc3339()
+            } else {
+                ts
+            },
+            action: action.to_string(),
+            token_in: "USDC".to_string(),
+            token_out: question.chars().take(40).collect(),
+            amount_in: amount.to_string(),
+            min_amount_out: entry_price.to_string(),
+            target_protocol: protocol.to_string(),
+            tx_hash: format!("0xpaper_{}", &tid[..tid.len().min(16)]),
+            paper_trade: true,
+            status: status.to_string(),
+            pnl,
+            entry_price,
+            current_price,
+        });
+    }
+
+    // Source 2: execution records (trade-history.json via trading HTTP API store)
+    if let Ok(paginated) = trading_http_api::trade_store::trades_for_bot(&bot.id, 1000, 0) {
+        for rec in paginated.trades {
+            if seen_ids.contains(&rec.id) {
+                continue;
             }
-        })
-        .collect();
+            entries.push(TradeEntryResponse {
+                id: rec.id,
+                bot_id: rec.bot_id,
+                timestamp: rec.timestamp.to_rfc3339(),
+                action: rec.action.clone(),
+                token_in: rec.token_in,
+                token_out: rec.token_out,
+                amount_in: rec.amount_in,
+                min_amount_out: rec.min_amount_out,
+                target_protocol: rec.target_protocol,
+                tx_hash: rec.tx_hash,
+                paper_trade: rec.paper_trade,
+                status: if rec.paper_trade {
+                    "executed".to_string()
+                } else {
+                    "confirmed".to_string()
+                },
+                pnl: 0.0,
+                entry_price: 0.0,
+                current_price: 0.0,
+            });
+        }
+    }
+
+    // Sort by timestamp descending (newest first)
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(Json(entries))
 }
 
 async fn get_bot_portfolio(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
@@ -997,6 +1042,7 @@ async fn get_bot_portfolio(
 // ── Activation progress handler ──────────────────────────────────────────
 
 async fn get_activation_progress(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
     let progress = state::get_activation(&bot_id)
@@ -1013,7 +1059,7 @@ async fn get_activation_progress(
 
 // ── Debug handlers ───────────────────────────────────────────────────────
 
-async fn debug_sandboxes() -> Json<serde_json::Value> {
+async fn debug_sandboxes(SessionAuth(_caller): SessionAuth) -> Json<serde_json::Value> {
     match sandbox_runtime::runtime::sandboxes() {
         Ok(store) => match store.values() {
             Ok(records) => {
@@ -1037,7 +1083,7 @@ async fn debug_sandboxes() -> Json<serde_json::Value> {
     }
 }
 
-async fn debug_workflows() -> Json<serde_json::Value> {
+async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::Value> {
     match ai_agent_sandbox_blueprint_lib::workflows::workflows() {
         Ok(store) => match store.values() {
             Ok(entries) => {
@@ -1072,6 +1118,7 @@ async fn debug_workflows() -> Json<serde_json::Value> {
 }
 
 async fn debug_run_now(
+    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
@@ -1359,6 +1406,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/bots")
+                    .header("authorization", test_auth_header())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1385,6 +1433,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/bots/nonexistent")
+                    .header("authorization", test_auth_header())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1638,8 +1687,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bot_detail_includes_wind_down() {
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+        ensure_state_dir();
 
         let store = state::bots().unwrap();
         let bot = TradingBotRecord {
@@ -1674,6 +1722,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/bots/wd-bot")
+                    .header("authorization", test_auth_header())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1770,6 +1819,8 @@ mod tests {
             stack: String::new(),
             owner: String::new(),
             tee_config: None,
+            extra_ports: std::collections::HashMap::new(),
+            tee_attestation_json: None,
         };
         // Ignore flush errors — the in-memory data is what matters for
         // has_user_secrets() since get_sandbox_by_id reads from memory.

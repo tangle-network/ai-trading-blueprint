@@ -3,32 +3,12 @@ import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { strategyColors } from '~/lib/constants/strategyColors';
 import { SparklineChart } from './SparklineChart';
 
 interface LeaderboardTableProps {
   bots: Bot[];
 }
-
-const strategyColors: Record<string, 'accent' | 'success' | 'amber' | 'default' | 'secondary'> = {
-  momentum: 'accent',
-  'mean-reversion': 'success',
-  arbitrage: 'amber',
-  'trend-following': 'secondary',
-  'market-making': 'default',
-  sentiment: 'accent',
-  dex: 'success',
-  prediction: 'accent',
-  prediction_politics: 'accent',
-  prediction_crypto: 'accent',
-  prediction_war: 'accent',
-  prediction_trending: 'accent',
-  prediction_celebrity: 'accent',
-  yield: 'amber',
-  perp: 'default',
-  volatility: 'secondary',
-  mm: 'default',
-  multi: 'accent',
-};
 
 function RankCell({ rank }: { rank: number }) {
   if (rank <= 3) {

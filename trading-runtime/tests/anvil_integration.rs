@@ -80,11 +80,30 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface FeeDistributor {
+        function transferOwnership(address newOwner) external;
+        function acceptOwnership() external;
+    }
+
+    #[sol(rpc)]
     interface VaultFactory {
+        struct PolicyConfig {
+            uint256 leverageCap;
+            uint256 maxTradesPerHour;
+            uint256 maxSlippageBps;
+        }
+
+        struct FeeConfig {
+            uint256 performanceFeeBps;
+            uint256 managementFeeBps;
+            uint256 validatorFeeShareBps;
+        }
+
         function createVault(
             uint64 serviceId, address assetToken, address admin, address operator,
             address[] calldata signers, uint256 requiredSigs,
-            string calldata name, string calldata symbol, bytes32 salt
+            string calldata name, string calldata symbol, bytes32 salt,
+            PolicyConfig calldata policyConfig, FeeConfig calldata feeConfig
         ) external returns (address vault, address shareToken);
     }
 
@@ -105,6 +124,17 @@ sol! {
         function execute(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores) external;
         function totalAssets() external view returns (uint256);
         function getBalance(address token) external view returns (uint256);
+        function convertToAssets(uint256 shares) external view returns (uint256);
+        function liquidAssets() external view returns (uint256);
+
+        // CLOB collateral management
+        function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function returnCollateral(uint256 amount) external;
+        function setMaxCollateralBps(uint256 bps) external;
+        function totalOutstandingCollateral() external view returns (uint256);
+        function operatorCollateral(address operator) external view returns (uint256);
+        function maxCollateralBps() external view returns (uint256);
+        function availableCollateral() external view returns (uint256);
     }
 
     #[sol(rpc)]
@@ -140,10 +170,30 @@ async fn deploy_contract(
         .expect("no contract address in receipt")
 }
 
+/// Default PolicyConfig for tests: reasonable limits, no leverage.
+fn default_policy_config() -> VaultFactory::PolicyConfig {
+    VaultFactory::PolicyConfig {
+        leverageCap: U256::ZERO,
+        maxTradesPerHour: U256::from(100u64),
+        maxSlippageBps: U256::from(500u64), // 5%
+    }
+}
+
+/// Default FeeConfig for tests: 10% perf, 2% mgmt, 20% validator share.
+fn default_fee_config() -> VaultFactory::FeeConfig {
+    VaultFactory::FeeConfig {
+        performanceFeeBps: U256::from(1000u64),
+        managementFeeBps: U256::from(200u64),
+        validatorFeeShareBps: U256::from(2000u64),
+    }
+}
+
 #[tokio::test]
 async fn test_full_lifecycle_on_anvil() {
     // ── 1. Start Anvil ──────────────────────────────────────────────────────
     let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
         .try_spawn()
         .expect("Failed to spawn Anvil — is it installed?");
     let rpc_url = anvil.endpoint();
@@ -261,8 +311,27 @@ async fn test_full_lifecycle_on_anvil() {
     // ── 5. Transfer ownership to factory ────────────────────────────────────
     let policy = PolicyEngine::new(policy_engine_addr, &deployer_provider);
     let validator_contract = TradeValidator::new(trade_validator_addr, &deployer_provider);
+    let fee_dist = FeeDistributor::new(fee_distributor_addr, &deployer_provider);
 
     policy
+        .transferOwnership(vault_factory_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    validator_contract
+        .transferOwnership(vault_factory_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    fee_dist
         .transferOwnership(vault_factory_addr)
         .send()
         .await
@@ -293,40 +362,23 @@ async fn test_full_lifecycle_on_anvil() {
 
     let factory_provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
 
-    let accept_call = PolicyEngine::acceptOwnershipCall {};
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(policy_engine_addr)
         .from(vault_factory_addr)
-        .input(Bytes::from(accept_call.abi_encode()).into());
-    factory_provider
-        .send_transaction(tx)
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+        .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    validator_contract
-        .transferOwnership(vault_factory_addr)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-
-    let accept_call2 = TradeValidator::acceptOwnershipCall {};
-    let tx2 = alloy::rpc::types::TransactionRequest::default()
+    let tx = alloy::rpc::types::TransactionRequest::default()
         .to(trade_validator_addr)
         .from(vault_factory_addr)
-        .input(Bytes::from(accept_call2.abi_encode()).into());
-    factory_provider
-        .send_transaction(tx2)
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+        .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(fee_distributor_addr)
+        .from(vault_factory_addr)
+        .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -352,6 +404,8 @@ async fn test_full_lifecycle_on_anvil() {
             "Test Vault Shares".to_string(),
             "tvSHR".to_string(),
             salt,
+            default_policy_config(),
+            default_fee_config(),
         )
         .call()
         .await
@@ -372,6 +426,8 @@ async fn test_full_lifecycle_on_anvil() {
             "Test Vault Shares".to_string(),
             "tvSHR".to_string(),
             salt,
+            default_policy_config(),
+            default_fee_config(),
         )
         .send()
         .await
@@ -647,7 +703,11 @@ async fn test_full_lifecycle_on_anvil() {
 #[ignore = "covered by individual edge case tests below; this combined test uses too much memory"]
 async fn test_vault_edge_cases() {
     // ── Setup (same as main test, condensed) ──────────────────────────────
-    let anvil = Anvil::new().try_spawn().expect("Failed to spawn Anvil");
+    let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
+        .try_spawn()
+        .expect("Failed to spawn Anvil");
     let rpc_url = anvil.endpoint();
 
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -745,21 +805,10 @@ async fn test_vault_edge_cases() {
     // Transfer ownership to factory
     let policy = PolicyEngine::new(policy_engine_addr, &deployer_provider);
     let tv = TradeValidator::new(trade_validator_addr, &deployer_provider);
-    policy
-        .transferOwnership(vault_factory_addr)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    tv.transferOwnership(vault_factory_addr)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let fd = FeeDistributor::new(fee_distributor_addr, &deployer_provider);
+    policy.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+    tv.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+    fd.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -781,31 +830,23 @@ async fn test_vault_edge_cases() {
 
     let factory_provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
 
-    let accept1 = PolicyEngine::acceptOwnershipCall {};
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(policy_engine_addr)
         .from(vault_factory_addr)
-        .input(Bytes::from(accept1.abi_encode()).into());
-    factory_provider
-        .send_transaction(tx)
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+        .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let accept2 = TradeValidator::acceptOwnershipCall {};
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(trade_validator_addr)
         .from(vault_factory_addr)
-        .input(Bytes::from(accept2.abi_encode()).into());
-    factory_provider
-        .send_transaction(tx)
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+        .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(fee_distributor_addr)
+        .from(vault_factory_addr)
+        .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
+    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -829,6 +870,8 @@ async fn test_vault_edge_cases() {
             "Edge Vault".to_string(),
             "evSHR".to_string(),
             salt,
+            default_policy_config(),
+            default_fee_config(),
         )
         .call()
         .await
@@ -848,6 +891,8 @@ async fn test_vault_edge_cases() {
             "Edge Vault".to_string(),
             "evSHR".to_string(),
             salt,
+            default_policy_config(),
+            default_fee_config(),
         )
         .send()
         .await
@@ -1109,6 +1154,8 @@ async fn test_vault_edge_cases() {
             "Dup Vault".to_string(),
             "dupSHR".to_string(),
             salt, // same salt!
+            default_policy_config(),
+            default_fee_config(),
         )
         .send()
         .await;
@@ -1223,7 +1270,11 @@ struct VaultTestSetup {
 
 impl VaultTestSetup {
     async fn new() -> Self {
-        let anvil = Anvil::new().try_spawn().expect("spawn Anvil");
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .expect("spawn Anvil");
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -1331,21 +1382,11 @@ impl VaultTestSetup {
 
         // Transfer ownership to factory
         PolicyEngine::new(policy_engine_addr, &deployer_provider)
-            .transferOwnership(vault_factory_addr)
-            .send()
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
+            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
         TradeValidator::new(trade_validator_addr, &deployer_provider)
-            .transferOwnership(vault_factory_addr)
-            .send()
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
+            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+        FeeDistributor::new(fee_distributor_addr, &deployer_provider)
+            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
 
         // Impersonate factory to accept ownership
         let _: () = deployer_provider
@@ -1369,28 +1410,19 @@ impl VaultTestSetup {
         let factory_provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
 
         let tx = alloy::rpc::types::TransactionRequest::default()
-            .to(policy_engine_addr)
-            .from(vault_factory_addr)
+            .to(policy_engine_addr).from(vault_factory_addr)
             .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
-        factory_provider
-            .send_transaction(tx)
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
+        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
         let tx = alloy::rpc::types::TransactionRequest::default()
-            .to(trade_validator_addr)
-            .from(vault_factory_addr)
+            .to(trade_validator_addr).from(vault_factory_addr)
             .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
-        factory_provider
-            .send_transaction(tx)
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
+        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+        let tx = alloy::rpc::types::TransactionRequest::default()
+            .to(fee_distributor_addr).from(vault_factory_addr)
+            .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
+        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
         let _: () = deployer_provider
             .raw_request(
@@ -1415,6 +1447,8 @@ impl VaultTestSetup {
                 "Edge Vault Shares".to_string(),
                 "evSHR".to_string(),
                 salt,
+                default_policy_config(),
+                default_fee_config(),
             )
             .call()
             .await
@@ -1434,6 +1468,8 @@ impl VaultTestSetup {
                 "Edge Vault Shares".to_string(),
                 "evSHR".to_string(),
                 salt,
+                default_policy_config(),
+                default_fee_config(),
             )
             .send()
             .await
@@ -1854,6 +1890,8 @@ async fn test_vault_factory_duplicate_salt_reverts() {
             "Duplicate".to_string(),
             "DUP".to_string(),
             salt,
+            default_policy_config(),
+            default_fee_config(),
         )
         .send()
         .await;
@@ -1862,4 +1900,289 @@ async fn test_vault_factory_duplicate_salt_reverts() {
         result.is_err(),
         "createVault with duplicate salt should revert"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLLATERAL ROUND-TRIP E2E — vault → operator EOA → profit → vault → LP withdraw
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_collateral_roundtrip_on_anvil() {
+    let setup = VaultTestSetup::new().await;
+
+    let e18 = setup.e18;
+    let deposit_amount = U256::from(10_000u64) * e18;
+
+    // ── 1. User deposits 10,000 tokens ──────────────────────────────────
+    let user_wallet = EthereumWallet::from(setup.user_key.clone());
+    let user_provider = ProviderBuilder::new()
+        .wallet(user_wallet)
+        .connect_http(setup._anvil.endpoint().parse().unwrap());
+
+    let user_token = MockERC20::new(setup.token_a_addr, &user_provider);
+    user_token
+        .approve(setup.vault_addr, deposit_amount)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let vault_as_user = TradingVault::new(setup.vault_addr, &user_provider);
+    vault_as_user
+        .deposit(deposit_amount, setup.user_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let vault_read = TradingVault::new(setup.vault_addr, &setup.deployer_provider);
+    let total_after_deposit: U256 = vault_read.totalAssets().call().await.unwrap();
+    assert_eq!(total_after_deposit, deposit_amount);
+
+    let share_token = VaultShare::new(setup.share_addr, &setup.deployer_provider);
+    let user_shares: U256 = share_token.balanceOf(setup.user_addr).call().await.unwrap();
+    assert_eq!(user_shares, deposit_amount, "First deposit = 1:1 shares");
+
+    // Record share price before collateral operations
+    let price_before: U256 = vault_read
+        .convertToAssets(U256::from(1u64) * e18)
+        .call()
+        .await
+        .unwrap();
+
+    // ── 2. Admin enables collateral (50% cap) ───────────────────────────
+    // deployer_addr is the vault admin (it deployed the vault)
+    let vault_as_admin = TradingVault::new(setup.vault_addr, &setup.deployer_provider);
+    vault_as_admin
+        .setMaxCollateralBps(U256::from(5000u64))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let max_bps: U256 = vault_read.maxCollateralBps().call().await.unwrap();
+    assert_eq!(max_bps, U256::from(5000u64), "Collateral BPS should be 5000");
+
+    let avail: U256 = vault_read.availableCollateral().call().await.unwrap();
+    assert_eq!(avail, U256::from(5000u64) * e18, "Available = 50% of 10k");
+
+    // ── 3. Operator releases 2,000 collateral with validator sigs ────────
+    let release_amount = U256::from(2_000u64) * e18;
+    let intent_hash = keccak256(alloy::sol_types::SolValue::abi_encode(&(
+        "collateral-release-1".to_string(),
+        release_amount,
+    )));
+
+    let block_num = setup.deployer_provider.get_block_number().await.unwrap();
+    let block_info = setup
+        .deployer_provider
+        .get_block_by_number(block_num.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let deadline = U256::from(block_info.header.timestamp + 3600);
+
+    let scores = vec![U256::from(80u64), U256::from(75u64)];
+    let tv = TradeValidator::new(setup.trade_validator_addr, &setup.deployer_provider);
+    let digest1: FixedBytes<32> = tv
+        .computeDigest(intent_hash, setup.vault_addr, scores[0], deadline)
+        .call()
+        .await
+        .unwrap();
+    let digest2: FixedBytes<32> = tv
+        .computeDigest(intent_hash, setup.vault_addr, scores[1], deadline)
+        .call()
+        .await
+        .unwrap();
+
+    use alloy::signers::SignerSync;
+    let sig1 = setup.validator1_key.sign_hash_sync(&digest1).unwrap();
+    let sig2 = setup.validator2_key.sign_hash_sync(&digest2).unwrap();
+
+    let operator_wallet = EthereumWallet::from(setup.operator_key.clone());
+    let operator_provider = ProviderBuilder::new()
+        .wallet(operator_wallet)
+        .connect_http(setup._anvil.endpoint().parse().unwrap());
+
+    let operator_addr = setup.operator_key.address();
+    let operator_bal_before: U256 = MockERC20::new(setup.token_a_addr, &operator_provider)
+        .balanceOf(operator_addr)
+        .call()
+        .await
+        .unwrap();
+
+    let vault_as_operator = TradingVault::new(setup.vault_addr, &operator_provider);
+    let release_receipt = vault_as_operator
+        .releaseCollateral(
+            release_amount,
+            operator_addr,
+            intent_hash,
+            deadline,
+            vec![
+                Bytes::from(sig1.as_bytes().to_vec()),
+                Bytes::from(sig2.as_bytes().to_vec()),
+            ],
+            scores,
+        )
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(release_receipt.status(), "releaseCollateral should succeed");
+
+    // ── 4. Verify on-chain state after release ──────────────────────────
+    let operator_bal_after: U256 = MockERC20::new(setup.token_a_addr, &operator_provider)
+        .balanceOf(operator_addr)
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(
+        operator_bal_after - operator_bal_before,
+        release_amount,
+        "Operator EOA should receive 2000 tokens"
+    );
+
+    let outstanding: U256 = vault_read.totalOutstandingCollateral().call().await.unwrap();
+    assert_eq!(outstanding, release_amount, "Outstanding should be 2000");
+
+    let op_collateral: U256 = vault_read
+        .operatorCollateral(operator_addr)
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(op_collateral, release_amount);
+
+    // totalAssets unchanged (outstanding tracked)
+    let total_after_release: U256 = vault_read.totalAssets().call().await.unwrap();
+    assert_eq!(
+        total_after_release, deposit_amount,
+        "totalAssets should be unchanged after release"
+    );
+
+    // Share price stable
+    let price_after_release: U256 = vault_read
+        .convertToAssets(U256::from(1u64) * e18)
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(price_after_release, price_before, "Share price stable after release");
+
+    // Liquid assets dropped
+    let liquid: U256 = vault_read.liquidAssets().call().await.unwrap();
+    assert_eq!(liquid, deposit_amount - release_amount, "Liquid = 10k - 2k = 8k");
+
+    // ── 5. Simulate CLOB profit: operator returns 2,500 (500 profit) ─────
+    let return_amount = U256::from(2_500u64) * e18;
+
+    // Operator needs extra tokens to simulate CLOB profit
+    let token_a_deployer = MockERC20::new(setup.token_a_addr, &setup.deployer_provider);
+    token_a_deployer
+        .mint(operator_addr, U256::from(500u64) * e18)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // Approve vault to pull tokens
+    let operator_token = MockERC20::new(setup.token_a_addr, &operator_provider);
+    operator_token
+        .approve(setup.vault_addr, return_amount)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // Return collateral + profit
+    let return_receipt = vault_as_operator
+        .returnCollateral(return_amount)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(return_receipt.status(), "returnCollateral should succeed");
+
+    // ── 6. Verify accounting after return ────────────────────────────────
+    let outstanding_after: U256 = vault_read.totalOutstandingCollateral().call().await.unwrap();
+    assert_eq!(outstanding_after, U256::ZERO, "All collateral returned");
+
+    let op_collateral_after: U256 = vault_read
+        .operatorCollateral(operator_addr)
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(op_collateral_after, U256::ZERO);
+
+    // totalAssets increased by 500 (profit)
+    let total_after_return: U256 = vault_read.totalAssets().call().await.unwrap();
+    let expected_total = deposit_amount + U256::from(500u64) * e18;
+    assert_eq!(
+        total_after_return, expected_total,
+        "totalAssets should be 10500 (10k + 500 profit)"
+    );
+
+    // Share price increased
+    let price_after_return: U256 = vault_read
+        .convertToAssets(U256::from(1u64) * e18)
+        .call()
+        .await
+        .unwrap();
+    assert!(
+        price_after_return > price_before,
+        "Share price should increase after profit return"
+    );
+
+    // ── 7. LP redeems ALL shares → gets deposit + profit ─────────────────
+    let user_bal_before: U256 = MockERC20::new(setup.token_a_addr, &user_provider)
+        .balanceOf(setup.user_addr)
+        .call()
+        .await
+        .unwrap();
+
+    let redeem_receipt = vault_as_user
+        .redeem(user_shares, setup.user_addr, setup.user_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(redeem_receipt.status(), "redeem should succeed");
+
+    let user_bal_after: U256 = MockERC20::new(setup.token_a_addr, &user_provider)
+        .balanceOf(setup.user_addr)
+        .call()
+        .await
+        .unwrap();
+
+    let assets_received = user_bal_after - user_bal_before;
+    // User should get ~10,500 tokens (deposit + profit, minus 1 wei virtual offset rounding)
+    assert!(
+        assets_received > deposit_amount,
+        "LP must receive MORE than deposited: got {assets_received}, deposited {deposit_amount}"
+    );
+    // Within 1 wei of expected (virtual offset rounding)
+    let diff = if assets_received > expected_total {
+        assets_received - expected_total
+    } else {
+        expected_total - assets_received
+    };
+    assert!(diff <= U256::from(1u64), "LP payout should be within 1 wei of 10500e18, diff={diff}");
+
+    // Vault should be nearly empty after full redemption
+    let final_total: U256 = vault_read.totalAssets().call().await.unwrap();
+    assert!(final_total <= U256::from(1u64), "Vault should be empty (within virtual offset)");
 }

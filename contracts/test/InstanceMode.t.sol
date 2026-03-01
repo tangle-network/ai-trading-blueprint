@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "./helpers/Setup.sol";
 import "../src/blueprints/TradingBlueprint.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
+import "tnt-core/BlueprintServiceManagerBase.sol";
 
 /// @title InstanceModeTest
 /// @notice Tests for the instanceMode flag: vault creation at service init,
@@ -31,6 +32,9 @@ contract InstanceModeTest is Setup {
         // Set vault factory
         vm.prank(tangleCore);
         blueprint.setVaultFactory(address(vaultFactory));
+
+        // Authorize blueprint as a factory caller
+        vaultFactory.setAuthorizedCaller(address(blueprint), true);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -38,30 +42,55 @@ contract InstanceModeTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @dev Build request inputs with asset token + signers for vault creation
+    ///      Full TradingProvisionRequest tuple (matches frontend encoding)
     function _buildRequestInputsWithAsset() internal view returns (bytes memory) {
         address[] memory signers = new address[](2);
         signers[0] = validator1;
         signers[1] = validator2;
+        uint64[] memory validatorIds = new uint64[](0);
 
         return abi.encode(
-            address(tokenA), // assetToken
-            signers, // signers
-            uint256(1), // requiredSignatures
             "Instance Vault", // name
-            "iVLT" // symbol
+            "",               // strategyType
+            "",               // strategyConfigJson
+            "",               // riskParamsJson
+            address(0),       // factoryAddress (unused)
+            address(tokenA),  // assetToken
+            signers,          // signers
+            uint256(1),       // requiredSignatures
+            uint256(0),       // chainId
+            "",               // rpcUrl
+            "",               // cron
+            uint64(0),        // cpuCores
+            uint64(0),        // memoryMb
+            uint64(0),        // maxLifetimeDays
+            validatorIds,     // validatorServiceIds
+            uint256(0)        // maxCollateralBps
         );
     }
 
     /// @dev Build request inputs WITHOUT asset token (zero address)
     function _buildRequestInputsNoAsset() internal pure returns (bytes memory) {
         address[] memory signers = new address[](0);
+        uint64[] memory validatorIds = new uint64[](0);
 
         return abi.encode(
-            address(0), // assetToken = zero
-            signers, // signers
-            uint256(0), // requiredSignatures
-            "", // name
-            "" // symbol
+            "",          // name
+            "",          // strategyType
+            "",          // strategyConfigJson
+            "",          // riskParamsJson
+            address(0),  // factoryAddress (unused)
+            address(0),  // assetToken = zero
+            signers,     // signers
+            uint256(0),  // requiredSignatures
+            uint256(0),  // chainId
+            "",          // rpcUrl
+            "",          // cron
+            uint64(0),   // cpuCores
+            uint64(0),   // memoryMb
+            uint64(0),   // maxLifetimeDays
+            validatorIds, // validatorServiceIds
+            uint256(0)   // maxCollateralBps
         );
     }
 
@@ -110,7 +139,9 @@ contract InstanceModeTest is Setup {
     }
 
     function test_instanceMode_onlyFromTangle() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+        ));
         blueprint.setInstanceMode(true);
     }
 
@@ -212,7 +243,11 @@ contract InstanceModeTest is Setup {
 
         // Build inputs with asset but no explicit signers, and pass empty operators
         address[] memory signers = new address[](0);
-        bytes memory inputs = abi.encode(address(tokenA), signers, uint256(0), "Test", "TST");
+        uint64[] memory validatorIds = new uint64[](0);
+        bytes memory inputs = abi.encode(
+            "Test", "", "", "", address(0), address(tokenA), signers, uint256(0),
+            uint256(0), "", "", uint64(0), uint64(0), uint64(0), validatorIds, uint256(0)
+        );
 
         vm.prank(tangleCore);
         blueprint.onRequest(requestId, address(0), new address[](0), inputs, 0, address(0), 0);
@@ -231,12 +266,10 @@ contract InstanceModeTest is Setup {
 
         // Build inputs with asset but NO explicit signers
         address[] memory signers = new address[](0);
+        uint64[] memory validatorIds = new uint64[](0);
         bytes memory inputs = abi.encode(
-            address(tokenA),
-            signers,
-            uint256(0), // requiredSigs = 0 (will default to 1)
-            "Op Vault",
-            "oVLT"
+            "Op Vault", "", "", "", address(0), address(tokenA), signers, uint256(0),
+            uint256(0), "", "", uint64(0), uint64(0), uint64(0), validatorIds, uint256(0)
         );
 
         vm.prank(tangleCore);

@@ -42,7 +42,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
     let result = timeout(common::ANVIL_TEST_TIMEOUT, async {
         // ── 1. Start Anvil ──────────────────────────────────────────────
         eprintln!("[setup] Starting Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Failed to spawn Anvil")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Failed to spawn Anvil")?;
         let rpc_url = anvil.endpoint();
 
         let val_addrs: Vec<Address> = (3..6)
@@ -82,6 +82,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
             memory_mb: 4096,
             max_lifetime_days: 30,
             validator_service_ids: vec![],
+            max_collateral_bps: U256::from(0),
         }
         .abi_encode();
 
@@ -125,6 +126,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
             memory_mb: 4096,
             max_lifetime_days: 30,
             validator_service_ids: vec![],
+            max_collateral_bps: U256::from(0),
         }
         .abi_encode();
 

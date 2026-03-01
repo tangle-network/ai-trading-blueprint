@@ -329,12 +329,16 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
 
 // ── Auth handlers ───────────────────────────────────────────────────────
 
-async fn create_challenge() -> (StatusCode, Json<serde_json::Value>) {
-    let challenge = sandbox_runtime::session_auth::create_challenge();
-    (
-        StatusCode::OK,
-        Json(serde_json::to_value(challenge).unwrap()),
-    )
+async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let challenge = sandbox_runtime::session_auth::create_challenge()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Challenge error: {e}")))?;
+    let value = serde_json::to_value(&challenge).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Serialization error: {e}"),
+        )
+    })?;
+    Ok((StatusCode::OK, Json(value)))
 }
 
 async fn create_session(
@@ -398,6 +402,7 @@ async fn provision_bot(
         memory_mb: 2048,
         max_lifetime_days: 30,
         validator_service_ids: body.validator_service_ids.unwrap_or_default(),
+        max_collateral_bps: U256::ZERO,
     };
 
     // Auto-detect TEE backend (None for plain instance, Some for TEE instance)
@@ -438,7 +443,7 @@ async fn provision_bot(
 
 // ── Bot handlers (singleton — no bot_id path param) ─────────────────────
 
-async fn get_bot() -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
+async fn get_bot(SessionAuth(_caller): SessionAuth) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     Ok(Json(BotDetailResponse::from_record(bot)))
 }
@@ -733,7 +738,7 @@ fn synthesize_metrics(
 
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
-async fn get_bot_metrics() -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
+async fn get_bot_metrics(SessionAuth(_caller): SessionAuth) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
 
@@ -749,7 +754,7 @@ async fn get_bot_metrics() -> Result<Json<BotMetricsResponse>, (StatusCode, Stri
     }))
 }
 
-async fn get_bot_metrics_history()
+async fn get_bot_metrics_history(SessionAuth(_caller): SessionAuth)
 -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
@@ -757,7 +762,7 @@ async fn get_bot_metrics_history()
     Ok(Json(snapshots))
 }
 
-async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
+async fn get_bot_trades(SessionAuth(_caller): SessionAuth) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
     let protocol = if bot.strategy_type == "prediction" {
@@ -861,7 +866,7 @@ async fn get_bot_trades() -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, 
     Ok(Json(entries))
 }
 
-async fn get_bot_portfolio() -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
+async fn get_bot_portfolio(SessionAuth(_caller): SessionAuth) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
 
@@ -941,7 +946,7 @@ async fn get_bot_portfolio() -> Result<Json<PortfolioStateResponse>, (StatusCode
 
 // ── Activation progress handler ─────────────────────────────────────────
 
-async fn get_activation_progress() -> Result<Json<ActivationProgressResponse>, (StatusCode, String)>
+async fn get_activation_progress(SessionAuth(_caller): SessionAuth) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)>
 {
     let bot = resolve_singleton()?;
     let progress = state::get_activation(&bot.id)
@@ -953,7 +958,7 @@ async fn get_activation_progress() -> Result<Json<ActivationProgressResponse>, (
 
 // ── Provision handlers ──────────────────────────────────────────────────
 
-async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
+async fn list_provisions(SessionAuth(_caller): SessionAuth) -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
     let all = sandbox_runtime::provision_progress::list_all_provisions()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ProvisionListResponse {
@@ -965,6 +970,7 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
 }
 
 async fn get_provision(
+    SessionAuth(_caller): SessionAuth,
     axum::extract::Path(call_id): axum::extract::Path<u64>,
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
     let progress = sandbox_runtime::provision_progress::get_provision(call_id)
@@ -1036,7 +1042,7 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
 
 // ── Debug handlers ──────────────────────────────────────────────────────
 
-async fn debug_sandboxes() -> Json<serde_json::Value> {
+async fn debug_sandboxes(SessionAuth(_caller): SessionAuth) -> Json<serde_json::Value> {
     match sandbox_runtime::runtime::sandboxes() {
         Ok(store) => match store.values() {
             Ok(records) => {
@@ -1060,7 +1066,7 @@ async fn debug_sandboxes() -> Json<serde_json::Value> {
     }
 }
 
-async fn debug_workflows() -> Json<serde_json::Value> {
+async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::Value> {
     match ai_agent_sandbox_blueprint_lib::workflows::workflows() {
         Ok(store) => match store.values() {
             Ok(entries) => {
@@ -1094,7 +1100,7 @@ async fn debug_workflows() -> Json<serde_json::Value> {
     }
 }
 
-async fn debug_run_now() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+async fn debug_run_now(SessionAuth(_caller): SessionAuth) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
 
     let workflow_id = bot
@@ -1159,6 +1165,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/bot")
+                    .header("authorization", test_auth_header())
                     .body(Body::empty())
                     .unwrap(),
             )

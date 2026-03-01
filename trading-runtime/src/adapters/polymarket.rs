@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter};
+use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -146,7 +146,13 @@ impl ProtocolAdapter for PolymarketAdapter {
         SUPPORTED_CHAINS.to_vec()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        vec![self.ctf_exchange, self.ctf_contract]
+    }
+
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
+        validate_vault_address(params, "polymarket")?;
+
         let condition_id = Self::parse_condition_id(&params.extra);
 
         match params.action {
@@ -158,6 +164,11 @@ impl ProtocolAdapter for PolymarketAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.ctf_contract,
+                        params.amount,
+                    )],
                 })
             }
             Action::Sell => {
@@ -168,6 +179,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_in,
+                    pre_calls: vec![],
                 })
             }
             Action::Redeem => {
@@ -181,6 +193,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -197,6 +210,7 @@ mod tests {
 
     const TOKEN_USDC: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_CTF: &str = "0x0000000000000000000000000000000000000002";
+    const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
     fn test_protocol_id() {
@@ -222,10 +236,12 @@ mod tests {
             extra: serde_json::json!({
                 "condition_id": "0x0000000000000000000000000000000000000000000000000000000000000001"
             }),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, CTF_CONTRACT.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
+        assert_eq!(result.pre_calls.len(), 1);
     }
 
     #[test]
@@ -240,6 +256,7 @@ mod tests {
             extra: serde_json::json!({
                 "condition_id": "0x0000000000000000000000000000000000000000000000000000000000000001"
             }),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, CTF_CONTRACT.parse::<Address>().unwrap());

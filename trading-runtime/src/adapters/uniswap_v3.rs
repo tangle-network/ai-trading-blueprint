@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use alloy::primitives::{Address, Bytes, U256, Uint};
 use alloy::sol;
 use alloy::sol_types::SolCall;
@@ -7,7 +9,7 @@ type Uint24 = Uint<24, 1>;
 /// Alloy type alias for uint160 (used for sqrtPriceLimitX96)
 type Uint160 = Uint<160, 3>;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter};
+use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -45,9 +47,14 @@ const UNISWAP_V3_ROUTER: &str = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
 /// Supported chain IDs (Ethereum mainnet, Arbitrum, Polygon, Optimism, Base)
 const SUPPORTED_CHAINS: &[u64] = &[1, 42161, 137, 10, 8453];
 
-/// Default deadline offset: 30 minutes from now (in seconds, as a large constant).
-/// In production, this would be `block.timestamp + 1800`.
-const DEFAULT_DEADLINE: u64 = u64::MAX;
+/// Compute a realistic deadline: 30 minutes from now.
+fn default_deadline() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        + 1800
+}
 
 pub struct UniswapV3Adapter {
     router_address: Address,
@@ -74,14 +81,15 @@ impl UniswapV3Adapter {
         amount_in: U256,
         amount_out_min: U256,
         fee_tier: u32,
+        recipient: Address,
     ) -> Bytes {
         let call = ISwapRouter::exactInputSingleCall {
             params: ISwapRouter::ExactInputSingleParams {
                 tokenIn: token_in,
                 tokenOut: token_out,
                 fee: Uint24::from(fee_tier),
-                recipient: Address::ZERO, // Vault will be the actual recipient
-                deadline: U256::from(DEFAULT_DEADLINE),
+                recipient,
+                deadline: U256::from(default_deadline()),
                 amountIn: amount_in,
                 amountOutMinimum: amount_out_min,
                 sqrtPriceLimitX96: Uint160::ZERO, // No price limit
@@ -98,14 +106,15 @@ impl UniswapV3Adapter {
         amount_out: U256,
         amount_in_max: U256,
         fee_tier: u32,
+        recipient: Address,
     ) -> Bytes {
         let call = ISwapRouter::exactOutputSingleCall {
             params: ISwapRouter::ExactOutputSingleParams {
                 tokenIn: token_in,
                 tokenOut: token_out,
                 fee: Uint24::from(fee_tier),
-                recipient: Address::ZERO,
-                deadline: U256::from(DEFAULT_DEADLINE),
+                recipient,
+                deadline: U256::from(default_deadline()),
                 amountOut: amount_out,
                 amountInMaximum: amount_in_max,
                 sqrtPriceLimitX96: Uint160::ZERO,
@@ -130,12 +139,20 @@ impl ProtocolAdapter for UniswapV3Adapter {
         SUPPORTED_CHAINS.to_vec()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        vec![self.router_address]
+    }
+
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
+        validate_vault_address(params, "uniswap_v3")?;
+
         let fee_tier: u32 = params
             .extra
             .get("fee_tier")
             .and_then(|v| v.as_u64())
             .unwrap_or(3000) as u32;
+
+        let router: Address = UNISWAP_V3_ROUTER.parse().expect("valid router address");
 
         match params.action {
             Action::Swap => {
@@ -145,6 +162,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     params.amount,
                     params.min_output,
                     fee_tier,
+                    params.vault_address,
                 );
                 Ok(EncodedAction {
                     target: self.router_address,
@@ -152,6 +170,11 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        router,
+                        params.amount,
+                    )],
                 })
             }
             Action::Buy => {
@@ -167,6 +190,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     params.amount,
                     amount_in_max,
                     fee_tier,
+                    params.vault_address,
                 );
                 Ok(EncodedAction {
                     target: self.router_address,
@@ -174,6 +198,11 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        router,
+                        amount_in_max,
+                    )],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -190,6 +219,7 @@ mod tests {
 
     const TOKEN_A: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_B: &str = "0x0000000000000000000000000000000000000002";
+    const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
     fn test_protocol_id() {
@@ -215,12 +245,17 @@ mod tests {
             amount: U256::from(1_000_000u64),
             min_output: U256::from(990_000u64),
             extra: serde_json::json!({"fee_tier": 3000}),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, UNISWAP_V3_ROUTER.parse::<Address>().unwrap());
-        // Verify ABI-encoded calldata starts with the correct selector
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, TOKEN_B.parse::<Address>().unwrap());
+        assert_eq!(result.pre_calls.len(), 1);
+        assert_eq!(
+            result.pre_calls[0].target,
+            TOKEN_A.parse::<Address>().unwrap()
+        );
     }
 
     #[test]
@@ -233,6 +268,23 @@ mod tests {
             amount: U256::from(1_000_000u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let result = adapter.encode_action(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_vault_address_rejected() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_B.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({"fee_tier": 3000}),
+            vault_address: Address::ZERO,
         };
         let result = adapter.encode_action(&params);
         assert!(result.is_err());

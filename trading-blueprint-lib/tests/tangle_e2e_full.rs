@@ -75,7 +75,7 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
         // ║  1. Deploy on-chain infrastructure                              ║
         // ╚══════════════════════════════════════════════════════════════════╝
         eprintln!("\n[1/9] Deploying TradeValidator on Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -147,6 +147,7 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             memory_mb: 4096,
             max_lifetime_days: 30,
             validator_service_ids: vec![],
+            max_collateral_bps: U256::from(0),
         }
         .abi_encode();
 
@@ -217,6 +218,8 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             stack: String::new(),
             owner: String::new(),
             tee_config: None,
+            extra_ports: std::collections::HashMap::new(),
+            tee_attestation_json: None,
         };
 
         let mut user_env = serde_json::Map::new();
@@ -283,6 +286,9 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             submitter_address: String::new(),
             sidecar_url: String::new(),
             sidecar_token: String::new(),
+            rpc_url: Some(rpc_url.clone()),
+            chain_id: Some(31337),
+            clob_client: None,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -519,7 +525,7 @@ async fn test_vault_execute_on_chain() -> Result<()> {
     let result = timeout(Duration::from_secs(600), async {
         // ── 1. Deploy full trade stack on Anvil ─────────────────────────────
         eprintln!("\n[1/8] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -616,6 +622,9 @@ async fn test_vault_execute_on_chain() -> Result<()> {
             submitter_address: String::new(),
             sidecar_url: String::new(),
             sidecar_token: String::new(),
+            rpc_url: Some(rpc_url.clone()),
+            chain_id: Some(31337),
+            clob_client: None,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -740,6 +749,8 @@ fn mock_sandbox_record(id: &str) -> sandbox_runtime::SandboxRecord {
         stack: String::new(),
         owner: String::new(),
         tee_config: None,
+        extra_ports: std::collections::HashMap::new(),
+        tee_attestation_json: None,
     }
 }
 
@@ -782,6 +793,7 @@ async fn test_full_bot_lifecycle() -> Result<()> {
             memory_mb: 4096,
             max_lifetime_days: 30,
             validator_service_ids: vec![],
+            max_collateral_bps: U256::from(0),
         };
 
         let output = trading_blueprint_lib::jobs::provision_core(
@@ -990,7 +1002,7 @@ async fn test_fee_settlement_on_chain() -> Result<()> {
     let result = timeout(Duration::from_secs(600), async {
         // ── 1. Deploy full trade stack ───────────────────────────────────────
         eprintln!("\n[1/8] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -1077,6 +1089,9 @@ async fn test_fee_settlement_on_chain() -> Result<()> {
             submitter_address: String::new(),
             sidecar_url: String::new(),
             sidecar_token: String::new(),
+            rpc_url: Some(rpc_url.clone()),
+            chain_id: Some(31337),
+            clob_client: None,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -1220,7 +1235,7 @@ async fn test_adversarial_contract_paths() -> Result<()> {
         // ║  Setup: Deploy full trade stack + get valid signatures          ║
         // ╚══════════════════════════════════════════════════════════════════╝
         eprintln!("\n[SETUP] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -1308,6 +1323,9 @@ async fn test_adversarial_contract_paths() -> Result<()> {
             submitter_address: String::new(),
             sidecar_url: String::new(),
             sidecar_token: String::new(),
+            rpc_url: Some(rpc_url.clone()),
+            chain_id: Some(31337),
+            clob_client: None,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -1769,7 +1787,7 @@ async fn test_fee_parity_rust_solidity() -> Result<()> {
     let result = timeout(Duration::from_secs(600), async {
         // ── 1. Deploy full trade stack ───────────────────────────────────────
         eprintln!("\n[1/6] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

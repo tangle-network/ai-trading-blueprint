@@ -43,7 +43,7 @@ pub trait TradingProvider: Send + Sync {
     /// Full expert prompt with API URLs, contract addresses, methodology.
     fn expert_prompt(&self) -> &'static str;
 
-    /// Provider-specific setup commands (e.g. `pip install py-clob-client`).
+    /// Provider-specific setup commands (e.g. `npm install --prefix /home/agent <pkg>`).
     fn setup_commands(&self) -> Vec<String>;
 
     /// Env vars this provider needs.

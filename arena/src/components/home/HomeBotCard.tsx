@@ -93,7 +93,7 @@ export function HomeBotCard({
               type="button"
               onClick={(e) => { e.preventDefault(); onDismiss(); }}
               className="p-1 rounded text-arena-elements-textTertiary hover:text-crimson-400 transition-colors shrink-0"
-              title="Dismiss from dashboard"
+              aria-label="Dismiss from dashboard"
             >
               <div className="i-ph:x text-sm" />
             </button>

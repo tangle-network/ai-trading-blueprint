@@ -6,6 +6,12 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/IOracleAdapter.sol";
 
+/// @dev Interface to query a vault's totalAssets() for accurate NAV
+interface IVaultAssets {
+    function asset() external view returns (address);
+    function totalAssets() external view returns (uint256);
+}
+
 /// @title VaultShare
 /// @notice ERC-20 share token for the ERC-7575 vault system
 /// @dev Tracks linked vaults and computes cross-vault NAV for multi-asset support.
@@ -104,6 +110,9 @@ contract VaultShare is ERC20, AccessControl {
             }
         }
 
+        // Revoke MINTER_ROLE so unlinked vault can no longer mint/burn shares
+        _revokeRole(MINTER_ROLE, vault);
+
         emit VaultUnlinked(vault);
     }
 
@@ -118,27 +127,33 @@ contract VaultShare is ERC20, AccessControl {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Total net asset value across all linked vaults
-    /// @dev In single-asset mode (no oracle), returns sum of deposit asset balances.
+    /// @dev In single-asset mode (no oracle), returns sum of each vault's totalAssets().
     ///      In multi-asset mode (oracle set), converts all asset balances to USD.
     /// @return nav The total NAV (in asset units for single-asset, USD-scaled for multi-asset)
     function totalNAV() public view returns (uint256 nav) {
         if (address(oracle) == address(0)) {
-            // Single-asset mode: sum raw balances of each vault's deposit asset
+            // Single-asset mode: sum totalAssets() of each vault (includes held positions).
+            // try/catch ensures one broken vault doesn't brick deposits/withdrawals for all.
             for (uint256 i = 0; i < linkedVaults.length; i++) {
-                address vault = linkedVaults[i];
-                address vaultAsset = IVaultAsset(vault).asset();
-                nav += IERC20(vaultAsset).balanceOf(vault);
+                try IVaultAssets(linkedVaults[i]).totalAssets() returns (uint256 assets) {
+                    nav += assets;
+                } catch {
+                    // Skip broken vaults — admin should unlink them
+                }
             }
         } else {
             // Multi-asset mode: convert all positions to USD via oracle
             for (uint256 i = 0; i < linkedVaults.length; i++) {
                 address vault = linkedVaults[i];
-                address vaultAsset = IVaultAsset(vault).asset();
-                uint256 balance = IERC20(vaultAsset).balanceOf(vault);
-                if (balance > 0) {
-                    (uint256 price, uint8 dec) = oracle.getPrice(vaultAsset);
-                    if (price == 0) revert StaleOraclePrice(vaultAsset);
-                    nav += (balance * price) / (10 ** dec);
+                try IVaultAssets(vault).totalAssets() returns (uint256 assets) {
+                    if (assets > 0) {
+                        address vaultAsset = IVaultAssets(vault).asset();
+                        (uint256 price, uint8 dec) = oracle.getPrice(vaultAsset);
+                        if (price == 0) revert StaleOraclePrice(vaultAsset);
+                        nav += (assets * price) / (10 ** dec);
+                    }
+                } catch {
+                    // Skip broken vaults
                 }
             }
         }
@@ -148,9 +163,4 @@ contract VaultShare is ERC20, AccessControl {
     function vaultCount() external view returns (uint256) {
         return linkedVaults.length;
     }
-}
-
-/// @dev Minimal interface to query a vault's deposit asset
-interface IVaultAsset {
-    function asset() external view returns (address);
 }

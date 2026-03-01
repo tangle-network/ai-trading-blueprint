@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./helpers/Setup.sol";
+import "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @title WindDownTest
 /// @notice Tests for the wind-down mode and permissionless unwind() function
@@ -76,8 +77,11 @@ contract WindDownTest is Setup {
     }
 
     function test_activateWindDown_onlyAdmin() public {
+        bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
+        ));
         vault.activateWindDown();
     }
 
@@ -105,8 +109,11 @@ contract WindDownTest is Setup {
         vm.prank(owner);
         vault.activateWindDown();
 
+        bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
+        ));
         vault.deactivateWindDown();
     }
 
@@ -292,12 +299,17 @@ contract WindDownTest is Setup {
         vm.prank(user);
         vault.deposit(1000 ether, user);
 
+        // Vault approves unwindTarget so the drain can actually transfer tokens out
+        vm.prank(address(vault));
+        tokenA.approve(address(unwindTarget), type(uint256).max);
+
         vm.prank(owner);
         vault.activateWindDown();
 
-        // Try to call a target that would drain deposit asset
+        // Drain transfers deposit asset OUT, balance decreases → AssetBalanceDecreased
+        uint256 vaultBal = tokenA.balanceOf(address(vault));
         vm.prank(user);
-        vm.expectRevert(); // MockUnwindTarget.drain transfers tokens OUT, balance decreases
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.AssetBalanceDecreased.selector, vaultBal, 0));
         vault.unwind(
             address(unwindTarget),
             abi.encodeWithSelector(MockUnwindTarget.drain.selector, address(vault), address(tokenA)),
@@ -407,8 +419,11 @@ contract WindDownTest is Setup {
     }
 
     function test_randomUser_cannotActivateWindDown() public {
+        bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
+        ));
         vault.activateWindDown();
     }
 
@@ -438,8 +453,11 @@ contract WindDownTest is Setup {
         vm.prank(creator);
         vault.activateWindDown();
 
+        bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
+        ));
         vault.adminUnwind(address(unwindTarget), "", 0);
     }
 
@@ -447,8 +465,11 @@ contract WindDownTest is Setup {
         vm.prank(creator);
         vault.activateWindDown();
 
+        bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(operator);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, creatorRole
+        ));
         vault.adminUnwind(address(unwindTarget), "", 0);
     }
 
@@ -495,6 +516,57 @@ contract WindDownTest is Setup {
         assertEq(vault.totalAssets(), 950 ether);
     }
 
+    function test_adminUnwind_excessiveDrawdown_reverts() public {
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Set 5% max drawdown
+        vm.prank(owner);
+        vault.setAdminUnwindMaxDrawdownBps(500);
+
+        // Vault needs to approve unwindTarget
+        vm.prank(address(vault));
+        tokenA.approve(address(unwindTarget), type(uint256).max);
+
+        vm.prank(creator);
+        vault.activateWindDown();
+
+        // Spending 100 ether = 10% drawdown, exceeds 5% cap
+        vm.prank(creator);
+        vm.expectRevert(TradingVault.ExcessiveDrawdown.selector);
+        vault.adminUnwind(
+            address(unwindTarget),
+            abi.encodeWithSelector(MockUnwindTarget.spendAsset.selector, address(vault), address(tokenA), 100 ether),
+            0
+        );
+    }
+
+    function test_adminUnwind_withinDrawdownLimit_succeeds() public {
+        vm.prank(user);
+        vault.deposit(1000 ether, user);
+
+        // Set 10% max drawdown
+        vm.prank(owner);
+        vault.setAdminUnwindMaxDrawdownBps(1000);
+
+        // Vault needs to approve unwindTarget
+        vm.prank(address(vault));
+        tokenA.approve(address(unwindTarget), type(uint256).max);
+
+        vm.prank(creator);
+        vault.activateWindDown();
+
+        // Spending 50 ether = 5% drawdown, within 10% cap
+        vm.prank(creator);
+        vault.adminUnwind(
+            address(unwindTarget),
+            abi.encodeWithSelector(MockUnwindTarget.spendAsset.selector, address(vault), address(tokenA), 50 ether),
+            0
+        );
+
+        assertEq(vault.totalAssets(), 950 ether);
+    }
+
     function test_adminUnwind_emitsEvent() public {
         vm.prank(user);
         vault.deposit(1000 ether, user);
@@ -504,7 +576,8 @@ contract WindDownTest is Setup {
 
         vm.prank(creator);
         vm.expectEmit(true, true, false, true);
-        emit TradingVault.PositionUnwound(creator, address(unwindTarget), 0);
+        // adminUnwind now correctly reports the deposit asset gained (100 ether from closePosition)
+        emit TradingVault.PositionUnwound(creator, address(unwindTarget), 100 ether);
         vault.adminUnwind(
             address(unwindTarget),
             abi.encodeWithSelector(MockUnwindTarget.closePosition.selector, address(vault), 100 ether),

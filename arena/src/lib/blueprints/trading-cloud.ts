@@ -5,7 +5,7 @@ import { strategyPacks } from './strategy-packs';
 function encodeProvision(params: ProvisionParams): `0x${string}` {
   return encodeAbiParameters(
     parseAbiParameters(
-      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[])',
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
     ),
     [
       [
@@ -24,6 +24,7 @@ function encodeProvision(params: ProvisionParams): `0x${string}` {
         params.memoryMb,
         params.maxLifetimeDays,
         params.validatorServiceIds,
+        params.maxCollateralBps,
       ],
     ],
   );
@@ -33,7 +34,7 @@ export const tradingCloud: TradingBlueprintDef = {
   id: 'trading-cloud',
   name: 'Trading Cloud',
   description: 'Multi-instance fleet — deploy multiple trading bots per service. Best for operators managing a portfolio of strategies.',
-  icon: 'i-lucide-cloud',
+  icon: 'i-ph:cloud',
   color: 'violet',
   blueprintId: import.meta.env.VITE_BLUEPRINT_ID ?? '0',
   isFleet: true,

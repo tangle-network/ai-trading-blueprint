@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useOperatorAuth } from './useOperatorAuth';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
@@ -40,12 +41,17 @@ export function useBotControl(botId: string) {
     queryClient.invalidateQueries({ queryKey: ['bot-detail', botId] });
   };
 
+  const onMutationError = (action: string) => (err: Error) => {
+    toast.error(`${action} failed: ${err.message.slice(0, 120)}`);
+  };
+
   const startBot = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
       return apiCall(`/api/bots/${botId}/start`, 'POST', t);
     },
     onSuccess: invalidate,
+    onError: onMutationError('Start bot'),
   });
 
   const stopBot = useMutation({
@@ -54,6 +60,7 @@ export function useBotControl(botId: string) {
       return apiCall(`/api/bots/${botId}/stop`, 'POST', t);
     },
     onSuccess: invalidate,
+    onError: onMutationError('Stop bot'),
   });
 
   const runNow = useMutation({
@@ -62,6 +69,7 @@ export function useBotControl(botId: string) {
       return apiCall(`/api/bots/${botId}/run-now`, 'POST', t);
     },
     onSuccess: invalidate,
+    onError: onMutationError('Run now'),
   });
 
   const updateConfig = useMutation({
@@ -76,6 +84,7 @@ export function useBotControl(botId: string) {
       });
     },
     onSuccess: invalidate,
+    onError: onMutationError('Update config'),
   });
 
   return {

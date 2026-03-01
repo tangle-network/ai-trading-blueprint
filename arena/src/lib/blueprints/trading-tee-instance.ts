@@ -6,7 +6,7 @@ export const tradingTeeInstance: TradingBlueprintDef = {
   id: 'trading-tee-instance',
   name: 'Trading Instance TEE',
   description: 'TEE-secured single bot — hardware-isolated execution for maximum security. Keys never leave the enclave.',
-  icon: 'i-lucide-shield-check',
+  icon: 'i-ph:shield-check',
   color: 'blue',
   blueprintId: import.meta.env.VITE_TEE_BLUEPRINT_ID ?? '0',
   isTee: true,

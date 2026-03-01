@@ -258,8 +258,7 @@ contract EdgeCaseTests is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_settleFees_zeroAUM_noFees() public {
-        // Settle fees on vault with 0 deposited — should emit 0 fees
-        vm.prank(address(this)); // FeeDistributor owner is this test contract
+        // Settle fees on vault with 0 deposited — should emit 0 fees (permissionless)
         (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         assertEq(perfFee, 0);
@@ -270,8 +269,11 @@ contract EdgeCaseTests is Setup {
         vm.prank(user);
         vault.deposit(1000 ether, user);
 
-        // First settlement initializes HWM — no fees
-        vm.prank(address(this));
+        // Approve fee distributor to pull fees
+        vm.prank(owner);
+        vault.approveFeeAllowance(type(uint256).max);
+
+        // First settlement initializes HWM — no fees (permissionless)
         (uint256 perfFee1, uint256 mgmtFee1) = feeDistributor.settleFees(address(vault), address(tokenA));
         assertEq(perfFee1, 0);
         assertEq(mgmtFee1, 0);
@@ -280,7 +282,6 @@ contract EdgeCaseTests is Setup {
         vm.warp(block.timestamp + 365 days);
 
         // Second settlement: management fee should accrue, but no performance fee
-        vm.prank(address(this));
         (uint256 perfFee2, uint256 mgmtFee2) = feeDistributor.settleFees(address(vault), address(tokenA));
         assertEq(perfFee2, 0); // No gains above HWM
         assertGt(mgmtFee2, 0); // Management fee accrued over 1 year
@@ -290,15 +291,17 @@ contract EdgeCaseTests is Setup {
         vm.prank(user);
         vault.deposit(2000 ether, user);
 
-        // First settlement — initializes HWM at 2000
-        vm.prank(address(this));
+        // Approve fee distributor to pull fees
+        vm.prank(owner);
+        vault.approveFeeAllowance(type(uint256).max);
+
+        // First settlement — initializes HWM at 2000 (permissionless)
         feeDistributor.settleFees(address(vault), address(tokenA));
 
         // Simulate gains to 3000 (1000 profit)
         tokenA.mint(address(vault), 1000 ether);
 
         vm.warp(block.timestamp + 1 days);
-        vm.prank(address(this));
         feeDistributor.settleFees(address(vault), address(tokenA));
         // HWM now at ~3000 (minus fees taken)
 
@@ -312,7 +315,6 @@ contract EdgeCaseTests is Setup {
         assertTrue(vaultBalance < hwm, "Vault should be below HWM");
 
         vm.warp(block.timestamp + 30 days);
-        vm.prank(address(this));
         (uint256 perfFee, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // Below HWM → no performance fee

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
 import { encodeAbiParameters, parseAbiParameters } from 'viem';
+import { toast } from 'sonner';
 import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
@@ -10,6 +11,7 @@ import { Badge, Button } from '@tangle/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
+import { SkeletonCard } from '~/components/ui/Skeleton';
 
 const JOB_EXTEND = 6;
 
@@ -44,9 +46,10 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
 
   if (detailLoading) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-        <div className="i-ph:arrow-clockwise text-3xl mb-3 mx-auto text-arena-elements-textTertiary animate-spin" />
-        Loading controls...
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonCard key={i} />
+        ))}
       </div>
     );
   }
@@ -407,6 +410,14 @@ function StrategyCard({
   );
 
   const handleSave = () => {
+    try { JSON.parse(strategyJson); } catch {
+      toast.error('Strategy config is not valid JSON');
+      return;
+    }
+    try { JSON.parse(riskJson); } catch {
+      toast.error('Risk params is not valid JSON');
+      return;
+    }
     updateConfig.mutate(
       { strategyConfigJson: strategyJson, riskParamsJson: riskJson },
       {

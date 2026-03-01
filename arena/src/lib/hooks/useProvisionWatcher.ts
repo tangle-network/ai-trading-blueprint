@@ -58,9 +58,12 @@ export function useProvisionWatcher() {
   const eventWatcherActive = useRef(false);
   const unwatchRef = useRef<(() => void) | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingInFlight = useRef(false);
 
   // Stage 1 + 2 + 2.5: Single subscription drives all logic without re-rendering
   useEffect(() => {
+    let cancelled = false;
+
     function processProvisions() {
       const provisions = provisionsStore.get();
 
@@ -142,6 +145,7 @@ export function useProvisionWatcher() {
               },
               fromBlock: 0n,
             });
+            if (cancelled) return;
             const waiting = provisionsStore.get().filter(
               (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
             );
@@ -219,6 +223,9 @@ export function useProvisionWatcher() {
 
       if (hasSubmitted && OPERATOR_API_URL && !pollingRef.current) {
         const poll = async () => {
+          if (cancelled || pollingInFlight.current) return;
+          pollingInFlight.current = true;
+          try {
           const submitted = provisionsStore.get().filter(
             (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
           );
@@ -269,6 +276,9 @@ export function useProvisionWatcher() {
               // Operator API unreachable
             }
           }
+          } finally {
+            pollingInFlight.current = false;
+          }
         };
         poll();
         pollingRef.current = setInterval(poll, 5000); // 5s instead of 2s
@@ -283,6 +293,7 @@ export function useProvisionWatcher() {
     const unsub = provisionsStore.subscribe(processProvisions);
 
     return () => {
+      cancelled = true;
       unsub();
       unwatchRef.current?.();
       unwatchRef.current = null;

@@ -395,6 +395,7 @@ async fn run_trade_pipeline(
         memory_mb: 4096,
         max_lifetime_days: 30,
         validator_service_ids: vec![],
+        max_collateral_bps: U256::from(0),
     }
     .abi_encode();
 
@@ -408,6 +409,10 @@ async fn run_trade_pipeline(
     .await?;
     eprintln!("        Job submitted");
 
+    // ── Session auth (needed for all operator API calls) ──────────────
+    eprintln!("        Authenticating with operator API...");
+    let session_token = do_session_auth(http_client, operator_api_url, SERVICE_OWNER_KEY).await?;
+
     // ── Poll for bot ─────────────────────────────────────────────────
     eprintln!("        Polling for provisioned bot...");
     let mut bot_id = String::new();
@@ -415,6 +420,7 @@ async fn run_trade_pipeline(
         tokio::time::sleep(Duration::from_secs(3)).await;
         if let Ok(resp) = http_client
             .get(format!("{operator_api_url}/api/bots"))
+            .header("Authorization", format!("Bearer {session_token}"))
             .send()
             .await
         {
@@ -438,6 +444,7 @@ async fn run_trade_pipeline(
     // ── Verify pre-activation state ──────────────────────────────────
     let bot_detail: serde_json::Value = http_client
         .get(format!("{operator_api_url}/api/bots/{bot_id}"))
+        .header("Authorization", format!("Bearer {session_token}"))
         .send()
         .await?
         .json()
@@ -446,9 +453,8 @@ async fn run_trade_pipeline(
     assert_eq!(bot_detail["secrets_configured"].as_bool(), Some(false));
     eprintln!("        Pre-activation state verified");
 
-    // ── Session auth + configure secrets ─────────────────────────────
-    eprintln!("        Session auth + configuring secrets...");
-    let session_token = do_session_auth(http_client, operator_api_url, SERVICE_OWNER_KEY).await?;
+    // ── Configure secrets ────────────────────────────────────────────
+    eprintln!("        Configuring secrets...");
 
     let secrets_resp = http_client
         .post(format!("{operator_api_url}/api/bots/{bot_id}/secrets"))
@@ -479,6 +485,7 @@ async fn run_trade_pipeline(
     // Verify activation
     let bot_active: serde_json::Value = http_client
         .get(format!("{operator_api_url}/api/bots/{bot_id}"))
+        .header("Authorization", format!("Bearer {session_token}"))
         .send()
         .await?
         .json()
@@ -869,9 +876,9 @@ async fn test_blueprint_manager_full_pipeline() -> Result<()> {
             .timeout(Duration::from_secs(30))
             .build()?;
 
-        // Verify binary is responsive
+        // Verify binary is responsive (auth challenge is unauthenticated — tests connectivity)
         let health = http_client
-            .get(format!("{operator_api_url}/api/bots"))
+            .post(format!("{operator_api_url}/api/auth/challenge"))
             .send()
             .await;
         assert!(

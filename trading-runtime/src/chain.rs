@@ -29,6 +29,11 @@ pub type HttpProvider = FillProvider<
 >;
 
 /// A chain client wrapping an alloy provider with a local signer.
+///
+/// Cloneable: alloy's `NonceFiller` uses interior mutability, so cloned
+/// providers share nonce state. This is critical in multi-bot mode where
+/// a shared `ChainClient` prevents nonce collisions from concurrent requests.
+#[derive(Clone)]
 pub struct ChainClient {
     pub provider: HttpProvider,
     pub wallet: EthereumWallet,

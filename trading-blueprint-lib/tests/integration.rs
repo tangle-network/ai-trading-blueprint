@@ -51,6 +51,7 @@ fn make_provision_request_with_lifetime(
         memory_mb: 4096,
         max_lifetime_days,
         validator_service_ids: vec![],
+        max_collateral_bps: U256::from(0),
     }
 }
 
@@ -87,6 +88,8 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         stack: String::new(),
         owner: String::new(),
         tee_config: None,
+        extra_ports: std::collections::HashMap::new(),
+        tee_attestation_json: None,
     }
 }
 
@@ -977,7 +980,7 @@ async fn test_two_phase_provision_e2e() {
         wf_json["prompt"]
             .as_str()
             .unwrap()
-            .contains("Trading iteration")
+            .contains("Trading tick")
     );
 
     // ── Phase 2b: Double-activate should fail ──────────────────────────────
@@ -1110,7 +1113,7 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
         let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
         let prompt = wf_json["prompt"].as_str().unwrap();
         assert!(
-            prompt.contains("Trading iteration") || prompt.contains("trading"),
+            prompt.contains("Trading tick") || prompt.contains("Trading iteration") || prompt.contains("trading"),
             "Workflow prompt for {strategy} should contain trading context, got: {}",
             &prompt[..prompt.len().min(100)]
         );

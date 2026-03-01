@@ -14,6 +14,11 @@ pub struct ValidatorServer {
     pub port: u16,
     pub ai_provider: Option<AiProvider>,
     pub signer: Option<Arc<ValidatorSigner>>,
+    /// JSON-RPC URL for independent transaction simulation.
+    /// When set, the validator runs its own `eth_call` simulation
+    /// to verify calldata independently (even if the HTTP API already
+    /// provided simulation results).
+    pub rpc_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +35,49 @@ pub struct ValidateRequest {
     /// valid protocols, expected metadata fields).
     #[serde(default)]
     pub strategy_type: Option<String>,
+    /// Optional execution context (target, calldata, simulation results).
+    /// Provided by the HTTP API after adapter encoding + simulation.
+    #[serde(default)]
+    pub execution_context: Option<ExecutionContext>,
+}
+
+/// Execution details for a trade — the actual target and calldata that
+/// will be submitted on-chain. Enables validators to verify that the
+/// calldata matches the stated intent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionContext {
+    /// Hex-encoded target contract address
+    pub target: String,
+    /// Hex-encoded calldata
+    pub calldata: String,
+    /// Human-readable decoded calldata (e.g. "exactInputSingle(tokenIn=0x..., ...)")
+    pub calldata_decoded: String,
+    /// ETH value sent with the call
+    pub value: String,
+    /// Pre-computed simulation results from the HTTP API
+    #[serde(default)]
+    pub simulation_result: Option<SimulationSummary>,
+}
+
+/// Summary of a simulation result, serializable for transmission to validators.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationSummary {
+    pub success: bool,
+    pub gas_used: u64,
+    /// Simulated output amount (decimal string)
+    pub output_amount: String,
+    pub balance_changes: Vec<BalanceChangeSummary>,
+    pub warnings: Vec<String>,
+    pub risk_score: u32,
+}
+
+/// Simplified balance change for serialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceChangeSummary {
+    pub token: String,
+    pub account: String,
+    pub before: String,
+    pub after: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,10 +126,13 @@ impl ValidatorServer {
             }
         });
 
+        let rpc_url = std::env::var("VALIDATOR_RPC_URL").ok();
+
         Self {
             port,
             ai_provider,
             signer: None,
+            rpc_url,
         }
     }
 
@@ -95,6 +146,12 @@ impl ValidatorServer {
     /// deterministic scoring without AI latency.
     pub fn without_ai(mut self) -> Self {
         self.ai_provider = None;
+        self
+    }
+
+    /// Set an RPC URL for independent transaction simulation.
+    pub fn with_rpc_url(mut self, rpc_url: String) -> Self {
+        self.rpc_url = Some(rpc_url);
         self
     }
 
@@ -125,19 +182,32 @@ impl ValidatorServer {
 
 async fn handle_validate(
     State(server): State<Arc<ValidatorServer>>,
-    Json(request): Json<ValidateRequest>,
+    Json(mut request): Json<ValidateRequest>,
 ) -> Json<ValidateResponse> {
+    // Independent simulation: if we have an RPC URL and execution context
+    // with target+calldata but no simulation result, run our own eth_call.
+    if let (Some(ref rpc_url), Some(ref mut ctx)) =
+        (server.rpc_url.as_ref(), request.execution_context.as_mut())
+    {
+        if ctx.simulation_result.is_none() {
+            if let Some(sim) = run_independent_simulation(rpc_url, ctx).await {
+                ctx.simulation_result = Some(sim);
+            }
+        }
+    }
+
     // Look up strategy context for protocol-aware scoring
     let strategy_context = request
         .strategy_type
         .as_deref()
         .and_then(crate::risk_evaluator::strategy_context_for);
 
-    // Run policy checks + AI scoring
+    // Run policy checks + AI scoring + simulation scoring
     let score_result = scoring::compute_score(
         &request.intent,
         server.ai_provider.as_ref(),
         strategy_context.as_deref(),
+        request.execution_context.as_ref(),
     )
     .await;
 
@@ -244,6 +314,55 @@ fn parse_b256(hex_str: &str) -> Result<B256, String> {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Ok(B256::from(arr))
+}
+
+/// Run an independent eth_call simulation using the validator's own RPC connection.
+///
+/// Returns a `SimulationSummary` if successful, or `None` on failure.
+/// Primary value: independent revert detection without trusting the HTTP API.
+async fn run_independent_simulation(
+    rpc_url: &str,
+    ctx: &ExecutionContext,
+) -> Option<SimulationSummary> {
+    use trading_runtime::simulator::{
+        SimulationRequest, SimulatorConfig, create_simulator,
+    };
+
+    let target: Address = ctx.target.parse().ok()?;
+    let calldata_hex = ctx.calldata.strip_prefix("0x").unwrap_or(&ctx.calldata);
+    let calldata_bytes = hex::decode(calldata_hex).ok()?;
+
+    let config = SimulatorConfig::default();
+    let simulator = create_simulator(rpc_url.to_string(), &config);
+
+    let sim_request = SimulationRequest {
+        from: Address::ZERO,
+        to: target,
+        data: alloy::primitives::Bytes::from(calldata_bytes),
+        value: alloy::primitives::U256::ZERO,
+        block_number: None,
+        token_addresses: Vec::new(),
+        balance_check_account: None,
+    };
+
+    match simulator.simulate(sim_request).await {
+        Ok(sim_result) => {
+            let warnings: Vec<String> = sim_result.warnings.iter().map(|w| w.to_string()).collect();
+            let risk_score = if sim_result.success { 0 } else { 80 };
+            Some(SimulationSummary {
+                success: sim_result.success,
+                gas_used: sim_result.gas_used,
+                output_amount: "0".into(),
+                balance_changes: Vec::new(),
+                warnings,
+                risk_score,
+            })
+        }
+        Err(e) => {
+            tracing::warn!("Independent simulation failed: {e}");
+            None
+        }
+    }
 }
 
 async fn handle_health() -> &'static str {

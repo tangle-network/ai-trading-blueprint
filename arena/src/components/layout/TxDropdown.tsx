@@ -1,19 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'sonner';
 import { txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle/blueprint-ui';
+import { copyText, timeAgo, useDropdownMenu } from '@tangle/agent-ui/primitives';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
 import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
-
-function timeAgo(ts: number): string {
-  const secs = Math.floor((Date.now() - ts) / 1000);
-  if (secs < 5) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ago`;
-}
 
 function StatusIcon({ status }: { status: TrackedTx['status'] }) {
   if (status === 'pending') {
@@ -29,20 +20,8 @@ function TxRow({ tx }: { tx: TrackedTx }) {
   const [expanded, setExpanded] = useState(false);
 
   const copyHash = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(tx.hash);
-      toast.success('Tx hash copied');
-    } catch {
-      const el = document.createElement('textarea');
-      el.value = tx.hash;
-      el.style.position = 'fixed';
-      el.style.opacity = '0';
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-      toast.success('Tx hash copied');
-    }
+    await copyText(tx.hash);
+    toast.success('Tx hash copied');
   }, [tx.hash]);
 
   return (
@@ -50,6 +29,7 @@ function TxRow({ tx }: { tx: TrackedTx }) {
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-arena-elements-item-backgroundHover transition-colors text-left"
       >
         <StatusIcon status={tx.status} />
@@ -114,26 +94,18 @@ export function TxDropdown() {
   useTxWatcher();
   useProvisionWatcher();
 
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const { open, ref, toggle, close } = useDropdownMenu();
   const txs = useStore(txListStore);
   const pending = useStore(pendingCount);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
 
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className="relative p-2.5 rounded-lg glass-card hover:border-violet-500/20 transition-all"
-        title="Transaction history"
+        aria-label="Transaction history"
+        aria-expanded={open}
       >
         <div className="i-ph:receipt text-base text-arena-elements-textSecondary" />
         {pending > 0 && (
@@ -164,7 +136,7 @@ export function TxDropdown() {
             {txs.length > 0 && (
               <button
                 type="button"
-                onClick={() => { clearTxs(); setOpen(false); }}
+                onClick={() => { clearTxs(); close(); }}
                 className="text-xs font-data text-arena-elements-textTertiary hover:text-crimson-700 dark:hover:text-crimson-400 transition-colors"
               >
                 Clear all

@@ -31,6 +31,22 @@ sol! {
         function getBalance(address token) external view returns (uint256);
         function pause() external;
         function unpause() external;
+
+        // CLOB collateral management
+        function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function returnCollateral(uint256 amount) external;
+        function writeDownCollateral(address operator, uint256 amount) external;
+        function setMaxCollateralBps(uint256 bps) external;
+        function totalOutstandingCollateral() external view returns (uint256);
+        function operatorCollateral(address operator) external view returns (uint256);
+        function maxCollateralBps() external view returns (uint256);
+        function availableCollateral() external view returns (uint256);
+    }
+
+    #[sol(rpc)]
+    interface IERC20 {
+        function approve(address spender, uint256 value) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
     }
 
     #[sol(rpc)]

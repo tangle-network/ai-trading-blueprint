@@ -35,6 +35,10 @@ contract TradeValidator is EIP712, Ownable2Step {
     error InvalidRequiredSignatures();
     error ZeroAddress();
     error DuplicateSigner(address signer);
+    error WouldBreachThreshold();
+    error SignerNotInSet(address signer);
+    error InvalidScoreThreshold();
+    error NotVaultConfigOwnerOrOwner();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -43,7 +47,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     event VaultConfigured(address indexed vault, uint256 requiredSignatures, uint256 totalSigners);
     event SignerAdded(address indexed vault, address indexed signer);
     event SignerRemoved(address indexed vault, address indexed signer);
-    event TradeValidated(bytes32 indexed intentHash, address indexed vault, bool approved, uint256 validSignatures);
+    event ScoreThresholdUpdated(address indexed vault, uint256 threshold);
+    event VaultConfigOwnerUpdated(address indexed vault, address indexed newOwner);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TYPES
@@ -60,6 +65,15 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     /// @notice Per-vault signer configuration
     mapping(address vault => VaultConfig) private _vaultConfigs;
+
+    /// @notice Minimum average score threshold per vault (default 50)
+    mapping(address vault => uint256) public minScoreThreshold;
+
+    /// @notice Whether score threshold has been initialized for a vault
+    mapping(address vault => bool) public thresholdInitialized;
+
+    /// @notice Tracks who configured each vault (for permissioned threshold updates)
+    mapping(address vault => address) public vaultConfigOwner;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -98,6 +112,14 @@ contract TradeValidator is EIP712, Ownable2Step {
         }
 
         config.requiredSignatures = requiredSigs;
+
+        // Initialize score threshold on first configure only (prevents resetting intentional 0)
+        if (!thresholdInitialized[vault]) {
+            minScoreThreshold[vault] = 50;
+            thresholdInitialized[vault] = true;
+        }
+        vaultConfigOwner[vault] = msg.sender;
+
         emit VaultConfigured(vault, requiredSigs, signers.length);
     }
 
@@ -111,9 +133,13 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     /// @notice Remove a single signer from a vault's signer set
+    /// @dev Reverts if removal would make signers.length <= requiredSignatures
+    ///      or if signer is not in the set.
     function removeSigner(address vault, address signer) external onlyOwner {
         VaultConfig storage config = _vaultConfigs[vault];
-        config.signers.remove(signer);
+        if (config.signers.length() <= config.requiredSignatures) revert WouldBreachThreshold();
+        bool removed = config.signers.remove(signer);
+        if (!removed) revert SignerNotInSet(signer);
         emit SignerRemoved(vault, signer);
     }
 
@@ -125,6 +151,28 @@ contract TradeValidator is EIP712, Ownable2Step {
         }
         config.requiredSignatures = requiredSigs;
         emit VaultConfigured(vault, requiredSigs, config.signers.length());
+    }
+
+    /// @notice Set the minimum average score threshold for a vault
+    /// @param vault The vault address
+    /// @param threshold Minimum average score (0-100)
+    function setMinScoreThreshold(address vault, uint256 threshold) external {
+        if (msg.sender != owner() && msg.sender != vaultConfigOwner[vault]) {
+            revert NotVaultConfigOwnerOrOwner();
+        }
+        if (threshold > 100) revert InvalidScoreThreshold();
+        minScoreThreshold[vault] = threshold;
+        emit ScoreThresholdUpdated(vault, threshold);
+    }
+
+    /// @notice Transfer vault config ownership to a new address
+    function setVaultConfigOwner(address vault, address newOwner) external {
+        if (msg.sender != owner() && msg.sender != vaultConfigOwner[vault]) {
+            revert NotVaultConfigOwnerOrOwner();
+        }
+        if (newOwner == address(0)) revert ZeroAddress();
+        vaultConfigOwner[vault] = newOwner;
+        emit VaultConfigOwnerUpdated(vault, newOwner);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -156,6 +204,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         // Track which signers we've already counted to prevent double-use
         address[] memory seen = new address[](signatures.length);
         uint256 seenCount = 0;
+        uint256 scoreSum = 0;
 
         for (uint256 i = 0; i < signatures.length; i++) {
             // Build the EIP-712 struct hash with the score INSIDE the signed data
@@ -180,9 +229,19 @@ contract TradeValidator is EIP712, Ownable2Step {
             seen[seenCount] = signer;
             seenCount++;
             validCount++;
+            scoreSum += scores[i];
         }
 
         approved = validCount >= config.requiredSignatures;
+
+        // Check average score against threshold
+        if (approved && validCount > 0) {
+            uint256 avgScore = scoreSum / validCount;
+            uint256 threshold = minScoreThreshold[vault];
+            if (threshold > 0 && avgScore < threshold) {
+                approved = false;
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

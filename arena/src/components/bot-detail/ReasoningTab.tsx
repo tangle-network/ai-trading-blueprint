@@ -2,7 +2,8 @@ import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
-import { ScoreRing, ValidatorCard, CopyButton, truncateAddress } from './shared/ValidatorComponents';
+import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { SkeletonCard } from '~/components/ui/Skeleton';
 
 interface ReasoningTabProps {
   botId: string;
@@ -103,6 +104,13 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
                   </m.div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Simulation summary */}
+          {trade.validation?.simulation && (
+            <div className="mb-3">
+              <SimulationDetail simulation={trade.validation.simulation} />
             </div>
           )}
 
@@ -211,6 +219,13 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
             </div>
           )}
 
+          {/* Simulation detail */}
+          {trade.validation?.simulation && (
+            <div className="mt-3">
+              <SimulationDetail simulation={trade.validation.simulation} />
+            </div>
+          )}
+
           {/* No validator responses */}
           {responses.length === 0 && trade.validatorReasoning && (
             <p className="text-sm text-arena-elements-textSecondary leading-relaxed mt-2">
@@ -244,9 +259,10 @@ export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
 
   if (isLoading) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-        <div className="i-ph:arrow-clockwise text-3xl mb-3 mx-auto text-arena-elements-textTertiary animate-spin" />
-        Loading validator reasoning...
+      <div className="space-y-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <SkeletonCard key={i} />
+        ))}
       </div>
     );
   }

@@ -60,17 +60,7 @@ export function BlueprintSelector({ blueprints, selected, onSelect }: BlueprintS
               <CardContent className="p-5">
                 {/* Icon + title */}
                 <div className="flex items-start gap-3 mb-3">
-                  <div className={`${colors.icon} text-2xl shrink-0 mt-0.5`}>
-                    {bp.icon === 'i-lucide-cloud' && (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
-                    )}
-                    {bp.icon === 'i-lucide-user' && (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                    )}
-                    {bp.icon === 'i-lucide-shield-check' && (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
-                    )}
-                  </div>
+                  <div className={`${bp.icon} ${colors.icon} text-2xl shrink-0 mt-0.5`} />
                   <div className="min-w-0">
                     <h3 className="font-display font-bold text-base leading-tight">
                       {bp.name}

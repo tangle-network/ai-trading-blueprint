@@ -64,9 +64,60 @@ pub fn strategy_context_for(strategy_type: &str) -> Option<String> {
     }
 }
 
-fn build_prompt(intent: &TradeIntent, strategy_context: Option<&str>) -> String {
+fn build_prompt(
+    intent: &TradeIntent,
+    strategy_context: Option<&str>,
+    execution_context: Option<&crate::server::ExecutionContext>,
+) -> String {
     let context_section = strategy_context
         .map(|ctx| format!("\nStrategy Context: {ctx}\n"))
+        .unwrap_or_default();
+
+    let execution_section = execution_context
+        .map(|ctx| {
+            let mut s = format!(
+                "\n--- EXECUTION DETAILS ---\n\
+                 Target Contract: {}\n\
+                 Decoded Calldata: {}\n\
+                 ETH Value: {}\n",
+                ctx.target, ctx.calldata_decoded, ctx.value,
+            );
+
+            if let Some(ref sim) = ctx.simulation_result {
+                s.push_str(&format!(
+                    "\n--- SIMULATION RESULTS ---\n\
+                     Success: {}\n\
+                     Simulated Output: {}\n\
+                     Gas Used: {}\n\
+                     Warnings: {}\n\
+                     Risk Score: {}/100\n",
+                    sim.success,
+                    sim.output_amount,
+                    sim.gas_used,
+                    if sim.warnings.is_empty() {
+                        "none".to_string()
+                    } else {
+                        sim.warnings.join(", ")
+                    },
+                    sim.risk_score,
+                ));
+            }
+
+            s.push_str(
+                "\n--- SECURITY EVALUATION ---\n\
+                 Consider CAREFULLY:\n\
+                 1. Does the decoded calldata match the stated action?\n\
+                 2. Are there ANY unexpected approvals to addresses other than the protocol router?\n\
+                 3. Does the vault lose MORE tokens than the stated amount_in?\n\
+                 4. Are tokens transferred to ANY address other than the vault?\n\
+                 5. Does the simulated output match or exceed min_amount_out?\n\
+                 6. Is the target contract a legitimate protocol contract?\n\
+                 7. Are the token addresses real, well-known tokens?\n\n\
+                 If ANY security checks fail, score BELOW 20.\n\
+                 If simulation shows unexpected approvals or transfers to unknown addresses, score 0.\n",
+            );
+            s
+        })
         .unwrap_or_default();
 
     format!(
@@ -78,7 +129,8 @@ fn build_prompt(intent: &TradeIntent, strategy_context: Option<&str>) -> String 
          Min Output: {}\n\
          Protocol: {}\n\
          Chain: {}\n\
-         {context_section}\n\
+         {context_section}\
+         {execution_section}\n\
          Consider:\n\
          - Is the protocol legitimate for this action?\n\
          - Is slippage protection adequate (min_amount_out)?\n\
@@ -140,8 +192,9 @@ pub async fn evaluate_risk(
     intent: &TradeIntent,
     provider: &AiProvider,
     strategy_context: Option<&str>,
+    execution_context: Option<&crate::server::ExecutionContext>,
 ) -> Result<ScoringResult, String> {
-    let prompt = build_prompt(intent, strategy_context);
+    let prompt = build_prompt(intent, strategy_context, execution_context);
 
     match provider {
         AiProvider::Anthropic { api_key, model } => call_anthropic(&prompt, api_key, model).await,
@@ -302,11 +355,49 @@ mod tests {
             .build()
             .unwrap();
 
-        let prompt_without = build_prompt(&intent, None);
+        let prompt_without = build_prompt(&intent, None, None);
         assert!(!prompt_without.contains("Strategy Context:"));
 
-        let prompt_with = build_prompt(&intent, Some("DEX swap context"));
+        let prompt_with = build_prompt(&intent, Some("DEX swap context"), None);
         assert!(prompt_with.contains("Strategy Context: DEX swap context"));
         assert!(prompt_with.contains("Is the protocol legitimate"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_execution_context() {
+        use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(rust_decimal::Decimal::new(100, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        let exec_ctx = crate::server::ExecutionContext {
+            target: "0xE592427A0AEce92De3Edee1F18E0157C05861564".into(),
+            calldata: "0x414bf389".into(),
+            calldata_decoded: "exactInputSingle(tokenIn=0xA, tokenOut=0xB)".into(),
+            value: "0".into(),
+            simulation_result: Some(crate::server::SimulationSummary {
+                success: true,
+                gas_used: 150000,
+                output_amount: "2500000000".into(),
+                balance_changes: Vec::new(),
+                warnings: Vec::new(),
+                risk_score: 5,
+            }),
+        };
+
+        let prompt = build_prompt(&intent, None, Some(&exec_ctx));
+        assert!(prompt.contains("EXECUTION DETAILS"));
+        assert!(prompt.contains("exactInputSingle"));
+        assert!(prompt.contains("SIMULATION RESULTS"));
+        assert!(prompt.contains("SECURITY EVALUATION"));
+        assert!(prompt.contains("unexpected approvals"));
     }
 }

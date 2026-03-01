@@ -106,7 +106,10 @@ function clientChunks(): Plugin {
               output: {
                 manualChunks: {
                   'react-vendor': ['react', 'react-dom', 'react-router'],
-                  'web3-vendor': ['wagmi', 'viem', '@tanstack/react-query', 'connectkit'],
+                  'viem': ['viem'],
+                  'wagmi': ['wagmi'],
+                  'connectkit': ['connectkit'],
+                  'query': ['@tanstack/react-query'],
                   'chart-vendor': ['chart.js', 'react-chartjs-2'],
                   'motion-vendor': ['framer-motion'],
                 },

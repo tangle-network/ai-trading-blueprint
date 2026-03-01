@@ -19,7 +19,7 @@ pub struct StrategyPack {
     /// Composed from providers + strategy_methodology.
     pub system_prompt: String,
     /// Shell commands to run inside the sidecar before the first trading loop
-    /// (e.g. `pip install py-clob-client`).
+    /// (e.g. `mkdir -p /home/agent/tools`).
     pub setup_commands: Vec<String>,
     /// Env vars the pack expects (informational — logged as warnings if absent).
     pub required_env_vars: Vec<String>,
@@ -169,7 +169,8 @@ impl StrategyPack {
                 "edit": "allow",
                 "bash": "allow",
                 "webfetch": "allow",
-                "mcp": "allow"
+                "mcp": "allow",
+                "external_directory": "allow"
             },
             "memory": { "enabled": true }
         })
@@ -181,36 +182,50 @@ impl StrategyPack {
 // ---------------------------------------------------------------------------
 
 /// Setup commands prepended to every strategy pack.  Creates the agent workspace,
-/// SQLite database with shared schema, and phase tracker.
+/// JSON data store, and phase tracker.
 fn common_setup_commands() -> Vec<String> {
     vec![
-        "pip install requests pandas numpy sqlite-utils 2>/dev/null".to_string(),
-        "mkdir -p /home/agent/{tools,tools/data,data,data/raw,memory,metrics,logs,state}".to_string(),
+        "mkdir -p /home/agent/{tools,tools/data,data,data/raw,memory,metrics,logs,state,config}".to_string(),
+        // Initialize JSON-based data stores
         concat!(
-            "python3 -c \"",
-            "import sqlite3, os; ",
-            "db = sqlite3.connect('/home/agent/data/trading.db'); ",
-            "c = db.cursor(); ",
-            "c.execute('CREATE TABLE IF NOT EXISTS markets (id TEXT PRIMARY KEY, source TEXT, symbol TEXT, name TEXT, price REAL, volume REAL, liquidity REAL, metadata TEXT, discovered_at TEXT, updated_at TEXT)'); ",
-            "c.execute('CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, action TEXT, protocol TEXT, amount REAL, price REAL, tx_hash TEXT, paper_trade INTEGER, pnl REAL, created_at TEXT, closed_at TEXT)'); ",
-            "c.execute('CREATE TABLE IF NOT EXISTS signals (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, type TEXT, direction TEXT, confidence REAL, acted_on INTEGER DEFAULT 0, outcome TEXT, created_at TEXT)'); ",
-            "c.execute('CREATE TABLE IF NOT EXISTS performance (id INTEGER PRIMARY KEY AUTOINCREMENT, metric TEXT, value REAL, context TEXT, recorded_at TEXT)'); ",
-            "c.execute('CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, insight TEXT, confidence REAL, times_confirmed INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)'); ",
-            "db.commit(); db.close(); ",
-            "print('DB initialized')\"",
+            "node -e \"",
+            "const fs = require('fs'); ",
+            "const db = '/home/agent/data/trading.json'; ",
+            "if (!fs.existsSync(db)) { ",
+            "fs.writeFileSync(db, JSON.stringify({",
+            "markets: [], trades: [], signals: [], performance: [], memory: []",
+            "}, null, 2)); ",
+            "console.log('Trading data store initialized'); ",
+            "} else { console.log('Trading data store exists'); }\"",
         ).to_string(),
+        // Initialize phase tracker — start at "research" (tools are pre-installed)
         concat!(
-            "python3 -c \"",
-            "import json, os; ",
-            "p = '/home/agent/state/phase.json'; ",
-            "d = {'current': 'bootstrap', 'iteration': 0, 'last_trade_at': None, 'tools_built': []}; ",
-            "existing = None; ",
-            "try:\n",
-            "  existing = json.load(open(p))\n",
-            "except: pass\n",
-            "if existing is None: json.dump(d, open(p, 'w'), indent=2); print('Phase tracker created')\n",
-            "else: print('Phase tracker exists at iteration', existing.get('iteration', '?'))\"",
+            "node -e \"",
+            "const fs = require('fs'); ",
+            "const p = '/home/agent/state/phase.json'; ",
+            "if (!fs.existsSync(p)) { ",
+            "fs.writeFileSync(p, JSON.stringify({",
+            "current: 'research', iteration: 0, last_trade_at: null, ",
+            "tools_built: ['analyze-opportunities','submit-trade','get-portfolio','write-metrics','api-client','manage-collateral']",
+            "}, null, 2)); ",
+            "console.log('Phase tracker created (starting at research)'); ",
+            "} else { ",
+            "const d = JSON.parse(fs.readFileSync(p, 'utf8')); ",
+            "console.log('Phase tracker exists at iteration', d.iteration); }\"",
         ).to_string(),
+        // Initialize persistent trading state
+        concat!(
+            "node -e \"",
+            "const fs = require('fs'); ",
+            "const p = '/home/agent/state/trading-state.json'; ",
+            "if (!fs.existsSync(p)) { ",
+            "fs.writeFileSync(p, JSON.stringify({",
+            "watchlist: [], positions: [], insights: [], iteration: 0",
+            "}, null, 2)); ",
+            "console.log('Trading state initialized'); }\"",
+        ).to_string(),
+        // Initialize empty log files
+        "touch /home/agent/memory/insights.jsonl /home/agent/logs/decisions.jsonl".to_string(),
     ]
 }
 
@@ -229,8 +244,8 @@ fn polymarket_pack() -> StrategyPack {
         system_prompt: compose_expert_prompt(&providers, methodology),
         setup_commands: compose_setup_commands(&providers),
         required_env_vars: compose_required_env_vars(&providers),
-        max_turns: 20,
-        timeout_ms: 240_000,
+        max_turns: 30,
+        timeout_ms: 600_000,
         default_cron: "0 */15 * * * *".into(),
         prompt_blocks: vec![
             BLOCK_DATA_PIPELINE,
@@ -821,7 +836,7 @@ For "Will [TOKEN] be above $X by [DATE]?" markets:
    - `σ_T = σ_daily * sqrt(T)`
    - `prob = 1 - Φ((ln(X) - μ) / σ_T)` where Φ is the standard normal CDF
    - This gives probability price exceeds target X at expiry
-5. Build a Python tool in `/home/agent/tools/crypto_prob.py` implementing this calculation
+5. Build a Node.js tool in `/home/agent/tools/crypto-prob.js` implementing this calculation
 
 ### Edge Thesis
 
@@ -1014,35 +1029,35 @@ Celebrity markets are uniquely exploitable because:
 
 pub(crate) const BLOCK_DATA_PIPELINE: &str = r#"## Data Pipeline
 
-Build persistent data collection scripts in `/home/agent/tools/data/`. Each script fetches from one source, updates SQLite rows, and records its `last_run` timestamp.
+Pre-built data collection tools are in `/home/agent/tools/`. Run them at the start of each iteration.
 
-### Pipeline Pattern
+### Pre-Installed Tools
 
-1. **Bootstrap**: Create one script per data source (e.g. `tools/data/fetch_prices.py`, `tools/data/fetch_funding.py`)
-2. **Orchestrate**: Create `tools/data/refresh_all.sh` that runs all collectors in sequence
-3. **Every iteration**: Run `bash tools/data/refresh_all.sh` before any analysis
-4. **Staleness check**: If a collector's `last_run` is older than 2x the cron interval, log a warning and investigate
-
-### Collector Script Convention
-
-Each script should:
-- Fetch data from its API with exponential backoff on rate limits
-- Upsert rows into the appropriate SQLite table (markets, signals, or a custom table)
-- Store raw JSON responses in `/home/agent/data/raw/` for debugging
-- Print `{"source": "...", "rows_updated": N, "last_run": "ISO8601"}` to stdout
-- Exit 0 on success, exit 1 on failure (so `refresh_all.sh` can detect problems)
+- `node tools/scan-markets.js [--limit 50] [--tag politics]` — Fetch markets from Gamma API, store in trading.json
+- `node tools/check-prices.js [--limit 20]` — Fetch CLOB midpoint prices for stored markets
+- `node tools/api-client.js` — Shared module (require it from custom scripts)
 
 ### Iteration-Start Data Refresh
 
-Since your container cannot run background daemons, treat each iteration start as your "wake-up" moment:
-1. Run `refresh_all.sh` to pull latest data
-2. Check all collectors succeeded (parse their JSON output)
-3. Only proceed to analysis if data is fresh
+At the start of each iteration:
+1. Run `node tools/scan-markets.js` to fetch latest market data
+2. Run `node tools/check-prices.js` to update prices
+3. Read trading.json and analyze the results
+4. Only proceed to trading if data is fresh (check `updated_at` timestamps)
+
+### Custom Data Scripts
+
+If you need additional data sources, create scripts in `/home/agent/tools/data/`:
+- Use Node.js (not Python) — `const https = require('https')`
+- Read/write `/home/agent/data/trading.json` for persistence
+- Store raw responses in `/home/agent/data/raw/` for debugging
+- Print JSON to stdout: `{"source": "...", "rows_updated": N}`
+- Exit 0 on success, exit 1 on failure
 "#;
 
 pub(crate) const BLOCK_TA_INDICATORS: &str = r#"## Technical Analysis Indicators
 
-Build a single tool (`tools/indicators.py` or similar) that computes indicators from price history in SQLite. Accept a symbol and timeframe as arguments, output JSON with all indicator values.
+Build a single tool (`tools/indicators.js`) that computes indicators from price history in trading.json. Accept a symbol and timeframe as arguments, output JSON with all indicator values.
 
 ### Core Indicators
 
@@ -1230,23 +1245,19 @@ fn build_profile_instructions(
 
 ## Identity & Autonomy
 
-You are an autonomous trading agent — a coding agent that builds tools, manages its own SQLite database, and iterates on its approach. You are NOT a chatbot. You act.
+You are an autonomous trading agent — a coding agent that runs tools, analyzes data, makes trading decisions, and iterates on its approach. You are NOT a chatbot. You act.
 
-Your container has Python, Node.js, Go, and Rust available via `mise`. Choose the best language for each task:
-- **Python** (pandas, numpy, requests, sqlite3): data analysis, API calls, indicators
-- **Node.js**: complex async workflows, websocket integration
-- **Shell scripts**: orchestration, running multiple tools in sequence
-- **Go / Rust**: performance-critical tools if needed (rarely)
+Your container has **Node.js 24**, npm, bash, curl, jq, and ripgrep.
 
-Prefer Python for most tasks unless you have a specific reason to use another language.
+**Pre-built tools are installed at `/home/agent/tools/`.** Run them — don't rebuild them. Use curl for direct API calls. Use Node.js if you need to create custom analysis scripts.
 
-You have a persistent workspace at /home/agent/ that survives across iterations. You build tools, discover markets, track performance, and improve your approach over time. Every iteration should leave your workspace in a better state than you found it.
+You have a persistent workspace at /home/agent/ that survives across iterations. Each iteration: run tools to gather data, analyze results, make trading decisions, execute trades, and update metrics. Spend your turns on ANALYSIS and DECISIONS, not on infrastructure.
 
 Workspace layout:
 ```
 /home/agent/
-├── data/trading.db        # SQLite — all persistent data
-├── tools/                 # Your tools (scanners, analyzers, indicators)
+├── data/trading.json      # JSON data store (markets, trades, signals, performance, memory)
+├── tools/                 # Your tools (scanners, analyzers, indicators) — Node.js scripts
 │   └── data/              # Data collection scripts (run at iteration start)
 ├── memory/insights.jsonl  # Append-only learning log
 ├── metrics/latest.json    # Current metrics (read by /metrics endpoint)
@@ -1258,24 +1269,45 @@ Workspace layout:
 
 Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
-- **bootstrap** (iteration 0): Install packages, build core tools (market scanner, signal analyzer, trade tracker), discover initial markets, populate the DB. Then set phase to "research".
-- **research**: Run your data collection and scanner tools, update market data in the DB, generate signals. If actionable signals found, set phase to "trading". Otherwise increment iteration and stay in "research".
-- **trading**: Check circuit breaker first. Validate trade intents, execute approved trades, log results to the DB. Then set phase to "reflect".
-- **reflect**: Calculate P&L from recent trades. Compare your signal predictions vs actual outcomes. Write insights to memory table and insights.jsonl. Set phase to "research".
+- **research**: Run pre-built tools to fetch data: `node tools/scan-markets.js` then `node tools/check-prices.js`. Analyze results. Generate signals. If actionable signals found, proceed to trading within this same iteration.
+- **trading**: Check circuit breaker (`node -e "require('./tools/api-client').checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Validate trade intents via the Trading HTTP API. Execute approved trades. Log results. Then proceed to reflect.
+- **reflect**: Calculate P&L from recent trades. Compare signal predictions vs outcomes. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
-After each iteration, update `phase.json` with the new phase and incremented iteration count.
+After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
-## Tool Building Guidelines
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions.
 
-Build standalone tools in `/home/agent/tools/`. Each tool should:
-- Accept command-line arguments (e.g. `python3 tools/scanner.py --source coingecko --limit 50`)
-- Output JSON to stdout for easy parsing
-- Use SQLite (`/home/agent/data/trading.db`) for persistence
-- Handle errors gracefully — print error JSON, don't crash
-- Be idempotent — safe to re-run
+## Pre-Built Tools
 
-Prefer Python for most tools. Use shell scripts for orchestrating multiple tools.
-On subsequent iterations, run existing tools rather than rebuilding them. Only modify tools when you identify a concrete improvement.
+Smart tools are pre-installed in `/home/agent/tools/`. They do the heavy lifting — you make decisions.
+
+### Core Workflow Tools (use these every tick)
+
+| Tool | Usage | What It Does |
+|------|-------|--------------|
+| `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
+| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, iteration state. |
+| `submit-trade.js` | `node tools/submit-trade.js --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. One command. |
+| `manage-collateral.js` | `node tools/manage-collateral.js --action status` | CLOB collateral: release vault funds, return funds, check status. Actions: status, release, return, return-all. |
+| `write-metrics.js` | `node tools/write-metrics.js '{{"portfolio_value_usd":10000}}'` | Write iteration metrics. |
+
+### Typical Iteration (3-5 turns)
+
+1. Run `analyze-opportunities.js` — read the opportunities list
+2. Run `get-portfolio.js` — check current positions
+3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
+4. For markets with edge > 5%: run `submit-trade.js` with your reasoning
+5. Run `write-metrics.js` to update state
+
+### Utility Tools
+
+| Tool | Usage | Purpose |
+|------|-------|---------|
+| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (used by other tools) |
+| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
+| `log-decision.js` | `node tools/log-decision.js '{{"action":"skip","reason":"no edge"}}'` | Log decisions |
+| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Raw Gamma API scan (use analyze-opportunities instead) |
+| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Raw CLOB prices (use analyze-opportunities instead) |
 
 ## Common Data APIs
 
@@ -1371,7 +1403,8 @@ pub fn build_generic_agent_profile(
             "edit": "allow",
             "bash": "allow",
             "webfetch": "allow",
-            "mcp": "allow"
+            "mcp": "allow",
+            "external_directory": "allow"
         },
         "memory": { "enabled": true }
     })
@@ -1488,14 +1521,13 @@ mod tests {
     }
 
     #[test]
-    fn test_common_setup_creates_db() {
+    fn test_common_setup_creates_data_store() {
         let cmds = common_setup_commands();
         let joined = cmds.join(" ");
         assert!(
-            joined.contains("trading.db"),
-            "setup must create trading.db"
+            joined.contains("trading.json"),
+            "setup must create trading.json"
         );
-        assert!(joined.contains("CREATE TABLE"), "setup must create tables");
         assert!(
             joined.contains("phase.json"),
             "setup must create phase tracker"
@@ -1525,8 +1557,8 @@ mod tests {
                 "{pack_type} pack missing mkdir"
             );
             assert!(
-                joined.contains("sqlite3"),
-                "{pack_type} pack missing sqlite setup"
+                joined.contains("trading.json"),
+                "{pack_type} pack missing data store setup"
             );
         }
     }
@@ -1657,8 +1689,8 @@ mod tests {
     #[test]
     fn test_pack_defaults() {
         let poly = get_pack("prediction").unwrap();
-        assert_eq!(poly.max_turns, 20);
-        assert_eq!(poly.timeout_ms, 240_000);
+        assert_eq!(poly.max_turns, 30);
+        assert_eq!(poly.timeout_ms, 600_000);
         assert_eq!(poly.default_cron, "0 */15 * * * *");
 
         let dex = get_pack("dex").unwrap();
@@ -1704,7 +1736,7 @@ mod tests {
             content.contains("coding agent"),
             "must mention coding agent identity"
         );
-        assert!(content.contains("SQLite"), "must mention SQLite");
+        assert!(content.contains("Node.js"), "must mention Node.js");
         assert!(
             content.contains("Iteration Protocol"),
             "must have iteration protocol"
@@ -1714,8 +1746,8 @@ mod tests {
             "must reference phase tracker"
         );
         assert!(
-            content.contains("Tool Building"),
-            "must have tool building section"
+            content.contains("Pre-Built Tools"),
+            "must have pre-built tools section"
         );
     }
 

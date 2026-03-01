@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "../helpers/Setup.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title FullLifecycleTest
 /// @notice End-to-end integration test:
@@ -39,7 +40,9 @@ contract FullLifecycleTest is Setup {
             2, // 2-of-3
             "Lifecycle Test Shares",
             "ltSHR",
-            bytes32("lifecycle-test")
+            bytes32("lifecycle-test"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         vault = TradingVault(payable(vaultAddr));
@@ -83,6 +86,8 @@ contract FullLifecycleTest is Setup {
     }
 
     function _validateTradePolicy() internal {
+        // Prank as vault since PolicyEngine.validateTrade is access-controlled
+        vm.prank(address(vault));
         bool policyValid =
             policyEngine.validateTrade(address(vault), address(tokenB), 1000 ether, address(mockTarget), 20000);
         assertTrue(policyValid, "Policy validation should pass");
@@ -120,10 +125,12 @@ contract FullLifecycleTest is Setup {
     }
 
     function _settleFees() internal {
-        address fdOwner = feeDistributor.owner();
+        // Approve fee distributor to pull fees from vault
+        vm.prank(owner);
+        vault.approveFeeAllowance(type(uint256).max);
 
+        // settleFees is permissionless — anyone can trigger
         // First settlement initializes HWM to current AUM — no perf fee on initial capital
-        vm.prank(fdOwner);
         (uint256 perfFee1,) = feeDistributor.settleFees(address(vault), address(tokenA));
         assertEq(perfFee1, 0, "No perf fee on first settlement - HWM initialized to AUM");
 
@@ -131,7 +138,6 @@ contract FullLifecycleTest is Setup {
         tokenA.mint(address(vault), 5000 ether);
         vm.warp(block.timestamp + 30 days);
 
-        vm.prank(fdOwner);
         (uint256 perfFee2, uint256 mgmtFee) = feeDistributor.settleFees(address(vault), address(tokenA));
 
         // Perf fee on the 5000 ether gain above HWM
@@ -165,7 +171,7 @@ contract FullLifecycleTest is Setup {
 
         // Normal operations blocked
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
         vault.redeem(1 ether, user, user);
 
         // Emergency withdraw (admin only, works when paused)

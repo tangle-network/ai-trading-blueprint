@@ -60,7 +60,13 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.06, duration: 0.4 }}
-          className="glass-card rounded-xl p-5"
+          className={`glass-card rounded-xl p-5 ${
+            stat.label === 'Total Value Locked' && stat.value != null && stat.value > 0
+              ? 'glow-emerald' : ''
+          }${
+            stat.label === 'Your Shares' && stat.value != null && stat.value > 0
+              ? 'glow-emerald' : ''
+          }`}
         >
           <div className="flex items-center gap-2 mb-2">
             <div className={`${stat.icon} text-base text-arena-elements-textTertiary`} />

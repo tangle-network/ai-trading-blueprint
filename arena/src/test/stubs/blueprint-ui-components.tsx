@@ -1,0 +1,23 @@
+import React from 'react';
+
+export const Badge = ({ children, ...props }: any) => <span data-testid="badge" {...props}>{children}</span>;
+export const Button = ({ children, ...props }: any) => <button {...props}>{children}</button>;
+export const Card = ({ children, ...props }: any) => <div data-testid="card" {...props}>{children}</div>;
+export const CardContent = ({ children, ...props }: any) => <div {...props}>{children}</div>;
+export const Input = (props: any) => <input {...props} />;
+export const Table = ({ children, ...props }: any) => <table {...props}>{children}</table>;
+export const TableHeader = ({ children, ...props }: any) => <thead {...props}>{children}</thead>;
+export const TableBody = ({ children, ...props }: any) => <tbody {...props}>{children}</tbody>;
+export const TableRow = ({ children, ...props }: any) => <tr {...props}>{children}</tr>;
+export const TableHead = ({ children, ...props }: any) => <th {...props}>{children}</th>;
+export const TableCell = ({ children, ...props }: any) => <td {...props}>{children}</td>;
+export const Dialog = ({ children }: any) => <div>{children}</div>;
+export const DialogContent = ({ children }: any) => <div>{children}</div>;
+export const DialogHeader = ({ children }: any) => <div>{children}</div>;
+export const DialogTitle = ({ children }: any) => <h2>{children}</h2>;
+export const DialogDescription = ({ children }: any) => <p>{children}</p>;
+export const Tabs = ({ children }: any) => <div>{children}</div>;
+export const TabsList = ({ children }: any) => <div>{children}</div>;
+export const TabsTrigger = ({ children }: any) => <button>{children}</button>;
+export const TabsContent = ({ children }: any) => <div>{children}</div>;
+export const Identicon = ({ address }: any) => <span data-testid="identicon">{address?.slice(0, 6)}</span>;

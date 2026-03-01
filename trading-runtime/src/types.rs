@@ -36,6 +36,7 @@ pub enum Action {
     Buy,
     Sell,
     Redeem,
+    CollateralRelease,
 }
 
 /// Portfolio state

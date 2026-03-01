@@ -5,6 +5,8 @@ import { useAccount, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
 import { AnimatedPage, Button } from '@tangle/blueprint-ui/components';
 import { VaultStats } from '~/components/vault/VaultStats';
+import { CollateralStats } from '~/components/vault/CollateralStats';
+import { CollateralAdmin } from '~/components/vault/CollateralAdmin';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
@@ -53,16 +55,42 @@ export default function VaultPage() {
           <span className="text-sm">&larr;</span> Back to Leaderboard
         </Link>
 
-        <div className="mb-8">
-          <h1 className="font-display font-bold text-3xl tracking-tight">Vault</h1>
-          <p className="text-sm text-arena-elements-textSecondary font-data mt-2 break-all">
-            {vaultAddress}
-          </p>
-          {vault.assetSymbol !== '???' && (
-            <p className="text-base text-arena-elements-textPrimary font-display font-medium mt-1">
-              Asset: {vault.assetSymbol}
-            </p>
-          )}
+        <div className="glass-card rounded-xl p-6 mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+              <div className="i-ph:vault text-xl text-violet-700 dark:text-violet-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="font-display font-bold text-2xl tracking-tight">Vault</h1>
+                {vault.assetSymbol !== '???' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs font-data font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wider">
+                    {vault.assetSymbol}
+                  </span>
+                )}
+                {vault.paused && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-crimson-500/10 border border-crimson-500/20 text-xs font-data font-semibold text-crimson-600 dark:text-crimson-400 uppercase tracking-wider">
+                    Paused
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-1.5">
+                <p className="text-sm text-arena-elements-textSecondary font-data truncate">
+                  {vaultAddress}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(vaultAddress!);
+                  }}
+                  className="text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 transition-colors shrink-0"
+                  aria-label="Copy vault address"
+                >
+                  <div className="i-ph:copy text-sm" />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <VaultStats
@@ -74,6 +102,27 @@ export default function VaultPage() {
           isLoading={vault.isLoading}
           userSharesFormatted={vault.userSharesFormatted}
         />
+
+        <CollateralStats
+          vaultAddress={vaultAddress}
+          totalOutstandingCollateral={vault.totalOutstandingCollateral}
+          maxCollateralBps={vault.maxCollateralBps}
+          availableCollateral={vault.availableCollateral}
+          assetDecimals={vault.assetDecimals}
+          assetSymbol={vault.assetSymbol}
+          tvl={vault.tvl}
+          isLoading={vault.isLoading}
+        />
+
+        {vault.isAdmin && (
+          <CollateralAdmin
+            vaultAddress={vaultAddress}
+            assetDecimals={vault.assetDecimals}
+            assetSymbol={vault.assetSymbol}
+            maxCollateralBps={vault.maxCollateralBps}
+            onSuccess={vault.refetch}
+          />
+        )}
 
         {vault.error ? (
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
@@ -114,7 +163,7 @@ export default function VaultPage() {
           </div>
         ) : null}
 
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 gap-6 mb-8">
           <DepositForm
             vaultAddress={vaultAddress}
             assetToken={vault.assetToken}
@@ -135,6 +184,17 @@ export default function VaultPage() {
             userSharesFormatted={vault.userSharesFormatted}
             onSuccess={vault.refetch}
           />
+        </div>
+
+        {/* Recent Activity */}
+        <div className="glass-card rounded-xl p-6">
+          <h2 className="font-display font-bold text-lg mb-4">Recent Activity</h2>
+          <div className="py-8 text-center">
+            <div className="i-ph:clock-counter-clockwise text-2xl text-arena-elements-textTertiary mb-3 mx-auto" />
+            <p className="text-sm text-arena-elements-textSecondary">
+              Deposit and withdrawal history coming soon.
+            </p>
+          </div>
         </div>
       </div>
     </AnimatedPage>

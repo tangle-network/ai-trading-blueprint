@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter};
+use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -93,7 +93,13 @@ impl ProtocolAdapter for VertexAdapter {
         SUPPORTED_CHAINS.to_vec()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        vec![self.endpoint]
+    }
+
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
+        validate_vault_address(params, "vertex")?;
+
         let product_id: u32 = params
             .extra
             .get("product_id")
@@ -115,6 +121,11 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.endpoint,
+                        params.amount,
+                    )],
                 })
             }
             Action::OpenShort => {
@@ -125,6 +136,11 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.endpoint,
+                        params.amount,
+                    )],
                 })
             }
             Action::CloseLong => {
@@ -136,6 +152,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             Action::CloseShort => {
@@ -147,6 +164,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -162,6 +180,7 @@ mod tests {
     use super::*;
 
     const TOKEN_USDC: &str = "0x0000000000000000000000000000000000000001";
+    const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
     fn test_protocol_id() {
@@ -188,10 +207,12 @@ mod tests {
                 "product_id": 2,
                 "price": "2500000000000000000000"
             }),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, VERTEX_ENDPOINT.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
+        assert_eq!(result.pre_calls.len(), 1);
     }
 
     #[test]
@@ -204,6 +225,7 @@ mod tests {
             amount: U256::from(100u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
         };
         assert!(adapter.encode_action(&params).is_err());
     }

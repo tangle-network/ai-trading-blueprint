@@ -49,6 +49,7 @@ contract DeployLocal is Script {
         // ── Transfer ownership to VaultFactory ──────────────────────────
         policyEngine.transferOwnership(address(vaultFactory));
         tradeValidator.transferOwnership(address(vaultFactory));
+        feeDistributor.transferOwnership(address(vaultFactory));
 
         // ── Deploy StrategyRegistry ─────────────────────────────────────
         StrategyRegistry strategyRegistry = new StrategyRegistry(deployer);
@@ -92,7 +93,9 @@ contract DeployLocal is Script {
             1, // 1-of-1 sigs for testing
             "Arena Vault Shares",
             "avSHARE",
-            bytes32("arena-vault-0")
+            bytes32("arena-vault-0"),
+            PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500}),
+            FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
         );
         address payable vault0 = payable(vault0Raw);
 

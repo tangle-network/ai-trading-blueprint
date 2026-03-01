@@ -21,6 +21,11 @@ interface VaultReadState {
   userAssetBalance?: bigint;
   userAssetBalanceFormatted?: number;
   userAllowance?: bigint;
+  // Collateral
+  totalOutstandingCollateral?: bigint;
+  maxCollateralBps?: number;
+  availableCollateral?: bigint;
+  isAdmin?: boolean;
   isLoading: boolean;
   error?: Error;
 }
@@ -161,6 +166,45 @@ export function useVaultRead(vaultAddress: Address | undefined) {
         }
       }
 
+      // Phase 5: Collateral state
+      let totalOutstandingCollateral: bigint | undefined;
+      let maxCollateralBps: number | undefined;
+      let availableCollateral: bigint | undefined;
+      let isAdmin = false;
+
+      try {
+        const collateralCalls: any[] = [
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalOutstandingCollateral' },
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxCollateralBps' },
+          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'availableCollateral' },
+        ];
+        // Check admin role if connected
+        if (userAddress) {
+          collateralCalls.push(
+            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'DEFAULT_ADMIN_ROLE' },
+          );
+        }
+        const collateralResults: any[] = await publicClient.multicall({ contracts: collateralCalls });
+        totalOutstandingCollateral = collateralResults[0]?.status === 'success' ? collateralResults[0].result as bigint : undefined;
+        maxCollateralBps = collateralResults[1]?.status === 'success' ? Number(collateralResults[1].result) : undefined;
+        availableCollateral = collateralResults[2]?.status === 'success' ? collateralResults[2].result as bigint : undefined;
+
+        // If we got the admin role hash, check if user has it
+        if (userAddress && collateralResults[3]?.status === 'success') {
+          const adminRole = collateralResults[3].result as `0x${string}`;
+          try {
+            isAdmin = await publicClient.readContract({
+              address: vaultAddress,
+              abi: tradingVaultAbi,
+              functionName: 'hasRole',
+              args: [adminRole, userAddress],
+            }) as boolean;
+          } catch {}
+        }
+      } catch {
+        // Collateral reads are non-critical — older vaults may not have these functions
+      }
+
       // Derive computed values
       const effectiveShareDec = sharesPerAsset != null && sharesPerAsset > 0n
         ? Math.round(Math.log10(Number(sharesPerAsset)))
@@ -188,6 +232,10 @@ export function useVaultRead(vaultAddress: Address | undefined) {
         userAssetBalance,
         userAssetBalanceFormatted: userAssetBalance != null ? Number(formatUnits(userAssetBalance, assetDecimals)) : undefined,
         userAllowance,
+        totalOutstandingCollateral,
+        maxCollateralBps,
+        availableCollateral,
+        isAdmin,
         isLoading: false,
       });
     } catch (err) {

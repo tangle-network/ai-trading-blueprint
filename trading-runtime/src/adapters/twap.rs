@@ -1,4 +1,4 @@
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 
 use super::{ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
@@ -76,6 +76,7 @@ impl TwapAdapter {
                 amount: U256::from(amount),
                 min_output: U256::from(slice_min),
                 extra: params.extra.clone(),
+                vault_address: params.vault_address,
             };
 
             let action = self.inner.encode_action(&slice_params)?;
@@ -101,6 +102,10 @@ impl ProtocolAdapter for TwapAdapter {
         self.inner.supported_chains()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        self.inner.known_addresses()
+    }
+
     /// Encodes only the first slice. Use `split_into_slices` for the full TWAP plan.
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
         let slices = self.split_into_slices(params)?;
@@ -118,8 +123,11 @@ mod tests {
     use crate::adapters::uniswap_v3::UniswapV3Adapter;
     use crate::types::Action;
 
+    use alloy::primitives::Address;
+
     const TOKEN_A: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_B: &str = "0x0000000000000000000000000000000000000002";
+    const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
     fn test_twap_split() {
@@ -133,6 +141,7 @@ mod tests {
             amount: U256::from(1_000_000u64),
             min_output: U256::from(900_000u64),
             extra: serde_json::json!({"fee_tier": 3000}),
+            vault_address: VAULT.parse::<Address>().unwrap(),
         };
 
         let slices = twap.split_into_slices(&params).unwrap();

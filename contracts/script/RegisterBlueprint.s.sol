@@ -58,9 +58,10 @@ contract RegisterBlueprint is Script {
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
 
-        // Transfer ownership of PolicyEngine + TradeValidator to VaultFactory
+        // Transfer ownership of PolicyEngine + TradeValidator + FeeDistributor to VaultFactory
         policyEngine.transferOwnership(address(vaultFactory));
         tradeValidator.transferOwnership(address(vaultFactory));
+        feeDistributor.transferOwnership(address(vaultFactory));
         vaultFactory.acceptDependencyOwnership();
 
         // ── Deploy BSMs ───────────────────────────────────────────────

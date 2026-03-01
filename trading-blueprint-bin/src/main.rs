@@ -325,6 +325,27 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         // Resolve validator endpoints from env (shared across all bots)
         let validator_eps: Vec<String> = trading_blueprint_lib::discovery::endpoints_from_env();
 
+        // Initialize Polymarket CLOB client if operator key is available.
+        let clob_client = trading_runtime::polymarket_clob::ClobClient::new(&private_key_for_api)
+            .map(std::sync::Arc::new)
+            .map_err(|e| tracing::warn!("Polymarket CLOB client not available: {e}"))
+            .ok();
+
+        // Shared ChainClient for nonce serialization across concurrent multi-bot requests.
+        let rpc_url_for_chain = std::env::var("HTTP_RPC_URL")
+            .unwrap_or_else(|_| "http://localhost:8545".to_string());
+        let chain_id_for_chain: u64 = std::env::var("CHAIN_ID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(31337);
+        let chain_client = trading_runtime::chain::ChainClient::new(
+            &rpc_url_for_chain,
+            &private_key_for_api,
+            chain_id_for_chain,
+        )
+        .map_err(|e| tracing::warn!("Shared ChainClient not available: {e}"))
+        .ok();
+
         let trading_state = std::sync::Arc::new(trading_http_api::MultiBotTradingState {
             operator_private_key: private_key_for_api,
             market_data_base_url: market_data_base_url_for_api,
@@ -341,6 +362,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     validator_endpoints: validator_eps.clone(),
                 })
             }),
+            clob_client,
+            chain_client,
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

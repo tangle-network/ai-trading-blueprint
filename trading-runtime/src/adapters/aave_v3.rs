@@ -2,7 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter};
+use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -37,46 +37,45 @@ impl AaveV3Adapter {
     }
 
     /// Encode `supply(address,uint256,address,uint16)`.
-    /// `onBehalfOf` is set to Address::ZERO (vault fills in).
-    fn encode_supply(&self, asset: Address, amount: U256) -> Bytes {
+    fn encode_supply(&self, asset: Address, amount: U256, vault: Address) -> Bytes {
         let call = IPool::supplyCall {
             asset,
             amount,
-            onBehalfOf: Address::ZERO,
+            onBehalfOf: vault,
             referralCode: 0,
         };
         Bytes::from(call.abi_encode())
     }
 
     /// Encode `withdraw(address,uint256,address)`.
-    fn encode_withdraw(&self, asset: Address, amount: U256) -> Bytes {
+    fn encode_withdraw(&self, asset: Address, amount: U256, vault: Address) -> Bytes {
         let call = IPool::withdrawCall {
             asset,
             amount,
-            to: Address::ZERO, // vault address filled in on-chain
+            to: vault,
         };
         Bytes::from(call.abi_encode())
     }
 
     /// Encode `borrow(address,uint256,uint256,uint16,address)`.
-    fn encode_borrow(&self, asset: Address, amount: U256, rate_mode: u8) -> Bytes {
+    fn encode_borrow(&self, asset: Address, amount: U256, rate_mode: u8, vault: Address) -> Bytes {
         let call = IPool::borrowCall {
             asset,
             amount,
             interestRateMode: U256::from(rate_mode),
             referralCode: 0,
-            onBehalfOf: Address::ZERO,
+            onBehalfOf: vault,
         };
         Bytes::from(call.abi_encode())
     }
 
     /// Encode `repay(address,uint256,uint256,address)`.
-    fn encode_repay(&self, asset: Address, amount: U256, rate_mode: u8) -> Bytes {
+    fn encode_repay(&self, asset: Address, amount: U256, rate_mode: u8, vault: Address) -> Bytes {
         let call = IPool::repayCall {
             asset,
             amount,
             interestRateMode: U256::from(rate_mode),
-            onBehalfOf: Address::ZERO,
+            onBehalfOf: vault,
         };
         Bytes::from(call.abi_encode())
     }
@@ -97,7 +96,13 @@ impl ProtocolAdapter for AaveV3Adapter {
         SUPPORTED_CHAINS.to_vec()
     }
 
+    fn known_addresses(&self) -> Vec<Address> {
+        vec![self.pool_address]
+    }
+
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
+        validate_vault_address(params, "aave_v3")?;
+
         let rate_mode: u8 = params
             .extra
             .get("rate_mode")
@@ -106,43 +111,67 @@ impl ProtocolAdapter for AaveV3Adapter {
 
         match params.action {
             Action::Supply => {
-                let calldata = self.encode_supply(params.token_in, params.amount);
+                let calldata =
+                    self.encode_supply(params.token_in, params.amount, params.vault_address);
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_in, // aToken
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.pool_address,
+                        params.amount,
+                    )],
                 })
             }
             Action::Withdraw => {
-                let calldata = self.encode_withdraw(params.token_in, params.amount);
+                let calldata =
+                    self.encode_withdraw(params.token_in, params.amount, params.vault_address);
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_in,
+                    pre_calls: vec![],
                 })
             }
             Action::Borrow => {
-                let calldata = self.encode_borrow(params.token_out, params.amount, rate_mode);
+                let calldata = self.encode_borrow(
+                    params.token_out,
+                    params.amount,
+                    rate_mode,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_out,
+                    pre_calls: vec![],
                 })
             }
             Action::Repay => {
-                let calldata = self.encode_repay(params.token_in, params.amount, rate_mode);
+                let calldata = self.encode_repay(
+                    params.token_in,
+                    params.amount,
+                    rate_mode,
+                    params.vault_address,
+                );
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
                     value: U256::ZERO,
                     min_output: U256::ZERO,
                     output_token: params.token_in,
+                    pre_calls: vec![encode_erc20_approve(
+                        params.token_in,
+                        self.pool_address,
+                        params.amount,
+                    )],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -159,6 +188,7 @@ mod tests {
 
     const TOKEN_USDC: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_WETH: &str = "0x0000000000000000000000000000000000000002";
+    const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
     fn test_protocol_id() {
@@ -176,10 +206,12 @@ mod tests {
             amount: U256::from(1_000_000u64),
             min_output: U256::from(1_000_000u64),
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, AAVE_V3_POOL.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
+        assert_eq!(result.pre_calls.len(), 1);
     }
 
     #[test]
@@ -192,6 +224,7 @@ mod tests {
             amount: U256::from(500_000u64),
             min_output: U256::from(500_000u64),
             extra: serde_json::json!({"rate_mode": 2}),
+            vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, AAVE_V3_POOL.parse::<Address>().unwrap());
@@ -207,6 +240,7 @@ mod tests {
             amount: U256::from(100u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
         };
         assert!(adapter.encode_action(&params).is_err());
     }

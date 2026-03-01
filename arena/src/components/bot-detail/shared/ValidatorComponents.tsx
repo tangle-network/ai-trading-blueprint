@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { Badge } from '@tangle/blueprint-ui/components';
 import { useThemeValue } from '@tangle/blueprint-ui';
-import type { ValidatorResponseDetail } from '~/lib/types/trade';
+import type { TradeSimulation, ValidatorResponseDetail } from '~/lib/types/trade';
 
 // ── Utilities ───────────────────────────────────────────────────────────
 
@@ -213,5 +213,80 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
         </AnimatePresence>
       </div>
     </m.div>
+  );
+}
+
+// ── SimulationBadge ─────────────────────────────────────────────────────
+
+export function SimulationBadge({ simulation }: { simulation: TradeSimulation }) {
+  const riskColor = simulation.riskScore > 60
+    ? 'text-arena-elements-icon-error'
+    : simulation.riskScore > 30
+      ? 'text-amber-700 dark:text-amber-400'
+      : 'text-arena-elements-icon-success';
+
+  return (
+    <span className="inline-flex items-center gap-1" title={`Risk: ${simulation.riskScore} | Gas: ${simulation.gasUsed.toLocaleString()}`}>
+      <span className={`text-xs ${simulation.success ? 'i-ph:check-circle' : 'i-ph:x-circle'} ${simulation.success ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`} />
+      <span className={`font-data text-xs font-bold ${riskColor}`}>
+        {simulation.riskScore}
+      </span>
+      {simulation.warnings.length > 0 && (
+        <span className="text-xs font-data text-amber-700 dark:text-amber-400" title={`${simulation.warnings.length} warning(s)`}>
+          !{simulation.warnings.length}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ── SimulationDetail ────────────────────────────────────────────────────
+
+export function SimulationDetail({ simulation }: { simulation: TradeSimulation }) {
+  const riskColor = simulation.riskScore > 60
+    ? 'text-arena-elements-icon-error'
+    : simulation.riskScore > 30
+      ? 'text-amber-700 dark:text-amber-400'
+      : 'text-arena-elements-icon-success';
+
+  return (
+    <div className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+        <span className="i-ph:flask text-sm" />
+        Simulation
+      </div>
+      <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-sm ${simulation.success ? 'i-ph:check-circle text-arena-elements-icon-success' : 'i-ph:x-circle text-arena-elements-icon-error'}`} />
+          <span className="font-data text-arena-elements-textPrimary">
+            {simulation.success ? 'PASS' : 'FAIL'}
+          </span>
+        </div>
+        <div>
+          <span className="text-arena-elements-textTertiary font-data text-xs">Risk </span>
+          <span className={`font-data font-bold ${riskColor}`}>{simulation.riskScore}</span>
+        </div>
+        <div>
+          <span className="text-arena-elements-textTertiary font-data text-xs">Gas </span>
+          <span className="font-data text-arena-elements-textPrimary">{simulation.gasUsed.toLocaleString()}</span>
+        </div>
+        {simulation.outputAmount && simulation.outputAmount !== '0' && (
+          <div>
+            <span className="text-arena-elements-textTertiary font-data text-xs">Output </span>
+            <span className="font-data text-arena-elements-textPrimary">{simulation.outputAmount}</span>
+          </div>
+        )}
+      </div>
+      {simulation.warnings.length > 0 && (
+        <div className="space-y-1">
+          {simulation.warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs">
+              <span className="i-ph:warning text-amber-500 mt-0.5 shrink-0" />
+              <code className="font-data text-arena-elements-textSecondary break-all">{w}</code>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

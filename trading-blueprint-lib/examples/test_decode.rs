@@ -63,6 +63,7 @@ fn main() {
         memory_mb: 2048,
         max_lifetime_days: 30,
         validator_service_ids: vec![],
+        max_collateral_bps: alloy::primitives::U256::from(0),
     };
 
     let encoded = correct.abi_encode();

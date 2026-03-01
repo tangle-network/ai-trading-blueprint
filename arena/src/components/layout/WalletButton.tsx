@@ -1,17 +1,21 @@
-import { useState, useRef, useEffect } from 'react';
 import { ConnectKitButton } from 'connectkit';
 import { useAccount, useDisconnect, useSwitchChain, useConnectorClient } from 'wagmi';
 import { useStore } from '@nanostores/react';
-import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { Identicon } from '@tangle/blueprint-ui/components';
 import { publicClient, selectedChainIdStore } from '@tangle/blueprint-ui';
+import {
+  ConnectWalletCta,
+  copyText,
+  truncateAddress,
+  useDropdownMenu,
+  useWalletEthBalance,
+} from '@tangle/agent-ui/primitives';
 import { networks } from '~/lib/contracts/chains';
 import { toast } from 'sonner';
 
 export function WalletButton() {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const { open, ref, toggle, close } = useDropdownMenu();
   const { address, chainId, isConnected, status } = useAccount();
   const isReconnecting = status === 'reconnecting';
   const { disconnect } = useDisconnect();
@@ -19,63 +23,19 @@ export function WalletButton() {
   const { data: connectorClient } = useConnectorClient();
   const selectedChainId = useStore(selectedChainIdStore);
   const selectedNetwork = networks[selectedChainId];
-
-  const [ethBalance, setEthBalance] = useState<string | null>(null);
-  const [balanceError, setBalanceError] = useState(false);
-
-  useEffect(() => {
-    if (!address) {
-      setEthBalance(null);
-      setBalanceError(false);
-      return;
-    }
-    let cancelled = false;
-
-    const fetchBalance = () => {
-      publicClient.getBalance({ address }).then((bal: bigint) => {
-        if (!cancelled) {
-          setEthBalance(parseFloat(formatUnits(bal, 18)).toFixed(3));
-          setBalanceError(false);
-        }
-      }).catch((err: unknown) => {
-        console.warn('[WalletButton] balance fetch failed:', err);
-        if (!cancelled) setBalanceError(true);
-      });
-    };
-
-    fetchBalance();
-    const interval = setInterval(fetchBalance, 15_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [address, selectedChainId]);
+  const { balance: ethBalance, hasError: balanceError } = useWalletEthBalance({
+    address,
+    refreshKey: selectedChainId,
+    readBalance: (walletAddress) => publicClient.getBalance({ address: walletAddress as Address }),
+    onError: (err) => console.warn('[WalletButton] balance fetch failed:', err),
+  });
 
   const isWrongChain = isConnected && chainId !== selectedChainId;
 
-  // Close dropdown on click outside
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
   async function copyAddress() {
     if (!address) return;
-    try {
-      await navigator.clipboard.writeText(address);
-      toast.success('Address copied');
-    } catch {
-      // Fallback for non-HTTPS contexts
-      const textarea = document.createElement('textarea');
-      textarea.value = address;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      toast.success('Address copied');
-    }
+    await copyText(address);
+    toast.success('Address copied');
   }
 
   const targetChain = selectedNetwork?.chain;
@@ -119,32 +79,19 @@ export function WalletButton() {
     <ConnectKitButton.Custom>
       {({ show }) => {
         if (!isConnected) {
-          return (
-            <button
-              onClick={show}
-              className="px-4 py-2.5 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-700 dark:text-violet-400 text-sm font-display font-medium hover:bg-violet-500/20 transition-colors"
-            >
-              {isReconnecting ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full border-2 border-violet-500/40 border-t-violet-600 dark:border-t-violet-400 animate-spin" />
-                  Reconnecting...
-                </span>
-              ) : 'Connect'}
-            </button>
-          );
+          return <ConnectWalletCta onClick={show} isReconnecting={isReconnecting} />;
         }
 
-        const truncated = address
-          ? `${address.slice(0, 6)}...${address.slice(-4)}`
-          : '';
+        const truncated = truncateAddress(address);
         const displayBalance = ethBalance ?? (balanceError ? '—' : '...');
 
         return (
           <div ref={ref} className="relative">
             <button
-              onClick={() => setOpen(!open)}
+              onClick={toggle}
               className="relative rounded-full hover:ring-2 hover:ring-violet-500/30 transition-all"
-              title={truncated}
+              aria-label="Account menu"
+              aria-expanded={open}
             >
               {address && <Identicon address={address as Address} size={32} />}
               {isWrongChain && (
@@ -217,7 +164,7 @@ export function WalletButton() {
                     </span>
                   </button>
                   <button
-                    onClick={() => { disconnect(); setOpen(false); }}
+                    onClick={() => { disconnect(); close(); }}
                     className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-crimson-500/10 transition-colors text-left"
                   >
                     <div className="i-ph:sign-out text-base text-crimson-600 dark:text-crimson-400" />
