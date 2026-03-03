@@ -56,6 +56,46 @@ import {
 } from './provision/types';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+export const FIRECRACKER_RUNTIME_SUPPORTED = false;
+
+export type RuntimeBackend = 'docker' | 'firecracker' | 'tee';
+
+interface StrategyConfigOptions {
+  runtimeBackend: RuntimeBackend;
+  isTeeBlueprint: boolean;
+  customExpertKnowledge?: string;
+  customInstructions?: string;
+  firecrackerRuntimeSupported?: boolean;
+}
+
+export function resolveRuntimeBackendForProvision(
+  runtimeBackend: RuntimeBackend,
+  isTeeBlueprint: boolean,
+  firecrackerRuntimeSupported = FIRECRACKER_RUNTIME_SUPPORTED,
+): RuntimeBackend {
+  if (isTeeBlueprint) return 'tee';
+  if (!firecrackerRuntimeSupported && runtimeBackend === 'firecracker') return 'docker';
+  return runtimeBackend;
+}
+
+export function buildStrategyConfigForProvision({
+  runtimeBackend,
+  isTeeBlueprint,
+  customExpertKnowledge,
+  customInstructions,
+  firecrackerRuntimeSupported,
+}: StrategyConfigOptions): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    runtime_backend: resolveRuntimeBackendForProvision(
+      runtimeBackend,
+      isTeeBlueprint,
+      firecrackerRuntimeSupported,
+    ),
+  };
+  if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
+  if (customInstructions) config.custom_instructions = customInstructions;
+  return config;
+}
 
 export const meta: MetaFunction = () => [
   { title: 'Deploy Agent — AI Trading Arena' },
@@ -135,6 +175,7 @@ export default function ProvisionPage() {
   // Configure — agent settings
   const [name, setName] = useState('');
   const [strategyType, setStrategyType] = useState('dex');
+  const [runtimeBackend, setRuntimeBackend] = useState<RuntimeBackend>('docker');
   const [customInstructions, setCustomInstructions] = useState('');
   const [customExpertKnowledge, setCustomExpertKnowledge] = useState('');
   const [customCron, setCustomCron] = useState('');
@@ -208,6 +249,19 @@ export default function ProvisionPage() {
   useEffect(() => {
     if (isInstance) setServiceMode('new');
   }, [isInstance]);
+
+  useEffect(() => {
+    if (selectedBlueprint?.isTee) {
+      setRuntimeBackend('tee');
+    } else if (runtimeBackend === 'tee') {
+      setRuntimeBackend('docker');
+    }
+  }, [selectedBlueprint?.id, selectedBlueprint?.isTee]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker') return;
+    setRuntimeBackend(selectedBlueprint?.isTee ? 'tee' : 'docker');
+  }, [runtimeBackend, selectedBlueprint?.isTee]);
 
   // Reset new service deploying state when switching modes
   useEffect(() => {
@@ -284,12 +338,12 @@ export default function ProvisionPage() {
           name: name || `Instance Bot (service ${activatedServiceId})`,
           strategy_type: strategyType,
           strategy_config_json: JSON.stringify(
-            (() => {
-              const cfg: Record<string, unknown> = {};
-              if (customExpertKnowledge) cfg.expert_knowledge_override = customExpertKnowledge;
-              if (customInstructions) cfg.custom_instructions = customInstructions;
-              return cfg;
-            })(),
+            buildStrategyConfigForProvision({
+              runtimeBackend,
+              isTeeBlueprint: !!selectedBlueprint?.isTee,
+              customExpertKnowledge,
+              customInstructions,
+            }),
           ),
           trading_loop_cron: effectiveCron,
           validator_service_ids: resolvedValidatorIds,
@@ -341,7 +395,7 @@ export default function ProvisionPage() {
       }
     }
     setInstanceProvisioning(false);
-  }, [name, strategyType, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorAuth]);
+  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorAuth]);
 
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
     setInstanceProvisioning(false);
@@ -619,9 +673,12 @@ export default function ProvisionPage() {
       return;
     }
 
-    const strategyConfig: Record<string, unknown> = {};
-    if (customExpertKnowledge) strategyConfig.expert_knowledge_override = customExpertKnowledge;
-    if (customInstructions) strategyConfig.custom_instructions = customInstructions;
+    const strategyConfig = buildStrategyConfigForProvision({
+      runtimeBackend,
+      isTeeBlueprint: !!selectedBlueprint?.isTee,
+      customExpertKnowledge,
+      customInstructions,
+    });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
 
@@ -797,10 +854,14 @@ export default function ProvisionPage() {
         [
           isInstance ? (name || 'Instance Bot') : '',
           isInstance ? strategyType : '',
-          isInstance ? JSON.stringify({
-            ...(customExpertKnowledge ? { expert_knowledge_override: customExpertKnowledge } : {}),
-            ...(customInstructions ? { custom_instructions: customInstructions } : {}),
-          }) : '{}',
+          isInstance ? JSON.stringify(
+            buildStrategyConfigForProvision({
+              runtimeBackend,
+              isTeeBlueprint: !!selectedBlueprint?.isTee,
+              customExpertKnowledge,
+              customInstructions,
+            }),
+          ) : '{}',
           '{}',
           zeroAddress,
           (import.meta.env.VITE_USDC_ADDRESS ??
@@ -865,7 +926,7 @@ export default function ProvisionPage() {
       case 'blueprint':
         return !!selectedBlueprint;
       case 'configure':
-        return !!name.trim();
+        return !!name.trim() && (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker');
       case 'deploy':
         return false;
     }
@@ -1152,6 +1213,9 @@ export default function ProvisionPage() {
             setName={setName}
             strategyType={strategyType}
             setStrategyType={setStrategyType}
+            runtimeBackend={runtimeBackend}
+            setRuntimeBackend={setRuntimeBackend}
+            firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
             selectedPack={selectedPack}
             selectedBlueprint={selectedBlueprint}
             serviceInfo={serviceInfo}

@@ -48,6 +48,9 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     setName: vi.fn(),
     strategyType: 'dex-swing',
     setStrategyType: vi.fn(),
+    runtimeBackend: 'docker' as const,
+    setRuntimeBackend: vi.fn(),
+    firecrackerSupported: false,
     selectedPack: {
       id: 'dex-swing',
       name: 'DEX Swing',
@@ -161,5 +164,38 @@ describe('ConfigureStep', () => {
       />,
     );
     expect(screen.getByText(/Trading Instance — New service will be created/)).toBeInTheDocument();
+  });
+
+  it('disables firecracker option when unsupported', () => {
+    render(<ConfigureStep {...defaultProps({ firecrackerSupported: false })} />);
+    const option = screen.getByRole('option', { name: /Firecracker \(microVM, unavailable\)/ });
+    expect(option).toBeDisabled();
+    expect(screen.getByText('Firecracker runtime is currently unavailable and cannot be selected.')).toBeInTheDocument();
+  });
+
+  it('enables firecracker option when supported', () => {
+    render(<ConfigureStep {...defaultProps({ firecrackerSupported: true })} />);
+    const option = screen.getByRole('option', { name: /Firecracker \(microVM\)/ });
+    expect(option).not.toBeDisabled();
+  });
+
+  it('calls setRuntimeBackend when selecting tee runtime', async () => {
+    const setRuntimeBackend = vi.fn();
+    const user = userEvent.setup();
+    render(<ConfigureStep {...defaultProps({ setRuntimeBackend })} />);
+    await user.selectOptions(screen.getByLabelText('Runtime Backend'), 'tee');
+    expect(setRuntimeBackend).toHaveBeenCalledWith('tee');
+  });
+
+  it('disables runtime selector for tee blueprints', () => {
+    render(
+      <ConfigureStep
+        {...defaultProps({
+          runtimeBackend: 'tee',
+          selectedBlueprint: { name: 'TEE Blueprint', id: 'tee-blueprint', isTee: true },
+        })}
+      />,
+    );
+    expect(screen.getByLabelText('Runtime Backend')).toBeDisabled();
   });
 });

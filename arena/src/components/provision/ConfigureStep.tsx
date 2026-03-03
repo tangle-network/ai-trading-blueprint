@@ -8,6 +8,9 @@ interface ConfigureStepProps {
   setName: (v: string) => void;
   strategyType: string;
   setStrategyType: (v: string) => void;
+  runtimeBackend: 'docker' | 'firecracker' | 'tee';
+  setRuntimeBackend: (v: 'docker' | 'firecracker' | 'tee') => void;
+  firecrackerSupported: boolean;
   selectedPack: StrategyPackDef;
   selectedBlueprint: TradingBlueprintDef | undefined;
   serviceInfo: ServiceInfo | null;
@@ -31,6 +34,9 @@ export function ConfigureStep({
   setName,
   strategyType,
   setStrategyType,
+  runtimeBackend,
+  setRuntimeBackend,
+  firecrackerSupported,
   selectedPack,
   selectedBlueprint,
   serviceInfo,
@@ -49,6 +55,7 @@ export function ConfigureStep({
   userAddress,
 }: ConfigureStepProps) {
   const isPrediction = strategyType.startsWith('prediction');
+  const firecrackerBlocked = !firecrackerSupported;
   return (
     <>
       {/* Compact infrastructure bar at top */}
@@ -194,6 +201,36 @@ export function ConfigureStep({
               Customize
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-5 pb-4 space-y-2">
+          <label htmlFor="runtime-backend" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+            Runtime Backend
+          </label>
+          <select
+            id="runtime-backend"
+            value={runtimeBackend}
+            onChange={(e) => setRuntimeBackend(e.target.value as 'docker' | 'firecracker' | 'tee')}
+            disabled={selectedBlueprint?.isTee}
+            className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-3 py-2 text-sm text-arena-elements-textPrimary focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+          >
+            <option value="docker">Docker (default)</option>
+            <option value="firecracker" disabled={firecrackerBlocked}>
+              {firecrackerBlocked ? 'Firecracker (microVM, unavailable)' : 'Firecracker (microVM)'}
+            </option>
+            <option value="tee">TEE (confidential)</option>
+          </select>
+          <p className="text-xs text-arena-elements-textTertiary">
+            Stored in `strategy_config_json.runtime_backend` and mapped to sandbox runtime metadata.
+            {selectedBlueprint?.isTee ? ' TEE blueprint is pinned to tee runtime.' : ''}
+          </p>
+          {firecrackerBlocked && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Firecracker runtime is currently unavailable and cannot be selected.
+            </p>
+          )}
         </CardContent>
       </Card>
 
