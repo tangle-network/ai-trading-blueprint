@@ -1,10 +1,52 @@
 use blueprint_sdk::tangle::extract::{CallId, Caller, TangleArg, TangleResult};
 use sandbox_runtime::provision_progress::{self, ProvisionPhase};
+use serde_json::{Map, Value};
 
 use crate::state::{TradingBotRecord, bot_key, bots};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
+
+fn parse_runtime_backend_from_strategy_config(
+    strategy_config_json: &str,
+) -> Result<Option<String>, String> {
+    let trimmed = strategy_config_json.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed: Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("Invalid strategy_config_json: {e}"))?;
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| "strategy_config_json must be a JSON object".to_string())?;
+
+    let Some(raw) = obj.get("runtime_backend").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "docker" | "container" => Ok(Some("docker".to_string())),
+        "firecracker" | "microvm" => Ok(Some("firecracker".to_string())),
+        "tee" | "confidential" | "confidential-vm" => Ok(Some("tee".to_string())),
+        _ => Err(format!(
+            "strategy_config_json.runtime_backend must be one of: docker, firecracker, tee (got '{raw}')"
+        )),
+    }
+}
+
+fn mark_provision_failed(call_id: u64, error: &str) {
+    if let Err(e) = provision_progress::update_provision(
+        call_id,
+        ProvisionPhase::Failed,
+        Some(error.to_string()),
+        None,
+        None,
+    ) {
+        tracing::warn!("Provision progress failure update failed: {e}");
+    }
+}
 
 /// Provision core logic, testable without Tangle extractors.
 ///
@@ -47,6 +89,12 @@ pub async fn provision_core(
         tracing::warn!("Provision metadata update failed: {e}");
     }
 
+    let runtime_backend = parse_runtime_backend_from_strategy_config(&request.strategy_config_json)
+        .map_err(|e| {
+            mark_provision_failed(call_id, &e);
+            e
+        })?;
+
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
 
@@ -74,8 +122,8 @@ pub async fn provision_core(
     // - SIDECAR_NETWORK_HOST=true → container shares host network → use 127.0.0.1
     // - Otherwise → use host.docker.internal (added via --add-host in sandbox-runtime)
     let trading_api_url = std::env::var("TRADING_API_URL").unwrap_or_else(|_| {
-        let host_network = std::env::var("SIDECAR_NETWORK_HOST")
-            .map_or(false, |v| v == "true" || v == "1");
+        let host_network =
+            std::env::var("SIDECAR_NETWORK_HOST").map_or(false, |v| v == "true" || v == "1");
         let host = std::env::var("SIDECAR_PUBLIC_HOST").unwrap_or_else(|_| {
             if host_network {
                 "127.0.0.1".to_string()
@@ -137,10 +185,15 @@ pub async fn provision_core(
     let env_json = serde_json::to_string(&env).unwrap_or_default();
 
     // 6. Create sidecar sandbox (or use mock)
+    let launch_detail = if runtime_backend.as_deref() == Some("firecracker") {
+        "Launching Firecracker microVM"
+    } else {
+        "Launching Docker container"
+    };
     if let Err(e) = provision_progress::update_provision(
         call_id,
         ProvisionPhase::ContainerCreate,
-        Some("Launching Docker container".into()),
+        Some(launch_detail.into()),
         None,
         None,
     ) {
@@ -152,6 +205,15 @@ pub async fn provision_core(
         let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(r.id.clone(), r.clone()));
         r
     } else {
+        let mut metadata = Map::new();
+        if let Some(backend) = runtime_backend.as_deref() {
+            metadata.insert(
+                "runtime_backend".to_string(),
+                Value::String(backend.to_string()),
+            );
+        }
+        let metadata_json = Value::Object(metadata).to_string();
+
         let params = CreateSandboxParams {
             name: request.name.clone(),
             image: std::env::var("SIDECAR_IMAGE")
@@ -159,7 +221,7 @@ pub async fn provision_core(
             stack: String::new(),
             agent_identifier: format!("trading-{}", request.strategy_type),
             env_json,
-            metadata_json: String::new(),
+            metadata_json,
             ssh_enabled: false,
             ssh_public_key: String::new(),
             web_terminal_enabled: false,
@@ -183,7 +245,11 @@ pub async fn provision_core(
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
             .await
-            .map_err(|e| format!("Failed to create sidecar: {e}"))?;
+            .map_err(|e| {
+                let msg = format!("Failed to create sidecar: {e}");
+                mark_provision_failed(call_id, &msg);
+                msg
+            })?;
         r
     };
 
@@ -255,9 +321,19 @@ pub async fn provision_core(
         tracing::warn!("Provision metadata update failed: {e}");
     }
 
-    bots()?
+    let bot_store = bots().map_err(|e| {
+        let msg = format!("Failed to open bot store: {e}");
+        mark_provision_failed(call_id, &msg);
+        msg
+    })?;
+
+    bot_store
         .insert(bot_key(&bot_id), bot_record)
-        .map_err(|e| format!("Failed to store bot record: {e}"))?;
+        .map_err(|e| {
+            let msg = format!("Failed to store bot record: {e}");
+            mark_provision_failed(call_id, &msg);
+            msg
+        })?;
 
     if let Err(e) = provision_progress::update_provision(
         call_id,
