@@ -103,7 +103,7 @@ async fn call_llm(
     // Coding API thinking mode: if content is empty, the model exhausted tokens on reasoning
     let has_reasoning = message["reasoning_content"]
         .as_str()
-        .map_or(false, |r| !r.is_empty());
+        .is_some_and(|r| !r.is_empty());
     if has_reasoning {
         return Err("Model exhausted tokens on thinking — increase max_tokens".into());
     }
@@ -271,7 +271,11 @@ async fn test_ai_trading_simulation() {
 
     // ── Infrastructure ───────────────────────────────────────────────────────
     println!("[setup] Deploying on-chain infrastructure...");
-    let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().expect("Anvil");
+    let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
+        .try_spawn()
+        .expect("Anvil");
     let rpc_url = anvil.endpoint();
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
     let deployer_provider = ProviderBuilder::new()

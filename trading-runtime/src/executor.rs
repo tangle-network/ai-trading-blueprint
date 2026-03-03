@@ -199,11 +199,7 @@ impl TradeExecutor {
                         );
                         return Err(TradingError::SimulationRejected {
                             risk_score: risk.risk_score,
-                            warnings: risk
-                                .warnings
-                                .iter()
-                                .map(|w| w.to_string())
-                                .collect(),
+                            warnings: risk.warnings.iter().map(|w| w.to_string()).collect(),
                         });
                     }
 
@@ -233,13 +229,12 @@ impl TradeExecutor {
                 .provider
                 .send_transaction(pre_request)
                 .await
-                .map_err(|e| {
-                    TradingError::VaultError(format!("Pre-call send failed: {e}"))
-                })?;
+                .map_err(|e| TradingError::VaultError(format!("Pre-call send failed: {e}")))?;
 
-            pre_pending.get_receipt().await.map_err(|e| {
-                TradingError::VaultError(format!("Pre-call receipt failed: {e}"))
-            })?;
+            pre_pending
+                .get_receipt()
+                .await
+                .map_err(|e| TradingError::VaultError(format!("Pre-call receipt failed: {e}")))?;
         }
 
         // 4. Collect validator signatures and scores
@@ -315,7 +310,8 @@ pub fn get_adapter(protocol: &str) -> Result<Box<dyn ProtocolAdapter + Send>, Tr
         }
         "polymarket_clob" => Err(TradingError::AdapterError {
             protocol: "polymarket_clob".into(),
-            message: "CLOB trades bypass the vault executor — route through execute_clob_trade()".into(),
+            message: "CLOB trades bypass the vault executor — route through execute_clob_trade()"
+                .into(),
         }),
         other => Err(TradingError::AdapterError {
             protocol: other.to_string(),

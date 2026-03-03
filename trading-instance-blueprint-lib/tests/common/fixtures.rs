@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use trading_blueprint_lib::state::{TradingBotRecord, bot_key, bots};
 
 /// Seed a `SandboxRecord` into the sandbox store.
@@ -6,7 +8,7 @@ pub fn seed_sandbox_record(
     sidecar_url: &str,
     token: &str,
 ) -> sandbox_runtime::SandboxRecord {
-    let record = sandbox_runtime::SandboxRecord {
+    sandbox_runtime::SandboxRecord {
         id: id.to_string(),
         container_id: format!("container-{id}"),
         sidecar_url: sidecar_url.to_string(),
@@ -40,8 +42,7 @@ pub fn seed_sandbox_record(
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
         tee_attestation_json: None,
-    };
-    record
+    }
 }
 
 /// Seed a `TradingBotRecord` into the bots store.

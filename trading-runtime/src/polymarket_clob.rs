@@ -11,14 +11,14 @@ use alloy::primitives::{Address, U256};
 use alloy::signers::Signer as _;
 use alloy::signers::local::PrivateKeySigner;
 use polymarket_client_sdk::auth::{Credentials, Normal};
+use polymarket_client_sdk::clob::Client as SdkClient;
+use polymarket_client_sdk::clob::types::Side as SdkSide;
 use polymarket_client_sdk::clob::types::request::{
     MidpointRequest, OrderBookSummaryRequest, OrdersRequest,
 };
 use polymarket_client_sdk::clob::types::response::{
     OpenOrderResponse, OrderBookSummaryResponse, OrderSummary, PostOrderResponse,
 };
-use polymarket_client_sdk::clob::types::Side as SdkSide;
-use polymarket_client_sdk::clob::Client as SdkClient;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -309,8 +309,8 @@ impl ClobClient {
     ///
     /// The underlying SDK client is lazily authenticated on first use.
     pub fn new(private_key: &str) -> Result<Self, TradingError> {
-        let base_url = std::env::var("POLYMARKET_CLOB_URL")
-            .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+        let base_url =
+            std::env::var("POLYMARKET_CLOB_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
         Self::with_config(private_key, base_url, None)
     }
 
@@ -399,8 +399,8 @@ impl ClobClient {
         fee_rate_bps: u32,
     ) -> Result<(), TradingError> {
         let client = self.client().await?;
-        let token_id = U256::from_str(token_id_str)
-            .map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
+        let token_id =
+            U256::from_str(token_id_str).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
 
         use polymarket_client_sdk::clob::types::TickSize;
         let tick = match tick_size {
@@ -445,9 +445,11 @@ impl ClobClient {
 
     /// Perform SDK authentication (called under write lock).
     async fn authenticate(&self) -> Result<AuthenticatedSdkClient, TradingError> {
-        let unauthenticated =
-            SdkClient::new(&self.base_url, polymarket_client_sdk::clob::Config::default())
-                .map_err(sdk_err)?;
+        let unauthenticated = SdkClient::new(
+            &self.base_url,
+            polymarket_client_sdk::clob::Config::default(),
+        )
+        .map_err(sdk_err)?;
 
         let mut builder = unauthenticated.authentication_builder(&self.signer);
         if let Some(ref creds) = self.pre_credentials {
@@ -588,7 +590,8 @@ impl ClobClient {
     /// Get the order book for a token (public endpoint).
     pub async fn get_book(&self, token_id: &str) -> Result<OrderBook, TradingError> {
         let client = self.client().await?;
-        let token_id = U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
+        let token_id =
+            U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
         let request = OrderBookSummaryRequest::builder()
             .token_id(token_id)
             .build();
@@ -599,7 +602,8 @@ impl ClobClient {
     /// Get the midpoint price for a token (public endpoint).
     pub async fn get_midpoint(&self, token_id: &str) -> Result<Decimal, TradingError> {
         let client = self.client().await?;
-        let token_id = U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
+        let token_id =
+            U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
         let request = MidpointRequest::builder().token_id(token_id).build();
         let response = client.midpoint(&request).await.map_err(sdk_err)?;
         Ok(response.mid)
@@ -623,7 +627,10 @@ impl ClobClient {
         let client = self.client().await?;
 
         let market_b256 = market
-            .map(|m| m.parse().map_err(|e| sdk_err(format!("Invalid market: {e}"))))
+            .map(|m| {
+                m.parse()
+                    .map_err(|e| sdk_err(format!("Invalid market: {e}")))
+            })
             .transpose()?;
         let asset_u256 = asset_id
             .map(|a| U256::from_str(a).map_err(|e| sdk_err(format!("Invalid asset_id: {e}"))))
@@ -687,9 +694,11 @@ impl ClobClient {
             .unwrap_or(POLYGON_CHAIN_ID);
 
         let wallet = EthereumWallet::from(self.signer.clone());
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(rpc_url.parse().map_err(|e| sdk_err(format!("Invalid RPC URL: {e}")))?);
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| sdk_err(format!("Invalid RPC URL: {e}")))?,
+        );
 
         let mut results = Vec::new();
 
@@ -784,7 +793,7 @@ impl ClobClient {
 
                     results.push(ApprovalResult {
                         tx_hash: format!("{}", receipt.transaction_hash),
-                        spender: format!("{}", adapter),
+                        spender: format!("{adapter}"),
                         spender_label: "NegRiskAdapter".into(),
                     });
                     tracing::info!(
@@ -869,7 +878,11 @@ pub fn extract_clob_params(
     let side = match action.to_lowercase().as_str() {
         "buy" => Side::Buy,
         "sell" => Side::Sell,
-        other => return Err(format!("polymarket_clob only supports buy/sell, got '{other}'")),
+        other => {
+            return Err(format!(
+                "polymarket_clob only supports buy/sell, got '{other}'"
+            ));
+        }
     };
 
     let order_type_str = metadata
@@ -882,7 +895,11 @@ pub fn extract_clob_params(
         "GTD" => OrderType::Gtd,
         "FOK" => OrderType::Fok,
         "FAK" => OrderType::Fak,
-        other => return Err(format!("Unknown order_type '{other}', expected GTC/GTD/FOK/FAK")),
+        other => {
+            return Err(format!(
+                "Unknown order_type '{other}', expected GTC/GTD/FOK/FAK"
+            ));
+        }
     };
 
     let expiration = metadata

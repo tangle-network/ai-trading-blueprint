@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod contract_deployer;
 pub mod e2e_helpers;
 pub mod fixtures;

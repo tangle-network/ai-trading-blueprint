@@ -78,7 +78,11 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
         // ║  1. Deploy on-chain infrastructure on Anvil                 ║
         // ╚══════════════════════════════════════════════════════════════╝
         eprintln!("\n[1/7] Deploying on-chain infrastructure...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Anvil")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

@@ -336,7 +336,9 @@ mod tests {
         };
 
         // Policy=100, sim_penalty=0, sim_score=100 → (100*70 + 100*30)/100 = 100
-        let result = compute_score(&intent, None, None, Some(&ctx)).await.unwrap();
+        let result = compute_score(&intent, None, None, Some(&ctx))
+            .await
+            .unwrap();
         assert_eq!(result.score, 100);
     }
 
@@ -403,12 +405,12 @@ mod tests {
             }),
         };
 
-        let approval_penalty = simulation_score(
-            &make_ctx("UnexpectedApproval: token=0xA spender=0xB amount=100"),
-        );
-        let transfer_penalty = simulation_score(
-            &make_ctx("TransferToUnknownAddress: token=0xA to=0xB amount=100"),
-        );
+        let approval_penalty = simulation_score(&make_ctx(
+            "UnexpectedApproval: token=0xA spender=0xB amount=100",
+        ));
+        let transfer_penalty = simulation_score(&make_ctx(
+            "TransferToUnknownAddress: token=0xA to=0xB amount=100",
+        ));
         let balance_penalty =
             simulation_score(&make_ctx("BalanceDecrease: token=0xA account=0xB lost=100"));
 

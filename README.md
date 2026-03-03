@@ -36,6 +36,19 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system diagrams.
 | **Instance** | `trading-instance-blueprint-bin` | Single dedicated bot | Service init vault + operator API provision | Per-subscription bots |
 | **TEE Instance** | `trading-tee-instance-blueprint-bin` | Single bot + hardware isolation | Service init vault + operator API provision | Sensitive strategies in enclave |
 
+## Runtime Backend Selection
+
+Trading provision requests can select runtime backend via:
+
+- `strategy_config_json.runtime_backend = "docker" | "firecracker" | "tee"`
+
+Operator mapping:
+
+- The provision handler maps this to sandbox metadata (`metadata_json.runtime_backend`).
+- `firecracker` currently follows the sandbox-runtime Firecracker gate:
+  it returns a clear validation error until provider wiring is enabled.
+- `tee` is intended for confidential runtime selection; TEE instance blueprints pin this mode by default.
+
 ## Supported Protocols
 
 | Adapter | Type | Operations |

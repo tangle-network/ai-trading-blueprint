@@ -347,8 +347,12 @@ pub fn build_operator_router() -> Router {
 // ── Auth handlers ────────────────────────────────────────────────────────
 
 async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let challenge = sandbox_runtime::session_auth::create_challenge()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Challenge error: {e}")))?;
+    let challenge = sandbox_runtime::session_auth::create_challenge().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Challenge error: {e}"),
+        )
+    })?;
     let value = serde_json::to_value(&challenge).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -865,12 +869,11 @@ async fn get_bot_trades(
             .and_then(|v| v.as_str())
             .unwrap_or("buy");
 
-        let action =
-            if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
-                "buy"
-            } else {
-                "sell"
-            };
+        let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
+            "buy"
+        } else {
+            "sell"
+        };
 
         let amount = t
             .get("amount_usd")
@@ -878,10 +881,7 @@ async fn get_bot_trades(
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
-        let entry_price = t
-            .get("entry_price")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
+        let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let current_price = t
             .get("current_price")
             .and_then(|v| v.as_f64())
@@ -2220,7 +2220,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/bots/{bot_id}/secrets"))
+                    .uri(format!("/api/bots/{bot_id}/secrets"))
                     .header("content-type", "application/json")
                     .header("authorization", test_auth_header())
                     .body(Body::from(serde_json::to_string(&body).unwrap()))

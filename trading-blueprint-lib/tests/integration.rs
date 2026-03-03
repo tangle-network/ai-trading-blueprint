@@ -30,6 +30,31 @@ fn make_provision_request(name: &str, strategy: &str) -> TradingProvisionRequest
     make_provision_request_with_lifetime(name, strategy, 0)
 }
 
+fn make_provision_request_with_strategy_config(
+    name: &str,
+    strategy: &str,
+    strategy_config_json: &str,
+) -> TradingProvisionRequest {
+    TradingProvisionRequest {
+        name: name.to_string(),
+        strategy_type: strategy.to_string(),
+        strategy_config_json: strategy_config_json.to_string(),
+        risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
+        factory_address: Address::from([0xBB; 20]),
+        asset_token: Address::from([0xCC; 20]),
+        signers: vec![Address::from([0x01; 20]), Address::from([0x02; 20])],
+        required_signatures: U256::from(2),
+        chain_id: U256::from(31337),
+        rpc_url: "http://localhost:8545".to_string(),
+        trading_loop_cron: "0 */5 * * * *".to_string(),
+        cpu_cores: 2,
+        memory_mb: 4096,
+        max_lifetime_days: 0,
+        validator_service_ids: vec![],
+        max_collateral_bps: U256::from(0),
+    }
+}
+
 fn make_provision_request_with_lifetime(
     name: &str,
     strategy: &str,
@@ -140,6 +165,92 @@ async fn test_provision_creates_records() {
     assert_eq!(
         bot.workflow_id, None,
         "two-phase: no workflow until activation"
+    );
+}
+
+#[tokio::test]
+async fn test_provision_rejects_invalid_runtime_backend() {
+    let _dir = common::init_test_env();
+    let call_id = 91_000_001u64;
+
+    let request = make_provision_request_with_strategy_config(
+        "test-invalid-runtime",
+        "dex",
+        r#"{"runtime_backend":"invalid"}"#,
+    );
+    let err = match provision_core(
+        request,
+        Some(mock_sandbox("sb-invalid-runtime")),
+        call_id,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    {
+        Ok(_) => panic!("invalid runtime backend should fail"),
+        Err(err) => err,
+    };
+
+    assert!(
+        err.contains("runtime_backend must be one of"),
+        "unexpected error: {err}"
+    );
+
+    let status = sandbox_runtime::provision_progress::get_provision(call_id)
+        .expect("provision status lookup should succeed")
+        .expect("provision status should exist");
+    assert_eq!(
+        status.phase,
+        sandbox_runtime::provision_progress::ProvisionPhase::Failed
+    );
+    assert!(
+        status
+            .message
+            .clone()
+            .unwrap_or_default()
+            .contains("runtime_backend must be one of"),
+        "unexpected failed phase message: {:?}",
+        status.message
+    );
+}
+
+#[tokio::test]
+async fn test_provision_firecracker_backend_surfaces_runtime_error() {
+    let _dir = common::init_test_env();
+    let call_id = 91_000_002u64;
+
+    let request = make_provision_request_with_strategy_config(
+        "test-firecracker-runtime",
+        "dex",
+        r#"{"runtime_backend":"firecracker"}"#,
+    );
+    let err =
+        match provision_core(request, None, call_id, 0, "0xTESTCALLER".to_string(), None).await {
+            Ok(_) => panic!("firecracker backend should fail until runtime is wired"),
+            Err(err) => err,
+        };
+
+    assert!(
+        err.contains("runtime_backend=firecracker was requested"),
+        "unexpected error: {err}"
+    );
+
+    let status = sandbox_runtime::provision_progress::get_provision(call_id)
+        .expect("provision status lookup should succeed")
+        .expect("provision status should exist");
+    assert_eq!(
+        status.phase,
+        sandbox_runtime::provision_progress::ProvisionPhase::Failed
+    );
+    assert!(
+        status
+            .message
+            .clone()
+            .unwrap_or_default()
+            .contains("runtime_backend=firecracker was requested"),
+        "unexpected failed phase message: {:?}",
+        status.message
     );
 }
 
@@ -800,7 +911,8 @@ async fn test_dex_profile_has_uniswap_content() {
 async fn test_all_packs_use_instructions_not_system_prompt() {
     // Verify all known pack types use resources.instructions, not systemPrompt
     for strategy in &["prediction", "dex", "yield", "perp"] {
-        let pack = packs::get_pack(strategy).expect(&format!("pack {strategy} should exist"));
+        let pack =
+            packs::get_pack(strategy).unwrap_or_else(|| panic!("pack {strategy} should exist"));
         let config = trading_blueprint_lib::state::TradingBotRecord {
             id: "test".to_string(),
             sandbox_id: "sb".to_string(),
@@ -976,12 +1088,7 @@ async fn test_two_phase_provision_e2e() {
     // Verify: workflow JSON contains sidecar info
     let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
     assert!(wf_json["sidecar_url"].as_str().is_some());
-    assert!(
-        wf_json["prompt"]
-            .as_str()
-            .unwrap()
-            .contains("Trading tick")
-    );
+    assert!(wf_json["prompt"].as_str().unwrap().contains("Trading tick"));
 
     // ── Phase 2b: Double-activate should fail ──────────────────────────────
     let err = activate_bot_with_secrets(
@@ -1113,7 +1220,9 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
         let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
         let prompt = wf_json["prompt"].as_str().unwrap();
         assert!(
-            prompt.contains("Trading tick") || prompt.contains("Trading iteration") || prompt.contains("trading"),
+            prompt.contains("Trading tick")
+                || prompt.contains("Trading iteration")
+                || prompt.contains("trading"),
             "Workflow prompt for {strategy} should contain trading context, got: {}",
             &prompt[..prompt.len().min(100)]
         );
@@ -1205,7 +1314,7 @@ async fn test_stop_already_stopped_bot() {
     let bot_id = "trading-stop-idem-1";
     let wf_id = 33333u64;
 
-    let mut bot = fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xII", Some(wf_id));
+    let _bot = fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xII", Some(wf_id));
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
 
     // Stop once

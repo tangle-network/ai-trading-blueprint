@@ -85,7 +85,9 @@ fn decode_exact_output_single(params: &[u8]) -> String {
     let token_out = extract_address(params, 1);
     let fee = extract_u32(params, 2);
     let amount_out = extract_u256(params, 5);
-    format!("exactOutputSingle(tokenIn={token_in}, tokenOut={token_out}, fee={fee}, amountOut={amount_out})")
+    format!(
+        "exactOutputSingle(tokenIn={token_in}, tokenOut={token_out}, fee={fee}, amountOut={amount_out})"
+    )
 }
 
 fn decode_create_order(params: &[u8], protocol: &str) -> String {
@@ -269,9 +271,7 @@ mod tests {
         let mut data = vec![0x09, 0x5e, 0xa7, 0xb3];
         // spender (padded address)
         data.extend_from_slice(&[0u8; 12]);
-        data.extend_from_slice(
-            &hex::decode("E592427A0AEce92De3Edee1F18E0157C05861564").unwrap(),
-        );
+        data.extend_from_slice(&hex::decode("E592427A0AEce92De3Edee1F18E0157C05861564").unwrap());
         // amount = 1000
         let mut amount_word = [0u8; 32];
         amount_word[31] = 0xe8;
@@ -605,7 +605,10 @@ mod tests {
             let mut data = selector.to_vec();
             data.push(0x00); // only 1 byte of params
             let result = decode_calldata(&data, "test");
-            assert!(result.contains("(...)") || result.contains("("), "selector {:?} should handle short params: {}", selector, result);
+            assert!(
+                result.contains("(...)") || result.contains("("),
+                "selector {selector:?} should handle short params: {result}"
+            );
         }
     }
 

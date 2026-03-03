@@ -279,7 +279,7 @@ async fn test_get_bot_detail() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}", bot.id))
+                .uri(format!("/api/bots/{}", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -336,7 +336,7 @@ async fn test_start_bot_auth_resolves_bot() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/bots/{}/start", bot.id))
+                .uri(format!("/api/bots/{}/start", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -366,7 +366,7 @@ async fn test_stop_bot_auth_resolves_bot() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/bots/{}/stop", bot.id))
+                .uri(format!("/api/bots/{}/stop", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -400,7 +400,7 @@ async fn test_configure_secrets_wrong_submitter() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/bots/{}/secrets", bot.id))
+                .uri(format!("/api/bots/{}/secrets", bot.id))
                 .header("content-type", "application/json")
                 .header("authorization", test_auth_header("0xWRONGADDRESS"))
                 .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -427,7 +427,7 @@ async fn test_update_config_with_auth() {
         .oneshot(
             Request::builder()
                 .method("PATCH")
-                .uri(&format!("/api/bots/{}/config", bot.id))
+                .uri(format!("/api/bots/{}/config", bot.id))
                 .header("content-type", "application/json")
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -459,7 +459,7 @@ async fn test_get_bot_metrics() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/metrics", bot.id))
+                .uri(format!("/api/bots/{}/metrics", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -484,7 +484,7 @@ async fn test_get_bot_trades() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/trades", bot.id))
+                .uri(format!("/api/bots/{}/trades", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -507,7 +507,7 @@ async fn test_get_bot_portfolio() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/portfolio/state", bot.id))
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -532,7 +532,7 @@ async fn test_get_bot_metrics_history() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/metrics/history", bot.id))
+                .uri(format!("/api/bots/{}/metrics/history", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -559,7 +559,7 @@ async fn test_activation_progress_not_found() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/activation-progress", bot.id))
+                .uri(format!("/api/bots/{}/activation-progress", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -582,7 +582,7 @@ async fn test_activation_progress_returns_state() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/bots/{}/activation-progress", bot.id))
+                .uri(format!("/api/bots/{}/activation-progress", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -896,7 +896,7 @@ async fn test_run_now_inactive_bot_returns_conflict() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/bots/{}/run-now", bot.id))
+                .uri(format!("/api/bots/{}/run-now", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),
@@ -924,7 +924,7 @@ async fn test_configure_secrets_correct_submitter_reaches_activation() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/bots/{}/secrets", bot.id))
+                .uri(format!("/api/bots/{}/secrets", bot.id))
                 .header("content-type", "application/json")
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -967,7 +967,7 @@ async fn test_wipe_secrets_requires_existing_secrets() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/bots/{}/secrets", bot.id))
+                .uri(format!("/api/bots/{}/secrets", bot.id))
                 .header("authorization", test_auth_header(SUBMITTER))
                 .body(Body::empty())
                 .unwrap(),

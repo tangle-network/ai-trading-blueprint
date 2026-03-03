@@ -71,9 +71,7 @@ impl EthCallSimulator {
             return Ok(U256::ZERO);
         }
 
-        let result_hex = body["result"]
-            .as_str()
-            .unwrap_or("0x0");
+        let result_hex = body["result"].as_str().unwrap_or("0x0");
 
         let stripped = result_hex.strip_prefix("0x").unwrap_or(result_hex);
         Ok(U256::from_str_radix(stripped, 16).unwrap_or(U256::ZERO))
@@ -123,9 +121,7 @@ impl EthCallSimulator {
 
         let result_hex = body["result"].as_str().unwrap_or("0x");
         let stripped = result_hex.strip_prefix("0x").unwrap_or(result_hex);
-        let return_data = hex::decode(stripped)
-            .map(Bytes::from)
-            .unwrap_or_default();
+        let return_data = hex::decode(stripped).map(Bytes::from).unwrap_or_default();
 
         // eth_call doesn't return gas_used directly; estimate separately
         let gas_used = self.estimate_gas(&body, request).await;
@@ -179,10 +175,7 @@ impl EthCallSimulator {
 
 #[async_trait::async_trait]
 impl TransactionSimulator for EthCallSimulator {
-    async fn simulate(
-        &self,
-        request: SimulationRequest,
-    ) -> Result<SimulationResult, TradingError> {
+    async fn simulate(&self, request: SimulationRequest) -> Result<SimulationResult, TradingError> {
         let (success, return_data, gas_used) = self.eth_call(&request).await?;
 
         let mut warnings = Vec::new();
@@ -198,7 +191,9 @@ impl TransactionSimulator for EthCallSimulator {
         let mut balance_changes = Vec::new();
         if let Some(account) = request.balance_check_account {
             for token in &request.token_addresses {
-                if let Ok(balance) = self.query_balance(*token, account, request.block_number).await
+                if let Ok(balance) = self
+                    .query_balance(*token, account, request.block_number)
+                    .await
                 {
                     balance_changes.push(super::BalanceChange {
                         token: *token,

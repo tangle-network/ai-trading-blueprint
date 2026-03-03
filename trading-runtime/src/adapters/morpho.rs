@@ -2,7 +2,10 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{encode_erc20_approve, parse_address_or, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
+use super::{
+    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, parse_address_or,
+    validate_vault_address,
+};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -190,7 +193,11 @@ mod tests {
         let adapter = MorphoAdapter::new();
         let addresses = adapter.known_addresses();
         for addr in &addresses {
-            assert_ne!(*addr, Address::ZERO, "known_addresses must not contain Address::ZERO");
+            assert_ne!(
+                *addr,
+                Address::ZERO,
+                "known_addresses must not contain Address::ZERO"
+            );
         }
     }
 

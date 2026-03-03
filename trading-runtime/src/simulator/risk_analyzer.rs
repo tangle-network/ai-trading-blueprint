@@ -45,10 +45,7 @@ pub struct RiskAssessment {
 ///
 /// Returns a `RiskAssessment` with a risk score (0-100) and warnings.
 /// A score below 20 is considered safe.
-pub fn analyze_simulation(
-    result: &SimulationResult,
-    context: &TradeContext,
-) -> RiskAssessment {
+pub fn analyze_simulation(result: &SimulationResult, context: &TradeContext) -> RiskAssessment {
     let mut warnings = Vec::new();
     let mut risk_score: u32 = 0;
 
@@ -61,7 +58,10 @@ pub fn analyze_simulation(
                 warnings.push(w.clone());
             }
         }
-        if !warnings.iter().any(|w| matches!(w, SimulationWarning::SimulationReverted { .. })) {
+        if !warnings
+            .iter()
+            .any(|w| matches!(w, SimulationWarning::SimulationReverted { .. }))
+        {
             warnings.push(SimulationWarning::SimulationReverted {
                 reason: "Transaction reverted during simulation".into(),
             });
@@ -100,7 +100,8 @@ pub fn analyze_simulation(
     for transfer in &result.transfer_events {
         if transfer.to != context.vault_address
             && !context.is_known_protocol_address(transfer.to)
-            && transfer.to != Address::ZERO // burn
+            && transfer.to != Address::ZERO
+        // burn
         {
             risk_score = risk_score.saturating_add(30);
             warnings.push(SimulationWarning::TransferToUnknownAddress {
@@ -144,9 +145,7 @@ pub fn analyze_simulation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulator::{
-        ApprovalChange, BalanceChange, SimulationResult, TransferEvent,
-    };
+    use crate::simulator::{ApprovalChange, BalanceChange, SimulationResult, TransferEvent};
     use alloy::primitives::Bytes;
 
     fn test_context() -> TradeContext {
@@ -161,7 +160,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             amount_in: U256::from(1_000_000_000_000_000_000u128), // 1 WETH
-            min_output: U256::from(2_500_000_000u64),              // 2500 USDC
+            min_output: U256::from(2_500_000_000u64),             // 2500 USDC
             known_protocol_addresses: vec![
                 "0xE592427A0AEce92De3Edee1F18E0157C05861564"
                     .parse()
@@ -203,9 +202,12 @@ mod tests {
         let assessment = analyze_simulation(&result, &test_context());
         assert!(!assessment.safe);
         assert!(assessment.risk_score >= 80);
-        assert!(assessment.warnings.iter().any(
-            |w| matches!(w, SimulationWarning::SimulationReverted { .. })
-        ));
+        assert!(
+            assessment
+                .warnings
+                .iter()
+                .any(|w| matches!(w, SimulationWarning::SimulationReverted { .. }))
+        );
     }
 
     #[test]
@@ -228,9 +230,12 @@ mod tests {
         let assessment = analyze_simulation(&result, &test_context());
         assert!(!assessment.safe);
         assert!(assessment.risk_score >= 60);
-        assert!(assessment.warnings.iter().any(
-            |w| matches!(w, SimulationWarning::UnexpectedApproval { .. })
-        ));
+        assert!(
+            assessment
+                .warnings
+                .iter()
+                .any(|w| matches!(w, SimulationWarning::UnexpectedApproval { .. }))
+        );
     }
 
     #[test]
@@ -359,9 +364,12 @@ mod tests {
 
         let assessment = analyze_simulation(&result, &ctx);
         assert!(!assessment.safe);
-        assert!(assessment.warnings.iter().any(
-            |w| matches!(w, SimulationWarning::OutputBelowMinimum { .. })
-        ));
+        assert!(
+            assessment
+                .warnings
+                .iter()
+                .any(|w| matches!(w, SimulationWarning::OutputBelowMinimum { .. }))
+        );
     }
 
     #[test]

@@ -33,6 +33,7 @@ use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -161,6 +162,7 @@ fn find_binary() -> Option<String> {
 }
 
 /// Start the binary as a child process.
+#[allow(clippy::too_many_arguments)]
 fn start_binary(
     binary_path: &str,
     rpc_url: &str,
@@ -365,6 +367,7 @@ fn extract_port_from_log(line: &str) -> Option<u16> {
 /// before the TradeValidator is deployed (chicken-and-egg: validators need the
 /// contract address for EIP-712 domain, but we don't have the Anvil URL until
 /// Manager starts). Flow A already covers on-chain verification.
+#[allow(clippy::too_many_arguments)]
 async fn run_trade_pipeline(
     http_client: &reqwest::Client,
     rpc_url: &str,
@@ -379,32 +382,11 @@ async fn run_trade_pipeline(
     // ── Submit JOB_PROVISION ──────────────────────────────────────────
     eprintln!("        Submitting JOB_PROVISION on-chain...");
 
-    let provision_payload = TradingProvisionRequest {
-        name: "e2e-bot".to_string(),
-        strategy_type: "dex".to_string(),
-        strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
-        risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-        factory_address: vault_addr,
-        asset_token: Address::from([0xCC; 20]),
-        signers: val_addrs,
-        required_signatures: U256::from(2),
-        chain_id: U256::from(31337),
-        rpc_url: rpc_url.to_string(),
-        trading_loop_cron: "0 */5 * * * *".to_string(),
-        cpu_cores: 2,
-        memory_mb: 4096,
-        max_lifetime_days: 30,
-        validator_service_ids: vec![],
-        max_collateral_bps: U256::from(0),
-    }
-    .abi_encode();
-
-    submit_job_onchain(
+    submit_provision_job_onchain(
         rpc_url,
-        SERVICE_OWNER_KEY,
-        0,
-        JOB_PROVISION,
-        &provision_payload,
+        vault_addr,
+        val_addrs.clone(),
+        r#"{"max_slippage":0.5}"#,
     )
     .await?;
     eprintln!("        Job submitted");
@@ -584,6 +566,135 @@ async fn run_trade_pipeline(
     Ok(())
 }
 
+async fn submit_provision_job_onchain(
+    rpc_url: &str,
+    vault_addr: Address,
+    val_addrs: Vec<Address>,
+    strategy_config_json: &str,
+) -> Result<()> {
+    let provision_payload = TradingProvisionRequest {
+        name: "e2e-bot".to_string(),
+        strategy_type: "dex".to_string(),
+        strategy_config_json: strategy_config_json.to_string(),
+        risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
+        factory_address: vault_addr,
+        asset_token: Address::from([0xCC; 20]),
+        signers: val_addrs,
+        required_signatures: U256::from(2),
+        chain_id: U256::from(31337),
+        rpc_url: rpc_url.to_string(),
+        trading_loop_cron: "0 */5 * * * *".to_string(),
+        cpu_cores: 2,
+        memory_mb: 4096,
+        max_lifetime_days: 30,
+        validator_service_ids: vec![],
+        max_collateral_bps: U256::from(0),
+    }
+    .abi_encode();
+
+    submit_job_onchain(
+        rpc_url,
+        SERVICE_OWNER_KEY,
+        0,
+        JOB_PROVISION,
+        &provision_payload,
+    )
+    .await
+}
+
+async fn snapshot_provision_call_ids(
+    client: &reqwest::Client,
+    operator_api_url: &str,
+) -> Result<HashSet<u64>> {
+    let resp = client
+        .get(format!("{operator_api_url}/api/provisions"))
+        .send()
+        .await
+        .context("GET /api/provisions (snapshot)")?;
+    if !resp.status().is_success() {
+        return Ok(HashSet::new());
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let mut ids = HashSet::new();
+    if let Some(items) = body["provisions"].as_array() {
+        for item in items {
+            if let Some(call_id) = item["call_id"].as_u64() {
+                ids.insert(call_id);
+            }
+        }
+    }
+    Ok(ids)
+}
+
+async fn assert_firecracker_provision_failed(
+    client: &reqwest::Client,
+    operator_api_url: &str,
+    session_token: &str,
+    existing_call_ids: &HashSet<u64>,
+) -> Result<u64> {
+    let mut last_body = serde_json::Value::Null;
+    let mut new_call_ids = HashSet::new();
+
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let resp = client
+            .get(format!("{operator_api_url}/api/provisions"))
+            .send()
+            .await
+            .context("GET /api/provisions")?;
+
+        if !resp.status().is_success() {
+            continue;
+        }
+
+        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        last_body = body.clone();
+
+        if let Some(items) = body["provisions"].as_array() {
+            for item in items {
+                let Some(call_id) = item["call_id"].as_u64() else {
+                    continue;
+                };
+                if existing_call_ids.contains(&call_id) {
+                    continue;
+                }
+                new_call_ids.insert(call_id);
+
+                let phase = item["phase"].as_str().unwrap_or_default();
+                let message = item["message"].as_str().unwrap_or_default();
+                if phase == "failed" && message.to_ascii_lowercase().contains("firecracker") {
+                    let bots_resp = client
+                        .get(format!("{operator_api_url}/api/bots?call_id={call_id}"))
+                        .header("Authorization", format!("Bearer {session_token}"))
+                        .send()
+                        .await
+                        .context("GET /api/bots after failed firecracker provision")?;
+                    if bots_resp.status().is_success() {
+                        let bots_body: serde_json::Value =
+                            bots_resp.json().await.unwrap_or_default();
+                        let count = bots_body["total"]
+                            .as_u64()
+                            .or_else(|| bots_body["bots"].as_array().map(|b| b.len() as u64))
+                            .unwrap_or(0);
+                        if count == 0 {
+                            return Ok(call_id);
+                        }
+                        anyhow::bail!(
+                            "firecracker provision failed for call_id={call_id}, but /api/bots?call_id={call_id} returned {count} bot(s): {bots_body}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "did not observe failed firecracker provision for a newly submitted call; observed_new_call_ids={new_call_ids:?}; last /api/provisions body: {last_body}"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Flow A: Direct binary test — full trade pipeline
 // ═══════════════════════════════════════════════════════════════════════
@@ -701,6 +812,103 @@ async fn test_blueprint_binary_full_pipeline() -> Result<()> {
         eprintln!("  BINARY E2E FULL TRADE PIPELINE: PASSED  ");
         eprintln!("════════════════════════════════════════════");
         Ok(())
+    })
+    .await;
+
+    result.context("test timed out")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_blueprint_binary_firecracker_provision_fails_cleanly() -> Result<()> {
+    if std::env::var("SIDECAR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: set SIDECAR_E2E=1 to run");
+        return Ok(());
+    }
+
+    let binary_path = match find_binary() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: binary not built. Run `cargo build -p trading-blueprint-bin`");
+            return Ok(());
+        }
+    };
+
+    common::setup_log();
+
+    let result = tokio::time::timeout(Duration::from_secs(300), async {
+        let tangle_harness = match blueprint_anvil_testing_utils::TangleHarness::start(true).await {
+            Ok(h) => h,
+            Err(e) => {
+                if blueprint_anvil_testing_utils::missing_tnt_core_artifacts(&e) {
+                    eprintln!("Skipping: TNT core artifacts not found: {e}");
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        };
+
+        let rpc_url = tangle_harness.http_endpoint().to_string();
+        let ws_url = tangle_harness.ws_endpoint().to_string();
+
+        let state_dir = tempfile::tempdir().context("create state dir")?;
+        let keystore_dir = tempfile::tempdir().context("create keystore dir")?;
+        setup_keystore(keystore_dir.path())?;
+
+        let op_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let op_port = op_listener.local_addr()?.port();
+        drop(op_listener);
+
+        let trade_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let trade_port = trade_listener.local_addr()?.port();
+        drop(trade_listener);
+
+        let mut child = start_binary(
+            &binary_path,
+            &rpc_url,
+            &ws_url,
+            state_dir.path().to_str().unwrap(),
+            op_port,
+            trade_port,
+            keystore_dir.path().to_str().unwrap(),
+            "",
+        )?;
+
+        let mut output = ProcessOutput::capture(&mut child, "binary-firecracker");
+        output.wait_for("Operator API listening", 30).await?;
+
+        let operator_api_url = format!("http://127.0.0.1:{op_port}");
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()?;
+
+        let session_token =
+            do_session_auth(&http_client, &operator_api_url, SERVICE_OWNER_KEY).await?;
+        let existing_call_ids =
+            snapshot_provision_call_ids(&http_client, &operator_api_url).await?;
+
+        submit_provision_job_onchain(
+            &rpc_url,
+            Address::from([0xAA; 20]),
+            validator_addresses(&validator_keys()),
+            r#"{"runtime_backend":"firecracker"}"#,
+        )
+        .await?;
+
+        let check = assert_firecracker_provision_failed(
+            &http_client,
+            &operator_api_url,
+            &session_token,
+            &existing_call_ids,
+        )
+        .await
+        .map(|call_id| {
+            eprintln!("        Observed firecracker failure for call_id={call_id}");
+        });
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        check
     })
     .await;
 
@@ -932,6 +1140,125 @@ async fn test_blueprint_manager_full_pipeline() -> Result<()> {
         eprintln!("  MANAGER E2E FULL TRADE PIPELINE: PASSED  ");
         eprintln!("══════════════════════════════════════════════════");
         Ok(())
+    })
+    .await;
+
+    result.context("test timed out")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_blueprint_manager_firecracker_provision_fails_cleanly() -> Result<()> {
+    if std::env::var("MANAGER_E2E").ok().as_deref() != Some("1") {
+        eprintln!(
+            "Skipping: set MANAGER_E2E=1 to run (requires cargo-tangle CLI + working Manager binary spawn)"
+        );
+        return Ok(());
+    }
+
+    let cargo_tangle_exists = Command::new("cargo-tangle")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !cargo_tangle_exists {
+        eprintln!("Skipping: cargo-tangle CLI not installed");
+        return Ok(());
+    }
+
+    if find_binary().is_none() {
+        eprintln!("Skipping: binary not built. Run `cargo build -p trading-blueprint-bin`");
+        return Ok(());
+    }
+
+    common::setup_log();
+
+    let result = tokio::time::timeout(Duration::from_secs(360), async {
+        let op_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let op_port = op_listener.local_addr()?.port();
+        drop(op_listener);
+
+        let trade_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let trade_port = trade_listener.local_addr()?.port();
+        drop(trade_listener);
+
+        let workspace_root = env!("CARGO_MANIFEST_DIR").trim_end_matches("/trading-blueprint-lib");
+
+        let mut manager = Command::new("cargo-tangle")
+            .current_dir(workspace_root)
+            .args([
+                "tangle",
+                "blueprint",
+                "deploy",
+                "tangle",
+                "--network",
+                "devnet",
+                "--spawn-method",
+                "native",
+                "--exit-after-seconds",
+                "300",
+            ])
+            .env("OPERATOR_API_PORT", op_port.to_string())
+            .env("TRADING_API_PORT", trade_port.to_string())
+            .env("VALIDATOR_ENDPOINTS", "")
+            .env("SIDECAR_IMAGE", "tangle-sidecar:local")
+            .env("SIDECAR_PULL_IMAGE", "false")
+            .env("SIDECAR_PUBLIC_HOST", "127.0.0.1")
+            .env("WORKFLOW_CRON_SCHEDULE", "0 0 1 1 * *")
+            .env("FEE_SETTLEMENT_INTERVAL_SECS", "999999")
+            .env("BILLING_INTERVAL_SECS", "999999")
+            .env("BLUEPRINT_CARGO_BIN", "trading-blueprint")
+            .env(
+                "RUST_LOG",
+                "info,tangle=debug,trading=debug,blueprint_manager=debug",
+            )
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn cargo-tangle")?;
+
+        let mut mgr_output = ProcessOutput::capture(&mut manager, "manager-firecracker");
+        let op_line = mgr_output.wait_for("Operator API listening", 180).await?;
+        let actual_op_port = extract_port_from_log(&op_line)
+            .context("Could not extract operator API port from manager log line")?;
+        let operator_api_url = format!("http://127.0.0.1:{actual_op_port}");
+
+        let anvil_line = mgr_output
+            .find_in_history("Anvil HTTP endpoint")
+            .context("Manager should have logged Anvil HTTP endpoint")?;
+        let rpc_url = extract_url_from_log(&anvil_line)
+            .context("Could not extract URL from Anvil log line")?;
+
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()?;
+        let session_token =
+            do_session_auth(&http_client, &operator_api_url, SERVICE_OWNER_KEY).await?;
+        let existing_call_ids =
+            snapshot_provision_call_ids(&http_client, &operator_api_url).await?;
+
+        submit_provision_job_onchain(
+            &rpc_url,
+            Address::from([0xAA; 20]),
+            validator_addresses(&validator_keys()),
+            r#"{"runtime_backend":"firecracker"}"#,
+        )
+        .await?;
+
+        let check = assert_firecracker_provision_failed(
+            &http_client,
+            &operator_api_url,
+            &session_token,
+            &existing_call_ids,
+        )
+        .await
+        .map(|call_id| {
+            eprintln!("        Observed firecracker failure for call_id={call_id}");
+        });
+
+        let _ = manager.kill();
+        let _ = manager.wait();
+
+        check
     })
     .await;
 

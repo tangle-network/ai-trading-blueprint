@@ -22,7 +22,7 @@ fn main() {
             println!("  trading_loop_cron: {}", req.trading_loop_cron);
         }
         Err(e) => {
-            println!("abi_decode FAILED: {:?}", e);
+            println!("abi_decode FAILED: {e:?}");
         }
     }
 
@@ -34,7 +34,7 @@ fn main() {
             println!("  strategy_type: {}", req.strategy_type);
         }
         Err(e) => {
-            println!("abi_decode_sequence FAILED: {:?}", e);
+            println!("abi_decode_sequence FAILED: {e:?}");
         }
     }
 
@@ -73,10 +73,7 @@ fn main() {
     if encoded != bytes {
         for (i, (a, b)) in encoded.iter().zip(bytes.iter()).enumerate() {
             if a != b {
-                println!(
-                    "First diff at byte {}: encoded={:#04x} input={:#04x}",
-                    i, a, b
-                );
+                println!("First diff at byte {i}: encoded={a:#04x} input={b:#04x}");
                 break;
             }
         }

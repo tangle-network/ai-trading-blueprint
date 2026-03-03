@@ -134,7 +134,7 @@ async fn call_llm(
     }
     let has_reasoning = message["reasoning_content"]
         .as_str()
-        .map_or(false, |r| !r.is_empty());
+        .is_some_and(|r| !r.is_empty());
     if has_reasoning {
         return Err("Model exhausted tokens on thinking — increase max_tokens".into());
     }
@@ -189,7 +189,11 @@ async fn test_ai_trading_flow() {
 
     // ── 1. Start Anvil + deploy TradeValidator ───────────────────────────────
     println!("[1/6] Starting Anvil and deploying TradeValidator...");
-    let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().expect("Failed to spawn Anvil");
+    let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
+        .try_spawn()
+        .expect("Failed to spawn Anvil");
     let rpc_url = anvil.endpoint();
 
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

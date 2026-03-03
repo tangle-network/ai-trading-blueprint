@@ -1,7 +1,10 @@
 use crate::TradingApiState;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::{Json, Router, routing::{get, post}};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::vault_client::VaultClient;
@@ -70,7 +73,12 @@ async fn release_collateral(
     let intent_hash_bytes: [u8; 32] = hex::decode(req.intent_hash.trim_start_matches("0x"))
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid intent_hash: {e}")))?
         .try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "intent_hash must be 32 bytes".to_string()))?;
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "intent_hash must be 32 bytes".to_string(),
+            )
+        })?;
 
     // Parse signatures and scores
     let mut signatures = Vec::new();
@@ -85,7 +93,14 @@ async fn release_collateral(
     let deadline = alloy::primitives::U256::from(req.deadline);
 
     let encoded = vault_client
-        .encode_release_collateral(&req.amount, &req.recipient, intent_hash_bytes, deadline, signatures, scores)
+        .encode_release_collateral(
+            &req.amount,
+            &req.recipient,
+            intent_hash_bytes,
+            deadline,
+            signatures,
+            scores,
+        )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Submit via ChainClient if available, otherwise return encoded data
@@ -108,10 +123,12 @@ async fn return_collateral(
     use alloy::sol_types::{SolCall, SolValue};
     use trading_runtime::contracts::{IERC20, ITradingVault};
 
-    let vault_addr: Address = state
-        .vault_address
-        .parse()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Invalid vault address: {e}")))?;
+    let vault_addr: Address = state.vault_address.parse().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Invalid vault address: {e}"),
+        )
+    })?;
 
     let amount = U256::from_str_radix(&req.amount, 10)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid amount: {e}")))?;
@@ -123,13 +140,18 @@ async fn return_collateral(
     let asset_tx = TransactionRequest::default()
         .to(vault_addr)
         .input(Bytes::from(asset_call.abi_encode()).into());
-    let asset_result = chain_client
-        .provider()
-        .call(asset_tx)
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to query vault asset: {e}")))?;
-    let asset_addr = Address::abi_decode(&asset_result)
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to decode asset address: {e}")))?;
+    let asset_result = chain_client.provider().call(asset_tx).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to query vault asset: {e}"),
+        )
+    })?;
+    let asset_addr = Address::abi_decode(&asset_result).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to decode asset address: {e}"),
+        )
+    })?;
 
     // Step 2: Approve the vault to pull the deposit asset
     let approve_call = IERC20::approveCall {
@@ -144,10 +166,12 @@ async fn return_collateral(
         .send_transaction(approve_tx)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Approve tx failed: {e}")))?;
-    approve_pending
-        .get_receipt()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Approve receipt failed: {e}")))?;
+    approve_pending.get_receipt().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Approve receipt failed: {e}"),
+        )
+    })?;
 
     // Step 3: Call returnCollateral (which does safeTransferFrom)
     let vault_client = VaultClient::new(
@@ -174,27 +198,27 @@ async fn collateral_status(
     use alloy::sol_types::SolCall;
     use trading_runtime::contracts::ITradingVault;
 
-    let rpc_url = state
-        .rpc_url
-        .as_deref()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "No RPC URL configured".to_string()))?;
+    let rpc_url = state.rpc_url.as_deref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "No RPC URL configured".to_string(),
+    ))?;
 
-    let vault_addr: Address = state
-        .vault_address
-        .parse()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Invalid vault address: {e}")))?;
+    let vault_addr: Address = state.vault_address.parse().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Invalid vault address: {e}"),
+        )
+    })?;
 
-    let provider = alloy::providers::ProviderBuilder::new()
-        .connect_http(
-            rpc_url
-                .parse()
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Invalid RPC URL: {e}")))?,
-        );
+    let provider =
+        alloy::providers::ProviderBuilder::new().connect_http(rpc_url.parse().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Invalid RPC URL: {e}"),
+            )
+        })?);
 
-    let operator_addr: Address = state
-        .operator_address
-        .parse()
-        .unwrap_or(Address::ZERO);
+    let operator_addr: Address = state.operator_address.parse().unwrap_or(Address::ZERO);
 
     // Read view functions via eth_call
     let total_outstanding = eth_call_u256(
@@ -208,7 +232,10 @@ async fn collateral_status(
     let operator_outstanding = eth_call_u256(
         &provider,
         vault_addr,
-        ITradingVault::operatorCollateralCall { operator: operator_addr }.abi_encode(),
+        ITradingVault::operatorCollateralCall {
+            operator: operator_addr,
+        }
+        .abi_encode(),
     )
     .await
     .unwrap_or_default();
@@ -250,26 +277,37 @@ async fn submit_tx(
 
     let chain_client = state.executor.chain_client();
 
-    let to_addr: Address = encoded
-        .to
-        .parse()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Invalid to address: {e}")))?;
+    let to_addr: Address = encoded.to.parse().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Invalid to address: {e}"),
+        )
+    })?;
 
     let tx = TransactionRequest::default()
         .to(to_addr)
         .input(Bytes::from(encoded.data.clone()).into())
-        .value(U256::from_str_radix(encoded.value.trim_start_matches("0x"), 10).unwrap_or(U256::ZERO));
+        .value(
+            U256::from_str_radix(encoded.value.trim_start_matches("0x"), 10).unwrap_or(U256::ZERO),
+        );
 
     let pending = chain_client
         .provider()
         .send_transaction(tx)
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Transaction send failed: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Transaction send failed: {e}"),
+            )
+        })?;
 
-    let receipt = pending
-        .get_receipt()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Receipt fetch failed: {e}")))?;
+    let receipt = pending.get_receipt().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Receipt fetch failed: {e}"),
+        )
+    })?;
 
     Ok(format!("{:#x}", receipt.transaction_hash))
 }
@@ -293,8 +331,7 @@ async fn eth_call_u256(
         .await
         .map_err(|e| format!("eth_call failed: {e}"))?;
 
-    alloy::primitives::U256::abi_decode(&result)
-        .map_err(|e| format!("ABI decode failed: {e}"))
+    alloy::primitives::U256::abi_decode(&result).map_err(|e| format!("ABI decode failed: {e}"))
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────

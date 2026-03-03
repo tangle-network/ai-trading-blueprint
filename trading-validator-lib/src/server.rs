@@ -186,7 +186,7 @@ async fn handle_validate(
 ) -> Json<ValidateResponse> {
     // Independent simulation: if we have an RPC URL and execution context
     // with target+calldata but no simulation result, run our own eth_call.
-    if let (Some(ref rpc_url), Some(ref mut ctx)) =
+    if let (Some(rpc_url), Some(ctx)) =
         (server.rpc_url.as_ref(), request.execution_context.as_mut())
     {
         if ctx.simulation_result.is_none() {
@@ -324,9 +324,7 @@ async fn run_independent_simulation(
     rpc_url: &str,
     ctx: &ExecutionContext,
 ) -> Option<SimulationSummary> {
-    use trading_runtime::simulator::{
-        SimulationRequest, SimulatorConfig, create_simulator,
-    };
+    use trading_runtime::simulator::{SimulationRequest, SimulatorConfig, create_simulator};
 
     let target: Address = ctx.target.parse().ok()?;
     let calldata_hex = ctx.calldata.strip_prefix("0x").unwrap_or(&ctx.calldata);
