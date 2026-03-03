@@ -75,7 +75,7 @@ impl TenderlySimulator {
 
         let response = self
             .client
-            .post(&self.api_url())
+            .post(self.api_url())
             .header("X-Access-Key", &self.api_key)
             .header("Content-Type", "application/json")
             .json(&body)

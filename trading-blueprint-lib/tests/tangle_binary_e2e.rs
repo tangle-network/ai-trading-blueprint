@@ -162,6 +162,7 @@ fn find_binary() -> Option<String> {
 }
 
 /// Start the binary as a child process.
+#[allow(clippy::too_many_arguments)]
 fn start_binary(
     binary_path: &str,
     rpc_url: &str,
@@ -366,6 +367,7 @@ fn extract_port_from_log(line: &str) -> Option<u16> {
 /// before the TradeValidator is deployed (chicken-and-egg: validators need the
 /// contract address for EIP-712 domain, but we don't have the Anvil URL until
 /// Manager starts). Flow A already covers on-chain verification.
+#[allow(clippy::too_many_arguments)]
 async fn run_trade_pipeline(
     http_client: &reqwest::Client,
     rpc_url: &str,

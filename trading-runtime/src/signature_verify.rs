@@ -103,8 +103,7 @@ pub fn verify_validator_signature(
             .as_secs();
         if deadline < now {
             return Err(TradingError::ValidatorError(format!(
-                "Signature expired: deadline {} < now {}",
-                deadline, now
+                "Signature expired: deadline {deadline} < now {now}"
             )));
         }
     }

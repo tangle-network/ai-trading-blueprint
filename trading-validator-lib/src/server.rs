@@ -186,7 +186,7 @@ async fn handle_validate(
 ) -> Json<ValidateResponse> {
     // Independent simulation: if we have an RPC URL and execution context
     // with target+calldata but no simulation result, run our own eth_call.
-    if let (Some(ref rpc_url), Some(ref mut ctx)) =
+    if let (Some(rpc_url), Some(ctx)) =
         (server.rpc_url.as_ref(), request.execution_context.as_mut())
     {
         if ctx.simulation_result.is_none() {

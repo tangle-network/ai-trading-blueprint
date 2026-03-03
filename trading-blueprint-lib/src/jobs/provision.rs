@@ -90,10 +90,7 @@ pub async fn provision_core(
     }
 
     let runtime_backend = parse_runtime_backend_from_strategy_config(&request.strategy_config_json)
-        .map_err(|e| {
-            mark_provision_failed(call_id, &e);
-            e
-        })?;
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
@@ -123,7 +120,7 @@ pub async fn provision_core(
     // - Otherwise → use host.docker.internal (added via --add-host in sandbox-runtime)
     let trading_api_url = std::env::var("TRADING_API_URL").unwrap_or_else(|_| {
         let host_network =
-            std::env::var("SIDECAR_NETWORK_HOST").map_or(false, |v| v == "true" || v == "1");
+            std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
         let host = std::env::var("SIDECAR_PUBLIC_HOST").unwrap_or_else(|_| {
             if host_network {
                 "127.0.0.1".to_string()

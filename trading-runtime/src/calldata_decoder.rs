@@ -607,9 +607,7 @@ mod tests {
             let result = decode_calldata(&data, "test");
             assert!(
                 result.contains("(...)") || result.contains("("),
-                "selector {:?} should handle short params: {}",
-                selector,
-                result
+                "selector {selector:?} should handle short params: {result}"
             );
         }
     }

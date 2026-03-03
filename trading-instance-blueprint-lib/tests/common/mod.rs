@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod fixtures;
 
 use once_cell::sync::Lazy;

@@ -911,7 +911,8 @@ async fn test_dex_profile_has_uniswap_content() {
 async fn test_all_packs_use_instructions_not_system_prompt() {
     // Verify all known pack types use resources.instructions, not systemPrompt
     for strategy in &["prediction", "dex", "yield", "perp"] {
-        let pack = packs::get_pack(strategy).expect(&format!("pack {strategy} should exist"));
+        let pack =
+            packs::get_pack(strategy).unwrap_or_else(|| panic!("pack {strategy} should exist"));
         let config = trading_blueprint_lib::state::TradingBotRecord {
             id: "test".to_string(),
             sandbox_id: "sb".to_string(),
@@ -1313,7 +1314,7 @@ async fn test_stop_already_stopped_bot() {
     let bot_id = "trading-stop-idem-1";
     let wf_id = 33333u64;
 
-    let mut bot = fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xII", Some(wf_id));
+    let _bot = fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xII", Some(wf_id));
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
 
     // Stop once

@@ -2220,7 +2220,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/bots/{bot_id}/secrets"))
+                    .uri(format!("/api/bots/{bot_id}/secrets"))
                     .header("content-type", "application/json")
                     .header("authorization", test_auth_header())
                     .body(Body::from(serde_json::to_string(&body).unwrap()))

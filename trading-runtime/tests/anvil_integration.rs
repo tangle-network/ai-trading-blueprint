@@ -4,6 +4,12 @@
 //! signs with validator keys, submits via vault.execute(), verifies balances.
 //!
 //! Requires `forge build` to have been run first (reads bytecode from contracts/out/).
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::useless_conversion,
+    dead_code
+)]
 
 use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
@@ -408,7 +414,7 @@ async fn test_full_lifecycle_on_anvil() {
 
     // ── 6. Create vault via factory ─────────────────────────────────────────
     let factory = VaultFactory::new(vault_factory_addr, &deployer_provider);
-    let salt = FixedBytes::<32>::from(keccak256("test-lifecycle-salt"));
+    let salt = keccak256("test-lifecycle-salt");
 
     // Use call() to get return values, then send() to actually deploy
     let call_result = factory
@@ -913,7 +919,7 @@ async fn test_vault_edge_cases() {
 
     // Create vault
     let factory = VaultFactory::new(vault_factory_addr, &deployer_provider);
-    let salt = FixedBytes::<32>::from(keccak256("edge-case-salt"));
+    let salt = keccak256("edge-case-salt");
     let call_result = factory
         .createVault(
             1u64,
@@ -1528,7 +1534,7 @@ impl VaultTestSetup {
 
         // Create vault
         let factory = VaultFactory::new(vault_factory_addr, &deployer_provider);
-        let salt = FixedBytes::<32>::from(keccak256("edge-case-test-salt"));
+        let salt = keccak256("edge-case-test-salt");
 
         let call_result = factory
             .createVault(
@@ -1968,7 +1974,7 @@ async fn test_vault_factory_duplicate_salt_reverts() {
     // The vault was already created with salt "edge-case-test-salt" in setup.
     // Try creating another vault with the same salt.
     let factory = VaultFactory::new(setup.vault_factory_addr, &setup.deployer_provider);
-    let salt = FixedBytes::<32>::from(keccak256("edge-case-test-salt"));
+    let salt = keccak256("edge-case-test-salt");
 
     let result = factory
         .createVault(

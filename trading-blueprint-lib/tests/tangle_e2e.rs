@@ -189,7 +189,7 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             .expect("bot should exist after provision");
         let mock_sb = sandbox_runtime::SandboxRecord {
             id: sandbox_id.clone(),
-            container_id: format!("container-{}", sandbox_id),
+            container_id: format!("container-{sandbox_id}"),
             sidecar_url: "http://127.0.0.1:19999".to_string(),
             sidecar_port: 19999,
             ssh_port: None,

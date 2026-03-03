@@ -793,7 +793,7 @@ impl ClobClient {
 
                     results.push(ApprovalResult {
                         tx_hash: format!("{}", receipt.transaction_hash),
-                        spender: format!("{}", adapter),
+                        spender: format!("{adapter}"),
                         spender_label: "NegRiskAdapter".into(),
                     });
                     tracing::info!(

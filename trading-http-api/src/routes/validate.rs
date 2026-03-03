@@ -204,6 +204,7 @@ async fn validate(
 ///
 /// Returns `None` if the adapter is unavailable or encoding fails
 /// (non-fatal — validators will score without execution context).
+#[allow(clippy::too_many_arguments)]
 async fn build_execution_context(
     protocol: &str,
     action: Action,
@@ -271,6 +272,7 @@ async fn build_execution_context(
 }
 
 /// Run a transaction simulation and return a SimulationSummary.
+#[allow(clippy::too_many_arguments)]
 async fn run_simulation(
     rpc_url: &str,
     chain_id: u64,

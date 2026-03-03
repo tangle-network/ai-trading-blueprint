@@ -164,6 +164,6 @@ async fn get_config(
         collateral: format!("{}", config.collateral),
         conditional_tokens: format!("{}", config.conditional_tokens),
         neg_risk_exchange: neg_config.map(|c| format!("{}", c.exchange)),
-        neg_risk_adapter: neg_config.and_then(|c| c.neg_risk_adapter.map(|a| format!("{}", a))),
+        neg_risk_adapter: neg_config.and_then(|c| c.neg_risk_adapter.map(|a| format!("{a}"))),
     }))
 }

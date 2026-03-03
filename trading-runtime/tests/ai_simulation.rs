@@ -103,7 +103,7 @@ async fn call_llm(
     // Coding API thinking mode: if content is empty, the model exhausted tokens on reasoning
     let has_reasoning = message["reasoning_content"]
         .as_str()
-        .map_or(false, |r| !r.is_empty());
+        .is_some_and(|r| !r.is_empty());
     if has_reasoning {
         return Err("Model exhausted tokens on thinking — increase max_tokens".into());
     }

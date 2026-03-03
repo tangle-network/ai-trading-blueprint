@@ -154,7 +154,7 @@ async fn test_start_stop_singleton() {
     let _lock = common::HARNESS_LOCK.lock().await;
     let _ = clear_instance_bot_id();
 
-    let (bot_id, sandbox_id) = seed_singleton("dex");
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
 
     // Seed a workflow so start/stop have something to toggle
     let wf_id = chrono::Utc::now().timestamp_millis() as u64 + 3000;
