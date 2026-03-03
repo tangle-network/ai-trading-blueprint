@@ -308,4 +308,51 @@ contract InstanceModeTest is Setup {
 
         assertEq(fresh.instanceVault(serviceId), address(0));
     }
+
+    function test_instance_mode_rejects_provision_job_call() public {
+        vm.prank(tangleCore);
+        blueprint.setInstanceMode(true);
+        uint8 jobId = blueprint.JOB_PROVISION();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TradingBlueprint.InstanceLifecycleIsNotAJob.selector,
+                jobId
+            )
+        );
+        vm.prank(tangleCore);
+        blueprint.onJobCall(serviceId, jobId, 1, "");
+    }
+
+    function test_instance_mode_rejects_deprovision_job_call() public {
+        vm.prank(tangleCore);
+        blueprint.setInstanceMode(true);
+        uint8 jobId = blueprint.JOB_DEPROVISION();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TradingBlueprint.InstanceLifecycleIsNotAJob.selector,
+                jobId
+            )
+        );
+        vm.prank(tangleCore);
+        blueprint.onJobCall(serviceId, jobId, 1, "");
+    }
+
+    function test_instance_mode_pricing_excludes_lifecycle_jobs() public {
+        vm.prank(tangleCore);
+        blueprint.setInstanceMode(true);
+
+        assertEq(blueprint.getJobPriceMultiplier(blueprint.JOB_PROVISION()), 0);
+        assertEq(blueprint.getJobPriceMultiplier(blueprint.JOB_DEPROVISION()), 0);
+
+        (uint8[] memory jobIndexes, uint256[] memory rates) = blueprint.getDefaultJobRates(1e15);
+        assertEq(jobIndexes.length, 5);
+        assertEq(rates.length, 5);
+        assertEq(jobIndexes[0], blueprint.JOB_CONFIGURE());
+        assertEq(jobIndexes[1], blueprint.JOB_START_TRADING());
+        assertEq(jobIndexes[2], blueprint.JOB_STOP_TRADING());
+        assertEq(jobIndexes[3], blueprint.JOB_STATUS());
+        assertEq(jobIndexes[4], blueprint.JOB_EXTEND());
+    }
 }

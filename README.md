@@ -33,8 +33,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system diagrams.
 | Model | Binary | Bots | Vault Creation | Use Case |
 |-------|--------|------|----------------|----------|
 | **Cloud Fleet** | `trading-blueprint-bin` | Multi-bot, shared HTTP API | On-chain `JOB_PROVISION` | Scalable operator fleets |
-| **Instance** | `trading-instance-blueprint-bin` | Single dedicated bot | Automatic at service init | Per-subscription bots |
-| **TEE Instance** | `trading-tee-instance-blueprint-bin` | Single bot + hardware isolation | Automatic at service init | Sensitive strategies in enclave |
+| **Instance** | `trading-instance-blueprint-bin` | Single dedicated bot | Service init vault + operator API provision | Per-subscription bots |
+| **TEE Instance** | `trading-tee-instance-blueprint-bin` | Single bot + hardware isolation | Service init vault + operator API provision | Sensitive strategies in enclave |
 
 ## Supported Protocols
 

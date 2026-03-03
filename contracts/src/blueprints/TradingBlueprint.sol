@@ -18,8 +18,8 @@ import {FeeDistributor} from "../FeeDistributor.sol";
 ///     1. Consumer calls requestService() → onRequest() stores vault config
 ///     2. Operators approve → service initialized → onServiceInitialized() stores config + operators
 ///     3. Each operator joins → onOperatorJoined() grants OPERATOR_ROLE on all bot vaults
-///     4. Consumer submits JOB_PROVISION → operators bootstrap off-chain infra (sidecars)
-///     5. onJobResult(PROVISION) → creates per-bot vault via VaultFactory.createBotVault()
+///     4. Cloud mode: consumer submits JOB_PROVISION → onJobResult(PROVISION) creates per-bot vault
+///     5. Instance mode: singleton vault is created directly in onServiceInitialized
 ///     6. Trading begins — multiple operators independently generate trade intents
 ///     7. Validator network scores intents, vault executes approved ones (deduped by intentHash)
 contract TradingBlueprint is BlueprintServiceManagerBase {
@@ -136,6 +136,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     error InvalidLifetimeDays();
     error BaseRateTooLarge(uint256 baseRate, uint256 maxBaseRate);
     error NotProvisioned(uint64 serviceId);
+    error InstanceLifecycleIsNotAJob(uint8 jobId);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -389,32 +390,52 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @param baseRate Base rate in wei. Must be <= type(uint256).max / PRICE_MULT_PROVISION.
     function getDefaultJobRates(uint256 baseRate)
         external
-        pure
+        view
         returns (uint8[] memory jobIndexes, uint256[] memory rates)
     {
-        uint256 maxBase = type(uint256).max / PRICE_MULT_PROVISION;
+        uint256 maxMult = instanceMode ? PRICE_MULT_EXTEND : PRICE_MULT_PROVISION;
+        uint256 maxBase = type(uint256).max / maxMult;
         if (baseRate > maxBase) revert BaseRateTooLarge(baseRate, maxBase);
 
-        jobIndexes = new uint8[](7);
-        rates = new uint256[](7);
-        jobIndexes[0] = JOB_PROVISION;
-        rates[0] = baseRate * PRICE_MULT_PROVISION;
-        jobIndexes[1] = JOB_CONFIGURE;
-        rates[1] = baseRate * PRICE_MULT_CONFIGURE;
-        jobIndexes[2] = JOB_START_TRADING;
-        rates[2] = baseRate * PRICE_MULT_START_TRADING;
-        jobIndexes[3] = JOB_STOP_TRADING;
-        rates[3] = baseRate * PRICE_MULT_STOP_TRADING;
-        jobIndexes[4] = JOB_STATUS;
-        rates[4] = baseRate * PRICE_MULT_STATUS;
-        jobIndexes[5] = JOB_DEPROVISION;
-        rates[5] = baseRate * PRICE_MULT_DEPROVISION;
-        jobIndexes[6] = JOB_EXTEND;
-        rates[6] = baseRate * PRICE_MULT_EXTEND;
+        if (instanceMode) {
+            // Instance/TEE variants do not expose lifecycle as jobs.
+            jobIndexes = new uint8[](5);
+            rates = new uint256[](5);
+            jobIndexes[0] = JOB_CONFIGURE;
+            rates[0] = baseRate * PRICE_MULT_CONFIGURE;
+            jobIndexes[1] = JOB_START_TRADING;
+            rates[1] = baseRate * PRICE_MULT_START_TRADING;
+            jobIndexes[2] = JOB_STOP_TRADING;
+            rates[2] = baseRate * PRICE_MULT_STOP_TRADING;
+            jobIndexes[3] = JOB_STATUS;
+            rates[3] = baseRate * PRICE_MULT_STATUS;
+            jobIndexes[4] = JOB_EXTEND;
+            rates[4] = baseRate * PRICE_MULT_EXTEND;
+        } else {
+            jobIndexes = new uint8[](7);
+            rates = new uint256[](7);
+            jobIndexes[0] = JOB_PROVISION;
+            rates[0] = baseRate * PRICE_MULT_PROVISION;
+            jobIndexes[1] = JOB_CONFIGURE;
+            rates[1] = baseRate * PRICE_MULT_CONFIGURE;
+            jobIndexes[2] = JOB_START_TRADING;
+            rates[2] = baseRate * PRICE_MULT_START_TRADING;
+            jobIndexes[3] = JOB_STOP_TRADING;
+            rates[3] = baseRate * PRICE_MULT_STOP_TRADING;
+            jobIndexes[4] = JOB_STATUS;
+            rates[4] = baseRate * PRICE_MULT_STATUS;
+            jobIndexes[5] = JOB_DEPROVISION;
+            rates[5] = baseRate * PRICE_MULT_DEPROVISION;
+            jobIndexes[6] = JOB_EXTEND;
+            rates[6] = baseRate * PRICE_MULT_EXTEND;
+        }
     }
 
     /// @notice Returns the pricing multiplier for a specific job.
-    function getJobPriceMultiplier(uint8 jobId) external pure returns (uint256) {
+    function getJobPriceMultiplier(uint8 jobId) external view returns (uint256) {
+        if (instanceMode && (jobId == JOB_PROVISION || jobId == JOB_DEPROVISION)) {
+            return 0;
+        }
         if (jobId == JOB_PROVISION) return PRICE_MULT_PROVISION;
         if (jobId == JOB_CONFIGURE) return PRICE_MULT_CONFIGURE;
         if (jobId == JOB_START_TRADING) return PRICE_MULT_START_TRADING;
@@ -440,6 +461,10 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         override
         onlyFromTangle
     {
+        if (instanceMode && (job == JOB_PROVISION || job == JOB_DEPROVISION)) {
+            revert InstanceLifecycleIsNotAJob(job);
+        }
+
         if (job == JOB_PROVISION) {
             _storeProvisionInputs(serviceId, jobCallId, inputs);
         } else {
@@ -462,6 +487,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         bytes calldata inputs,
         bytes calldata outputs
     ) external payable virtual override onlyFromTangle {
+        if (instanceMode && (job == JOB_PROVISION || job == JOB_DEPROVISION)) {
+            revert InstanceLifecycleIsNotAJob(job);
+        }
         _handleCommonJobResult(serviceId, job, jobCallId, operator, inputs, outputs);
     }
 

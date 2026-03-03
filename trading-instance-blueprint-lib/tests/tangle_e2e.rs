@@ -11,20 +11,15 @@
 
 mod common;
 
-use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
-use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
-use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 use blueprint_sdk::alloy::primitives::Bytes;
 use tokio::time::timeout;
 
 use trading_instance_blueprint_lib::{
-    JOB_CONFIGURE, JOB_DEPROVISION, JOB_PROVISION, JOB_START_TRADING, JOB_STATUS, JOB_STOP_TRADING,
-    JsonResponse, TradingConfigureRequest, TradingControlRequest, TradingProvisionOutput,
-    TradingProvisionRequest, TradingStatusResponse, clear_instance_bot_id, get_instance_bot_id,
+    JOB_CONFIGURE, JOB_START_TRADING, JOB_STATUS, JOB_STOP_TRADING, JsonResponse,
+    TradingConfigureRequest, TradingControlRequest, TradingStatusResponse, clear_instance_bot_id,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -42,15 +37,12 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
     let result = timeout(common::ANVIL_TEST_TIMEOUT, async {
         // ── 1. Start Anvil ──────────────────────────────────────────────
         eprintln!("[setup] Starting Anvil...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Failed to spawn Anvil")?;
-        let rpc_url = anvil.endpoint();
-
-        let val_addrs: Vec<Address> = (3..6)
-            .map(|i| {
-                let k: PrivateKeySigner = anvil.keys()[i].clone().into();
-                k.address()
-            })
-            .collect();
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Failed to spawn Anvil")?;
+        let _rpc_url = anvil.endpoint();
 
         // ── 2. Set up sidecar env + spawn BlueprintHarness ──────────────
         unsafe {
@@ -64,89 +56,11 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
         };
         eprintln!("[setup] Instance BlueprintHarness spawned");
 
-        // ── 3. JOB_PROVISION (0) — singleton ─────────────────────────────
-        eprintln!("\n[test] Submitting JOB_PROVISION (instance)...");
-        let provision_payload = TradingProvisionRequest {
-            name: "e2e-instance-bot".to_string(),
-            strategy_type: "dex".to_string(),
-            strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
-            risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-            factory_address: Address::from([0xAA; 20]),
-            asset_token: Address::from([0xCC; 20]),
-            signers: val_addrs.clone(),
-            required_signatures: U256::from(2),
-            chain_id: U256::from(31337),
-            rpc_url: rpc_url.clone(),
-            trading_loop_cron: "0 */5 * * * *".to_string(),
-            cpu_cores: 2,
-            memory_mb: 4096,
-            max_lifetime_days: 30,
-            validator_service_ids: vec![],
-            max_collateral_bps: U256::from(0),
-        }
-        .abi_encode();
+        // ── 3. Seed singleton (instance lifecycle is operator API) ───────
+        let (_bot_id, sandbox_id) = common::fixtures::seed_instance_bot("dex");
+        eprintln!("[setup] Seeded singleton bot for job routing checks: {sandbox_id}");
 
-        let provision_sub = harness
-            .submit_job(JOB_PROVISION, Bytes::from(provision_payload))
-            .await?;
-        let provision_output = harness
-            .wait_for_job_result_with_deadline(provision_sub, common::JOB_RESULT_TIMEOUT)
-            .await?;
-        let receipt = TradingProvisionOutput::abi_decode(&provision_output)?;
-        let sandbox_id = receipt.sandbox_id.clone();
-
-        eprintln!(
-            "        sandbox_id={}, workflow_id={}, vault={}",
-            sandbox_id, receipt.workflow_id, receipt.vault_address
-        );
-        assert!(!sandbox_id.is_empty(), "sandbox_id should not be empty");
-        assert!(receipt.workflow_id > 0, "workflow_id should be set");
-
-        // Verify singleton was set
-        let instance_bot_id = get_instance_bot_id()
-            .expect("instance store read")
-            .expect("singleton should be set after provision");
-        eprintln!("        instance singleton bot_id={instance_bot_id}");
-
-        // ── 4. JOB_PROVISION again — should reject (singleton) ──────────
-        eprintln!("[test] Submitting duplicate JOB_PROVISION...");
-        let dup_payload = TradingProvisionRequest {
-            name: "e2e-duplicate-bot".to_string(),
-            strategy_type: "perp".to_string(),
-            strategy_config_json: "{}".to_string(),
-            risk_params_json: "{}".to_string(),
-            factory_address: Address::from([0xAA; 20]),
-            asset_token: Address::from([0xCC; 20]),
-            signers: val_addrs.clone(),
-            required_signatures: U256::from(2),
-            chain_id: U256::from(31337),
-            rpc_url: rpc_url.clone(),
-            trading_loop_cron: "0 */5 * * * *".to_string(),
-            cpu_cores: 2,
-            memory_mb: 4096,
-            max_lifetime_days: 30,
-            validator_service_ids: vec![],
-            max_collateral_bps: U256::from(0),
-        }
-        .abi_encode();
-
-        let dup_sub = harness
-            .submit_job(JOB_PROVISION, Bytes::from(dup_payload))
-            .await?;
-        // The handler should return an error result (singleton guard)
-        let dup_result = harness
-            .wait_for_job_result_with_deadline(dup_sub, common::JOB_RESULT_TIMEOUT)
-            .await;
-        // This should either error or return an error-encoded response
-        if dup_result.is_ok() {
-            eprintln!(
-                "        Note: duplicate provision returned Ok (handler may encode error in output)"
-            );
-        } else {
-            eprintln!("        Duplicate provision correctly rejected");
-        }
-
-        // ── 5. JOB_STATUS (4) — no sandbox_id needed for instance ───────
+        // ── 4. JOB_STATUS (4) — singleton lookup path ───────────────────
         eprintln!("[test] Submitting JOB_STATUS...");
         let status_payload = TradingControlRequest {
             sandbox_id: sandbox_id.clone(),
@@ -167,7 +81,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
         assert!(status.trading_active);
         assert_eq!(status.sandbox_id, sandbox_id);
 
-        // ── 6. JOB_CONFIGURE (1) ────────────────────────────────────────
+        // ── 5. JOB_CONFIGURE (1) ────────────────────────────────────────
         eprintln!("[test] Submitting JOB_CONFIGURE...");
         let configure_payload = TradingConfigureRequest {
             sandbox_id: sandbox_id.clone(),
@@ -185,7 +99,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
         eprintln!("        {}", config_receipt.json);
         assert!(config_receipt.json.contains("configured"));
 
-        // ── 7. JOB_STOP_TRADING (3) ─────────────────────────────────────
+        // ── 6. JOB_STOP_TRADING (3) ─────────────────────────────────────
         eprintln!("[test] Submitting JOB_STOP_TRADING...");
         let stop_payload = TradingControlRequest {
             sandbox_id: sandbox_id.clone(),
@@ -201,7 +115,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
         eprintln!("        {}", stop_receipt.json);
         assert!(stop_receipt.json.contains("stopped"));
 
-        // ── 8. JOB_START_TRADING (2) ─────────────────────────────────────
+        // ── 7. JOB_START_TRADING (2) ─────────────────────────────────────
         eprintln!("[test] Submitting JOB_START_TRADING...");
         let start_payload = TradingControlRequest {
             sandbox_id: sandbox_id.clone(),
@@ -217,30 +131,7 @@ async fn test_instance_tangle_lifecycle() -> Result<()> {
         eprintln!("        {}", start_receipt.json);
         assert!(start_receipt.json.contains("started"));
 
-        // ── 9. JOB_DEPROVISION (5) ──────────────────────────────────────
-        eprintln!("[test] Submitting JOB_DEPROVISION...");
-        let deprov_payload = TradingControlRequest {
-            sandbox_id: sandbox_id.clone(),
-        }
-        .abi_encode();
-        let deprov_sub = harness
-            .submit_job(JOB_DEPROVISION, Bytes::from(deprov_payload))
-            .await?;
-        let deprov_output = harness
-            .wait_for_job_result_with_deadline(deprov_sub, common::JOB_RESULT_TIMEOUT)
-            .await?;
-        let deprov_receipt = JsonResponse::abi_decode(&deprov_output)?;
-        eprintln!("        {}", deprov_receipt.json);
-        assert!(deprov_receipt.json.contains("deprovisioned"));
-
-        // Verify singleton was cleared
-        let after = get_instance_bot_id().expect("store read");
-        assert!(
-            after.is_none(),
-            "Singleton should be cleared after deprovision"
-        );
-
-        eprintln!("\n[done] Instance lifecycle completed successfully!");
+        eprintln!("\n[done] Instance job routing checks completed successfully!");
         harness.shutdown().await;
         Ok(())
     })

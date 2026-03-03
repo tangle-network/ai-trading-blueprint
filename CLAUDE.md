@@ -3,6 +3,10 @@
 ## Architecture
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for system design, session management, agent iteration protocol, feedback loop, scheduling, and crate map.
 
+Canonical lifecycle model:
+- Cloud blueprint keeps lifecycle jobs (`JOB_PROVISION` / `JOB_DEPROVISION`).
+- Instance and TEE instance blueprints do not expose lifecycle jobs; singleton lifecycle is service-init + operator API (`POST /api/bot/provision`).
+
 ## Git Commits
 - Never include Co-Authored-By lines in commit messages. Do not mention Anthropic or Claude.
 - Always use the logged-in git config user (drewstone329@gmail.com) as the sole author.

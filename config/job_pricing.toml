@@ -9,7 +9,7 @@
 #   - getDefaultJobRates(baseRate) — returns per-job rates as (baseRate * multiplier)
 #   - getJobPriceMultiplier(jobId) — returns the multiplier for a specific job
 #
-# ─── Trading Blueprint Job IDs & Multipliers ─────────────────────────
+# ─── Trading Blueprint Job IDs & Multipliers (cloud variant) ─────────
 # Job ID  Name               Multiplier  Description
 # 0       JOB_PROVISION      50x         Deploy vault + sidecar (expensive)
 # 1       JOB_CONFIGURE      2x          Update strategy params
@@ -19,6 +19,11 @@
 # 5       JOB_DEPROVISION     1x          Teardown
 # 6       JOB_EXTEND          10x         Extend bot lifetime
 # 30      JOB_WORKFLOW_TICK   N/A         Cron-triggered (internal)
+#
+# Instance / TEE variants use a subset and do not expose lifecycle jobs:
+#   - No JOB_PROVISION / JOB_DEPROVISION in blueprint job metadata
+#   - Singleton lifecycle is managed by service init + operator API (/api/bot/provision)
+#   - On-chain pricing helpers return 0 multiplier for lifecycle jobs in instance mode
 #
 # ─── How Pricing Works ──────────────────────────────────────────────
 #

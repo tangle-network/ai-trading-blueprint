@@ -38,7 +38,6 @@ pub use blueprint_sdk::tangle;
 pub use jobs::configure::instance_configure;
 pub use jobs::exec::instance_exec;
 pub use jobs::prompt::instance_prompt;
-pub use jobs::provision::{instance_deprovision, instance_provision};
 pub use jobs::start::instance_start;
 pub use jobs::status::instance_status;
 pub use jobs::stop::instance_stop;
@@ -48,11 +47,13 @@ pub use jobs::task::instance_task;
 // Job IDs — match cloud variant where possible
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Cloud mode only — defined for cross-crate consistency.
 pub const JOB_PROVISION: u8 = 0;
 pub const JOB_CONFIGURE: u8 = 1;
 pub const JOB_START_TRADING: u8 = 2;
 pub const JOB_STOP_TRADING: u8 = 3;
 pub const JOB_STATUS: u8 = 4;
+/// Cloud mode only — defined for cross-crate consistency.
 pub const JOB_DEPROVISION: u8 = 5;
 pub const JOB_PROMPT: u8 = 10;
 pub const JOB_TASK: u8 = 11;
@@ -117,12 +118,10 @@ pub fn require_instance_bot() -> Result<TradingBotRecord, String> {
 
 pub fn router() -> Router {
     Router::new()
-        .route(JOB_PROVISION, instance_provision.layer(TangleLayer))
         .route(JOB_CONFIGURE, instance_configure.layer(TangleLayer))
         .route(JOB_START_TRADING, instance_start.layer(TangleLayer))
         .route(JOB_STOP_TRADING, instance_stop.layer(TangleLayer))
         .route(JOB_STATUS, instance_status.layer(TangleLayer))
-        .route(JOB_DEPROVISION, instance_deprovision.layer(TangleLayer))
         .route(JOB_PROMPT, instance_prompt.layer(TangleLayer))
         .route(JOB_TASK, instance_task.layer(TangleLayer))
         .route(JOB_EXEC, instance_exec.layer(TangleLayer))

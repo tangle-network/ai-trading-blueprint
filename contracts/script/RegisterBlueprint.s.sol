@@ -86,8 +86,8 @@ contract RegisterBlueprint is Script {
         }
 
         // ── Register Blueprints on Tangle ─────────────────────────────
-        // All three variants share the same BSM contract (on-chain logic is identical).
-        // They differ only in the off-chain binary that processes jobs.
+        // All three variants share the same BSM logic. Cloud exposes lifecycle
+        // as jobs, while instance/TEE variants expose only state-changing bot jobs.
 
         // 1. Cloud (multi-bot fleet)
         uint64 cloudId = tangle.createBlueprint(
@@ -96,7 +96,8 @@ contract RegisterBlueprint is Script {
                 "AI Trading Cloud",
                 "Multi-bot fleet: deploy multiple trading bots per service",
                 "trading-blueprint-bin",
-                "trading-blueprint"
+                "trading-blueprint",
+                false
             )
         );
 
@@ -107,7 +108,8 @@ contract RegisterBlueprint is Script {
                 "AI Trading Instance",
                 "Single dedicated bot per service: one agent, one strategy",
                 "trading-instance-blueprint-bin",
-                "trading-instance-blueprint"
+                "trading-instance-blueprint",
+                true
             )
         );
 
@@ -118,7 +120,8 @@ contract RegisterBlueprint is Script {
                 "AI Trading TEE Instance",
                 "TEE-secured single bot: hardware-isolated execution",
                 "trading-tee-instance-blueprint-bin",
-                "trading-tee-instance-blueprint"
+                "trading-tee-instance-blueprint",
+                true
             )
         );
 
@@ -150,12 +153,14 @@ contract RegisterBlueprint is Script {
     /// @param bpDescription Description of this variant
     /// @param crateName Rust crate name (e.g. "trading-blueprint-bin")
     /// @param binaryName Binary name (e.g. "trading-blueprint")
+    /// @param instanceVariant True for instance/TEE variants that do not expose lifecycle jobs.
     function _buildDefinition(
         address manager,
         string memory bpName,
         string memory bpDescription,
         string memory crateName,
-        string memory binaryName
+        string memory binaryName,
+        bool instanceVariant
     ) internal pure returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmTradingBlueprint";
         def.manager = manager;
@@ -186,15 +191,25 @@ contract RegisterBlueprint is Script {
             profilingData: ""
         });
 
-        // Jobs (7 core jobs — identical across all variants)
-        def.jobs = new Types.JobDefinition[](7);
-        def.jobs[0] = Types.JobDefinition("provision", "Provision a new trading bot", "", "", "");
-        def.jobs[1] = Types.JobDefinition("configure", "Reconfigure bot strategy", "", "", "");
-        def.jobs[2] = Types.JobDefinition("start_trading", "Start trading loop", "", "", "");
-        def.jobs[3] = Types.JobDefinition("stop_trading", "Stop trading loop", "", "", "");
-        def.jobs[4] = Types.JobDefinition("status", "Query bot status", "", "", "");
-        def.jobs[5] = Types.JobDefinition("deprovision", "Deprovision bot", "", "", "");
-        def.jobs[6] = Types.JobDefinition("extend", "Extend bot lifetime", "", "", "");
+        if (instanceVariant) {
+            // Instance/TEE variants: lifecycle is service-level + operator API, not submitJob.
+            def.jobs = new Types.JobDefinition[](5);
+            def.jobs[0] = Types.JobDefinition("configure", "Reconfigure bot strategy", "", "", "");
+            def.jobs[1] = Types.JobDefinition("start_trading", "Start trading loop", "", "", "");
+            def.jobs[2] = Types.JobDefinition("stop_trading", "Stop trading loop", "", "", "");
+            def.jobs[3] = Types.JobDefinition("status", "Query bot status", "", "", "");
+            def.jobs[4] = Types.JobDefinition("extend", "Extend bot lifetime", "", "", "");
+        } else {
+            // Cloud fleet variant: lifecycle remains on-chain jobs.
+            def.jobs = new Types.JobDefinition[](7);
+            def.jobs[0] = Types.JobDefinition("provision", "Provision a new trading bot", "", "", "");
+            def.jobs[1] = Types.JobDefinition("configure", "Reconfigure bot strategy", "", "", "");
+            def.jobs[2] = Types.JobDefinition("start_trading", "Start trading loop", "", "", "");
+            def.jobs[3] = Types.JobDefinition("stop_trading", "Stop trading loop", "", "", "");
+            def.jobs[4] = Types.JobDefinition("status", "Query bot status", "", "", "");
+            def.jobs[5] = Types.JobDefinition("deprovision", "Deprovision bot", "", "", "");
+            def.jobs[6] = Types.JobDefinition("extend", "Extend bot lifetime", "", "", "");
+        }
 
         // Schemas (empty = no validation, any input accepted)
         def.registrationSchema = "";

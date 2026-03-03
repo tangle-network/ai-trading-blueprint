@@ -175,6 +175,8 @@
   └─────────────────────────────────────────────────────────────┘
 ```
 
+Note: The job index list above reflects the cloud fleet variant. Instance and TEE instance variants use a reduced job set (`configure/start/stop/status/extend`) and manage lifecycle through service initialization plus operator API provisioning.
+
 ## Vault & DeFi Users
 
 ```

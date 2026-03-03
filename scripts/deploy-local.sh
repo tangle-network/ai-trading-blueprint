@@ -7,7 +7,7 @@
 #   3. Register operators for the new blueprint
 #   4. Request service + operators approve → service activated (no vault yet)
 #   5. Grant OPERATOR_ROLE via onOperatorJoined (Anvil impersonation)
-#   6. Write .env.local (vaults created per-bot when provision jobs complete)
+#   6. Write .env.local (cloud vaults created by JOB_PROVISION; instance/TEE vaults at service init)
 #
 # Prerequisites:
 #   anvil --load-state /path/to/blueprint/crates/chain-setup/anvil/snapshots/localtestnet-state.json
@@ -333,7 +333,7 @@ for idx in 0 1 2; do
   echo "  $BP_NAME (service $SVC_ID): provisioned=$PROVISIONED"
 done
 echo "  Validator ($N_VALIDATOR_SERVICES services: $VALIDATOR_SERVICE_IDS_CSV): active (no vaults needed)"
-echo "  Note: Per-bot vaults are created when provision jobs complete (not at service init)"
+echo "  Note: Cloud vaults are created when provision jobs complete; Instance/TEE singleton vaults are created at service init."
 
 # ── [7/9] Setup pricing engine keystores ─────────────────────────
 echo "[7/9] Setting up pricing engine keystores..."
