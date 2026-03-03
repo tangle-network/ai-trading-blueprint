@@ -10,10 +10,10 @@ pub mod intent;
 pub mod market_data;
 pub mod polymarket_clob;
 pub mod portfolio;
+pub mod signature_verify;
 pub mod simulator;
 pub mod strategy;
 pub mod types;
-pub mod signature_verify;
 pub mod validator_client;
 pub mod vault_client;
 

@@ -440,7 +440,11 @@ mod tests {
             .unwrap();
 
         let result = client
-            .validate(&intent, "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 9999999999)
+            .validate(
+                &intent,
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+                9999999999,
+            )
             .await
             .unwrap();
         // Score should be clamped to 100, not 99999.
@@ -476,7 +480,11 @@ mod tests {
             .unwrap();
 
         let result = client
-            .validate(&intent, "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 9999999999)
+            .validate(
+                &intent,
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+                9999999999,
+            )
             .await;
         // Should fail — only response had invalid signature, so 0 valid responses.
         assert!(result.is_err());
@@ -498,8 +506,7 @@ mod tests {
             .await;
 
         // Require 2 validators but only provide 1 endpoint.
-        let client = ValidatorClient::new(vec![mock_server.uri()], 50)
-            .with_min_validators(2);
+        let client = ValidatorClient::new(vec![mock_server.uri()], 50).with_min_validators(2);
 
         let intent = TradeIntentBuilder::new()
             .strategy_id("test")
@@ -512,10 +519,17 @@ mod tests {
             .unwrap();
 
         let result = client
-            .validate(&intent, "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 9999999999)
+            .validate(
+                &intent,
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+                9999999999,
+            )
             .await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Insufficient validators"), "Error: {err_msg}");
+        assert!(
+            err_msg.contains("Insufficient validators"),
+            "Error: {err_msg}"
+        );
     }
 }

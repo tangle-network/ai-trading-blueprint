@@ -330,8 +330,12 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
 // ── Auth handlers ───────────────────────────────────────────────────────
 
 async fn create_challenge() -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let challenge = sandbox_runtime::session_auth::create_challenge()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Challenge error: {e}")))?;
+    let challenge = sandbox_runtime::session_auth::create_challenge().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Challenge error: {e}"),
+        )
+    })?;
     let value = serde_json::to_value(&challenge).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -443,7 +447,9 @@ async fn provision_bot(
 
 // ── Bot handlers (singleton — no bot_id path param) ─────────────────────
 
-async fn get_bot(SessionAuth(_caller): SessionAuth) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
+async fn get_bot(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     Ok(Json(BotDetailResponse::from_record(bot)))
 }
@@ -738,7 +744,9 @@ fn synthesize_metrics(
 
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
-async fn get_bot_metrics(SessionAuth(_caller): SessionAuth) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
+async fn get_bot_metrics(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
 
@@ -754,15 +762,18 @@ async fn get_bot_metrics(SessionAuth(_caller): SessionAuth) -> Result<Json<BotMe
     }))
 }
 
-async fn get_bot_metrics_history(SessionAuth(_caller): SessionAuth)
--> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
+async fn get_bot_metrics_history(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
     let snapshots = synthesize_metrics(&bot, &trades);
     Ok(Json(snapshots))
 }
 
-async fn get_bot_trades(SessionAuth(_caller): SessionAuth) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
+async fn get_bot_trades(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
     let protocol = if bot.strategy_type == "prediction" {
@@ -866,7 +877,9 @@ async fn get_bot_trades(SessionAuth(_caller): SessionAuth) -> Result<Json<Vec<Tr
     Ok(Json(entries))
 }
 
-async fn get_bot_portfolio(SessionAuth(_caller): SessionAuth) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
+async fn get_bot_portfolio(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let trades = state::load_bot_trades(&bot.id);
 
@@ -946,8 +959,9 @@ async fn get_bot_portfolio(SessionAuth(_caller): SessionAuth) -> Result<Json<Por
 
 // ── Activation progress handler ─────────────────────────────────────────
 
-async fn get_activation_progress(SessionAuth(_caller): SessionAuth) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)>
-{
+async fn get_activation_progress(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     let progress = state::get_activation(&bot.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
@@ -958,7 +972,9 @@ async fn get_activation_progress(SessionAuth(_caller): SessionAuth) -> Result<Js
 
 // ── Provision handlers ──────────────────────────────────────────────────
 
-async fn list_provisions(SessionAuth(_caller): SessionAuth) -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
+async fn list_provisions(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<ProvisionListResponse>, (StatusCode, String)> {
     let all = sandbox_runtime::provision_progress::list_all_provisions()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ProvisionListResponse {
@@ -1100,7 +1116,9 @@ async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::
     }
 }
 
-async fn debug_run_now(SessionAuth(_caller): SessionAuth) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+async fn debug_run_now(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
 
     let workflow_id = bot

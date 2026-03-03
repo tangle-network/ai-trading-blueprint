@@ -79,7 +79,11 @@ async fn deploy_contract(
 #[tokio::test]
 async fn test_multisig_validator_fanout() {
     // ── 1. Start Anvil ──────────────────────────────────────────────────────
-    let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().expect("Failed to spawn Anvil");
+    let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
+        .try_spawn()
+        .expect("Failed to spawn Anvil");
     let rpc_url = anvil.endpoint();
 
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

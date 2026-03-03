@@ -75,7 +75,11 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
         // ║  1. Deploy on-chain infrastructure                              ║
         // ╚══════════════════════════════════════════════════════════════════╝
         eprintln!("\n[1/9] Deploying TradeValidator on Anvil...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -525,7 +529,11 @@ async fn test_vault_execute_on_chain() -> Result<()> {
     let result = timeout(Duration::from_secs(600), async {
         // ── 1. Deploy full trade stack on Anvil ─────────────────────────────
         eprintln!("\n[1/8] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -1002,7 +1010,11 @@ async fn test_fee_settlement_on_chain() -> Result<()> {
     let result = timeout(Duration::from_secs(600), async {
         // ── 1. Deploy full trade stack ───────────────────────────────────────
         eprintln!("\n[1/8] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -1235,7 +1247,11 @@ async fn test_adversarial_contract_paths() -> Result<()> {
         // ║  Setup: Deploy full trade stack + get valid signatures          ║
         // ╚══════════════════════════════════════════════════════════════════╝
         eprintln!("\n[SETUP] Deploying full trade stack on Anvil...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil spawn")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Anvil spawn")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

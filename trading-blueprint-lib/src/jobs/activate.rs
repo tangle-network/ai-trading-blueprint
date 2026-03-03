@@ -105,7 +105,11 @@ pub async fn activate_bot_with_secrets(
 
     // 3b. Deploy pre-built trading tools (skip in test/mock mode)
     if !is_mock {
-        update_activation_progress(bot_id, "deploying_tools", "Installing pre-built trading tools");
+        update_activation_progress(
+            bot_id,
+            "deploying_tools",
+            "Installing pre-built trading tools",
+        );
         if let Err(e) = write_prebuilt_tools(
             &record.sidecar_url,
             &record.token,
@@ -257,7 +261,13 @@ async fn write_prebuilt_tools(
         "operator_address": operator_address,
     })
     .to_string();
-    write_file_to_sidecar(sidecar_url, token, "/home/agent/config/api.json", &config_json).await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/api.json",
+        &config_json,
+    )
+    .await?;
 
     // Common tools (all strategies)
     write_file_to_sidecar(

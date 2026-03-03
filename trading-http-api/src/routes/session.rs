@@ -93,7 +93,11 @@ async fn proxy_to_sidecar(
     let client = reqwest::Client::new();
 
     let base = state.sidecar_url.trim_end_matches('/');
-    let path = if path.starts_with('/') { path } else { &format!("/{path}") };
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        &format!("/{path}")
+    };
     let mut url = format!("{base}{path}");
     if let Some(q) = query {
         url.push('?');

@@ -366,19 +366,37 @@ async fn test_full_lifecycle_on_anvil() {
         .to(policy_engine_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(trade_validator_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(fee_distributor_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -806,9 +824,28 @@ async fn test_vault_edge_cases() {
     let policy = PolicyEngine::new(policy_engine_addr, &deployer_provider);
     let tv = TradeValidator::new(trade_validator_addr, &deployer_provider);
     let fd = FeeDistributor::new(fee_distributor_addr, &deployer_provider);
-    policy.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
-    tv.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
-    fd.transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+    policy
+        .transferOwnership(vault_factory_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    tv.transferOwnership(vault_factory_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    fd.transferOwnership(vault_factory_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -834,19 +871,37 @@ async fn test_vault_edge_cases() {
         .to(policy_engine_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(trade_validator_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(fee_distributor_addr)
         .from(vault_factory_addr)
         .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
-    factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    factory_provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
     let _: () = deployer_provider
         .raw_request(
@@ -1382,11 +1437,29 @@ impl VaultTestSetup {
 
         // Transfer ownership to factory
         PolicyEngine::new(policy_engine_addr, &deployer_provider)
-            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+            .transferOwnership(vault_factory_addr)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
         TradeValidator::new(trade_validator_addr, &deployer_provider)
-            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+            .transferOwnership(vault_factory_addr)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
         FeeDistributor::new(fee_distributor_addr, &deployer_provider)
-            .transferOwnership(vault_factory_addr).send().await.unwrap().get_receipt().await.unwrap();
+            .transferOwnership(vault_factory_addr)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
 
         // Impersonate factory to accept ownership
         let _: () = deployer_provider
@@ -1410,19 +1483,40 @@ impl VaultTestSetup {
         let factory_provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
 
         let tx = alloy::rpc::types::TransactionRequest::default()
-            .to(policy_engine_addr).from(vault_factory_addr)
+            .to(policy_engine_addr)
+            .from(vault_factory_addr)
             .input(Bytes::from(PolicyEngine::acceptOwnershipCall {}.abi_encode()).into());
-        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        factory_provider
+            .send_transaction(tx)
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
 
         let tx = alloy::rpc::types::TransactionRequest::default()
-            .to(trade_validator_addr).from(vault_factory_addr)
+            .to(trade_validator_addr)
+            .from(vault_factory_addr)
             .input(Bytes::from(TradeValidator::acceptOwnershipCall {}.abi_encode()).into());
-        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        factory_provider
+            .send_transaction(tx)
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
 
         let tx = alloy::rpc::types::TransactionRequest::default()
-            .to(fee_distributor_addr).from(vault_factory_addr)
+            .to(fee_distributor_addr)
+            .from(vault_factory_addr)
             .input(Bytes::from(FeeDistributor::acceptOwnershipCall {}.abi_encode()).into());
-        factory_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        factory_provider
+            .send_transaction(tx)
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
 
         let _: () = deployer_provider
             .raw_request(
@@ -1967,7 +2061,11 @@ async fn test_collateral_roundtrip_on_anvil() {
         .unwrap();
 
     let max_bps: U256 = vault_read.maxCollateralBps().call().await.unwrap();
-    assert_eq!(max_bps, U256::from(5000u64), "Collateral BPS should be 5000");
+    assert_eq!(
+        max_bps,
+        U256::from(5000u64),
+        "Collateral BPS should be 5000"
+    );
 
     let avail: U256 = vault_read.availableCollateral().call().await.unwrap();
     assert_eq!(avail, U256::from(5000u64) * e18, "Available = 50% of 10k");
@@ -2050,7 +2148,11 @@ async fn test_collateral_roundtrip_on_anvil() {
         "Operator EOA should receive 2000 tokens"
     );
 
-    let outstanding: U256 = vault_read.totalOutstandingCollateral().call().await.unwrap();
+    let outstanding: U256 = vault_read
+        .totalOutstandingCollateral()
+        .call()
+        .await
+        .unwrap();
     assert_eq!(outstanding, release_amount, "Outstanding should be 2000");
 
     let op_collateral: U256 = vault_read
@@ -2073,11 +2175,18 @@ async fn test_collateral_roundtrip_on_anvil() {
         .call()
         .await
         .unwrap();
-    assert_eq!(price_after_release, price_before, "Share price stable after release");
+    assert_eq!(
+        price_after_release, price_before,
+        "Share price stable after release"
+    );
 
     // Liquid assets dropped
     let liquid: U256 = vault_read.liquidAssets().call().await.unwrap();
-    assert_eq!(liquid, deposit_amount - release_amount, "Liquid = 10k - 2k = 8k");
+    assert_eq!(
+        liquid,
+        deposit_amount - release_amount,
+        "Liquid = 10k - 2k = 8k"
+    );
 
     // ── 5. Simulate CLOB profit: operator returns 2,500 (500 profit) ─────
     let return_amount = U256::from(2_500u64) * e18;
@@ -2116,7 +2225,11 @@ async fn test_collateral_roundtrip_on_anvil() {
     assert!(return_receipt.status(), "returnCollateral should succeed");
 
     // ── 6. Verify accounting after return ────────────────────────────────
-    let outstanding_after: U256 = vault_read.totalOutstandingCollateral().call().await.unwrap();
+    let outstanding_after: U256 = vault_read
+        .totalOutstandingCollateral()
+        .call()
+        .await
+        .unwrap();
     assert_eq!(outstanding_after, U256::ZERO, "All collateral returned");
 
     let op_collateral_after: U256 = vault_read
@@ -2180,9 +2293,15 @@ async fn test_collateral_roundtrip_on_anvil() {
     } else {
         expected_total - assets_received
     };
-    assert!(diff <= U256::from(1u64), "LP payout should be within 1 wei of 10500e18, diff={diff}");
+    assert!(
+        diff <= U256::from(1u64),
+        "LP payout should be within 1 wei of 10500e18, diff={diff}"
+    );
 
     // Vault should be nearly empty after full redemption
     let final_total: U256 = vault_read.totalAssets().call().await.unwrap();
-    assert!(final_total <= U256::from(1u64), "Vault should be empty (within virtual offset)");
+    assert!(
+        final_total <= U256::from(1u64),
+        "Vault should be empty (within virtual offset)"
+    );
 }

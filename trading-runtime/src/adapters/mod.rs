@@ -100,10 +100,9 @@ pub fn parse_address_or(
     default: &str,
 ) -> Result<Address, crate::error::TradingError> {
     let raw = value.and_then(|v| v.as_str()).unwrap_or(default);
-    raw.parse::<Address>().map_err(|e| {
-        crate::error::TradingError::AdapterError {
+    raw.parse::<Address>()
+        .map_err(|e| crate::error::TradingError::AdapterError {
             protocol: "common".into(),
             message: format!("Invalid address '{raw}': {e}"),
-        }
-    })
+        })
 }

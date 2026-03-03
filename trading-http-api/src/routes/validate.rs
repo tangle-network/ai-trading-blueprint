@@ -4,13 +4,15 @@ use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use trading_runtime::adapters::ActionParams;
+use trading_runtime::calldata_decoder;
+use trading_runtime::executor::get_adapter;
 use trading_runtime::intent::hash_intent;
 use trading_runtime::validator_client::ValidatorClient;
-use trading_runtime::{Action, TradeIntentBuilder, TradeIntent};
-use trading_runtime::adapters::ActionParams;
-use trading_runtime::executor::get_adapter;
-use trading_runtime::calldata_decoder;
-use trading_runtime::validator_client::{ExecutionContext, SimulationSummary, BalanceChangeSummary};
+use trading_runtime::validator_client::{
+    BalanceChangeSummary, ExecutionContext, SimulationSummary,
+};
+use trading_runtime::{Action, TradeIntent, TradeIntentBuilder};
 
 #[derive(Deserialize)]
 pub struct ValidateRequest {
@@ -92,17 +94,21 @@ struct ParsedValidateRequest {
 }
 
 /// Parse and validate a ValidateRequest into typed fields.
-fn parse_validate_request(req: &ValidateRequest) -> Result<ParsedValidateRequest, (StatusCode, String)> {
+fn parse_validate_request(
+    req: &ValidateRequest,
+) -> Result<ParsedValidateRequest, (StatusCode, String)> {
     let action = parse_action(&req.action).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     let amount_in: rust_decimal::Decimal = req
         .amount_in
         .parse()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid amount_in: {e}")))?;
-    let min_amount_out: rust_decimal::Decimal = req
-        .min_amount_out
-        .parse()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid min_amount_out: {e}")))?;
+    let min_amount_out: rust_decimal::Decimal = req.min_amount_out.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid min_amount_out: {e}"),
+        )
+    })?;
 
     let intent = TradeIntentBuilder::new()
         .strategy_id(&req.strategy_id)
@@ -230,8 +236,7 @@ async fn build_execution_context(
 
     let encoded = adapter.encode_action(&params).ok()?;
 
-    let calldata_decoded =
-        calldata_decoder::decode_encoded_action(&encoded.calldata, protocol);
+    let calldata_decoded = calldata_decoder::decode_encoded_action(&encoded.calldata, protocol);
 
     // Extract known addresses before the async boundary (adapter may not be Sync)
     let known_addresses = adapter.known_addresses();
@@ -359,7 +364,12 @@ async fn validate_multi_bot(
         .extensions()
         .get::<crate::BotContext>()
         .cloned()
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Bot context not resolved — check auth middleware".into()))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Bot context not resolved — check auth middleware".into(),
+            )
+        })?;
 
     let body = axum::body::to_bytes(request.into_body(), 1024 * 64)
         .await

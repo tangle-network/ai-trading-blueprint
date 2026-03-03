@@ -332,8 +332,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .ok();
 
         // Shared ChainClient for nonce serialization across concurrent multi-bot requests.
-        let rpc_url_for_chain = std::env::var("HTTP_RPC_URL")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
+        let rpc_url_for_chain =
+            std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
         let chain_id_for_chain: u64 = std::env::var("CHAIN_ID")
             .ok()
             .and_then(|v| v.parse().ok())

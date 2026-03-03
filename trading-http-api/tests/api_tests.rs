@@ -1594,7 +1594,10 @@ async fn test_multi_bot_clob_execute() {
     .expect("clob client");
 
     // Pre-populate SDK caches to avoid HTTP lookups during order building
-    clob_client.configure_token_cache("48328953829", "0.01", false, 0).await.unwrap();
+    clob_client
+        .configure_token_cache("48328953829", "0.01", false, 0)
+        .await
+        .unwrap();
 
     let state = Arc::new(MultiBotTradingState {
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -1663,11 +1666,7 @@ async fn test_multi_bot_clob_execute() {
         .await
         .unwrap();
 
-    assert_eq!(
-        response.status(),
-        200,
-        "CLOB execute should succeed"
-    );
+    assert_eq!(response.status(), 200, "CLOB execute should succeed");
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -1854,10 +1853,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
 // ── CLOB route tests ─────────────────────────────────────────────────────────
 
 /// Create a test state with CLOB client configured against a wiremock server.
-async fn test_state_with_clob(
-    mock_uri: &str,
-    clob_mock_uri: &str,
-) -> Arc<TradingApiState> {
+async fn test_state_with_clob(mock_uri: &str, clob_mock_uri: &str) -> Arc<TradingApiState> {
     use trading_runtime::polymarket_clob::ClobClient;
 
     ensure_state_dir();
@@ -1951,7 +1947,11 @@ async fn test_clob_not_configured_returns_503() {
     let app = build_router(state);
 
     // All CLOB routes should return 503 when clob_client is None.
-    for path in &["/clob/config", "/clob/orders", "/clob/midpoint?token_id=123"] {
+    for path in &[
+        "/clob/config",
+        "/clob/orders",
+        "/clob/midpoint?token_id=123",
+    ] {
         let response = app
             .clone()
             .oneshot(

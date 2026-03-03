@@ -1,4 +1,6 @@
-use crate::trade_store::{self, StoredSimulation, StoredValidation, StoredValidatorResponse, TradeRecord};
+use crate::trade_store::{
+    self, StoredSimulation, StoredValidation, StoredValidatorResponse, TradeRecord,
+};
 use crate::{MultiBotTradingState, TradingApiState};
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -14,8 +16,8 @@ use tokio::sync::RwLock;
 use trading_runtime::executor::TradeExecutor;
 use trading_runtime::polymarket_clob::{self, ClobClient};
 use trading_runtime::{
-    PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder,
-    ValidationResult, ValidatorResponse,
+    PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
+    ValidatorResponse,
 };
 
 use super::validate::parse_action;
@@ -134,10 +136,7 @@ static EXECUTED_INTENTS: Lazy<Mutex<IntentDedupStore>> = Lazy::new(|| {
             }
         }
 
-        tracing::info!(
-            loaded = memory.len(),
-            "Intent dedup store loaded from disk"
-        );
+        tracing::info!(loaded = memory.len(), "Intent dedup store loaded from disk");
         Some(store)
     })();
 
@@ -158,7 +157,9 @@ fn check_and_insert_intent(intent_hash: &str) -> bool {
     let now = Utc::now();
 
     // Expire old entries (lazy cleanup on each check).
-    guard.memory.retain(|_, ts| (now - *ts).num_seconds() < DEDUP_TTL_SECS);
+    guard
+        .memory
+        .retain(|_, ts| (now - *ts).num_seconds() < DEDUP_TTL_SECS);
 
     if guard.memory.contains_key(intent_hash) {
         return true;
@@ -579,8 +580,7 @@ async fn execute(
             &request.intent.metadata,
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
-        let result =
-            execute_clob_trade(&state.bot_id, clob, &request, stored_validation).await?;
+        let result = execute_clob_trade(&state.bot_id, clob, &request, stored_validation).await?;
         update_portfolio_after_trade(
             &state.portfolio,
             &request,
@@ -645,7 +645,12 @@ async fn execute_multi_bot(
         .extensions()
         .get::<crate::BotContext>()
         .cloned()
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Bot context not resolved — check auth middleware".into()))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Bot context not resolved — check auth middleware".into(),
+            )
+        })?;
 
     let body = axum::body::to_bytes(request.into_body(), 1024 * 64)
         .await

@@ -56,7 +56,11 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
     let result = timeout(common::ANVIL_TEST_TIMEOUT, async {
         // ── 1. Start Anvil + deploy TradeValidator ──────────────────────
         eprintln!("[setup] Starting Anvil and deploying contracts...");
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Failed to spawn Anvil")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Failed to spawn Anvil")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -349,7 +353,11 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
     let _guard = common::HARNESS_LOCK.lock().await;
 
     // ── Deploy TradeValidator on Anvil ───────────────────────────────
-    let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Anvil")?;
+    let anvil = Anvil::new()
+        .arg("--code-size-limit")
+        .arg("50000")
+        .try_spawn()
+        .context("Anvil")?;
     let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();
     let deployer_provider = ProviderBuilder::new()
         .wallet(EthereumWallet::from(deployer_key))
@@ -464,7 +472,11 @@ async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
     let guard = common::HARNESS_LOCK.lock().await;
 
     let result = timeout(common::ANVIL_TEST_TIMEOUT, async {
-        let anvil = Anvil::new().arg("--code-size-limit").arg("50000").try_spawn().context("Failed to spawn Anvil")?;
+        let anvil = Anvil::new()
+            .arg("--code-size-limit")
+            .arg("50000")
+            .try_spawn()
+            .context("Failed to spawn Anvil")?;
         let rpc_url = anvil.endpoint();
 
         let deployer_key: PrivateKeySigner = anvil.keys()[0].clone().into();

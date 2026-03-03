@@ -250,7 +250,10 @@ impl VaultClient {
     }
 
     /// Encode a returnCollateral call.
-    pub fn encode_return_collateral(&self, amount: &str) -> Result<EncodedTransaction, TradingError> {
+    pub fn encode_return_collateral(
+        &self,
+        amount: &str,
+    ) -> Result<EncodedTransaction, TradingError> {
         let amount_u256 = Self::parse_u256(amount)?;
 
         let call = ITradingVault::returnCollateralCall {
@@ -265,12 +268,13 @@ impl VaultClient {
     }
 
     /// Encode a setMaxCollateralBps call.
-    pub fn encode_set_max_collateral_bps(&self, bps: &str) -> Result<EncodedTransaction, TradingError> {
+    pub fn encode_set_max_collateral_bps(
+        &self,
+        bps: &str,
+    ) -> Result<EncodedTransaction, TradingError> {
         let bps_u256 = Self::parse_u256(bps)?;
 
-        let call = ITradingVault::setMaxCollateralBpsCall {
-            bps: bps_u256,
-        };
+        let call = ITradingVault::setMaxCollateralBpsCall { bps: bps_u256 };
 
         Ok(EncodedTransaction {
             to: self.vault_address.clone(),

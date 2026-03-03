@@ -8,8 +8,8 @@ use alloy::primitives::{Address, Bytes, U256};
 
 use super::eth_call::EthCallSimulator;
 use super::{
-    ApprovalChange, BalanceChange, SimulationRequest, SimulationResult, SimulationWarning,
-    TransactionSimulator, TransferEvent, APPROVAL_TOPIC, TRANSFER_TOPIC,
+    APPROVAL_TOPIC, ApprovalChange, BalanceChange, SimulationRequest, SimulationResult,
+    SimulationWarning, TRANSFER_TOPIC, TransactionSimulator, TransferEvent,
 };
 use crate::error::TradingError;
 
@@ -106,21 +106,15 @@ impl TenderlySimulator {
         let transaction = &response["transaction"];
         let tx_info = &transaction["transaction_info"];
 
-        let success = transaction["status"]
-            .as_bool()
-            .unwrap_or(false);
+        let success = transaction["status"].as_bool().unwrap_or(false);
 
-        let gas_used = tx_info["gas_used"]
-            .as_u64()
-            .unwrap_or(0);
+        let gas_used = tx_info["gas_used"].as_u64().unwrap_or(0);
 
-        let return_data_hex = tx_info["call_trace"]["output"]
-            .as_str()
-            .unwrap_or("0x");
-        let stripped = return_data_hex.strip_prefix("0x").unwrap_or(return_data_hex);
-        let return_data = hex::decode(stripped)
-            .map(Bytes::from)
-            .unwrap_or_default();
+        let return_data_hex = tx_info["call_trace"]["output"].as_str().unwrap_or("0x");
+        let stripped = return_data_hex
+            .strip_prefix("0x")
+            .unwrap_or(return_data_hex);
+        let return_data = hex::decode(stripped).map(Bytes::from).unwrap_or_default();
 
         let mut warnings = Vec::new();
         let mut balance_changes = Vec::new();
@@ -141,20 +135,14 @@ impl TenderlySimulator {
             for log in logs {
                 let topics: Vec<&str> = log["raw"]["topics"]
                     .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|t| t.as_str())
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect())
                     .unwrap_or_default();
 
                 if topics.is_empty() {
                     continue;
                 }
 
-                let topic0 = topics[0]
-                    .strip_prefix("0x")
-                    .unwrap_or(topics[0]);
+                let topic0 = topics[0].strip_prefix("0x").unwrap_or(topics[0]);
 
                 let log_address = log["raw"]["address"]
                     .as_str()
@@ -164,9 +152,7 @@ impl TenderlySimulator {
                 if topic0 == TRANSFER_TOPIC && topics.len() >= 3 {
                     let from = parse_topic_address(topics[1]);
                     let to = parse_topic_address(topics[2]);
-                    let amount = parse_log_data_u256(
-                        log["raw"]["data"].as_str().unwrap_or("0x0"),
-                    );
+                    let amount = parse_log_data_u256(log["raw"]["data"].as_str().unwrap_or("0x0"));
                     transfer_events.push(TransferEvent {
                         token: log_address,
                         from,
@@ -176,9 +162,7 @@ impl TenderlySimulator {
                 } else if topic0 == APPROVAL_TOPIC && topics.len() >= 3 {
                     let owner = parse_topic_address(topics[1]);
                     let spender = parse_topic_address(topics[2]);
-                    let amount = parse_log_data_u256(
-                        log["raw"]["data"].as_str().unwrap_or("0x0"),
-                    );
+                    let amount = parse_log_data_u256(log["raw"]["data"].as_str().unwrap_or("0x0"));
                     approval_changes.push(ApprovalChange {
                         token: log_address,
                         owner,
@@ -197,10 +181,9 @@ impl TenderlySimulator {
                     .and_then(|s| s.parse::<Address>().ok());
                 if let (Some(addr), Some(raw)) = (address, diff["raw"].as_array()) {
                     for entry in raw {
-                        if let (Some(before), Some(after)) = (
-                            entry["original"].as_str(),
-                            entry["dirty"].as_str(),
-                        ) {
+                        if let (Some(before), Some(after)) =
+                            (entry["original"].as_str(), entry["dirty"].as_str())
+                        {
                             let before_val = parse_hex_u256(before);
                             let after_val = parse_hex_u256(after);
                             if before_val != after_val {
@@ -252,10 +235,7 @@ fn parse_hex_u256(s: &str) -> U256 {
 
 #[async_trait::async_trait]
 impl TransactionSimulator for TenderlySimulator {
-    async fn simulate(
-        &self,
-        request: SimulationRequest,
-    ) -> Result<SimulationResult, TradingError> {
+    async fn simulate(&self, request: SimulationRequest) -> Result<SimulationResult, TradingError> {
         match self.tenderly_simulate(&request).await {
             Ok(result) => Ok(result),
             Err(e) => {

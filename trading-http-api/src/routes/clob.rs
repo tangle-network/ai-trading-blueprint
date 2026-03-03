@@ -26,10 +26,7 @@ pub fn router() -> Router<Arc<TradingApiState>> {
         .route("/clob/orders", get(get_orders))
         .route("/clob/book", get(get_book))
         .route("/clob/midpoint", get(get_midpoint))
-        .route(
-            "/clob/approve",
-            axum::routing::post(approve_collateral),
-        )
+        .route("/clob/approve", axum::routing::post(approve_collateral))
         .route("/clob/config", get(get_config))
 }
 
@@ -135,15 +132,12 @@ async fn approve_collateral(
 ) -> Result<Json<Vec<ApprovalResult>>, (StatusCode, String)> {
     let clob = state.clob_client.as_ref().ok_or_else(clob_not_configured)?;
 
-    let rpc_url = q
-        .rpc_url
-        .or_else(|| state.rpc_url.clone())
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "rpc_url required (query param or server config)".into(),
-            )
-        })?;
+    let rpc_url = q.rpc_url.or_else(|| state.rpc_url.clone()).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "rpc_url required (query param or server config)".into(),
+        )
+    })?;
 
     let results = clob
         .approve_collateral(&rpc_url, q.neg_risk)

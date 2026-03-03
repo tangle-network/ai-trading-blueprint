@@ -324,9 +324,7 @@ async fn run_independent_simulation(
     rpc_url: &str,
     ctx: &ExecutionContext,
 ) -> Option<SimulationSummary> {
-    use trading_runtime::simulator::{
-        SimulationRequest, SimulatorConfig, create_simulator,
-    };
+    use trading_runtime::simulator::{SimulationRequest, SimulatorConfig, create_simulator};
 
     let target: Address = ctx.target.parse().ok()?;
     let calldata_hex = ctx.calldata.strip_prefix("0x").unwrap_or(&ctx.calldata);

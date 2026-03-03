@@ -135,9 +135,8 @@ pub fn verify_validator_signature(
     let intent_hash_stripped = intent_hash_hex
         .strip_prefix("0x")
         .unwrap_or(intent_hash_hex);
-    let intent_hash_bytes = hex::decode(intent_hash_stripped).map_err(|e| {
-        TradingError::ValidatorError(format!("Invalid intent_hash hex: {e}"))
-    })?;
+    let intent_hash_bytes = hex::decode(intent_hash_stripped)
+        .map_err(|e| TradingError::ValidatorError(format!("Invalid intent_hash hex: {e}")))?;
     if intent_hash_bytes.len() != 32 {
         return Err(TradingError::ValidatorError(format!(
             "intent_hash must be 32 bytes, got {}",
@@ -147,9 +146,9 @@ pub fn verify_validator_signature(
     let intent_hash = B256::from_slice(&intent_hash_bytes);
 
     // Parse vault address
-    let vault: Address = vault_address.parse().map_err(|e| {
-        TradingError::ValidatorError(format!("Invalid vault_address: {e}"))
-    })?;
+    let vault: Address = vault_address
+        .parse()
+        .map_err(|e| TradingError::ValidatorError(format!("Invalid vault_address: {e}")))?;
 
     // Parse signature (65 bytes: r[32] || s[32] || v[1])
     let sig_hex = response
@@ -280,9 +279,12 @@ mod tests {
             .unwrap();
         let chain_id = 31337u64;
 
-        let signer =
-            trading_validator_lib::signer::ValidatorSigner::new(private_key, chain_id, contract_addr)
-                .unwrap();
+        let signer = trading_validator_lib::signer::ValidatorSigner::new(
+            private_key,
+            chain_id,
+            contract_addr,
+        )
+        .unwrap();
 
         let intent_hash = keccak256("test-intent-for-verify");
         let vault: Address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
@@ -323,9 +325,7 @@ mod tests {
             signature: format!("0x{}", "ab".repeat(65)),
             reasoning: "test".into(),
             chain_id: Some(31337),
-            verifying_contract: Some(
-                "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
-            ),
+            verifying_contract: Some("0x5FbDB2315678afecb367f032d93F642f64180aa3".into()),
             validated_at: None,
         };
 
@@ -345,9 +345,7 @@ mod tests {
             signature: format!("0x{}", "ab".repeat(65)),
             reasoning: "test".into(),
             chain_id: None,
-            verifying_contract: Some(
-                "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
-            ),
+            verifying_contract: Some("0x5FbDB2315678afecb367f032d93F642f64180aa3".into()),
             validated_at: None,
         };
 

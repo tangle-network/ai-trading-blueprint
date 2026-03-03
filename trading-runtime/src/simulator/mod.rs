@@ -167,9 +167,7 @@ impl SimulatorConfig {
             tenderly_api_key: std::env::var("TENDERLY_API_KEY").ok(),
             tenderly_account: std::env::var("TENDERLY_ACCOUNT").ok(),
             tenderly_project: std::env::var("TENDERLY_PROJECT").ok(),
-            chain_id: std::env::var("CHAIN_ID")
-                .ok()
-                .and_then(|s| s.parse().ok()),
+            chain_id: std::env::var("CHAIN_ID").ok().and_then(|s| s.parse().ok()),
         }
     }
 }
@@ -200,11 +198,9 @@ pub fn create_simulator(
 
 // ERC20 event topic constants (keccak256 of event signatures)
 /// keccak256("Transfer(address,address,uint256)")
-pub const TRANSFER_TOPIC: &str =
-    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+pub const TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 /// keccak256("Approval(address,address,uint256)")
-pub const APPROVAL_TOPIC: &str =
-    "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+pub const APPROVAL_TOPIC: &str = "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 
 #[cfg(test)]
 mod tests {

@@ -9,7 +9,9 @@ type Uint24 = Uint<24, 1>;
 /// Alloy type alias for uint160 (used for sqrtPriceLimitX96)
 type Uint160 = Uint<160, 3>;
 
-use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
+use super::{
+    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, validate_vault_address,
+};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -170,11 +172,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
-                        params.token_in,
-                        router,
-                        params.amount,
-                    )],
+                    pre_calls: vec![encode_erc20_approve(params.token_in, router, params.amount)],
                 })
             }
             Action::Buy => {
@@ -198,11 +196,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
-                        params.token_in,
-                        router,
-                        amount_in_max,
-                    )],
+                    pre_calls: vec![encode_erc20_approve(params.token_in, router, amount_in_max)],
                 })
             }
             _ => Err(TradingError::AdapterError {

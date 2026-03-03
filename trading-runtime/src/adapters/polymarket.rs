@@ -2,7 +2,9 @@ use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{encode_erc20_approve, validate_vault_address, ActionParams, EncodedAction, ProtocolAdapter};
+use super::{
+    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, validate_vault_address,
+};
 use crate::error::TradingError;
 use crate::types::Action;
 
