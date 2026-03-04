@@ -20,6 +20,11 @@ interface AdvancedSettingsDialogProps {
   setValidatorMode: (v: 'default' | 'custom') => void;
   customValidatorIds: string;
   setCustomValidatorIds: (v: string) => void;
+  runtimeBackend: 'docker' | 'firecracker' | 'tee';
+  setRuntimeBackend: (v: 'docker' | 'firecracker' | 'tee') => void;
+  firecrackerSupported: boolean;
+  isTeeBlueprint: boolean;
+  onOpenInfrastructure: () => void;
 }
 
 export function AdvancedSettingsDialog({
@@ -37,21 +42,29 @@ export function AdvancedSettingsDialog({
   setValidatorMode,
   customValidatorIds,
   setCustomValidatorIds,
+  runtimeBackend,
+  setRuntimeBackend,
+  firecrackerSupported,
+  isTeeBlueprint,
+  onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
+  const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
+  const canResetRuntime = !isTeeBlueprint && runtimeBackend !== 'docker';
+  const canResetSettings = !!(customCron || validatorMode === 'custom' || canResetRuntime);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-lg">
-            Agent Instructions: {selectedPack.name}
+            Advanced Configuration: {selectedPack.name}
           </DialogTitle>
           <DialogDescription className="text-sm">
-            This is the full system prompt injected into the sidecar coding agent. The operator
-            binary fills in runtime values (API URL, vault address, etc.) at provision time.
+            Configure runtime, infrastructure, scheduling, and agent instruction overlays.
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="full" className="flex-1 flex flex-col min-h-0">
+        <Tabs defaultValue="settings" className="flex-1 flex flex-col min-h-0">
           <TabsList>
             <TabsTrigger value="full">Full Instructions</TabsTrigger>
             <TabsTrigger value="expert">Expert Knowledge</TabsTrigger>
@@ -112,6 +125,45 @@ export function AdvancedSettingsDialog({
 
           <TabsContent value="settings" className="flex-1 mt-3">
             <div className="space-y-5 p-px">
+              <div>
+                <label htmlFor="runtime-backend" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  Runtime Backend
+                </label>
+                <select
+                  id="runtime-backend"
+                  value={effectiveRuntimeBackend}
+                  disabled={isTeeBlueprint}
+                  onChange={(e) => setRuntimeBackend(e.target.value as 'docker' | 'firecracker' | 'tee')}
+                  className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <option value="docker">Docker (default)</option>
+                  <option value="firecracker" disabled={!firecrackerSupported}>
+                    {firecrackerSupported ? 'Firecracker (microVM)' : 'Firecracker (microVM, unavailable)'}
+                  </option>
+                  <option value="tee">TEE (confidential)</option>
+                </select>
+                {isTeeBlueprint && (
+                  <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                    TEE blueprints are pinned to TEE runtime.
+                  </p>
+                )}
+                {!isTeeBlueprint && !firecrackerSupported && (
+                  <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                    Firecracker runtime is not enabled for this deployment.
+                  </p>
+                )}
+              </div>
+              <div>
+                <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  Infrastructure
+                </span>
+                <p className="text-xs text-arena-elements-textTertiary mb-2.5">
+                  Configure service mode, operator selection, and quote management.
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={onOpenInfrastructure}>
+                  Open Infrastructure Settings
+                </Button>
+              </div>
               <div>
                 <label htmlFor="cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                   Cron Schedule
@@ -212,12 +264,17 @@ export function AdvancedSettingsDialog({
                 </div>
               </div>
 
-              {(customCron || validatorMode === 'custom') && (
+              {canResetSettings && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => { setCustomCron(''); setValidatorMode('default'); setCustomValidatorIds(''); }}
+                  onClick={() => {
+                    setCustomCron('');
+                    setValidatorMode('default');
+                    setCustomValidatorIds('');
+                    if (!isTeeBlueprint) setRuntimeBackend('docker');
+                  }}
                   className="text-xs"
                 >
                   Reset to Defaults

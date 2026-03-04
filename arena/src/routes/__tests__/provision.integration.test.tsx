@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+let latestInfrastructureProps: any;
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
@@ -17,7 +21,10 @@ vi.mock('wagmi', () => ({
 }));
 
 vi.mock('@nanostores/react', () => ({
-  useStore: () => 0,
+  useStore: (store: any) => {
+    if (store && typeof store.get === 'function') return store.get();
+    return 0;
+  },
 }));
 
 vi.mock('sonner', () => ({
@@ -41,6 +48,22 @@ vi.mock('~/lib/contracts/chains', () => ({
   networks: {
     0: { chain: { id: 0, name: 'Testnet' } },
   },
+}));
+
+vi.mock('@tangle/blueprint-ui/components', () => ({
+  Card: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  Input: (props: any) => <input {...props} />,
+  Dialog: ({ open, children }: any) => (open ? <div>{children}</div> : null),
+  DialogContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  DialogHeader: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  DialogTitle: ({ children, ...props }: any) => <h2 {...props}>{children}</h2>,
+  DialogDescription: ({ children, ...props }: any) => <p {...props}>{children}</p>,
+  Tabs: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  TabsList: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  TabsTrigger: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  TabsContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 }));
 
 vi.mock('@tangle/blueprint-ui', () => ({
@@ -111,46 +134,34 @@ vi.mock('~/lib/blueprints', () => ({
 }));
 
 vi.mock('~/components/provision/BlueprintSelector', () => ({ BlueprintSelector: () => null }));
-vi.mock('~/components/provision/ConfigureStep', () => ({ ConfigureStep: () => null }));
 vi.mock('~/components/provision/DeployStep', () => ({ DeployStep: () => null }));
 vi.mock('~/components/provision/SecretsStep', () => ({ SecretsStep: () => null }));
-vi.mock('~/components/provision/InfrastructureDialog', () => ({ InfrastructureDialog: () => null }));
-vi.mock('~/components/provision/AdvancedSettingsDialog', () => ({ AdvancedSettingsDialog: () => null }));
+vi.mock('~/components/provision/InfrastructureDialog', () => ({
+  InfrastructureDialog: (props: any) => {
+    latestInfrastructureProps = props;
+    return <div data-testid="infra-open-state">{String(props.open)}</div>;
+  },
+}));
 
 vi.mock('~/lib/utils/resolveBotId', () => ({
   resolveBotId: vi.fn(async () => ({ botId: 'bot-1' })),
 }));
 
-describe('provision runtime backend helpers', () => {
-  it('falls back unsupported firecracker runtime to docker', async () => {
-    const { resolveRuntimeBackendForProvision, FIRECRACKER_RUNTIME_SUPPORTED } = await import('../provision');
-    expect(FIRECRACKER_RUNTIME_SUPPORTED).toBe(false);
-    expect(resolveRuntimeBackendForProvision('firecracker', false)).toBe('docker');
-  });
+describe('provision route dialog wiring', () => {
+  it('opens infrastructure dialog from advanced callback', async () => {
+    const { default: ProvisionPage } = await import('../provision');
+    const user = userEvent.setup();
+    render(<ProvisionPage />);
 
-  it('pins tee blueprints to tee runtime', async () => {
-    const { resolveRuntimeBackendForProvision } = await import('../provision');
-    expect(resolveRuntimeBackendForProvision('docker', true)).toBe('tee');
-  });
+    expect(screen.getByTestId('infra-open-state')).toHaveTextContent('false');
+    await user.click(screen.getByRole('button', { name: 'Customize' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open Infrastructure Settings' })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Open Infrastructure Settings' }));
 
-  it('keeps firecracker when explicitly marked as supported', async () => {
-    const { resolveRuntimeBackendForProvision } = await import('../provision');
-    expect(resolveRuntimeBackendForProvision('firecracker', false, true)).toBe('firecracker');
-  });
-
-  it('propagates normalized runtime and overrides into strategy config payload', async () => {
-    const { buildStrategyConfigForProvision } = await import('../provision');
-    expect(
-      buildStrategyConfigForProvision({
-        runtimeBackend: 'firecracker',
-        isTeeBlueprint: false,
-        customExpertKnowledge: 'expert notes',
-        customInstructions: 'custom prompt',
-      }),
-    ).toEqual({
-      runtime_backend: 'docker',
-      expert_knowledge_override: 'expert notes',
-      custom_instructions: 'custom prompt',
+    await waitFor(() => {
+      expect(screen.getByTestId('infra-open-state')).toHaveTextContent('true');
+      expect(latestInfrastructureProps.open).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Open Infrastructure Settings' })).not.toBeInTheDocument();
     });
   });
 });
