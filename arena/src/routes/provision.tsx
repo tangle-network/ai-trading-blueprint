@@ -1213,25 +1213,18 @@ export default function ProvisionPage() {
             setName={setName}
             strategyType={strategyType}
             setStrategyType={setStrategyType}
-            runtimeBackend={runtimeBackend}
-            setRuntimeBackend={setRuntimeBackend}
-            firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
             selectedPack={selectedPack}
-            selectedBlueprint={selectedBlueprint}
+            isInstance={isInstance}
+            serviceId={serviceId}
             serviceInfo={serviceInfo}
             serviceLoading={serviceLoading}
             serviceError={serviceError}
-            serviceId={serviceId}
-            discoveryLoading={discoveryLoading}
             selectedOperators={selectedOperators}
-            isInstance={isInstance}
-            setShowInfra={setShowInfra}
             setShowAdvanced={setShowAdvanced}
             collateralCapPct={collateralCapPct}
             setCollateralCapPct={setCollateralCapPct}
             canNext={canNext ?? false}
             goNext={goNext}
-            userAddress={userAddress}
           />
         )}
 
@@ -1343,6 +1336,14 @@ export default function ProvisionPage() {
         setValidatorMode={setValidatorMode}
         customValidatorIds={customValidatorIds}
         setCustomValidatorIds={setCustomValidatorIds}
+        runtimeBackend={runtimeBackend}
+        setRuntimeBackend={setRuntimeBackend}
+        firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
+        isTeeBlueprint={!!selectedBlueprint?.isTee}
+        onOpenInfrastructure={() => {
+          setShowAdvanced(false);
+          setShowInfra(true);
+        }}
       />
     </div>
   );

@@ -48,9 +48,6 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     setName: vi.fn(),
     strategyType: 'dex-swing',
     setStrategyType: vi.fn(),
-    runtimeBackend: 'docker' as const,
-    setRuntimeBackend: vi.fn(),
-    firecrackerSupported: false,
     selectedPack: {
       id: 'dex-swing',
       name: 'DEX Swing',
@@ -61,21 +58,17 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
       timeoutMs: 120000,
       expertKnowledge: 'DEX momentum and mean-reversion setup.',
     },
-    selectedBlueprint: undefined,
+    isInstance: false,
+    serviceId: '1',
     serviceInfo: null,
     serviceLoading: false,
     serviceError: null,
-    serviceId: '1',
-    discoveryLoading: false,
     selectedOperators: new Set() as Set<`0x${string}`>,
-    isInstance: false,
-    setShowInfra: vi.fn(),
     setShowAdvanced: vi.fn(),
     collateralCapPct: '',
     setCollateralCapPct: vi.fn(),
     canNext: false,
     goNext: vi.fn(),
-    userAddress: undefined,
     ...overrides,
   };
 }
@@ -132,15 +125,6 @@ describe('ConfigureStep', () => {
     expect(setName).toHaveBeenCalled();
   });
 
-  it('opens infrastructure dialog on bar click', async () => {
-    const setShowInfra = vi.fn();
-    const user = userEvent.setup();
-    render(<ConfigureStep {...defaultProps({ setShowInfra })} />);
-    const infraBtn = screen.getByText('Change');
-    await user.click(infraBtn.closest('button')!);
-    expect(setShowInfra).toHaveBeenCalledWith(true);
-  });
-
   it('opens advanced settings on Customize click', async () => {
     const setShowAdvanced = vi.fn();
     const user = userEvent.setup();
@@ -154,48 +138,74 @@ describe('ConfigureStep', () => {
     expect(screen.getByText('Swing trading on DEXes')).toBeInTheDocument();
   });
 
-  it('shows instance mode infrastructure bar text', () => {
+  it('shows infrastructure/runtime hint for advanced settings', () => {
+    render(<ConfigureStep {...defaultProps()} />);
+    expect(screen.getByText('Runtime backend and infrastructure controls are available in Advanced Settings.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Runtime Backend')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open Infrastructure Settings')).not.toBeInTheDocument();
+  });
+
+  it('shows fleet infrastructure status summary', () => {
     render(
       <ConfigureStep
         {...defaultProps({
-          isInstance: true,
-          selectedBlueprint: { name: 'Trading Instance', id: 0 },
+          serviceInfo: {
+            blueprintId: 1,
+            owner: '0x0000000000000000000000000000000000000000',
+            operators: ['0x0000000000000000000000000000000000000001'],
+            operatorCount: 1,
+            ttl: 100,
+            createdAt: 1,
+            status: 1,
+            isActive: true,
+            isPermitted: true,
+            blueprintMismatch: false,
+          },
         })}
       />,
     );
-    expect(screen.getByText(/Trading Instance — New service will be created/)).toBeInTheDocument();
+    expect(screen.getByText('Infrastructure Status')).toBeInTheDocument();
+    expect(screen.getByText(/Service #1: active, permitted/)).toBeInTheDocument();
   });
 
-  it('disables firecracker option when unsupported', () => {
-    render(<ConfigureStep {...defaultProps({ firecrackerSupported: false })} />);
-    const option = screen.getByRole('option', { name: /Firecracker \(microVM, unavailable\)/ });
-    expect(option).toBeDisabled();
-    expect(screen.getByText('Firecracker runtime is currently unavailable and cannot be selected.')).toBeInTheDocument();
+  it('shows not validated yet when fleet service info is not loaded', () => {
+    render(<ConfigureStep {...defaultProps({ serviceInfo: null })} />);
+    expect(screen.getByText(/Service #1: not validated yet/)).toBeInTheDocument();
   });
 
-  it('enables firecracker option when supported', () => {
-    render(<ConfigureStep {...defaultProps({ firecrackerSupported: true })} />);
-    const option = screen.getByRole('option', { name: /Firecracker \(microVM\)/ });
-    expect(option).not.toBeDisabled();
+  it('shows service loading and error states for fleet infra summary', () => {
+    const { rerender } = render(<ConfigureStep {...defaultProps({ serviceLoading: true })} />);
+    expect(screen.getByText(/Service #1: checking status.../)).toBeInTheDocument();
+
+    rerender(<ConfigureStep {...defaultProps({ serviceLoading: false, serviceError: 'boom' })} />);
+    expect(screen.getByText(/Service #1: status unavailable/)).toBeInTheDocument();
   });
 
-  it('calls setRuntimeBackend when selecting tee runtime', async () => {
-    const setRuntimeBackend = vi.fn();
-    const user = userEvent.setup();
-    render(<ConfigureStep {...defaultProps({ setRuntimeBackend })} />);
-    await user.selectOptions(screen.getByLabelText('Runtime Backend'), 'tee');
-    expect(setRuntimeBackend).toHaveBeenCalledWith('tee');
-  });
-
-  it('disables runtime selector for tee blueprints', () => {
+  it('shows blueprint mismatch and permission issues in infra summary', () => {
     render(
       <ConfigureStep
         {...defaultProps({
-          runtimeBackend: 'tee',
-          selectedBlueprint: { name: 'TEE Blueprint', id: 'tee-blueprint', isTee: true },
+          serviceInfo: {
+            blueprintId: 42,
+            owner: '0x0000000000000000000000000000000000000000',
+            operators: ['0x0000000000000000000000000000000000000001'],
+            operatorCount: 1,
+            ttl: 100,
+            createdAt: 1,
+            status: 1,
+            isActive: true,
+            isPermitted: false,
+            blueprintMismatch: true,
+          },
         })}
       />,
     );
-    expect(screen.getByLabelText('Runtime Backend')).toBeDisabled();
+    expect(screen.getByText(/Service #1: active, not permitted, wrong blueprint \(#42\)/)).toBeInTheDocument();
+  });
+
+  it('shows instance infrastructure status summary', () => {
+    const selectedOperators = new Set(['0x1234567890123456789012345678901234567890']);
+    render(<ConfigureStep {...defaultProps({ isInstance: true, selectedOperators })} />);
+    expect(screen.getByText(/Instance service mode with 1 selected operator\./)).toBeInTheDocument();
   });
 });
