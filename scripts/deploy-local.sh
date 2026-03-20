@@ -15,7 +15,10 @@
 # Usage: ./scripts/deploy-local.sh
 set -euo pipefail
 
-RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
+ANVIL_PORT="${ANVIL_PORT:-8545}"
+RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
+CHAIN_ID="${CHAIN_ID:-31337}"
+OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
 N_VALIDATOR_SERVICES="${N_VALIDATOR_SERVICES:-1}"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
@@ -206,10 +209,30 @@ done
 # ── [4/9] Request services for all blueprints ────────────────────
 echo "[4/9] Requesting services (3 trading + $N_VALIDATOR_SERVICES validator)..."
 
-# ABI-encode the vault config for TradingBlueprint.onRequest():
-# (address assetToken, address[] signers, uint256 requiredSigs, string name, string symbol)
-CONFIG=$(cast abi-encode "f(address,address[],uint256,string,string)" \
-  "$USDC" "[$DEPLOYER_ADDR]" 1 "Arena Vault Shares" "avSHARE")
+# ABI-encode the TradingProvisionRequest tuple expected by TradingBlueprint.onRequest():
+# (string name, string strategyType, string strategyConfigJson, string riskParamsJson,
+#  address factoryAddress, address assetToken, address[] signers, uint256 requiredSigs,
+#  uint256 chainId, string rpcUrl, string cron, uint64 cpuCores, uint64 memoryMb,
+#  uint64 maxLifetimeDays, uint64[] validatorServiceIds, uint256 maxCollateralBps)
+TRADING_CONFIG=$(cast abi-encode \
+  "f(string,string,string,string,address,address,address[],uint256,uint256,string,string,uint64,uint64,uint64,uint64[],uint256)" \
+  "Arena Demo Bot" \
+  "dex" \
+  "{}" \
+  "{}" \
+  "$VAULT_FACTORY" \
+  "$USDC" \
+  "[$DEPLOYER_ADDR]" \
+  1 \
+  "$CHAIN_ID" \
+  "$RPC_URL" \
+  "0 */5 * * * *" \
+  1 \
+  2048 \
+  30 \
+  "[]" \
+  0)
+VALIDATOR_CONFIG="0x"
 
 # Build permitted callers list
 PERMITTED_CALLERS="[$USER_ACCOUNT,$USER_ACCOUNT_2,$DEPLOYER_ADDR"
@@ -220,81 +243,147 @@ if [[ -n "${EXTRA_ACCOUNTS:-}" ]]; then
 fi
 PERMITTED_CALLERS="$PERMITTED_CALLERS]"
 
-# Helper: create a service for a blueprint and return its service ID
-create_service() {
+NEXT_REQ=$(cast call "$TANGLE" "serviceRequestCount()(uint64)" --rpc-url "$RPC_URL" 2>&1 | xargs)
+NEXT_REQ=$(echo "$NEXT_REQ" | sed 's/^0x//' | sed 's/^0*//' | sed 's/^$/0/')
+SVC_BEFORE=$(cast call "$TANGLE" "serviceCount()(uint64)" --rpc-url "$RPC_URL" 2>&1 | xargs)
+SVC_BEFORE=$(echo "$SVC_BEFORE" | sed 's/^0x//' | sed 's/^0*//' | sed 's/^$/0/')
+
+# Helper: submit a service request for a blueprint and return its request ID
+submit_service_request() {
   local bp_id="$1"
   local label="$2"
+  local config="$3"
+  local req_id="$NEXT_REQ"
 
-  local req_id
-  req_id=$(cast call "$TANGLE" "serviceRequestCount()(uint64)" --rpc-url "$RPC_URL" 2>&1 | xargs)
-  req_id=$(echo "$req_id" | sed 's/^0x//' | sed 's/^0*//' | sed 's/^$/0/')
-
-  cast send "$TANGLE" \
+  if ! cast send "$TANGLE" \
     "requestService(uint64,address[],bytes,address[],uint64,address,uint256)" \
     "$bp_id" \
     "[$OPERATOR1_ADDR,$OPERATOR2_ADDR]" \
-    "$CONFIG" \
+    "$config" \
     "$PERMITTED_CALLERS" \
     31536000 \
     "0x0000000000000000000000000000000000000000" \
     0 \
     --gas-price 0 --priority-gas-price 0 --gas-limit 3000000 \
-    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" > /dev/null 2>&1; then
+    echo "ERROR: requestService failed for $label blueprint $bp_id"
+    exit 1
+  fi
 
-  cast send "$TANGLE" "approveService(uint64,uint8)" "$req_id" 100 \
-    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
-    --rpc-url "$RPC_URL" --private-key "$OPERATOR1_KEY" > /dev/null 2>&1
-  cast send "$TANGLE" "approveService(uint64,uint8)" "$req_id" 100 \
-    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
-    --rpc-url "$RPC_URL" --private-key "$OPERATOR2_KEY" > /dev/null 2>&1
-
-  local svc_count
-  svc_count=$(cast call "$TANGLE" "serviceCount()(uint64)" --rpc-url "$RPC_URL" 2>&1 | xargs)
-  svc_count=$(echo "$svc_count" | sed 's/^0x//' | sed 's/^0*//' | sed 's/^$/0/')
-  local svc_id=$((svc_count - 1))
-
-  echo "  $label: service $svc_id (request $req_id)" >&2
-  echo "$svc_id"
+  NEXT_REQ=$((NEXT_REQ + 1))
+  REQ_ID_OUT="$req_id"
+  echo "  $label: request $req_id" >&2
 }
 
-# Create 3 trading services (one per variant)
-CLOUD_SERVICE_ID=$(create_service "$BLUEPRINT_ID" "Cloud")
-INSTANCE_SERVICE_ID=$(create_service "$INSTANCE_BLUEPRINT_ID" "Instance")
-TEE_SERVICE_ID=$(create_service "$TEE_BLUEPRINT_ID" "TEE")
+# Submit 3 trading service requests (one per variant)
+submit_service_request "$BLUEPRINT_ID" "Cloud" "$TRADING_CONFIG"
+CLOUD_REQUEST_ID="$REQ_ID_OUT"
+submit_service_request "$INSTANCE_BLUEPRINT_ID" "Instance" "$TRADING_CONFIG"
+INSTANCE_REQUEST_ID="$REQ_ID_OUT"
+submit_service_request "$TEE_BLUEPRINT_ID" "TEE" "$TRADING_CONFIG"
+TEE_REQUEST_ID="$REQ_ID_OUT"
 
-# Create N validator services (all use same validator blueprint)
-declare -a VALIDATOR_SERVICE_IDS
+# Submit N validator service requests (all use same validator blueprint)
+declare -a VALIDATOR_REQUEST_IDS
 for i in $(seq 1 "$N_VALIDATOR_SERVICES"); do
-  svc_id=$(create_service "$VALIDATOR_BLUEPRINT_ID" "Validator $i")
-  VALIDATOR_SERVICE_IDS+=("$svc_id")
+  submit_service_request "$VALIDATOR_BLUEPRINT_ID" "Validator $i" "$VALIDATOR_CONFIG"
+  VALIDATOR_REQUEST_IDS+=("$REQ_ID_OUT")
 done
+
+VALIDATOR_REQUEST_IDS_CSV=$(IFS=,; echo "${VALIDATOR_REQUEST_IDS[*]}")
+
+echo ""
+echo "  Cloud request ID:      $CLOUD_REQUEST_ID"
+echo "  Instance request ID:   $INSTANCE_REQUEST_ID"
+echo "  TEE request ID:        $TEE_REQUEST_ID"
+echo "  Validator request IDs: $VALIDATOR_REQUEST_IDS_CSV"
+
+# ── [5/9] Approve service requests ────────────────────────────────
+echo "[5/9] Approving service requests..."
+
+for REQ_ID in "$CLOUD_REQUEST_ID" "$INSTANCE_REQUEST_ID" "$TEE_REQUEST_ID"; do
+  cast send "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
+    --rpc-url "$RPC_URL" --private-key "$OPERATOR1_KEY" > /dev/null 2>&1
+  cast send "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
+    --rpc-url "$RPC_URL" --private-key "$OPERATOR2_KEY" > /dev/null 2>&1
+done
+
+for REQ_ID in "${VALIDATOR_REQUEST_IDS[@]}"; do
+  cast send "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
+    --rpc-url "$RPC_URL" --private-key "$OPERATOR1_KEY" > /dev/null 2>&1
+  cast send "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
+    --rpc-url "$RPC_URL" --private-key "$OPERATOR2_KEY" > /dev/null 2>&1
+done
+
+# Resolve service IDs by scanning services created during this deployment.
+echo "[6/9] Resolving service IDs..."
+SVC_AFTER=$(cast call "$TANGLE" "serviceCount()(uint64)" --rpc-url "$RPC_URL" 2>&1 | xargs)
+SVC_AFTER=$(echo "$SVC_AFTER" | sed 's/^0x//' | sed 's/^0*//' | sed 's/^$/0/')
+
+CLOUD_SERVICE_ID=""
+INSTANCE_SERVICE_ID=""
+TEE_SERVICE_ID=""
+declare -a VALIDATOR_SERVICE_IDS
+
+if (( SVC_AFTER > SVC_BEFORE )); then
+  for SVC_ID in $(seq "$SVC_BEFORE" "$((SVC_AFTER - 1))"); do
+    SVC_DATA=$(cast call "$TANGLE" "getService(uint64)" "$SVC_ID" --rpc-url "$RPC_URL" 2>/dev/null || true)
+    BP_WORD=$(echo "$SVC_DATA" | head -c 66)
+    BP_NUM=$(echo "$BP_WORD" | sed 's/^0x0*//' | sed 's/^$/0/')
+
+    if [[ "$BP_NUM" == "$BLUEPRINT_ID" && -z "$CLOUD_SERVICE_ID" ]]; then
+      CLOUD_SERVICE_ID="$SVC_ID"
+    elif [[ "$BP_NUM" == "$INSTANCE_BLUEPRINT_ID" && -z "$INSTANCE_SERVICE_ID" ]]; then
+      INSTANCE_SERVICE_ID="$SVC_ID"
+    elif [[ "$BP_NUM" == "$TEE_BLUEPRINT_ID" && -z "$TEE_SERVICE_ID" ]]; then
+      TEE_SERVICE_ID="$SVC_ID"
+    elif [[ "$BP_NUM" == "$VALIDATOR_BLUEPRINT_ID" ]]; then
+      VALIDATOR_SERVICE_IDS+=("$SVC_ID")
+    fi
+  done
+fi
+
+if [[ -z "$CLOUD_SERVICE_ID" || -z "$INSTANCE_SERVICE_ID" || -z "$TEE_SERVICE_ID" ]]; then
+  echo "ERROR: Failed to resolve all trading service IDs from services $SVC_BEFORE..$((SVC_AFTER - 1))."
+  echo "  Cloud=$CLOUD_SERVICE_ID Instance=$INSTANCE_SERVICE_ID TEE=$TEE_SERVICE_ID"
+  exit 1
+fi
+
+if [[ "${#VALIDATOR_SERVICE_IDS[@]}" -lt "$N_VALIDATOR_SERVICES" ]]; then
+  echo "WARNING: Failed to resolve $N_VALIDATOR_SERVICES validator service(s) from services $SVC_BEFORE..$((SVC_AFTER - 1))."
+  echo "  Found: ${VALIDATOR_SERVICE_IDS[*]:-none}"
+  echo "  Continuing with direct validator HTTP endpoints only."
+  VALIDATOR_SERVICE_IDS=("0")
+fi
 
 # First validator service (used as default in frontend)
 VALIDATOR_SERVICE_ID="${VALIDATOR_SERVICE_IDS[0]}"
 # Comma-separated list of all validator service IDs
 VALIDATOR_SERVICE_IDS_CSV=$(IFS=,; echo "${VALIDATOR_SERVICE_IDS[*]}")
 
-echo ""
 echo "  Cloud service ID:      $CLOUD_SERVICE_ID"
 echo "  Instance service ID:   $INSTANCE_SERVICE_ID"
 echo "  TEE service ID:        $TEE_SERVICE_ID"
 echo "  Validator service IDs: $VALIDATOR_SERVICE_IDS_CSV"
 
-# ── [5/9] Grant OPERATOR_ROLE via onOperatorJoined ───────────────
-echo "[5/9] Granting OPERATOR_ROLE to operators..."
+# ── [6/9] Grant OPERATOR_ROLE via onOperatorJoined ───────────────
+echo "[6/9] Granting OPERATOR_ROLE to operators..."
 
 # onOperatorJoined is NOT auto-called during Fixed membership activation.
 # We impersonate Tangle to trigger it on both BSMs.
 cast rpc anvil_impersonateAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/null 2>&1
 
 # Trading services — each variant has its own BSM
-declare -A SVC_BSM_MAP
-SVC_BSM_MAP["$CLOUD_SERVICE_ID"]="$BSM"
-SVC_BSM_MAP["$INSTANCE_SERVICE_ID"]="$INSTANCE_BSM"
-SVC_BSM_MAP["$TEE_SERVICE_ID"]="$TEE_BSM"
+SERVICE_IDS=("$CLOUD_SERVICE_ID" "$INSTANCE_SERVICE_ID" "$TEE_SERVICE_ID")
+SERVICE_BSMS=("$BSM" "$INSTANCE_BSM" "$TEE_BSM")
 
-for SVC_ID in "$CLOUD_SERVICE_ID" "$INSTANCE_SERVICE_ID" "$TEE_SERVICE_ID"; do
-  SVC_BSM="${SVC_BSM_MAP[$SVC_ID]}"
+for idx in 0 1 2; do
+  SVC_ID="${SERVICE_IDS[$idx]}"
+  SVC_BSM="${SERVICE_BSMS[$idx]}"
   cast send "$SVC_BSM" "onOperatorJoined(uint64,address,uint16)" \
     "$SVC_ID" "$OPERATOR1_ADDR" 10000 \
     --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
@@ -323,8 +412,6 @@ cast rpc anvil_stopImpersonatingAccount "$TANGLE" --rpc-url "$RPC_URL" > /dev/nu
 
 # ── [6/9] Verify service state ───────────────────────────────────
 echo "[6/9] Verifying service state..."
-SERVICE_IDS=("$CLOUD_SERVICE_ID" "$INSTANCE_SERVICE_ID" "$TEE_SERVICE_ID")
-SERVICE_BSMS=("$BSM" "$INSTANCE_BSM" "$TEE_BSM")
 for idx in 0 1 2; do
   SVC_ID="${SERVICE_IDS[$idx]}"
   SVC_BSM="${SERVICE_BSMS[$idx]}"
@@ -365,7 +452,7 @@ ALL_SERVICE_IDS="$CLOUD_SERVICE_ID,$INSTANCE_SERVICE_ID,$TEE_SERVICE_ID"
 cat > arena/.env.local <<EOF
 VITE_USE_LOCAL_CHAIN=true
 VITE_RPC_URL=$RPC_URL
-VITE_CHAIN_ID=31337
+VITE_CHAIN_ID=$CHAIN_ID
 VITE_TANGLE_CONTRACT=$TANGLE
 VITE_VAULT_FACTORY=$VAULT_FACTORY
 VITE_USDC_ADDRESS=$USDC
@@ -373,6 +460,7 @@ VITE_WETH_ADDRESS=$WETH
 VITE_SERVICE_IDS=$ALL_SERVICE_IDS
 VITE_BOT_META={"$CLOUD_SERVICE_ID":{"name":"Cloud Demo Bot","strategyType":"dex"},"$INSTANCE_SERVICE_ID":{"name":"Instance Demo Bot","strategyType":"dex"},"$TEE_SERVICE_ID":{"name":"TEE Demo Bot","strategyType":"dex"}}
 VITE_OPERATOR_API_URL=/operator-api
+VITE_OPERATOR_PROXY_TARGET=${VITE_OPERATOR_PROXY_TARGET:-http://localhost:$OPERATOR_API_PORT}
 VITE_DEFAULT_AI_PROVIDER=zai
 VITE_DEFAULT_AI_API_KEY=${ZAI_API_KEY:-}
 VITE_TRADING_BLUEPRINT=$BSM
