@@ -1,12 +1,17 @@
 import type { Address } from 'viem';
 import {
-  tangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
-  configureNetworks, getNetworks,
+  createTangleLocalChain, tangleTestnet, tangleMainnet, rpcUrl,
+  configureNetworks, getNetworks, sanitizeSelectedChainId,
   type CoreAddresses,
 } from '@tangle/blueprint-ui';
 
+export const tangleLocal = createTangleLocalChain({
+  chainId: Number(import.meta.env.VITE_CHAIN_ID ?? 31337),
+  rpcUrl: import.meta.env.VITE_RPC_URL,
+});
+
 export {
-  tangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
+  tangleTestnet, tangleMainnet, rpcUrl,
   allTangleChains, mainnet, resolveRpcUrl,
   configureNetworks, getNetworks,
 } from '@tangle/blueprint-ui';
@@ -61,6 +66,8 @@ configureNetworks<ArenaAddresses>({
     },
   },
 });
+
+sanitizeSelectedChainId();
 
 /** Backwards-compatible accessor. */
 export const networks = getNetworks<ArenaAddresses>();

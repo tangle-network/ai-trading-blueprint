@@ -4,14 +4,15 @@ import { type ReactNode } from 'react';
 import {
   createTangleTransports,
   defaultConnectKitOptions,
-  tangleWalletChains,
+  getTangleWalletChains,
 } from '@tangle/blueprint-ui';
 import { Web3Shell } from '@tangle/blueprint-ui/components';
+import { tangleLocal } from '~/lib/contracts/chains';
 
 const config = createConfig(
   getDefaultConfig({
-    chains: tangleWalletChains,
-    transports: createTangleTransports(),
+    chains: getTangleWalletChains(tangleLocal),
+    transports: createTangleTransports(tangleLocal),
     walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3fcc6bba6f1de962d911bb5b5c3dba68',
     appName: 'AI Trading Arena',
     appDescription: 'AI-powered trading competition platform on Tangle Network',
