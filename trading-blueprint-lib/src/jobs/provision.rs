@@ -235,6 +235,7 @@ pub async fn provision_core(
             memory_mb: request.memory_mb,
             disk_gb: 10,
             tee_config: None,
+            service_id: None,
             owner: String::new(),
             user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
             port_mappings: Vec::new(),
