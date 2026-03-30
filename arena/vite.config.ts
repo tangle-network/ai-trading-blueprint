@@ -127,6 +127,7 @@ export default defineConfig(({ mode }) => {
   // process.env.VITE_* is NOT populated when vite.config.ts runs — must use loadEnv().
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const rpcTarget = env.VITE_RPC_URL || 'http://127.0.0.1:8545';
+  const operatorProxyTarget = env.VITE_OPERATOR_PROXY_TARGET || 'http://localhost:9200';
 
   return {
   plugins: [
@@ -169,7 +170,7 @@ export default defineConfig(({ mode }) => {
     proxy: {
       // Proxy operator API calls to avoid CORS issues in development
       '/operator-api': {
-        target: 'http://localhost:9200',
+        target: operatorProxyTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/operator-api/, ''),
       },

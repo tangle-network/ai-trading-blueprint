@@ -7,7 +7,7 @@ import {
   useSwitchChain,
 } from 'wagmi';
 import { useStore } from '@nanostores/react';
-import { encodeAbiParameters, parseAbiParameters, zeroAddress } from 'viem';
+import { decodeEventLog, encodeAbiParameters, parseAbiParameters, parseGwei, zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { Button } from '@tangle/blueprint-ui/components';
 import { toast } from 'sonner';
@@ -110,6 +110,17 @@ export default function ProvisionPage() {
   const selectedNetwork = networks[selectedChainId]!;
   const targetChain = selectedNetwork.chain;
   const isWrongChain = isConnected && walletChainId !== targetChain.id;
+  const localChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 31337);
+  const localFeeOverrides = useMemo(
+    () =>
+      import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' && targetChain.id === localChainId
+        ? {
+            maxFeePerGas: parseGwei('1'),
+            maxPriorityFeePerGas: parseGwei('1'),
+          }
+        : {},
+    [targetChain.id, localChainId],
+  );
 
   /** Ensure wallet is on tangleLocal before sending a TX. Returns true if ready. */
   const ensureCorrectChain = useCallback(async (): Promise<boolean> => {
@@ -290,25 +301,6 @@ export default function ProvisionPage() {
     });
   }, [txHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Wait for new service TX receipt
-  useEffect(() => {
-    if (!newServiceTxHash || !newServiceDeploying) return;
-    publicClient
-      .waitForTransactionReceipt({ hash: newServiceTxHash })
-      .then((receipt: { status: string }) => {
-        if (receipt.status === 'success') {
-          toast.success('Service request submitted! Waiting for activation...');
-        } else {
-          toast.error('Service request transaction reverted');
-          setNewServiceDeploying(false);
-        }
-      })
-      .catch(() => {
-        toast.error('Failed to confirm service request');
-        setNewServiceDeploying(false);
-      });
-  }, [newServiceTxHash, newServiceDeploying]);
-
   // Auto-provision instance bot via operator API after service activation
   const autoProvisionInstance = useCallback(async (activatedServiceId: string) => {
     setInstanceProvisioning(true);
@@ -423,39 +415,6 @@ export default function ProvisionPage() {
     toast.success(`Instance provisioned! Configure API keys to start trading.`);
     setStep('secrets');
   }, [userAddress, name, strategyType, blueprintId, selectedBlueprint, targetChain.id, resetTx]);
-
-  // Watch for ServiceActivated when deploying new service
-  useEffect(() => {
-    if (!newServiceDeploying) return;
-    const unwatch = publicClient.watchContractEvent({
-      address: addresses.tangle,
-      abi: tangleServicesAbi,
-      eventName: 'ServiceActivated',
-      onLogs(logs: Array<{ args: { blueprintId?: bigint; serviceId?: bigint } }>) {
-        for (const log of logs) {
-          const bid = log.args.blueprintId;
-          const sid = log.args.serviceId;
-          if (bid == null || sid == null) continue;
-          if (Number(bid) === Number(blueprintId)) {
-            const activatedId = Number(sid).toString();
-            setNewServiceDeploying(false);
-            setShowInfra(false);
-
-            if (isInstance) {
-              toast.success(`Service #${activatedId} active! Provisioning instance bot...`);
-              autoProvisionInstance(activatedId);
-            } else {
-              setServiceId(activatedId);
-              setServiceMode('existing');
-              toast.success(`Service #${activatedId} is live! Ready to provision agents.`);
-              discoverServices();
-            }
-          }
-        }
-      },
-    });
-    return unwatch;
-  }, [newServiceDeploying, blueprintId, isInstance, autoProvisionInstance]);
 
   // ── Service validation ─────────────────────────────────────────────────
 
@@ -649,6 +608,79 @@ export default function ProvisionPage() {
     }
   }, [blueprintId, userAddress]);
 
+  const handleServiceActivated = useCallback((activatedServiceId: string) => {
+    setNewServiceDeploying(false);
+    setShowInfra(false);
+
+    if (isInstance) {
+      toast.success(`Service #${activatedServiceId} active! Provisioning instance bot...`);
+      void autoProvisionInstance(activatedServiceId);
+    } else {
+      setServiceId(activatedServiceId);
+      setServiceMode('existing');
+      toast.success(`Service #${activatedServiceId} is live! Ready to provision agents.`);
+      void discoverServices();
+    }
+  }, [isInstance, autoProvisionInstance, discoverServices]);
+
+  // Wait for new service TX receipt
+  useEffect(() => {
+    if (!newServiceTxHash || !newServiceDeploying) return;
+    publicClient
+      .waitForTransactionReceipt({ hash: newServiceTxHash })
+      .then((receipt: { status: string; logs?: Array<{ data: `0x${string}`; topics: readonly `0x${string}`[] }> }) => {
+        if (receipt.status === 'success') {
+          for (const log of receipt.logs ?? []) {
+            try {
+              const decoded = decodeEventLog({
+                abi: tangleServicesAbi,
+                data: log.data,
+                topics: [...log.topics],
+              });
+              if (decoded.eventName !== 'ServiceActivated') continue;
+              const args = decoded.args as { blueprintId?: bigint; serviceId?: bigint };
+              if (args.blueprintId == null || args.serviceId == null) continue;
+              if (Number(args.blueprintId) !== Number(blueprintId)) continue;
+              handleServiceActivated(Number(args.serviceId).toString());
+              return;
+            } catch {
+              // Ignore unrelated logs in the receipt
+            }
+          }
+
+          toast.success('Service request submitted! Waiting for activation...');
+        } else {
+          toast.error('Service request transaction reverted');
+          setNewServiceDeploying(false);
+        }
+      })
+      .catch(() => {
+        toast.error('Failed to confirm service request');
+        setNewServiceDeploying(false);
+      });
+  }, [newServiceTxHash, newServiceDeploying, blueprintId, handleServiceActivated]);
+
+  // Watch for ServiceActivated when deploying new service
+  useEffect(() => {
+    if (!newServiceDeploying) return;
+    const unwatch = publicClient.watchContractEvent({
+      address: addresses.tangle,
+      abi: tangleServicesAbi,
+      eventName: 'ServiceActivated',
+      onLogs(logs: Array<{ args: { blueprintId?: bigint; serviceId?: bigint } }>) {
+        for (const log of logs) {
+          const bid = log.args.blueprintId;
+          const sid = log.args.serviceId;
+          if (bid == null || sid == null) continue;
+          if (Number(bid) === Number(blueprintId)) {
+            handleServiceActivated(Number(sid).toString());
+          }
+        }
+      },
+    });
+    return unwatch;
+  }, [newServiceDeploying, blueprintId, handleServiceActivated]);
+
   useEffect(() => {
     if (!isConnected || !userAddress || serviceMode !== 'existing') return;
     discoverServices();
@@ -754,6 +786,7 @@ export default function ProvisionPage() {
         abi: tangleJobsAbi,
         functionName: 'submitJob',
         args: [BigInt(serviceId), 0, inputs],
+        ...localFeeOverrides,
       },
       {
         onError(err) {
@@ -903,6 +936,7 @@ export default function ProvisionPage() {
         functionName: 'createServiceFromQuotes',
         args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
         value: totalCost,
+        ...localFeeOverrides,
       },
       {
         onSuccess(hash) {
