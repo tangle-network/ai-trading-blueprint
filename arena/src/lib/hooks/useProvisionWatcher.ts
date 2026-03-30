@@ -252,6 +252,18 @@ export function useProvisionWatcher() {
               if (!res.ok) continue;
               const progress = await res.json();
               if (progress?.phase) {
+                if (progress.phase === 'failed') {
+                  updateProvision(prov.id, {
+                    phase: 'failed',
+                    progressPhase: progress.phase,
+                    progressDetail: progress.message,
+                    errorMessage: progress.message ?? 'Provision failed in operator runtime',
+                    ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+                    ...(progress.metadata?.service_id ? { serviceId: progress.metadata.service_id } : {}),
+                  });
+                  continue;
+                }
+
                 // If operator reports ready (100%), transition to awaiting_secrets
                 // This is the fallback path when on-chain event decoding misses
                 if (progress.phase === 'ready' && progress.progress_pct === 100) {

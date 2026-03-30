@@ -21,6 +21,7 @@ export const PROVISION_PROGRESS_LABELS: Record<string, string> = {
   container_start: 'Container ready, finalizing configuration...',
   health_check: 'Saving bot configuration...',
   ready: 'Submitting on-chain result...',
+  failed: 'Provisioning failed',
 };
 
 // ── Service types ───────────────────────────────────────────────────────
