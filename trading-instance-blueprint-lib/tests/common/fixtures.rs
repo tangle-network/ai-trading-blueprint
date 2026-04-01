@@ -8,7 +8,7 @@ pub fn seed_sandbox_record(
     sidecar_url: &str,
     token: &str,
 ) -> sandbox_runtime::SandboxRecord {
-    sandbox_runtime::SandboxRecord {
+    let record = sandbox_runtime::SandboxRecord {
         id: id.to_string(),
         container_id: format!("container-{id}"),
         sidecar_url: sidecar_url.to_string(),
@@ -39,10 +39,20 @@ pub fn seed_sandbox_record(
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        service_id: None,
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
-    }
+    };
+
+    sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .insert(id.to_string(), record.clone())
+        .expect("insert sandbox");
+
+    record
 }
 
 /// Seed a `TradingBotRecord` into the bots store.
@@ -128,6 +138,9 @@ pub fn seed_workflow(
         trigger_type: "cron".to_string(),
         trigger_config: cron.to_string(),
         sandbox_config_json: String::new(),
+        target_kind: ai_agent_sandbox_blueprint_lib::workflows::WORKFLOW_TARGET_SANDBOX,
+        target_sandbox_id: String::new(),
+        target_service_id: 0,
         active: true,
         next_run_at: next_run,
         last_run_at: None,

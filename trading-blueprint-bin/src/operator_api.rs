@@ -1,9 +1,11 @@
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
@@ -37,6 +39,7 @@ pub struct BotSummary {
     pub paper_trade: bool,
     pub created_at: u64,
     pub secrets_configured: bool,
+    pub sandbox_exists: bool,
     pub sandbox_id: String,
     pub call_id: u64,
     pub service_id: u64,
@@ -44,9 +47,12 @@ pub struct BotSummary {
 
 impl BotSummary {
     fn from_record(b: TradingBotRecord) -> Self {
-        let secrets_configured = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id)
+        let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id).ok();
+        let secrets_configured = sandbox
+            .as_ref()
             .map(|s| s.has_user_secrets())
             .unwrap_or(false);
+        let sandbox_exists = sandbox.is_some();
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -57,6 +63,7 @@ impl BotSummary {
             paper_trade: b.paper_trade,
             created_at: b.created_at,
             secrets_configured,
+            sandbox_exists,
             sandbox_id: b.sandbox_id,
             call_id: b.call_id,
             service_id: b.service_id,
@@ -85,16 +92,22 @@ pub struct BotDetailResponse {
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
     pub secrets_configured: bool,
+    pub sandbox_exists: bool,
     pub wind_down_started_at: Option<u64>,
     pub validator_service_ids: Vec<u64>,
     pub validator_endpoints: Vec<String>,
+    pub call_id: u64,
+    pub service_id: u64,
 }
 
 impl BotDetailResponse {
     fn from_record(b: TradingBotRecord) -> Self {
-        let secrets_configured = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id)
+        let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id).ok();
+        let secrets_configured = sandbox
+            .as_ref()
             .map(|s| s.has_user_secrets())
             .unwrap_or(false);
+        let sandbox_exists = sandbox.is_some();
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -113,9 +126,12 @@ impl BotDetailResponse {
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id,
             secrets_configured,
+            sandbox_exists,
             wind_down_started_at: b.wind_down_started_at,
             validator_service_ids: b.validator_service_ids.clone(),
             validator_endpoints: trading_blueprint_lib::discovery::endpoints_from_env(),
+            call_id: b.call_id,
+            service_id: b.service_id,
         }
     }
 }
@@ -155,6 +171,19 @@ impl From<sandbox_runtime::provision_progress::ProvisionStatus> for ProvisionPro
 #[derive(Serialize)]
 pub struct ProvisionListResponse {
     pub provisions: Vec<ProvisionProgressResponse>,
+}
+
+#[derive(Serialize)]
+struct OperatorMetaResponse {
+    api_version: String,
+    deployment_kind: String,
+    features: OperatorFeatureFlags,
+}
+
+#[derive(Serialize)]
+struct OperatorFeatureFlags {
+    chat: bool,
+    terminal: bool,
 }
 
 // ── Secrets types ────────────────────────────────────────────────────────
@@ -221,6 +250,96 @@ struct UpdateConfigRequest {
 struct ConfigResponse {
     status: String,
 }
+
+#[derive(Serialize)]
+struct OperatorErrorResponse {
+    code: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_id: Option<String>,
+}
+
+enum ApiError {
+    Message(StatusCode, String),
+    Conflict(String),
+    StaleState {
+        message: String,
+        bot_id: String,
+        sandbox_id: String,
+    },
+}
+
+impl ApiError {
+    fn message(status: StatusCode, message: impl Into<String>) -> Self {
+        Self::Message(status, message.into())
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self::Conflict(message.into())
+    }
+
+    fn stale_bot(bot: &TradingBotRecord) -> Self {
+        Self::StaleState {
+            message: format!(
+                "Bot {} points to missing sandbox {}. Operator state is stale; reprovision the agent from the deploy step.",
+                bot.id, bot.sandbox_id
+            ),
+            bot_id: bot.id.clone(),
+            sandbox_id: bot.sandbox_id.clone(),
+        }
+    }
+}
+
+impl From<(StatusCode, String)> for ApiError {
+    fn from(value: (StatusCode, String)) -> Self {
+        Self::Message(value.0, value.1)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        match self {
+            ApiError::Message(status, message) => (
+                status,
+                Json(OperatorErrorResponse {
+                    code: "operator_error",
+                    message,
+                    bot_id: None,
+                    sandbox_id: None,
+                }),
+            )
+                .into_response(),
+            ApiError::Conflict(message) => (
+                StatusCode::CONFLICT,
+                Json(OperatorErrorResponse {
+                    code: "conflict",
+                    message,
+                    bot_id: None,
+                    sandbox_id: None,
+                }),
+            )
+                .into_response(),
+            ApiError::StaleState {
+                message,
+                bot_id,
+                sandbox_id,
+            } => (
+                StatusCode::CONFLICT,
+                Json(OperatorErrorResponse {
+                    code: "stale_state",
+                    message,
+                    bot_id: Some(bot_id),
+                    sandbox_id: Some(sandbox_id),
+                }),
+            )
+                .into_response(),
+        }
+    }
+}
+
+type ApiResult<T> = Result<Json<T>, ApiError>;
 
 // ── Metrics / trades response types ─────────────────────────────────────
 
@@ -292,6 +411,12 @@ struct MetricsHistoryQuery {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct TradeListQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
 // ── Session auth types ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -304,6 +429,7 @@ struct SessionRequest {
 
 pub fn build_operator_router() -> Router {
     Router::new()
+        .route("/api/meta", get(get_operator_meta))
         // Session auth (delegates to sandbox-runtime's session_auth)
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
@@ -339,9 +465,21 @@ pub fn build_operator_router() -> Router {
         .route("/api/pricing/billing/{service_id}", get(get_billing_status))
         // Debug endpoints (auth required)
         .route("/api/debug/sandboxes", get(debug_sandboxes))
+        .route("/api/debug/state-health", get(debug_state_health))
         .route("/api/debug/workflows", get(debug_workflows))
         .route("/api/debug/run-now/{bot_id}", post(debug_run_now))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
+}
+
+async fn get_operator_meta() -> Json<OperatorMetaResponse> {
+    Json(OperatorMetaResponse {
+        api_version: "1".to_string(),
+        deployment_kind: "fleet".to_string(),
+        features: OperatorFeatureFlags {
+            chat: false,
+            terminal: false,
+        },
+    })
 }
 
 // ── Auth handlers ────────────────────────────────────────────────────────
@@ -382,15 +520,33 @@ async fn create_session(
 async fn list_bots(
     SessionAuth(_caller): SessionAuth,
     Query(query): Query<BotListQuery>,
-) -> Result<Json<BotListResponse>, (StatusCode, String)> {
+) -> ApiResult<BotListResponse> {
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
 
     // Exact match by on-chain call_id + service_id (most reliable lookup)
     if let (Some(call_id), Some(service_id)) = (query.call_id, query.service_id) {
-        let bot = state::find_bot_by_call_id(service_id, call_id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-        let bots: Vec<BotSummary> = bot.into_iter().map(BotSummary::from_record).collect();
+        let matches = state::bot_lookup_candidates_by_call_id(service_id, call_id)
+            .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+        if matches.live.len() > 1 {
+            let ids: Vec<String> = matches.live.iter().map(|bot| bot.id.clone()).collect();
+            return Err(ApiError::conflict(format!(
+                "Multiple live bots found for service_id {service_id} and call_id {call_id}: {}. Operator state is ambiguous; reset local state or reprovision the agent.",
+                ids.join(", ")
+            )));
+        }
+
+        if matches.live.is_empty() && !matches.stale.is_empty() {
+            return Err(ApiError::stale_bot(&matches.stale[0]));
+        }
+
+        let bots: Vec<BotSummary> = matches
+            .live
+            .into_iter()
+            .take(1)
+            .map(BotSummary::from_record)
+            .collect();
         let total = bots.len();
         return Ok(Json(BotListResponse {
             bots,
@@ -408,7 +564,7 @@ async fn list_bots(
         state::list_bots(limit, offset)
     };
 
-    let paginated = result.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let paginated = result.map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let mut bots: Vec<BotSummary> = paginated
         .bots
@@ -444,14 +600,14 @@ async fn configure_secrets(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
     Json(body): Json<ConfigureSecretsRequest>,
-) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
-    let bot = resolve_bot(&bot_id)?;
+) -> ApiResult<SecretsResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
 
     // Verify caller is the bot's submitter
     if !bot.submitter_address.is_empty()
         && caller.to_lowercase() != bot.submitter_address.to_lowercase()
     {
-        return Err((
+        return Err(ApiError::message(
             StatusCode::FORBIDDEN,
             format!("Caller {caller} is not the bot submitter"),
         ));
@@ -486,11 +642,10 @@ async fn configure_secrets(
             }
         }
         if !found {
-            return Err((
+            return Err(ApiError::message(
                 StatusCode::BAD_REQUEST,
                 "No API keys provided and operator has no pre-configured AI keys. \
-                 Set ANTHROPIC_API_KEY or ZAI_API_KEY in the operator environment."
-                    .to_string(),
+                 Set ANTHROPIC_API_KEY or ZAI_API_KEY in the operator environment.",
             ));
         }
         env
@@ -500,7 +655,7 @@ async fn configure_secrets(
 
     let result = trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot_id, env_json, None)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(SecretsResponse {
         status: "active".to_string(),
@@ -557,14 +712,14 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
 async fn start_bot(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
-) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
-    let bot = resolve_bot(&bot_id)?;
+) -> ApiResult<BotControlResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
     trading_blueprint_lib::jobs::start_core(&bot.sandbox_id, false)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(BotControlResponse {
         status: "started".to_string(),
@@ -575,14 +730,14 @@ async fn start_bot(
 async fn stop_bot(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
-) -> Result<Json<BotControlResponse>, (StatusCode, String)> {
-    let bot = resolve_bot(&bot_id)?;
+) -> ApiResult<BotControlResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
     trading_blueprint_lib::jobs::stop_core(&bot.sandbox_id, false)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(BotControlResponse {
         status: "stopped".to_string(),
@@ -646,8 +801,8 @@ async fn update_config(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
     Json(body): Json<UpdateConfigRequest>,
-) -> Result<Json<ConfigResponse>, (StatusCode, String)> {
-    let bot = resolve_bot(&bot_id)?;
+) -> ApiResult<ConfigResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
 
@@ -657,7 +812,7 @@ async fn update_config(
         body.risk_params_json.as_deref().unwrap_or(""),
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(ConfigResponse {
         status: "configured".to_string(),
@@ -671,6 +826,214 @@ fn resolve_bot(bot_id: &str) -> Result<TradingBotRecord, (StatusCode, String)> {
     state::resolve_bot(bot_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Bot {bot_id} not found")))
+}
+
+fn resolve_live_bot(bot_id: &str) -> Result<TradingBotRecord, ApiError> {
+    let bot =
+        resolve_bot(bot_id).map_err(|(status, message)| ApiError::message(status, message))?;
+    ensure_live_sandbox(bot)
+}
+
+fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiError> {
+    if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_err() {
+        return Err(ApiError::stale_bot(&bot));
+    }
+    Ok(bot)
+}
+
+async fn fetch_trading_api_json(
+    bot: &TradingBotRecord,
+    path: &str,
+    query: &[(&str, String)],
+) -> Result<Option<serde_json::Value>, String> {
+    if bot.trading_api_url.trim().is_empty() || bot.trading_api_token.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("failed to build trading api client: {e}"))?;
+
+    let url = format!("{}{}", bot.trading_api_url.trim_end_matches('/'), path);
+    let response = client
+        .get(url)
+        .bearer_auth(&bot.trading_api_token)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .query(query)
+        .send()
+        .await
+        .map_err(|e| format!("trading api request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("trading api returned {status}"));
+    }
+
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map(Some)
+        .map_err(|e| format!("failed to decode trading api response: {e}"))
+}
+
+fn extract_json_array(
+    payload: serde_json::Value,
+    field_name: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    match payload {
+        serde_json::Value::Array(values) => Ok(values),
+        serde_json::Value::Object(mut map) => match map.remove(field_name) {
+            Some(serde_json::Value::Array(values)) => Ok(values),
+            Some(_) => Err(format!("trading api field `{field_name}` was not an array")),
+            None => Err(format!("trading api response missing `{field_name}`")),
+        },
+        _ => Err("trading api response was not an array/object".to_string()),
+    }
+}
+
+fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
+    let trades = state::load_bot_trades(&bot.id);
+    synthesize_metrics(bot, &trades)
+        .into_iter()
+        .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
+        .collect()
+}
+
+fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
+    let protocol = if bot.strategy_type == "prediction" {
+        "polymarket"
+    } else {
+        &bot.strategy_type
+    };
+
+    let mut entries: Vec<TradeEntryResponse> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let portfolio_trades = state::load_bot_trades(&bot.id);
+    for t in &portfolio_trades {
+        let mid = t
+            .get("market_id")
+            .or_else(|| t.get("symbol"))
+            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+            .unwrap_or("");
+        let mid_str = if mid.is_empty() {
+            t.get("market_id")
+                .or_else(|| t.get("symbol"))
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        } else {
+            mid.to_string()
+        };
+
+        let tid = t
+            .get("id")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => v.to_string(),
+            })
+            .unwrap_or_else(|| mid_str.clone());
+
+        let question = t
+            .get("question")
+            .or_else(|| t.get("symbol"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+
+        let side = t
+            .get("side")
+            .or_else(|| t.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("buy");
+
+        let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
+            "buy"
+        } else {
+            "sell"
+        };
+
+        let amount = t
+            .get("amount_usd")
+            .or_else(|| t.get("size"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let current_price = t
+            .get("current_price")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(entry_price);
+        let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let status = t
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let ts = t
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        seen_ids.insert(tid.clone());
+        entries.push(TradeEntryResponse {
+            id: tid.clone(),
+            bot_id: bot.id.clone(),
+            timestamp: if ts.is_empty() {
+                chrono::Utc::now().to_rfc3339()
+            } else {
+                ts
+            },
+            action: action.to_string(),
+            token_in: "USDC".to_string(),
+            token_out: question.chars().take(40).collect(),
+            amount_in: amount.to_string(),
+            min_amount_out: entry_price.to_string(),
+            target_protocol: protocol.to_string(),
+            tx_hash: format!("0xpaper_{}", &tid[..tid.len().min(16)]),
+            paper_trade: true,
+            status: status.to_string(),
+            pnl,
+            entry_price,
+            current_price,
+        });
+    }
+
+    if let Ok(paginated) = trading_http_api::trade_store::trades_for_bot(&bot.id, 1000, 0) {
+        for rec in paginated.trades {
+            if seen_ids.contains(&rec.id) {
+                continue;
+            }
+            entries.push(TradeEntryResponse {
+                id: rec.id,
+                bot_id: rec.bot_id,
+                timestamp: rec.timestamp.to_rfc3339(),
+                action: rec.action.clone(),
+                token_in: rec.token_in,
+                token_out: rec.token_out,
+                amount_in: rec.amount_in,
+                min_amount_out: rec.min_amount_out,
+                target_protocol: rec.target_protocol,
+                tx_hash: rec.tx_hash,
+                paper_trade: rec.paper_trade,
+                status: if rec.paper_trade {
+                    "executed".to_string()
+                } else {
+                    "confirmed".to_string()
+                },
+                pnl: 0.0,
+                entry_price: 0.0,
+                current_price: 0.0,
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    entries
+        .into_iter()
+        .map(|entry| serde_json::to_value(entry).unwrap_or(serde_json::Value::Null))
+        .collect()
 }
 
 /// Synthesize metrics history from per-bot trade data.
@@ -809,153 +1172,64 @@ async fn get_bot_metrics(
 async fn get_bot_metrics_history(
     SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
-    Query(_query): Query<MetricsHistoryQuery>,
-) -> Result<Json<Vec<MetricsSnapshotResponse>>, (StatusCode, String)> {
+    Query(query): Query<MetricsHistoryQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let trades = state::load_bot_trades(&bot.id);
-    let snapshots = synthesize_metrics(&bot, &trades);
-    Ok(Json(snapshots))
+    let mut remote_query = Vec::new();
+    if let Some(from) = query.from {
+        remote_query.push(("from", from));
+    }
+    if let Some(to) = query.to {
+        remote_query.push(("to", to));
+    }
+    if let Some(limit) = query.limit {
+        remote_query.push(("limit", limit.to_string()));
+    }
+
+    match fetch_trading_api_json(&bot, "/metrics/history", &remote_query).await {
+        Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
+            Ok(snapshots) => Ok(Json(snapshots)),
+            Err(err) => {
+                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
+                Ok(Json(fallback_metrics_history(&bot)))
+            }
+        },
+        Ok(None) => Ok(Json(fallback_metrics_history(&bot))),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
+            Ok(Json(fallback_metrics_history(&bot)))
+        }
+    }
 }
 
 async fn get_bot_trades(
     SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
-) -> Result<Json<Vec<TradeEntryResponse>>, (StatusCode, String)> {
+    Query(query): Query<TradeListQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let protocol = if bot.strategy_type == "prediction" {
-        "polymarket"
-    } else {
-        &bot.strategy_type
-    };
-
-    let mut entries: Vec<TradeEntryResponse> = Vec::new();
-    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Source 1: sidecar portfolio trades (bot-trades/{bot_id}.json)
-    let portfolio_trades = state::load_bot_trades(&bot.id);
-    for t in &portfolio_trades {
-        let mid = t
-            .get("market_id")
-            .or_else(|| t.get("symbol"))
-            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
-            .unwrap_or("");
-        let mid_str = if mid.is_empty() {
-            t.get("market_id")
-                .or_else(|| t.get("symbol"))
-                .map(|v| v.to_string())
-                .unwrap_or_default()
-        } else {
-            mid.to_string()
-        };
-
-        let tid = t
-            .get("id")
-            .map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                _ => v.to_string(),
-            })
-            .unwrap_or_else(|| mid_str.clone());
-
-        let question = t
-            .get("question")
-            .or_else(|| t.get("symbol"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-
-        let side = t
-            .get("side")
-            .or_else(|| t.get("action"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("buy");
-
-        let action = if side == "YES" || side == "long" || side == "buy" || side.contains("buy") {
-            "buy"
-        } else {
-            "sell"
-        };
-
-        let amount = t
-            .get("amount_usd")
-            .or_else(|| t.get("size"))
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let current_price = t
-            .get("current_price")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(entry_price);
-        let pnl = t.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let status = t
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        let ts = t
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        seen_ids.insert(tid.clone());
-        entries.push(TradeEntryResponse {
-            id: tid.clone(),
-            bot_id: bot.id.clone(),
-            timestamp: if ts.is_empty() {
-                chrono::Utc::now().to_rfc3339()
-            } else {
-                ts
-            },
-            action: action.to_string(),
-            token_in: "USDC".to_string(),
-            token_out: question.chars().take(40).collect(),
-            amount_in: amount.to_string(),
-            min_amount_out: entry_price.to_string(),
-            target_protocol: protocol.to_string(),
-            tx_hash: format!("0xpaper_{}", &tid[..tid.len().min(16)]),
-            paper_trade: true,
-            status: status.to_string(),
-            pnl,
-            entry_price,
-            current_price,
-        });
+    let mut remote_query = Vec::new();
+    if let Some(limit) = query.limit {
+        remote_query.push(("limit", limit.to_string()));
+    }
+    if let Some(offset) = query.offset {
+        remote_query.push(("offset", offset.to_string()));
     }
 
-    // Source 2: execution records (trade-history.json via trading HTTP API store)
-    if let Ok(paginated) = trading_http_api::trade_store::trades_for_bot(&bot.id, 1000, 0) {
-        for rec in paginated.trades {
-            if seen_ids.contains(&rec.id) {
-                continue;
+    match fetch_trading_api_json(&bot, "/trades", &remote_query).await {
+        Ok(Some(payload)) => match extract_json_array(payload, "trades") {
+            Ok(trades) => Ok(Json(trades)),
+            Err(err) => {
+                tracing::warn!(bot_id = %bot.id, "invalid trading api trades payload: {err}");
+                Ok(Json(fallback_trade_history(&bot)))
             }
-            entries.push(TradeEntryResponse {
-                id: rec.id,
-                bot_id: rec.bot_id,
-                timestamp: rec.timestamp.to_rfc3339(),
-                action: rec.action.clone(),
-                token_in: rec.token_in,
-                token_out: rec.token_out,
-                amount_in: rec.amount_in,
-                min_amount_out: rec.min_amount_out,
-                target_protocol: rec.target_protocol,
-                tx_hash: rec.tx_hash,
-                paper_trade: rec.paper_trade,
-                status: if rec.paper_trade {
-                    "executed".to_string()
-                } else {
-                    "confirmed".to_string()
-                },
-                pnl: 0.0,
-                entry_price: 0.0,
-                current_price: 0.0,
-            });
+        },
+        Ok(None) => Ok(Json(fallback_trade_history(&bot))),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api trades request failed, using fallback: {err}");
+            Ok(Json(fallback_trade_history(&bot)))
         }
     }
-
-    // Sort by timestamp descending (newest first)
-    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-    Ok(Json(entries))
 }
 
 async fn get_bot_portfolio(
@@ -1081,6 +1355,13 @@ async fn debug_sandboxes(SessionAuth(_caller): SessionAuth) -> Json<serde_json::
         },
         Err(e) => Json(serde_json::json!({ "error": format!("sandboxes() failed: {e}") })),
     }
+}
+
+async fn debug_state_health(
+    SessionAuth(_caller): SessionAuth,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let health = state::bot_state_health().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(serde_json::json!(health)))
 }
 
 async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::Value> {

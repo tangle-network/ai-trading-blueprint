@@ -9,8 +9,11 @@
 mod common;
 
 use axum::body::Body;
+use axum::routing::get;
+use axum::{Json, Router};
 use http_body_util::BodyExt;
 use hyper::Request;
+use serde_json::json;
 use tower::ServiceExt;
 
 use trading_blueprint_lib::state;
@@ -43,6 +46,74 @@ fn seed_singleton(strategy: &str) -> (String, String) {
 
 fn app() -> axum::Router {
     build_instance_router()
+}
+
+async fn spawn_mock_trading_api() -> String {
+    let app = Router::new()
+        .route(
+            "/trades",
+            get(|| async {
+                Json(json!({
+                    "trades": [{
+                        "id": "remote-trade-1",
+                        "bot_id": "remote-bot",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "action": "buy",
+                        "token_in": "USDC",
+                        "token_out": "ETH",
+                        "amount_in": "100",
+                        "min_amount_out": "0.05",
+                        "target_protocol": "uniswap",
+                        "tx_hash": "0xremote",
+                        "paper_trade": false,
+                        "validation": {
+                            "approved": true,
+                            "aggregate_score": 91,
+                            "intent_hash": "0xintent",
+                            "responses": [{
+                                "validator": "validator-1",
+                                "score": 91,
+                                "reasoning": "trade looks safe",
+                                "signature": "0xsig"
+                            }]
+                        }
+                    }],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0
+                }))
+            }),
+        )
+        .route(
+            "/metrics/history",
+            get(|| async {
+                Json(json!({
+                    "snapshots": [{
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "bot_id": "remote-bot",
+                        "account_value_usd": 10123.45,
+                        "unrealized_pnl": 12.0,
+                        "realized_pnl": 34.0,
+                        "high_water_mark": 10123.45,
+                        "drawdown_pct": 0.0,
+                        "positions_count": 1,
+                        "trade_count": 1
+                    }],
+                    "total": 1
+                }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +166,32 @@ async fn test_get_bot_when_not_provisioned() {
         .unwrap();
 
     assert_eq!(response.status(), 404);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_operator_meta_reports_instance_contract() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/meta")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["deployment_kind"], "instance");
+    assert!(json["features"]["chat"].is_boolean());
+    assert!(json["features"]["terminal"].is_boolean());
 
     let _ = clear_instance_bot_id();
 }
@@ -351,6 +448,58 @@ async fn test_metrics_and_trades() {
     let _ = clear_instance_bot_id();
 }
 
+#[tokio::test]
+async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _) = seed_singleton("prediction");
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url = trading_api_url.clone();
+            b.trading_api_token = "remote-token".to_string();
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/trades")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json[0]["validation"]["responses"][0]["reasoning"],
+        "trade looks safe"
+    );
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics/history")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["account_value_usd"], 10123.45);
+
+    let _ = clear_instance_bot_id();
+}
+
 // ---------------------------------------------------------------------------
 // Debug endpoints
 // ---------------------------------------------------------------------------
@@ -603,6 +752,50 @@ async fn test_configure_secrets_not_provisioned() {
         .unwrap();
 
     assert_eq!(response.status(), 404);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_configure_secrets_missing_sandbox_returns_stale_state_error() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, sandbox_id) = seed_singleton("dex");
+    let _ = sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .remove(&sandbox_id);
+
+    let body = serde_json::json!({
+        "env_json": { "ANTHROPIC_API_KEY": "sk-test-key-123" },
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/secrets")
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 409);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "stale_state");
+    assert_eq!(json["sandbox_id"], sandbox_id);
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Operator state is stale")
+    );
 
     let _ = clear_instance_bot_id();
 }

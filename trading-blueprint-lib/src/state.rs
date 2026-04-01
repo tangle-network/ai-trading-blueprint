@@ -66,6 +66,28 @@ pub struct PaperTrade {
     pub timestamp: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotLookupCandidates {
+    pub live: Vec<TradingBotRecord>,
+    pub stale: Vec<TradingBotRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DuplicateBotGroup {
+    pub service_id: u64,
+    pub call_id: u64,
+    pub live_bot_ids: Vec<String>,
+    pub stale_bot_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotStateHealth {
+    pub total_bots: usize,
+    pub live_bots: usize,
+    pub stale_bots: usize,
+    pub duplicate_groups: Vec<DuplicateBotGroup>,
+}
+
 // ── Activation progress (two-phase provisioning: secrets config) ─────────
 
 static ACTIVATIONS: OnceCell<PersistentStore<ActivationProgress>> = OnceCell::new();
@@ -255,9 +277,102 @@ pub fn find_bot_by_call_id(
     service_id: u64,
     call_id: u64,
 ) -> Result<Option<TradingBotRecord>, String> {
-    bots()?
-        .find(|b| b.service_id == service_id && b.call_id == call_id)
-        .map_err(|e| e.to_string())
+    Ok(bot_lookup_candidates_by_call_id(service_id, call_id)?
+        .live
+        .into_iter()
+        .next())
+}
+
+pub fn bot_lookup_candidates_by_call_id(
+    service_id: u64,
+    call_id: u64,
+) -> Result<BotLookupCandidates, String> {
+    let mut live: Vec<TradingBotRecord> = Vec::new();
+    let mut stale: Vec<TradingBotRecord> = Vec::new();
+
+    for bot in bots()?.values().map_err(|e| e.to_string())?.into_iter() {
+        if bot.service_id != service_id || bot.call_id != call_id {
+            continue;
+        }
+
+        if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+            live.push(bot);
+        } else {
+            stale.push(bot);
+        }
+    }
+
+    let sort_desc = |a: &TradingBotRecord, b: &TradingBotRecord| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    };
+    live.sort_by(sort_desc);
+    stale.sort_by(sort_desc);
+
+    if live.len() + stale.len() > 1 {
+        let summaries: Vec<String> = live
+            .iter()
+            .map(|b| format!("live:{}:{}@{}", b.id, b.sandbox_id, b.created_at))
+            .chain(
+                stale
+                    .iter()
+                    .map(|b| format!("stale:{}:{}@{}", b.id, b.sandbox_id, b.created_at)),
+            )
+            .collect();
+        tracing::warn!(
+            service_id,
+            call_id,
+            matches = %summaries.join(", "),
+            "Multiple bot records found for service_id/call_id"
+        );
+    }
+
+    Ok(BotLookupCandidates { live, stale })
+}
+
+pub fn bot_state_health() -> Result<BotStateHealth, String> {
+    let all: Vec<TradingBotRecord> = bots()?.values().map_err(|e| e.to_string())?;
+    let mut live_bots = 0usize;
+    let mut stale_bots = 0usize;
+    let mut grouped: std::collections::BTreeMap<(u64, u64), DuplicateBotGroup> =
+        std::collections::BTreeMap::new();
+
+    for bot in &all {
+        let is_live = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok();
+        if is_live {
+            live_bots += 1;
+        } else {
+            stale_bots += 1;
+        }
+
+        let entry = grouped
+            .entry((bot.service_id, bot.call_id))
+            .or_insert_with(|| DuplicateBotGroup {
+                service_id: bot.service_id,
+                call_id: bot.call_id,
+                live_bot_ids: Vec::new(),
+                stale_bot_ids: Vec::new(),
+            });
+
+        if is_live {
+            entry.live_bot_ids.push(bot.id.clone());
+        } else {
+            entry.stale_bot_ids.push(bot.id.clone());
+        }
+    }
+
+    let duplicate_groups = grouped
+        .into_values()
+        .filter(|group| group.live_bot_ids.len() + group.stale_bot_ids.len() > 1)
+        .collect();
+
+    Ok(BotStateHealth {
+        total_bots: all.len(),
+        live_bots,
+        stale_bots,
+        duplicate_groups,
+    })
 }
 
 /// Get a bot by either its trading ID or vault address.

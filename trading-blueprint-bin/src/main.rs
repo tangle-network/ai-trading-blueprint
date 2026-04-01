@@ -58,6 +58,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     setup_log();
 
+    if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
+        return Err(blueprint_sdk::Error::Other(msg));
+    }
+
     // ── 1. QoS service (heartbeat + metrics) ─────────────────────────────────
     #[cfg(feature = "qos")]
     {

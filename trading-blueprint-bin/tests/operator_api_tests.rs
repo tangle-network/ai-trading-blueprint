@@ -5,9 +5,12 @@
 //! `tower::ServiceExt::oneshot`.
 
 use axum::body::Body;
+use axum::routing::get;
+use axum::{Json, Router};
 use http_body_util::BodyExt;
 use hyper::{Request, StatusCode};
 use once_cell::sync::Lazy;
+use serde_json::json;
 use tower::ServiceExt;
 
 use trading_blueprint_lib::state::{self, TradingBotRecord};
@@ -35,6 +38,52 @@ fn test_auth_header(address: &str) -> String {
 
 const SUBMITTER: &str = "0xaaaa000000000000000000000000000000000001";
 
+fn seed_sandbox_record(id: &str) {
+    let record = sandbox_runtime::SandboxRecord {
+        id: id.to_string(),
+        container_id: format!("container-{id}"),
+        sidecar_url: "http://127.0.0.1:19999".to_string(),
+        sidecar_port: 8080,
+        ssh_port: None,
+        token: "test-token".to_string(),
+        created_at: chrono::Utc::now().timestamp() as u64,
+        cpu_cores: 2,
+        memory_mb: 4096,
+        state: sandbox_runtime::runtime::SandboxState::Running,
+        idle_timeout_seconds: 0,
+        max_lifetime_seconds: 86400,
+        last_activity_at: chrono::Utc::now().timestamp() as u64,
+        stopped_at: None,
+        snapshot_image_id: None,
+        snapshot_s3_url: None,
+        container_removed_at: None,
+        image_removed_at: None,
+        original_image: "tangle-sidecar:local".to_string(),
+        base_env_json: "{}".to_string(),
+        user_env_json: String::new(),
+        snapshot_destination: None,
+        tee_deployment_id: None,
+        tee_metadata_json: None,
+        name: String::new(),
+        agent_identifier: String::new(),
+        metadata_json: String::new(),
+        disk_gb: 0,
+        stack: String::new(),
+        owner: String::new(),
+        service_id: None,
+        tee_config: None,
+        extra_ports: std::collections::HashMap::new(),
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
+        tee_attestation_json: None,
+    };
+
+    sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .insert(id.to_string(), record)
+        .expect("insert sandbox");
+}
+
 fn seed_bot(id: &str, strategy: &str, active: bool) -> TradingBotRecord {
     seed_bot_with_workflow(id, strategy, active, None)
 }
@@ -45,6 +94,29 @@ fn seed_bot_with_workflow(
     active: bool,
     workflow_id: Option<u64>,
 ) -> TradingBotRecord {
+    seed_bot_with_identity(
+        id,
+        strategy,
+        active,
+        workflow_id,
+        0,
+        0,
+        chrono::Utc::now().timestamp() as u64,
+    )
+}
+
+fn seed_bot_with_identity(
+    id: &str,
+    strategy: &str,
+    active: bool,
+    workflow_id: Option<u64>,
+    call_id: u64,
+    service_id: u64,
+    created_at: u64,
+) -> TradingBotRecord {
+    let sandbox_id = format!("sandbox-{id}");
+    seed_sandbox_record(&sandbox_id);
+
     // If a workflow_id is provided, create a matching workflow entry
     if let Some(wf_id) = workflow_id {
         let wf_json = serde_json::json!({
@@ -71,6 +143,9 @@ fn seed_bot_with_workflow(
             trigger_type: "cron".to_string(),
             trigger_config: "0 */5 * * * *".to_string(),
             sandbox_config_json: String::new(),
+            target_kind: ai_agent_sandbox_blueprint_lib::workflows::WORKFLOW_TARGET_SANDBOX,
+            target_sandbox_id: sandbox_id.clone(),
+            target_service_id: 0,
             active,
             next_run_at: next_run,
             last_run_at: None,
@@ -88,7 +163,7 @@ fn seed_bot_with_workflow(
 
     let record = TradingBotRecord {
         id: id.to_string(),
-        sandbox_id: format!("sandbox-{id}"),
+        sandbox_id,
         vault_address: format!("0xVAULT-{id}"),
         share_token: String::new(),
         strategy_type: strategy.to_string(),
@@ -100,7 +175,7 @@ fn seed_bot_with_workflow(
         trading_api_token: "tok".to_string(),
         workflow_id,
         trading_active: active,
-        created_at: chrono::Utc::now().timestamp() as u64,
+        created_at,
         operator_address: "0xOP1".to_string(),
         validator_service_ids: vec![],
         max_lifetime_days: 30,
@@ -108,8 +183,8 @@ fn seed_bot_with_workflow(
         wind_down_started_at: None,
         submitter_address: SUBMITTER.to_string(),
         trading_loop_cron: "0 */5 * * * *".to_string(),
-        call_id: 0,
-        service_id: 0,
+        call_id,
+        service_id,
     };
     state::bots()
         .expect("bots store")
@@ -122,6 +197,74 @@ fn seed_bot_with_workflow(
 /// We re-export it from the crate root for tests.
 fn app() -> axum::Router {
     trading_blueprint_bin::build_operator_router()
+}
+
+async fn spawn_mock_trading_api() -> String {
+    let app = Router::new()
+        .route(
+            "/trades",
+            get(|| async {
+                Json(json!({
+                    "trades": [{
+                        "id": "remote-trade-1",
+                        "bot_id": "remote-bot",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "action": "buy",
+                        "token_in": "USDC",
+                        "token_out": "ETH",
+                        "amount_in": "100",
+                        "min_amount_out": "0.05",
+                        "target_protocol": "uniswap",
+                        "tx_hash": "0xremote",
+                        "paper_trade": false,
+                        "validation": {
+                            "approved": true,
+                            "aggregate_score": 91,
+                            "intent_hash": "0xintent",
+                            "responses": [{
+                                "validator": "validator-1",
+                                "score": 91,
+                                "reasoning": "trade looks safe",
+                                "signature": "0xsig"
+                            }]
+                        }
+                    }],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0
+                }))
+            }),
+        )
+        .route(
+            "/metrics/history",
+            get(|| async {
+                Json(json!({
+                    "snapshots": [{
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "bot_id": "remote-bot",
+                        "account_value_usd": 10123.45,
+                        "unrealized_pnl": 12.0,
+                        "realized_pnl": 34.0,
+                        "high_water_mark": 10123.45,
+                        "drawdown_pct": 0.0,
+                        "positions_count": 1,
+                        "trade_count": 1
+                    }],
+                    "total": 1
+                }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +298,28 @@ async fn test_auth_challenge_returns_nonce_and_message() {
         json["expires_at"].is_number(),
         "challenge should contain expires_at"
     );
+}
+
+#[tokio::test]
+async fn test_operator_meta_reports_fleet_contract() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/meta")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["deployment_kind"], "fleet");
+    assert!(json["features"]["chat"].is_boolean());
+    assert!(json["features"]["terminal"].is_boolean());
 }
 
 #[tokio::test]
@@ -268,6 +433,71 @@ async fn test_list_bots_returns_seeded() {
     let bots = json["bots"].as_array().unwrap();
     let found = bots.iter().any(|b| b["id"].as_str() == Some(&bot.id));
     assert!(found, "Seeded bot should appear in list");
+}
+
+#[tokio::test]
+async fn test_list_bots_by_call_id_ignores_stale_matches() {
+    let _dir = init_test_env();
+
+    let old_bot = seed_bot_with_identity("dup-old", "dex", false, None, 7, 9, 1000);
+    let new_bot = seed_bot_with_identity("dup-new", "dex", false, None, 7, 9, 2000);
+    let _ = sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .remove(&old_bot.sandbox_id);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots?call_id=7&service_id=9")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let bots = json["bots"].as_array().expect("bots array");
+
+    assert_eq!(
+        bots.len(),
+        1,
+        "call_id/service_id lookup should resolve to one live bot"
+    );
+    assert_eq!(bots[0]["id"], new_bot.id);
+    assert_ne!(bots[0]["id"], old_bot.id);
+}
+
+#[tokio::test]
+async fn test_list_bots_by_call_id_returns_conflict_for_multiple_live_matches() {
+    let _dir = init_test_env();
+
+    let _first = seed_bot_with_identity("dup-live-1", "dex", false, None, 17, 19, 1000);
+    let _second = seed_bot_with_identity("dup-live-2", "dex", false, None, 17, 19, 2000);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots?call_id=17&service_id=19")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "conflict");
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Multiple live bots found")
+    );
 }
 
 #[tokio::test]
@@ -499,6 +729,41 @@ async fn test_get_bot_trades() {
 }
 
 #[tokio::test]
+async fn test_get_bot_trades_prefers_remote_trading_api_payload() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("trades-bot-remote", "dex", true);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/trades", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["id"], "remote-trade-1");
+    assert_eq!(
+        json[0]["validation"]["responses"][0]["reasoning"],
+        "trade looks safe"
+    );
+}
+
+#[tokio::test]
 async fn test_get_bot_portfolio() {
     let _dir = init_test_env();
 
@@ -544,6 +809,37 @@ async fn test_get_bot_metrics_history() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json.is_array(), "metrics history should be an array");
+}
+
+#[tokio::test]
+async fn test_get_bot_metrics_history_prefers_remote_trading_api_payload() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("history-bot-remote", "dex", true);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics/history", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["account_value_usd"], 10123.45);
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,4 +1311,45 @@ async fn test_configure_secrets_bot_not_found() {
         .unwrap();
 
     assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn test_configure_secrets_missing_sandbox_returns_stale_state_error() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("secrets-stale-1", "dex", false);
+    let _ = sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .remove(&bot.sandbox_id);
+
+    let body = serde_json::json!({
+        "env_json": { "ANTHROPIC_API_KEY": "sk-test-key-123" },
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/bots/{}/secrets", bot.id))
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "stale_state");
+    assert_eq!(json["bot_id"], bot.id);
+    assert_eq!(json["sandbox_id"], bot.sandbox_id);
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Operator state is stale")
+    );
 }
