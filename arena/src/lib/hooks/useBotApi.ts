@@ -2,9 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
-import { getApiUrlForBot } from '~/lib/config/botRegistry';
-
-// Types matching the Rust HTTP API response schemas
+import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { useOperatorAuth } from './useOperatorAuth';
 
 interface ApiTrade {
   id: string;
@@ -41,6 +40,11 @@ interface ApiTrade {
       output_amount: string;
     };
   };
+  status?: string;
+}
+
+interface ApiTradeListResponse {
+  trades: ApiTrade[];
 }
 
 interface ApiMetricsSnapshot {
@@ -55,171 +59,230 @@ interface ApiMetricsSnapshot {
   trade_count: number;
 }
 
+interface ApiMetricsHistoryResponse {
+  snapshots: ApiMetricsSnapshot[];
+}
+
 interface ApiPortfolioState {
   positions: Array<{
     token: string;
-    symbol: string;
-    amount: number;
-    value_usd: number;
-    entry_price: number;
-    current_price: number;
-    pnl_percent: number;
-    weight: number;
+    symbol?: string;
+    amount: number | string;
+    value_usd?: number;
+    entry_price: number | string;
+    current_price: number | string;
+    pnl_percent?: number;
+    weight?: number;
+    unrealized_pnl?: string;
+    protocol?: string;
   }>;
-  total_value_usd: number;
-  cash_balance: number;
+  total_value_usd: number | string;
+  cash_balance?: number | string;
+  unrealized_pnl?: string;
+  realized_pnl?: string;
 }
 
-async function fetchBotApi<T>(apiUrl: string, path: string): Promise<T> {
-  const res = await fetch(`${apiUrl}${path}`, {
-    headers: { 'Accept': 'application/json' },
+async function fetchOperatorBotApi<T>(
+  token: string,
+  path: string,
+): Promise<T> {
+  const res = await fetch(`${OPERATOR_API_URL}${path}`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
   });
   if (!res.ok) throw new Error(`Bot API error: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-function mapApiTrade(t: ApiTrade, botName: string): Trade {
-  const simulation: TradeSimulation | undefined = t.validation?.simulation ? {
-    success: t.validation.simulation.success,
-    gasUsed: t.validation.simulation.gas_used,
-    riskScore: t.validation.simulation.risk_score,
-    warnings: t.validation.simulation.warnings,
-    outputAmount: t.validation.simulation.output_amount,
-  } : undefined;
-
-  const validation: TradeValidation | undefined = t.validation ? {
-    approved: t.validation.approved,
-    aggregateScore: t.validation.aggregate_score,
-    intentHash: t.validation.intent_hash,
-    responses: t.validation.responses.map((r): ValidatorResponseDetail => ({
-      validator: r.validator,
-      score: r.score,
-      reasoning: r.reasoning,
-      signature: r.signature,
-      chainId: r.chain_id,
-      verifyingContract: r.verifying_contract,
-      validatedAt: r.validated_at,
-    })),
-    simulation,
-  } : undefined;
+function mapApiSimulation(trade: ApiTrade): TradeSimulation | undefined {
+  const simulation = trade.validation?.simulation;
+  if (!simulation) return undefined;
 
   return {
-    id: t.id,
-    botId: t.bot_id,
+    success: simulation.success,
+    gasUsed: simulation.gas_used,
+    riskScore: simulation.risk_score,
+    warnings: simulation.warnings,
+    outputAmount: simulation.output_amount,
+  };
+}
+
+function mapApiValidation(trade: ApiTrade): TradeValidation | undefined {
+  const validation = trade.validation;
+  if (!validation) return undefined;
+
+  return {
+    approved: validation.approved,
+    aggregateScore: validation.aggregate_score,
+    intentHash: validation.intent_hash,
+    responses: validation.responses.map((response): ValidatorResponseDetail => ({
+      validator: response.validator,
+      score: response.score,
+      reasoning: response.reasoning,
+      signature: response.signature,
+      chainId: response.chain_id,
+      verifyingContract: response.verifying_contract,
+      validatedAt: response.validated_at,
+    })),
+    simulation: mapApiSimulation(trade),
+  };
+}
+
+function getTradeStatus(trade: ApiTrade): Trade['status'] {
+  if (trade.paper_trade) return 'paper';
+  if (trade.validation?.approved === false) return 'rejected';
+  if (trade.tx_hash) return 'executed';
+  return 'pending';
+}
+
+function mapApiTrade(trade: ApiTrade, botName: string): Trade {
+  const validation = mapApiValidation(trade);
+
+  return {
+    id: trade.id,
+    botId: trade.bot_id,
     botName,
-    action: t.action,
-    tokenIn: t.token_in,
-    tokenOut: t.token_out,
-    amountIn: Number(t.amount_in),
-    amountOut: Number(t.min_amount_out),
-    priceUsd: 0, // Would need price oracle
-    timestamp: new Date(t.timestamp).getTime(),
-    status: t.paper_trade ? 'paper' : t.validation?.approved === false ? 'rejected' : t.tx_hash ? 'executed' : 'pending',
-    txHash: t.tx_hash,
-    paperTrade: t.paper_trade,
-    targetProtocol: t.target_protocol || undefined,
-    venue: protocolToVenue(t.target_protocol, t.paper_trade),
-    chainId: t.validation?.responses?.[0]?.chain_id,
-    validatorScore: t.validation?.aggregate_score,
-    validatorReasoning: t.validation?.responses?.[0]?.reasoning,
+    action: trade.action,
+    tokenIn: trade.token_in,
+    tokenOut: trade.token_out,
+    amountIn: Number(trade.amount_in),
+    amountOut: Number(trade.min_amount_out),
+    priceUsd: 0,
+    timestamp: new Date(trade.timestamp).getTime(),
+    status: getTradeStatus(trade),
+    txHash: trade.tx_hash,
+    paperTrade: trade.paper_trade,
+    targetProtocol: trade.target_protocol || undefined,
+    venue: protocolToVenue(trade.target_protocol, trade.paper_trade),
+    chainId: trade.validation?.responses?.[0]?.chain_id,
+    validatorScore: trade.validation?.aggregate_score,
+    validatorReasoning: trade.validation?.responses?.[0]?.reasoning,
     validation,
   };
 }
 
+function calculatePnlPercent(currentPrice: number, entryPrice: number): number {
+  if (entryPrice <= 0) return 0;
+  return ((currentPrice - entryPrice) / entryPrice) * 100;
+}
+
+function calculateWeight(valueUsd: number, totalValueUsd: number): number {
+  if (totalValueUsd <= 0) return 0;
+  return (valueUsd / totalValueUsd) * 100;
+}
+
 function mapApiPortfolio(p: ApiPortfolioState, botId: string): Portfolio {
+  const totalValueUsd = Number(p.total_value_usd ?? 0);
+  const cashBalance = Number(p.cash_balance ?? 0);
   return {
     botId,
-    totalValueUsd: p.total_value_usd,
-    cashBalance: p.cash_balance,
-    positions: p.positions.map(pos => ({
-      token: pos.token,
-      symbol: pos.symbol,
-      amount: pos.amount,
-      valueUsd: pos.value_usd,
-      entryPrice: pos.entry_price,
-      currentPrice: pos.current_price,
-      pnlPercent: pos.pnl_percent,
-      weight: pos.weight,
-    })),
+    totalValueUsd,
+    cashBalance,
+    positions: p.positions.map((pos) => {
+      const amount = Number(pos.amount);
+      const entryPrice = Number(pos.entry_price);
+      const currentPrice = Number(pos.current_price);
+      const valueUsd = pos.value_usd != null ? Number(pos.value_usd) : amount * currentPrice;
+      const pnlPercent = pos.pnl_percent != null
+        ? Number(pos.pnl_percent)
+        : calculatePnlPercent(currentPrice, entryPrice);
+      const weight = pos.weight != null
+        ? Number(pos.weight)
+        : calculateWeight(valueUsd, totalValueUsd);
+
+      return {
+        token: pos.token,
+        symbol: pos.symbol ?? pos.token,
+        amount,
+        valueUsd,
+        entryPrice,
+        currentPrice,
+        pnlPercent,
+        weight,
+      };
+    }),
   };
 }
 
-/**
- * Fetch trades for a bot. Uses real API when available, mock data as fallback.
- */
+function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
+  return Array.isArray(data) ? data : data.trades;
+}
+
+function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse): ApiMetricsSnapshot[] {
+  return Array.isArray(data) ? data : data.snapshots;
+}
+
 export function useBotTrades(botId: string, botName: string = '', limit = 50) {
-  const apiUrl = getApiUrlForBot(botId);
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-trades', botId, limit],
+    queryKey: ['bot-trades', botId, limit, meta?.deployment_kind, auth.token],
     queryFn: async () => {
-      if (!apiUrl) {
-        return [];
-      }
-      const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/api/bots/${botId}/trades?limit=${limit}`);
-      return data.map(t => mapApiTrade(t, botName));
+      if (!meta || !auth.token) return [];
+      const path = `${buildBotScopedPath(meta, botId, '/trades')}?limit=${limit}`;
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(auth.token, path);
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
     staleTime: 30_000,
+    enabled: !!meta && !!auth.token,
   });
 }
 
-/**
- * Fetch recent trades with high-frequency polling for live validation visibility.
- * Returns the 5 most recent trades, polled every 5 seconds.
- */
 export function useBotRecentValidations(botId: string, botName: string = '') {
-  const apiUrl = getApiUrlForBot(botId);
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-recent-validations', botId],
+    queryKey: ['bot-recent-validations', botId, meta?.deployment_kind, auth.token],
     queryFn: async () => {
-      if (!apiUrl) return [];
-      const data = await fetchBotApi<ApiTrade[]>(apiUrl, `/api/bots/${botId}/trades?limit=5`);
-      return data.map(t => mapApiTrade(t, botName));
+      if (!meta || !auth.token) return [];
+      const path = `${buildBotScopedPath(meta, botId, '/trades')}?limit=5`;
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(auth.token, path);
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
     refetchInterval: 5_000,
     staleTime: 3_000,
     retry: 1,
     retryDelay: 3_000,
-    enabled: !!apiUrl,
+    enabled: !!meta && !!auth.token,
   });
 }
 
-/**
- * Fetch portfolio/positions for a bot.
- */
 export function useBotPortfolio(botId: string) {
-  const apiUrl = getApiUrlForBot(botId);
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
 
   return useQuery<Portfolio | null>({
-    queryKey: ['bot-portfolio', botId],
+    queryKey: ['bot-portfolio', botId, meta?.deployment_kind, auth.token],
     queryFn: async () => {
-      if (!apiUrl) {
-        return null;
-      }
-      const data = await fetchBotApi<ApiPortfolioState>(apiUrl, `/api/bots/${botId}/portfolio/state`);
+      if (!meta || !auth.token) return null;
+      const path = buildBotScopedPath(meta, botId, '/portfolio/state');
+      const data = await fetchOperatorBotApi<ApiPortfolioState>(auth.token, path);
       return mapApiPortfolio(data, botId);
     },
     staleTime: 30_000,
+    enabled: !!meta && !!auth.token,
   });
 }
 
-/**
- * Fetch metrics history for sparkline / performance charts.
- */
 export function useBotMetrics(botId: string, days = 30) {
-  const apiUrl = getApiUrlForBot(botId);
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
 
   return useQuery<ApiMetricsSnapshot[]>({
-    queryKey: ['bot-metrics', botId, days],
+    queryKey: ['bot-metrics', botId, days, meta?.deployment_kind, auth.token],
     queryFn: async () => {
-      if (!apiUrl) return [];
+      if (!meta || !auth.token) return [];
       const from = new Date(Date.now() - days * 86400000).toISOString();
       const to = new Date().toISOString();
-      return fetchBotApi<ApiMetricsSnapshot[]>(apiUrl, `/api/bots/${botId}/metrics/history?from=${from}&to=${to}&limit=100`);
+      const path = `${buildBotScopedPath(meta, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+      const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(auth.token, path);
+      return normalizeMetrics(data);
     },
     staleTime: 60_000,
-    enabled: !!apiUrl,
+    enabled: !!meta && !!auth.token,
   });
 }
-

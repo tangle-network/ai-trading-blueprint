@@ -1,12 +1,9 @@
 import { useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import type { Bot } from '~/lib/types/bot';
-import { getBotApiUrl } from '~/lib/config/botRegistry';
+import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { useOperatorAuth } from './useOperatorAuth';
 
-/**
- * Per-bot metrics response from the HTTP API.
- * GET /metrics/history?from=...&to=...&limit=100
- */
 interface MetricsSnapshot {
   timestamp: string;
   bot_id: string;
@@ -19,56 +16,61 @@ interface MetricsSnapshot {
   trade_count: number;
 }
 
-/**
- * Enriches a list of on-chain bots with performance data from their HTTP APIs.
- * Fetches /metrics/history from each bot's API in parallel.
- * Returns the same bot list with performance fields filled in where data is available.
- *
- * PERF: Stabilizes output reference — only returns a new array when enrichment
- * data actually changes, preventing downstream useMemo invalidation cascades.
- */
+interface MetricsHistoryResponse {
+  snapshots: MetricsSnapshot[];
+}
+
+function normalizeSnapshots(data: MetricsSnapshot[] | MetricsHistoryResponse): MetricsSnapshot[] {
+  return Array.isArray(data) ? data : data.snapshots;
+}
+
 export function useBotEnrichment(bots: Bot[]): Bot[] {
-  // Stable list of enrichable bots (only recompute when bot IDs change)
   const botIds = bots.map((b) => b.id).join(',');
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
+
   const enrichable = useMemo(() => {
     const indices: number[] = [];
-    const entries: Array<{ botId: string; serviceId: number; apiUrl: string }> = [];
+    const entries: Array<{ botId: string }> = [];
+    if (!meta || !auth.token) {
+      return { indices, entries };
+    }
     for (let i = 0; i < bots.length; i++) {
-      const apiUrl = getBotApiUrl(bots[i].serviceId);
-      if (apiUrl) {
-        indices.push(i);
-        entries.push({ botId: bots[i].id, serviceId: bots[i].serviceId, apiUrl });
-      }
+      indices.push(i);
+      entries.push({ botId: bots[i].id });
     }
     return { indices, entries };
-  }, [botIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [auth.token, botIds, meta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useQueries({
-    queries: enrichable.entries.map(({ botId, apiUrl }) => ({
-      queryKey: ['bot-enrichment', botId] as const,
+    queries: enrichable.entries.map(({ botId }) => ({
+      queryKey: ['bot-enrichment', botId, meta?.deployment_kind, auth.token] as const,
       queryFn: async (): Promise<MetricsSnapshot[]> => {
         const from = new Date(Date.now() - 30 * 86400000).toISOString();
         const to = new Date().toISOString();
-        const res = await fetch(`${apiUrl}/metrics/history?from=${from}&to=${to}&limit=100`, {
-          headers: { 'Accept': 'application/json' },
+        const path = `${buildBotScopedPath(meta, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+        const res = await fetch(`${OPERATOR_API_URL}${path}`, {
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${auth.token}`,
+          },
         });
         if (!res.ok) throw new Error(`API ${res.status}`);
-        return res.json();
+        const data = await res.json() as MetricsSnapshot[] | MetricsHistoryResponse;
+        return normalizeSnapshots(data);
       },
       staleTime: 60_000,
       refetchInterval: 60_000,
       retry: 1,
+      enabled: !!meta && !!auth.token,
     })),
   });
 
   const prevRef = useRef<Bot[]>(bots);
-
-  // Build fingerprint of enrichment results to avoid new array on every render
   const dataFingerprint = results.map((r) =>
     r.data ? `${r.data.length}:${r.data[r.data.length - 1]?.trade_count}` : 'x',
   ).join(',');
 
-  // useMemo must always be called (Rules of Hooks) — handle empty case inside
   return useMemo(() => {
     if (enrichable.entries.length === 0) return bots;
 
@@ -100,5 +102,5 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     }
     prevRef.current = enrichedBots;
     return enrichedBots;
-  }, [botIds, dataFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botIds, bots, dataFingerprint, enrichable.entries.length, enrichable.indices, results]); // eslint-disable-line react-hooks/exhaustive-deps
 }

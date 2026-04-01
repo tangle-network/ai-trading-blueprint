@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useOperatorAuth } from './useOperatorAuth';
-
-const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { readOperatorError } from '~/lib/operator/errors';
 
 async function apiCall(
   path: string,
@@ -19,13 +19,13 @@ async function apiCall(
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    throw await readOperatorError(res);
   }
   return res.json();
 }
 
 export function useBotControl(botId: string) {
+  const { data: meta } = useOperatorMeta();
   const { token, authenticate, isAuthenticated } = useOperatorAuth(OPERATOR_API_URL);
   const queryClient = useQueryClient();
 
@@ -48,7 +48,7 @@ export function useBotControl(botId: string) {
   const startBot = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(`/api/bots/${botId}/start`, 'POST', t);
+      return apiCall(buildBotScopedPath(meta, botId, '/start'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Start bot'),
@@ -57,7 +57,7 @@ export function useBotControl(botId: string) {
   const stopBot = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(`/api/bots/${botId}/stop`, 'POST', t);
+      return apiCall(buildBotScopedPath(meta, botId, '/stop'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Stop bot'),
@@ -66,7 +66,7 @@ export function useBotControl(botId: string) {
   const runNow = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(`/api/bots/${botId}/run-now`, 'POST', t);
+      return apiCall(buildBotScopedPath(meta, botId, '/run-now'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Run now'),
@@ -78,7 +78,7 @@ export function useBotControl(botId: string) {
       riskParamsJson?: string;
     }) => {
       const t = await ensureToken();
-      return apiCall(`/api/bots/${botId}/config`, 'PATCH', t, {
+      return apiCall(buildBotScopedPath(meta, botId, '/config'), 'PATCH', t, {
         strategy_config_json: params.strategyConfigJson,
         risk_params_json: params.riskParamsJson,
       });

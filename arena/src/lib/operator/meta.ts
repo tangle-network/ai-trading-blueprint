@@ -1,0 +1,97 @@
+import { useQuery } from '@tanstack/react-query';
+
+const DEFAULT_OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+export const CLOUD_OPERATOR_API_URL =
+  import.meta.env.VITE_CLOUD_OPERATOR_API_URL ?? DEFAULT_OPERATOR_API_URL;
+export const INSTANCE_OPERATOR_API_URL =
+  import.meta.env.VITE_INSTANCE_OPERATOR_API_URL ?? DEFAULT_OPERATOR_API_URL;
+export const TEE_OPERATOR_API_URL =
+  import.meta.env.VITE_TEE_OPERATOR_API_URL ?? INSTANCE_OPERATOR_API_URL;
+export const OPERATOR_API_URL = CLOUD_OPERATOR_API_URL;
+
+export type OperatorDeploymentKind = 'fleet' | 'instance';
+
+export interface OperatorFeatures {
+  chat: boolean;
+  terminal: boolean;
+}
+
+export interface OperatorMeta {
+  api_version: string;
+  deployment_kind: OperatorDeploymentKind;
+  features: OperatorFeatures;
+}
+
+const DEFAULT_META: OperatorMeta = {
+  api_version: '1',
+  deployment_kind: 'fleet',
+  features: {
+    chat: false,
+    terminal: false,
+  },
+};
+
+export function getOperatorApiUrlForBlueprint(
+  blueprintType?: string,
+): string {
+  switch (blueprintType) {
+    case 'trading-instance':
+      return INSTANCE_OPERATOR_API_URL;
+    case 'trading-tee-instance':
+      return TEE_OPERATOR_API_URL;
+    case 'trading-cloud':
+    default:
+      return CLOUD_OPERATOR_API_URL;
+  }
+}
+
+export function getExpectedDeploymentKindForBlueprint(
+  blueprintType?: string,
+): OperatorDeploymentKind {
+  switch (blueprintType) {
+    case 'trading-instance':
+    case 'trading-tee-instance':
+      return 'instance';
+    case 'trading-cloud':
+    default:
+      return 'fleet';
+  }
+}
+
+export function useOperatorMeta(apiUrl = OPERATOR_API_URL) {
+  return useQuery<OperatorMeta>({
+    queryKey: ['operator-meta', apiUrl],
+    queryFn: async () => {
+      if (!apiUrl) return DEFAULT_META;
+      const res = await fetch(`${apiUrl}/api/meta`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to load operator metadata: ${res.status}`);
+      }
+      return res.json() as Promise<OperatorMeta>;
+    },
+    enabled: !!apiUrl,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+export function buildBotScopedPath(
+  meta: OperatorMeta | undefined,
+  botId: string | undefined,
+  suffix = '',
+): string {
+  const tail = suffix.startsWith('/') || suffix.length === 0 ? suffix : `/${suffix}`;
+  if (meta?.deployment_kind === 'instance') {
+    return `/api/bot${tail}`;
+  }
+  if (!botId) {
+    throw new Error('botId is required for fleet operator routes');
+  }
+  return `/api/bots/${encodeURIComponent(botId)}${tail}`;
+}
+
+export function isInstanceOperator(meta: OperatorMeta | undefined): boolean {
+  return meta?.deployment_kind === 'instance';
+}

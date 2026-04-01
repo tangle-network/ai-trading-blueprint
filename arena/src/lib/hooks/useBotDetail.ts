@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-
-const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { useOperatorAuth } from './useOperatorAuth';
 
 export interface BotDetail {
   id: string;
@@ -23,17 +23,28 @@ export interface BotDetail {
   wind_down_started_at: number | null;
   validator_service_ids: number[];
   validator_endpoints: string[];
+  call_id: number;
+  service_id: number;
 }
 
 export function useBotDetail(botId: string | undefined) {
+  const { data: meta } = useOperatorMeta();
+  const auth = useOperatorAuth(OPERATOR_API_URL);
+
   return useQuery<BotDetail>({
-    queryKey: ['bot-detail', botId],
+    queryKey: ['bot-detail', botId, meta?.deployment_kind, auth.token],
     queryFn: async () => {
-      const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}`);
+      const path = buildBotScopedPath(meta, botId);
+      const res = await fetch(`${OPERATOR_API_URL}${path}`, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${auth.token}`,
+        },
+      });
       if (!res.ok) throw new Error(`Failed to fetch bot: ${res.status}`);
       return res.json();
     },
-    enabled: !!botId && !!OPERATOR_API_URL,
+    enabled: !!botId && !!OPERATOR_API_URL && !!meta && !!auth.token,
     staleTime: 10_000,
     refetchInterval: 15_000,
   });

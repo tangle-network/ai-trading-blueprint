@@ -8,6 +8,9 @@ import { getBotMeta } from '~/lib/config/botRegistry';
 import { publicClient } from '@tangle/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
+import { useOperatorAuth } from './useOperatorAuth';
+import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { subscribeBotsRefresh } from '~/lib/events/bots';
 
 // Direct vault address mapping (fallback when neither Blueprint nor VaultFactory deployed):
 // VITE_SERVICE_VAULTS={"0":["0x..."],"1":["0x...","0x..."]}
@@ -30,8 +33,6 @@ const SERVICE_VAULTS: Record<string, Address[]> = (() => {
     return {};
   }
 })();
-
-const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
 /** Intermediate: one entry per vault discovered on-chain */
 type VaultEntry = {
@@ -58,6 +59,8 @@ type VaultEntry = {
 export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void } {
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { data: operatorMeta } = useOperatorMeta();
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
 
   const discover = useCallback(async () => {
     setIsLoading(true);
@@ -313,9 +316,17 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
       // The operator API returns bots with call_id and service_id. For bots whose
       // vault_address is empty (created on-chain AFTER operator submits result),
       // we batch-query botVaults(serviceId, callId) from the BSM contract.
-      if (OPERATOR_API_URL) {
+      if (OPERATOR_API_URL && operatorMeta && operatorAuth.token) {
         try {
-          const res = await fetch(`${OPERATOR_API_URL}/api/bots?limit=200`);
+          const operatorPath = operatorMeta.deployment_kind === 'instance'
+            ? '/api/bot'
+            : '/api/bots?limit=200';
+          const res = await fetch(`${OPERATOR_API_URL}${operatorPath}`, {
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${operatorAuth.token}`,
+            },
+          });
           if (res.ok) {
             const data = await res.json();
             const operatorBots: Array<{
@@ -331,7 +342,22 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
               secrets_configured?: boolean;
               call_id: number;
               service_id: number;
-            }> = data.bots ?? [];
+            }> = operatorMeta.deployment_kind === 'instance'
+              ? [{
+                  id: data.id,
+                  operator_address: data.operator_address,
+                  vault_address: data.vault_address,
+                  strategy_type: data.strategy_type,
+                  chain_id: data.chain_id,
+                  trading_active: data.trading_active,
+                  paper_trade: data.paper_trade,
+                  created_at: data.created_at,
+                  sandbox_id: data.sandbox_id,
+                  secrets_configured: data.secrets_configured,
+                  call_id: data.call_id ?? 0,
+                  service_id: data.service_id ?? 0,
+                }]
+              : data.bots ?? [];
 
             // Resolve vault addresses for bots that don't have one yet.
             // The vault is created on-chain in _handleProvisionResult, so we query
@@ -378,6 +404,20 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             const seenBotIds = new Set(builtBots.map((b) => b.id));
 
             for (const ob of operatorBots) {
+              // Find matching provision for name and lifecycle fallback
+              const matchingProv = provisionsStore.get().find(
+                (p: { sandboxId?: string; callId?: number; serviceId?: number }) =>
+                  (p.sandboxId && ob.sandbox_id && p.sandboxId === ob.sandbox_id)
+                  || (
+                    p.callId != null
+                    && ob.call_id != null
+                    && p.callId === ob.call_id
+                    && p.serviceId != null
+                    && ob.service_id > 0
+                    && p.serviceId === ob.service_id
+                  ),
+              );
+
               // Resolve vault: operator-provided > on-chain resolved > skip
               let vaultAddr: Address = (ob.vault_address || zeroAddress) as Address;
               if (!vaultAddr || vaultAddr === zeroAddress) {
@@ -390,17 +430,17 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                   vaultLower === addresses.vaultFactory.toLowerCase() ||
                   vaultLower === addresses.tangle.toLowerCase())) continue;
 
-              // Skip bots whose vault hasn't been created yet (still provisioning)
-              if (vaultLower === zeroAddress) continue;
+              // Paper-trade/local bots can be fully active before any vault exists.
+              // Keep those operator-backed records instead of falling back to stale
+              // provision cache state.
+              const hasOperatorLifecycleState = ob.trading_active
+                || ob.secrets_configured === true
+                || matchingProv?.phase === 'active';
+              if (vaultLower === zeroAddress && !hasOperatorLifecycleState) continue;
 
               const botId = ob.id;
               if (seenBotIds.has(botId)) continue;
               seenBotIds.add(botId);
-
-              // Find matching provision for name
-              const matchingProv = provisionsStore.get().find(
-                (p: { sandboxId?: string }) => p.sandboxId && ob.sandbox_id && p.sandboxId === ob.sandbox_id,
-              );
 
               // Find on-chain vault data (TVL, asset, etc.)
               const vaultEntry = vaultEntries.find((v) => v.vaultAddress.toLowerCase() === vaultLower);
@@ -527,13 +567,19 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [operatorAuth.token, operatorMeta]);
 
   useEffect(() => {
     discover();
     // Refresh every 60s instead of on every store change
     const interval = setInterval(discover, 60_000);
-    return () => clearInterval(interval);
+    const unsubscribe = subscribeBotsRefresh(() => {
+      void discover();
+    });
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [discover]);
 
   return {
