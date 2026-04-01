@@ -9,9 +9,11 @@ import { formatDuration, truncateAddress } from '~/lib/format';
 export function ServiceCard({
   service,
   bots,
+  lockedBotCount = 0,
 }: {
   service: UserService;
   bots: Bot[];
+  lockedBotCount?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -53,6 +55,12 @@ export function ServiceCard({
             <span className="flex items-center gap-1 shrink-0">
               <div className="i-ph:robot text-[10px]" />
               {bots.length}
+            </span>
+          )}
+          {lockedBotCount > 0 && (
+            <span className="flex items-center gap-1 shrink-0 text-amber-500">
+              <div className="i-ph:lock-key text-[10px]" />
+              {lockedBotCount} locked
             </span>
           )}
           {totalTvl > 0 && (
@@ -203,6 +211,14 @@ export function ServiceCard({
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {lockedBotCount > 0 && (
+                <div className="rounded border border-amber-500/15 bg-amber-500/5 px-2.5 py-2">
+                  <p className="text-[11px] font-data text-arena-elements-textSecondary">
+                    {lockedBotCount} operator-managed bot{lockedBotCount === 1 ? '' : 's'} hidden until wallet authentication completes.
+                  </p>
                 </div>
               )}
 

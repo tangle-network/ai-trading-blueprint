@@ -36,6 +36,22 @@ export interface TrackedProvision {
   blueprintType?: string;
 }
 
+export function getProvisionStructuralFingerprint(provisions: TrackedProvision[]): string {
+  return provisions
+    .map((p) => [
+      p.id,
+      p.phase,
+      p.serviceId ?? '',
+      p.vaultAddress ?? '',
+      p.callId ?? '',
+      p.progressPhase ?? '',
+      p.botId ?? '',
+      p.sandboxId ?? '',
+      p.workflowId ?? '',
+    ].join('|'))
+    .join(';');
+}
+
 const MAX_PROVISIONS = 20;
 
 export const provisionsStore = persistedAtom<TrackedProvision[]>({

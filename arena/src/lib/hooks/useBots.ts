@@ -6,11 +6,12 @@ import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi, tradingB
 import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
 import { publicClient } from '@tangle-network/blueprint-ui';
-import { provisionsStore } from '~/lib/stores/provisions';
+import { provisionsStore, getProvisionStructuralFingerprint } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 import { useOperatorAuth } from './useOperatorAuth';
 import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
 import { subscribeBotsRefresh } from '~/lib/events/bots';
+import { collectMatchedProvisionIds } from '~/lib/utils/botProvisionReconciliation';
 
 // Direct vault address mapping (fallback when neither Blueprint nor VaultFactory deployed):
 // VITE_SERVICE_VAULTS={"0":["0x..."],"1":["0x...","0x..."]}
@@ -56,7 +57,9 @@ type VaultEntry = {
  *   5. Operator API — enriches with off-chain state (sandbox, secrets, trading status)
  *   6. Provisions store — catches in-progress provisions
  */
-export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void } {
+export type OperatorDataState = 'disabled' | 'authenticating' | 'locked' | 'ready';
+
+export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean; refetch: () => void; operatorDataState: OperatorDataState } {
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { data: operatorMeta } = useOperatorMeta();
@@ -65,6 +68,8 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
   const discover = useCallback(async () => {
     setIsLoading(true);
     try {
+      const storedProvisions = provisionsStore.get();
+
       // Phase 0: Discover service IDs from ServiceActivated events across all configured blueprints
       const allLogs = await Promise.all(
         ALL_BLUEPRINT_IDS.map((bpId) =>
@@ -101,7 +106,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
       }
 
       // Also include service IDs from tracked provisions (catches newly created services)
-      for (const prov of provisionsStore.get()) {
+      for (const prov of storedProvisions) {
         if (prov.serviceId != null && !serviceIds.includes(prov.serviceId)) {
           serviceIds.push(prov.serviceId);
         }
@@ -190,7 +195,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
         }
 
         // From provisions store (catches vaults deployed by recent provisions)
-        for (const prov of provisionsStore.get()) {
+        for (const prov of storedProvisions) {
           if (prov.serviceId === id && prov.vaultAddress) {
             const va = prov.vaultAddress as Address;
             if (va !== zeroAddress && !vaultAddrs.some((a) => a.toLowerCase() === va.toLowerCase())) {
@@ -308,9 +313,12 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             tvl: tvlRaw,
             avgValidatorScore: 0,
             sparklineData: [],
+            source: 'on_chain',
           });
         }
       }
+
+      const operatorBackedBots: Bot[] = [];
 
       // Phase 4: Enrich with operator API data and resolve per-bot vaults.
       // The operator API returns bots with call_id and service_id. For bots whose
@@ -405,7 +413,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
             for (const ob of operatorBots) {
               // Find matching provision for name and lifecycle fallback
-              const matchingProv = provisionsStore.get().find(
+              const matchingProv = storedProvisions.find(
                 (p: { sandboxId?: string; callId?: number; serviceId?: number }) =>
                   (p.sandboxId && ob.sandbox_id && p.sandboxId === ob.sandbox_id)
                   || (
@@ -445,7 +453,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
               // Find on-chain vault data (TVL, asset, etc.)
               const vaultEntry = vaultEntries.find((v) => v.vaultAddress.toLowerCase() === vaultLower);
 
-              builtBots.push({
+              const operatorBot: Bot = {
                 id: botId,
                 serviceId: ob.service_id || matchingProv?.serviceId || vaultEntry?.serviceId || 0,
                 name: matchingProv?.name ?? `${ob.strategy_type} Agent`,
@@ -469,7 +477,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 secretsConfigured: ob.secrets_configured,
                 paperTrade: ob.paper_trade,
                 callId: ob.call_id ?? matchingProv?.callId,
-              });
+                source: 'operator',
+              };
+
+              builtBots.push(operatorBot);
+              operatorBackedBots.push(operatorBot);
             }
           }
         } catch {
@@ -477,14 +489,21 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
         }
       }
 
+      const matchedProvisionIds = collectMatchedProvisionIds(storedProvisions, operatorBackedBots);
+
       // Phase 5: Build bots directly from provisions — the guaranteed fallback.
       // On-chain discovery is fragile (wrong service ID, VaultFactory not deployed,
       // operator API down). The provisions store always has the ground truth for
       // user-deployed bots. Includes in-progress provisions (no vault yet) so they
       // appear under the correct service card.
-      for (const prov of provisionsStore.get()) {
+      for (const prov of storedProvisions) {
         // Skip failed provisions — they're shown in ProvisionsBanner
         if (prov.phase === 'failed') continue;
+        if (matchedProvisionIds.has(prov.id)) continue;
+        // If the operator has already assigned a bot ID, treat it as operator-managed
+        // state and let the route-level auth flow load the real bot instead of
+        // rendering a misleading local fallback.
+        if (prov.botId) continue;
 
         const vaultLower = prov.vaultAddress?.toLowerCase() ?? '';
         const hasVault = vaultLower && vaultLower !== zeroAddress;
@@ -522,6 +541,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           secretsConfigured: prov.phase === 'active',
           tradingActive: prov.phase === 'active',
           callId: prov.callId,
+          source: 'provision',
         });
       }
 
@@ -540,6 +560,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           fbVaultLower === (import.meta.env.VITE_VAULT_FACTORY ?? '').toLowerCase() ||
           fbVaultLower === (import.meta.env.VITE_TANGLE_CONTRACT ?? '').toLowerCase()
         )) continue;
+        if (prov.botId) continue;
         const botId = hasVault ? fbVaultLower : `provision:${prov.id}`;
 
         fallbackBots.push({
@@ -561,6 +582,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           avgValidatorScore: 0,
           sparklineData: [],
           sandboxId: prov.sandboxId,
+          source: 'provision',
         });
       }
       setBots(fallbackBots);
@@ -576,16 +598,33 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
     const unsubscribe = subscribeBotsRefresh(() => {
       void discover();
     });
+    let provisionFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+    const unsubscribeProvisions = provisionsStore.subscribe(() => {
+      const nextFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+      if (nextFingerprint === provisionFingerprint) return;
+      provisionFingerprint = nextFingerprint;
+      void discover();
+    });
     return () => {
       clearInterval(interval);
       unsubscribe();
+      unsubscribeProvisions();
     };
   }, [discover]);
+
+  const operatorDataState: OperatorDataState = !OPERATOR_API_URL
+    ? 'disabled'
+    : operatorAuth.token
+      ? 'ready'
+      : operatorAuth.isAuthenticating
+        ? 'authenticating'
+        : 'locked';
 
   return {
     bots,
     isLoading,
     isOnChain: bots.length > 0,
     refetch: discover,
+    operatorDataState,
   };
 }

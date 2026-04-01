@@ -4,7 +4,7 @@ import type { Address } from 'viem';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle-network/blueprint-ui';
-import { provisionsStore } from '~/lib/stores/provisions';
+import { provisionsStore, getProvisionStructuralFingerprint } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 const BLOCK_TIME_SECONDS = 12;
 
@@ -198,6 +198,17 @@ export function useUserServices(userAddress: Address | undefined) {
 
   useEffect(() => {
     discover();
+    let provisionFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+    const unsubscribe = provisionsStore.subscribe(() => {
+      const nextFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+      if (nextFingerprint === provisionFingerprint) return;
+      provisionFingerprint = nextFingerprint;
+      void discover();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [discover]);
 
   return { services, isLoading, refetch: discover };

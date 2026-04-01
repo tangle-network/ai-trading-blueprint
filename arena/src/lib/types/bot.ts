@@ -43,4 +43,7 @@ export interface Bot {
 
   // On-chain provision tracking
   callId?: number;
+
+  // Internal UI source tracking
+  source?: 'on_chain' | 'operator' | 'provision';
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import type { Address } from 'viem';
+import { useAccount } from 'wagmi';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
@@ -11,7 +12,9 @@ import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
-import { OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -84,10 +87,16 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
 }
 
 export default function IndexPage() {
+  const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
   const [timePeriod, setTimePeriod] = useState('30d');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
-  const { bots: rawBots, isLoading, isOnChain } = useBots();
+  useRouteOperatorAutoAuth({
+    enabled: isConnected && !!OPERATOR_API_URL,
+    routeKey: 'leaderboard',
+    apiUrl: OPERATOR_API_URL,
+  });
+  const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
   const bots = useBotEnrichment(rawBots);
 
   // Leaderboard: only bots that are active or were previously active
@@ -183,6 +192,12 @@ export default function IndexPage() {
           ))}
         </div>
       ) : sorted.length === 0 ? (
+        operatorDataState !== 'ready' && isConnected ? (
+          <OperatorAccessCard
+            title="Operator authentication required"
+            description="Authenticate to load operator-managed agents and live leaderboard metrics."
+          />
+        ) : (
         <div className="glass-card rounded-xl p-16 text-center">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <p className="text-base text-arena-elements-textSecondary mb-2">No agents deployed yet</p>
@@ -190,6 +205,7 @@ export default function IndexPage() {
             <Link to="/provision" className="text-violet-700 dark:text-violet-400 hover:underline">Deploy an agent</Link> to get started.
           </p>
         </div>
+        )
       ) : viewMode === 'table' ? (
         <LeaderboardTable bots={sorted} />
       ) : (

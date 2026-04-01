@@ -237,6 +237,7 @@ export function SecretsModal({
       if (target.provisionId) {
         updateProvision(target.provisionId, {
           phase: 'active',
+          botId,
           workflowId: result.workflow_id,
           sandboxId: result.sandbox_id ?? target.sandboxId,
         });
