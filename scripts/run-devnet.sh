@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 START_UI=true
+RESET_STATE=false
 PIDS=()
 
 resolve_blueprint_root() {
@@ -86,6 +87,37 @@ binary_needs_rebuild() {
   return 1
 }
 
+wait_for_operator_meta() {
+  local url="$1"
+  local expected_kind="$2"
+  local label="$3"
+  local response=""
+
+  for _ in $(seq 1 30); do
+    if response="$(curl -fsS "$url" 2>/dev/null)"; then
+      if grep -q "\"deployment_kind\":\"$expected_kind\"" <<<"$response"; then
+        echo "  $label ready at $url ($expected_kind)"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: $label at $url did not report deployment_kind=$expected_kind"
+  if [[ -n "$response" ]]; then
+    echo "Last response: $response"
+  fi
+  exit 1
+}
+
+verify_distinct_proxy_targets() {
+  if [[ "$OPERATOR_PROXY_TARGET" == "$INSTANCE_OPERATOR_PROXY_TARGET" ]]; then
+    echo "ERROR: cloud and instance operator proxy targets are both set to $OPERATOR_PROXY_TARGET"
+    echo "Set VITE_OPERATOR_PROXY_TARGET and VITE_INSTANCE_OPERATOR_PROXY_TARGET to different operator URLs."
+    exit 1
+  fi
+}
+
 ensure_release_binaries() {
   local sandbox_root="$ROOT_DIR/../ai-agent-sandbox-blueprint"
   local cloud_bin="$ROOT_DIR/target/release/trading-blueprint"
@@ -137,14 +169,24 @@ RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
 WS_RPC_URL="${WS_RPC_URL:-ws://127.0.0.1:$ANVIL_PORT}"
 ARENA_PORT="${ARENA_PORT:-1337}"
 OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
+INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 TRADING_API_PORT="${TRADING_API_PORT:-9100}"
 OPERATOR_PROXY_TARGET="${VITE_OPERATOR_PROXY_TARGET:-http://localhost:$OPERATOR_API_PORT}"
+INSTANCE_OPERATOR_PROXY_TARGET="${VITE_INSTANCE_OPERATOR_PROXY_TARGET:-http://localhost:$INSTANCE_OPERATOR_API_PORT}"
 
 for arg in "$@"; do
   case "$arg" in
     --no-ui) START_UI=false ;;
+    --reset-state) RESET_STATE=true ;;
   esac
 done
+
+verify_distinct_proxy_targets
+
+if [[ "$RESET_STATE" == "true" ]]; then
+  echo "=== Resetting local blueprint state ==="
+  bash "$SCRIPT_DIR/reset-local-state.sh"
+fi
 
 ensure_release_binaries
 
@@ -185,7 +227,9 @@ cd "$ROOT_DIR"
 CHAIN_ID="$CHAIN_ID" \
 RPC_URL="$RPC_URL" \
 OPERATOR_API_PORT="$OPERATOR_API_PORT" \
+INSTANCE_OPERATOR_API_PORT="$INSTANCE_OPERATOR_API_PORT" \
 VITE_OPERATOR_PROXY_TARGET="$OPERATOR_PROXY_TARGET" \
+VITE_INSTANCE_OPERATOR_PROXY_TARGET="$INSTANCE_OPERATOR_PROXY_TARGET" \
   bash "$SCRIPT_DIR/deploy-local.sh"
 
 # ── 3. Start pricing engines ──────────────────────────────────────
@@ -215,7 +259,11 @@ echo ""
 echo "=== Starting cloud operator ==="
 
 CLOUD_SERVICE_ID="$(grep '^VITE_SERVICE_IDS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2 | cut -d, -f1)"
+CLOUD_SERVICE_ID="${CLOUD_SERVICE_ID:-0}"
 CLOUD_BLUEPRINT_ID="$(grep '^VITE_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+INSTANCE_SERVICE_ID="$(grep '^VITE_SERVICE_IDS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2 | cut -d, -f2)"
+INSTANCE_SERVICE_ID="${INSTANCE_SERVICE_ID:-0}"
+INSTANCE_BLUEPRINT_ID="$(grep '^VITE_INSTANCE_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
 DOCKER_SOCKET="${DOCKER_HOST:-}"
 if [[ -z "$DOCKER_SOCKET" ]]; then
   if [[ -S "$HOME/.docker/run/docker.sock" ]]; then
@@ -239,6 +287,7 @@ PRIVATE_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 TANGLE_CONTRACT="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9" \
 RESTAKING_CONTRACT="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" \
 STATUS_REGISTRY_CONTRACT="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
+SESSION_AUTH_SECRET="${SESSION_AUTH_SECRET:-dev-secret-key-do-not-use-in-production}" \
 SIDECAR_IMAGE="${SIDECAR_IMAGE:-tangle-sidecar:local}" \
 SIDECAR_PULL_IMAGE="${SIDECAR_PULL_IMAGE:-false}" \
 SIDECAR_PUBLIC_HOST="${SIDECAR_PUBLIC_HOST:-127.0.0.1}" \
@@ -258,6 +307,45 @@ BILLING_INTERVAL_SECS="${BILLING_INTERVAL_SECS:-999999}" \
 PIDS+=($!)
 sleep 2
 echo "  Cloud operator starting on :$OPERATOR_API_PORT (API) and :$TRADING_API_PORT (trading)"
+wait_for_operator_meta "http://localhost:$OPERATOR_API_PORT/api/meta" "fleet" "Cloud operator"
+
+# ── 4b. Start instance operator ─────────────────────────────────────
+echo ""
+echo "=== Starting instance operator ==="
+
+DOCKER_HOST="$DOCKER_SOCKET" \
+RUST_LOG="${RUST_LOG:-info,tangle=debug,trading=debug}" \
+SERVICE_ID="$INSTANCE_SERVICE_ID" \
+BLUEPRINT_ID="$INSTANCE_BLUEPRINT_ID" \
+RPC_URL="$RPC_URL" \
+HTTP_RPC_URL="$RPC_URL" \
+CHAIN_ID="$CHAIN_ID" \
+OPERATOR_ADDRESS="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" \
+PRIVATE_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" \
+TANGLE_CONTRACT="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9" \
+RESTAKING_CONTRACT="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" \
+STATUS_REGISTRY_CONTRACT="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
+SESSION_AUTH_SECRET="${SESSION_AUTH_SECRET:-dev-secret-key-do-not-use-in-production}" \
+SIDECAR_IMAGE="${SIDECAR_IMAGE:-tangle-sidecar:local}" \
+SIDECAR_PULL_IMAGE="${SIDECAR_PULL_IMAGE:-false}" \
+SIDECAR_PUBLIC_HOST="${SIDECAR_PUBLIC_HOST:-127.0.0.1}" \
+OPERATOR_API_PORT="$INSTANCE_OPERATOR_API_PORT" \
+TRADING_API_PORT="$TRADING_API_PORT" \
+BLUEPRINT_STATE_DIR="${INSTANCE_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/instance}" \
+VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-}" \
+WORKFLOW_CRON_SCHEDULE="${WORKFLOW_CRON_SCHEDULE:-0 0 1 1 * *}" \
+FEE_SETTLEMENT_INTERVAL_SECS="${FEE_SETTLEMENT_INTERVAL_SECS:-999999}" \
+BILLING_INTERVAL_SECS="${BILLING_INTERVAL_SECS:-999999}" \
+"$ROOT_DIR/target/release/trading-instance-blueprint" run \
+  --http-rpc-url "$RPC_URL" \
+  --ws-rpc-url "$WS_RPC_URL" \
+  --keystore-uri "$ROOT_DIR/scripts/data/operator2/keystore" \
+  --data-dir "${INSTANCE_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/instance}" \
+  --protocol tangle -t &
+PIDS+=($!)
+sleep 2
+echo "  Instance operator starting on :$INSTANCE_OPERATOR_API_PORT (API)"
+wait_for_operator_meta "http://localhost:$INSTANCE_OPERATOR_API_PORT/api/meta" "instance" "Instance operator"
 
 # ── 5. Start frontend ─────────────────────────────────────────────
 if [[ "$START_UI" == "true" ]]; then
@@ -268,9 +356,12 @@ if [[ "$START_UI" == "true" ]]; then
   fi
   PATH="${NVM_BIN:-$HOME/.nvm/versions/node/v24.13.1/bin}:$PATH" \
     VITE_OPERATOR_PROXY_TARGET="$OPERATOR_PROXY_TARGET" \
+    VITE_INSTANCE_OPERATOR_PROXY_TARGET="$INSTANCE_OPERATOR_PROXY_TARGET" \
     pnpm -C "$ROOT_DIR/arena" dev --host 0.0.0.0 --port "$ARENA_PORT" &
   PIDS+=($!)
   echo "  Frontend starting on http://localhost:$ARENA_PORT"
+  wait_for_operator_meta "http://localhost:$ARENA_PORT/operator-api/api/meta" "fleet" "Frontend cloud operator proxy"
+  wait_for_operator_meta "http://localhost:$ARENA_PORT/instance-operator-api/api/meta" "instance" "Frontend instance operator proxy"
 fi
 
 # ── Done ───────────────────────────────────────────────────────────
@@ -282,6 +373,7 @@ echo "║  Anvil RPC:     $RPC_URL          ║"
 echo "║  Operator 1:    http://localhost:50051 (gRPC)   ║"
 echo "║  Operator 2:    http://localhost:50052 (gRPC)   ║"
 echo "║  Cloud API:     http://localhost:$OPERATOR_API_PORT        ║"
+echo "║  Instance API:  http://localhost:$INSTANCE_OPERATOR_API_PORT        ║"
 if [[ "$START_UI" == "true" ]]; then
 echo "║  Frontend:      http://localhost:$ARENA_PORT           ║"
 fi

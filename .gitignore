@@ -55,3 +55,6 @@ arena/.env.local
 data/
 scripts/data/
 arena/scripts/data/
+
+# Playwright MCP
+.playwright-mcp

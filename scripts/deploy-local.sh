@@ -19,6 +19,7 @@ ANVIL_PORT="${ANVIL_PORT:-8545}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
 CHAIN_ID="${CHAIN_ID:-31337}"
 OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
+INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 N_VALIDATOR_SERVICES="${N_VALIDATOR_SERVICES:-1}"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
@@ -460,7 +461,11 @@ VITE_WETH_ADDRESS=$WETH
 VITE_SERVICE_IDS=$ALL_SERVICE_IDS
 VITE_BOT_META={"$CLOUD_SERVICE_ID":{"name":"Cloud Demo Bot","strategyType":"dex"},"$INSTANCE_SERVICE_ID":{"name":"Instance Demo Bot","strategyType":"dex"},"$TEE_SERVICE_ID":{"name":"TEE Demo Bot","strategyType":"dex"}}
 VITE_OPERATOR_API_URL=/operator-api
+VITE_CLOUD_OPERATOR_API_URL=/operator-api
+VITE_INSTANCE_OPERATOR_API_URL=/instance-operator-api
+VITE_TEE_OPERATOR_API_URL=/instance-operator-api
 VITE_OPERATOR_PROXY_TARGET=${VITE_OPERATOR_PROXY_TARGET:-http://localhost:$OPERATOR_API_PORT}
+VITE_INSTANCE_OPERATOR_PROXY_TARGET=${VITE_INSTANCE_OPERATOR_PROXY_TARGET:-http://localhost:$INSTANCE_OPERATOR_API_PORT}
 VITE_DEFAULT_AI_PROVIDER=zai
 VITE_DEFAULT_AI_API_KEY=${ZAI_API_KEY:-}
 VITE_TRADING_BLUEPRINT=$BSM
@@ -496,8 +501,8 @@ echo "║ TEE:       blueprint=$TEE_BLUEPRINT_ID  service=$TEE_SERVICE_ID"
 echo "║ Validator: blueprint=$VALIDATOR_BLUEPRINT_ID  services=$VALIDATOR_SERVICE_IDS_CSV"
 echo "╠════════════════════════════════════════════════════════════════════╣"
 echo "║ User:      $USER_ACCOUNT"
-echo "║ Operator1: $OPERATOR1_ADDR → gRPC :50051, HTTP :9200"
-echo "║ Operator2: $OPERATOR2_ADDR → gRPC :50052, HTTP :9201"
+echo "║ Operator1: $OPERATOR1_ADDR → gRPC :50051, HTTP :$OPERATOR_API_PORT"
+echo "║ Operator2: $OPERATOR2_ADDR → gRPC :50052, HTTP :$INSTANCE_OPERATOR_API_PORT"
 echo "╚════════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Next steps:"

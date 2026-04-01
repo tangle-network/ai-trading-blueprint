@@ -128,6 +128,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const rpcTarget = env.VITE_RPC_URL || 'http://127.0.0.1:8545';
   const operatorProxyTarget = env.VITE_OPERATOR_PROXY_TARGET || 'http://localhost:9200';
+  const instanceOperatorProxyTarget =
+    env.VITE_INSTANCE_OPERATOR_PROXY_TARGET || 'http://localhost:9201';
 
   return {
   plugins: [
@@ -143,6 +145,10 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       events: 'events',
+      // Symlinked @tangle/blueprint-ui subpath exports aren't resolved by
+      // Vite's SSR module runner. Map them via the workspace symlink.
+      '@tangle/blueprint-ui/components': new URL('../../blueprint-ui/src/components.ts', import.meta.url).pathname,
+      '@tangle/blueprint-ui/preset': new URL('../../blueprint-ui/src/preset.ts', import.meta.url).pathname,
     },
     dedupe: [
       '@nanostores/react',
@@ -173,6 +179,11 @@ export default defineConfig(({ mode }) => {
         target: operatorProxyTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/operator-api/, ''),
+      },
+      '/instance-operator-api': {
+        target: instanceOperatorProxyTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/instance-operator-api/, ''),
       },
       // Proxy RPC calls so browsers on non-localhost (Tailscale, LAN) can reach Anvil
       '/rpc-proxy': {
