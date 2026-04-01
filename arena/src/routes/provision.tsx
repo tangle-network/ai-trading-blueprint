@@ -21,6 +21,9 @@ import { addTx } from '@tangle/blueprint-ui';
 import {
   provisionsForOwner,
   addProvision,
+  upsertInstanceProvision,
+  removeProvision,
+  removeInstanceProvisions,
   updateProvision,
   type TrackedProvision,
 } from '~/lib/stores/provisions';
@@ -48,6 +51,19 @@ import { InfrastructureDialog } from '~/components/provision/InfrastructureDialo
 import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsDialog';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
+  buildBotScopedPath,
+  getExpectedDeploymentKindForBlueprint,
+  getOperatorApiUrlForBlueprint,
+  useOperatorMeta,
+} from '~/lib/operator/meta';
+import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { dispatchBotsRefresh } from '~/lib/events/bots';
+import {
+  isStaleStateError,
+  readOperatorError,
+  type OperatorErrorBody,
+} from '~/lib/operator/errors';
+import {
   type WizardStep,
   STEP_ORDER,
   STEP_LABELS,
@@ -55,7 +71,6 @@ import {
   type DiscoveredService,
 } from './provision/types';
 
-const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 export const FIRECRACKER_RUNTIME_SUPPORTED = false;
 
 export type RuntimeBackend = 'docker' | 'firecracker' | 'tee';
@@ -95,6 +110,43 @@ export function buildStrategyConfigForProvision({
   if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
   return config;
+}
+
+interface InstanceOperatorBot {
+  id: string;
+  sandbox_id: string;
+  sandbox_exists: boolean;
+  vault_address: string;
+  strategy_type: string;
+  trading_active: boolean;
+  workflow_id?: number | null;
+  call_id: number;
+  service_id: number;
+}
+
+export function selectLatestInstanceProvision(
+  provisions: TrackedProvision[],
+  activeServiceId?: string,
+): TrackedProvision | undefined {
+  const candidates = provisions.filter(
+    (p) => p.id.startsWith('instance-') && p.phase !== 'failed',
+  );
+  if (candidates.length === 0) return undefined;
+
+  const parsedServiceId =
+    activeServiceId && /^\d+$/.test(activeServiceId) ? Number(activeServiceId) : undefined;
+
+  const sortNewest = (a: TrackedProvision, b: TrackedProvision) =>
+    b.updatedAt - a.updatedAt || b.createdAt - a.createdAt;
+
+  if (parsedServiceId != null) {
+    const matching = candidates
+      .filter((p) => p.serviceId === parsedServiceId)
+      .sort(sortNewest);
+    if (matching[0]) return matching[0];
+  }
+
+  return [...candidates].sort(sortNewest)[0];
 }
 
 export const meta: MetaFunction = () => [
@@ -237,13 +289,13 @@ export default function ProvisionPage() {
   const [isSubmittingSecrets, setIsSubmittingSecrets] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
   const [secretsLookupError, setSecretsLookupError] = useState<string | null>(null);
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const [useOperatorKey, setUseOperatorKey] = useState(false);
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
   const effectiveExpert = customExpertKnowledge || selectedPack.expertKnowledge;
   const effectiveCron = customCron || selectedPack.cron;
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
+  const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
 
   // Reset customizations when strategy changes
   const prevStrategyRef = useRef(strategyType);
@@ -253,8 +305,6 @@ export default function ProvisionPage() {
     setCustomInstructions('');
     setCustomCron('');
   }
-
-  const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
 
   // Auto-set service mode to 'new' for instance blueprints
   useEffect(() => {
@@ -301,6 +351,49 @@ export default function ProvisionPage() {
     });
   }, [txHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const latestDeployment = useMemo(() => {
+    const txMatch = myProvisions.find((p) => p.txHash === txHash);
+    if (txMatch) return txMatch;
+    if (isInstance) return selectLatestInstanceProvision(myProvisions, serviceId);
+    return undefined;
+  }, [myProvisions, txHash, isInstance, serviceId]);
+
+  const operatorApiUrl = useMemo(
+    () => getOperatorApiUrlForBlueprint(selectedBlueprint?.id ?? latestDeployment?.blueprintType),
+    [latestDeployment?.blueprintType, selectedBlueprint?.id],
+  );
+  const operatorAuth = useOperatorAuth(operatorApiUrl);
+  const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
+  const expectedOperatorKind = useMemo(
+    () => getExpectedDeploymentKindForBlueprint(selectedBlueprint?.id ?? latestDeployment?.blueprintType),
+    [latestDeployment?.blueprintType, selectedBlueprint?.id],
+  );
+  const operatorRouteMismatchMessage = useMemo(() => {
+    if (!operatorMeta || operatorMeta.deployment_kind === expectedOperatorKind) return null;
+    const flowLabel = expectedOperatorKind === 'fleet' ? 'cloud' : 'instance';
+    return `This ${flowLabel} provision flow is pointed at a ${operatorMeta.deployment_kind} operator. Fix the local operator proxy routing and restart the devnet.`;
+  }, [expectedOperatorKind, operatorMeta]);
+  const hasOperatorManagedProvision = myProvisions.some((p) =>
+    ['job_submitted', 'job_processing', 'awaiting_secrets'].includes(p.phase),
+  );
+  const provisionNeedsOperatorAuth = Boolean(
+    operatorApiUrl
+    && isConnected
+    && (
+      isInstance
+      || step === 'deploy'
+      || step === 'secrets'
+      || instanceProvisioning
+      || hasOperatorManagedProvision
+    ),
+  );
+
+  useRouteOperatorAutoAuth({
+    enabled: provisionNeedsOperatorAuth,
+    routeKey: 'provision',
+    apiUrl: operatorApiUrl,
+  });
+
   // Auto-provision instance bot via operator API after service activation
   const autoProvisionInstance = useCallback(async (activatedServiceId: string) => {
     setInstanceProvisioning(true);
@@ -341,7 +434,7 @@ export default function ProvisionPage() {
           validator_service_ids: resolvedValidatorIds,
         };
 
-        const res = await fetch(`${OPERATOR_API_URL}/api/bot/provision`, {
+        const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -354,7 +447,7 @@ export default function ProvisionPage() {
           operatorAuth.clearCachedToken();
           const fresh = await operatorAuth.authenticate();
           if (!fresh) throw new Error('Re-authentication failed');
-          const retry = await fetch(`${OPERATOR_API_URL}/api/bot/provision`, {
+          const retry = await fetch(`${operatorApiUrl}/api/bot/provision`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -362,15 +455,14 @@ export default function ProvisionPage() {
             },
             body: JSON.stringify(provisionBody),
           });
-          if (!retry.ok) throw new Error(await retry.text());
+          if (!retry.ok) throw await readOperatorError(retry);
           const result = await retry.json();
           handleInstanceProvisionSuccess(activatedServiceId, result);
           return;
         }
 
         if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(errText || `HTTP ${res.status}`);
+          throw await readOperatorError(res);
         }
 
         const result = await res.json();
@@ -387,29 +479,32 @@ export default function ProvisionPage() {
       }
     }
     setInstanceProvisioning(false);
-  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorAuth]);
+  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth]);
 
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
     setInstanceProvisioning(false);
     setServiceId(activatedServiceId);
 
-    addProvision({
-      id: `instance-${activatedServiceId}`,
-      owner: userAddress!,
-      name: name || 'Instance Agent',
-      strategyType,
-      operators: [],
-      blueprintId,
-      blueprintType: selectedBlueprint?.id,
-      serviceId: Number(activatedServiceId),
-      jobIndex: 0,
-      phase: 'awaiting_secrets',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      chainId: targetChain.id,
-      sandboxId: result.sandbox_id,
-      callId: 0,
-    });
+    if (userAddress) {
+      upsertInstanceProvision({
+        id: `instance-${activatedServiceId}`,
+        owner: userAddress,
+        name: name || 'Instance Agent',
+        strategyType,
+        operators: [],
+        blueprintId,
+        blueprintType: selectedBlueprint?.id,
+        serviceId: Number(activatedServiceId),
+        jobIndex: 0,
+        phase: 'awaiting_secrets',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        chainId: targetChain.id,
+        botId: result.bot_id,
+        sandboxId: result.sandbox_id,
+        callId: 0,
+      });
+    }
 
     resetTx();
     toast.success(`Instance provisioned! Configure API keys to start trading.`);
@@ -635,7 +730,7 @@ export default function ProvisionPage() {
               const decoded = decodeEventLog({
                 abi: tangleServicesAbi,
                 data: log.data,
-                topics: [...log.topics],
+                topics: [...log.topics] as [`0x${string}`, ...`0x${string}`[]],
               });
               if (decoded.eventName !== 'ServiceActivated') continue;
               const args = decoded.args as { blueprintId?: bigint; serviceId?: bigint };
@@ -981,10 +1076,112 @@ export default function ProvisionPage() {
     if (idx > 0) setStep(STEP_ORDER[idx - 1]);
   };
 
-  const latestDeployment = myProvisions.find((p) =>
-    p.txHash === txHash ||
-    (isInstance && p.id.startsWith('instance-') && p.phase !== 'failed'),
-  );
+  const syncInstanceProvisionFromBot = useCallback((bot: InstanceOperatorBot) => {
+    if (!userAddress) return null;
+
+    const normalized: TrackedProvision = {
+      id: `instance-${bot.service_id}`,
+      owner: userAddress,
+      name: latestDeployment?.name || name || 'Instance Agent',
+      strategyType: bot.strategy_type || latestDeployment?.strategyType || strategyType,
+      operators: latestDeployment?.operators ?? [],
+      blueprintId: latestDeployment?.blueprintId ?? blueprintId,
+      blueprintType: latestDeployment?.blueprintType ?? selectedBlueprint?.id,
+      serviceId: bot.service_id,
+      jobIndex: latestDeployment?.jobIndex ?? 0,
+      phase: bot.trading_active ? 'active' : 'awaiting_secrets',
+      createdAt: latestDeployment?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+      chainId: latestDeployment?.chainId ?? targetChain.id,
+      botId: bot.id,
+      sandboxId: bot.sandbox_id,
+      callId: bot.call_id,
+      workflowId: bot.workflow_id ?? undefined,
+      vaultAddress: bot.vault_address !== zeroAddress ? bot.vault_address : undefined,
+    };
+
+    upsertInstanceProvision(normalized);
+    setSecretsLookupError(null);
+    return normalized;
+  }, [
+    userAddress,
+    latestDeployment,
+    name,
+    strategyType,
+    blueprintId,
+    selectedBlueprint?.id,
+    targetChain.id,
+  ]);
+
+  const reconcileInstanceDeployment = useCallback(async (
+    token: string,
+  ): Promise<
+    | { kind: 'ok'; provision: TrackedProvision }
+    | { kind: 'auth_required' }
+    | { kind: 'missing'; message: string }
+    | { kind: 'error'; message: string }
+  > => {
+    if (!isInstance || !userAddress || operatorMeta?.deployment_kind !== 'instance') {
+      if (!latestDeployment) {
+        return { kind: 'error', message: 'No provision is available to configure.' };
+      }
+      return { kind: 'ok', provision: latestDeployment };
+    }
+
+    try {
+      const res = await fetch(`${operatorApiUrl}/api/bot`, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        return { kind: 'auth_required' };
+      }
+
+      if (res.status === 404) {
+        removeInstanceProvisions(userAddress);
+        return {
+          kind: 'missing',
+          message: 'Instance bot is no longer provisioned on the operator. Reprovision it from the deploy step.',
+        };
+      }
+
+      if (!res.ok) {
+        return {
+          kind: 'error',
+          message: `Failed to load current instance bot (HTTP ${res.status}).`,
+        };
+      }
+
+      const bot = await res.json() as InstanceOperatorBot;
+      if (!bot.sandbox_exists) {
+        removeInstanceProvisions(userAddress);
+        return {
+          kind: 'missing',
+          message: `Instance bot ${bot.id} points to missing sandbox ${bot.sandbox_id}. Reprovision it from the deploy step.`,
+        };
+      }
+      const provision = syncInstanceProvisionFromBot(bot);
+      if (!provision) {
+        return { kind: 'error', message: 'Wallet authentication required to load bot data.' };
+      }
+      return { kind: 'ok', provision };
+    } catch {
+      return {
+        kind: 'error',
+        message: 'Failed to reach the operator while loading the current instance bot.',
+      };
+    }
+  }, [
+    isInstance,
+    userAddress,
+    operatorMeta?.deployment_kind,
+    latestDeployment,
+    operatorApiUrl,
+    syncInstanceProvisionFromBot,
+  ]);
 
   useEffect(() => {
     if (latestDeployment?.phase === 'awaiting_secrets' && step === 'deploy') {
@@ -992,47 +1189,180 @@ export default function ProvisionPage() {
     }
   }, [latestDeployment?.phase, step]);
 
+  useEffect(() => {
+    if (
+      !isInstance
+      || step !== 'secrets'
+      || operatorMeta?.deployment_kind !== 'instance'
+      || !operatorAuth.token
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const result = await reconcileInstanceDeployment(operatorAuth.token!);
+      if (cancelled) return;
+      if (result.kind === 'missing') {
+        setSecretsLookupError(result.message);
+        setStep('configure');
+      } else if (result.kind === 'error') {
+        setSecretsLookupError(result.message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isInstance,
+    step,
+    operatorMeta?.deployment_kind,
+    operatorAuth.token,
+    reconcileInstanceDeployment,
+  ]);
+
   /** Resolve operator bot ID using multi-strategy lookup. */
   const resolveBotId = useCallback(async (opts: {
+    botId?: string;
     sandboxId?: string;
     callId?: number;
     serviceId?: number;
-  }): Promise<string | null> => {
-    const result = await resolveBot(OPERATOR_API_URL, opts);
+    token?: string | null;
+  }): Promise<
+    | { botId: string }
+    | {
+      error: string;
+      code: 'auth_required' | 'not_found' | 'operator_unreachable' | 'stale_state' | 'conflict';
+    }
+  > => {
+    if (!operatorApiUrl) {
+      const error = {
+        error: 'Operator API URL not configured',
+        code: 'operator_unreachable' as const,
+      };
+      setSecretsLookupError(error.error);
+      return error;
+    }
+    const result = await resolveBot(operatorApiUrl, opts);
     if ('botId' in result) {
+      if (latestDeployment && latestDeployment.botId !== result.botId) {
+        updateProvision(latestDeployment.id, { botId: result.botId });
+      }
       setSecretsLookupError(null);
-      return result.botId;
+      return result;
     }
     setSecretsLookupError(result.error);
-    return null;
-  }, []);
+    return result;
+  }, [latestDeployment, operatorApiUrl]);
 
   const handleSubmitSecrets = async () => {
     if (!latestDeployment) return;
     if (!latestDeployment.sandboxId && !latestDeployment.callId) return;
     if (!useOperatorKey && !apiKey.trim()) return;
+    if (operatorRouteMismatchMessage) {
+      setSecretsLookupError(operatorRouteMismatchMessage);
+      return;
+    }
 
     setIsSubmittingSecrets(true);
     setActivationPhase(null);
     setSecretsLookupError(null);
 
-    const botId = await resolveBotId({
-      sandboxId: latestDeployment.sandboxId,
-      callId: latestDeployment.callId,
-      serviceId: latestDeployment.serviceId,
-    });
-    if (!botId) {
-      setIsSubmittingSecrets(false);
-      return;
+    let authToken = operatorAuth.token;
+    if (!authToken) {
+      authToken = await operatorAuth.authenticate();
+      if (!authToken) {
+        setSecretsLookupError('Wallet authentication required to load bot data.');
+        setIsSubmittingSecrets(false);
+        return;
+      }
+    }
+
+    let targetDeployment = latestDeployment;
+    let botId: string;
+
+    if (isInstance && operatorMeta?.deployment_kind === 'instance') {
+      let reconciled = await reconcileInstanceDeployment(authToken);
+      if (reconciled.kind === 'auth_required') {
+        operatorAuth.clearCachedToken();
+        authToken = await operatorAuth.authenticate();
+        if (!authToken) {
+          setSecretsLookupError('Wallet authentication required to load bot data.');
+          setIsSubmittingSecrets(false);
+          return;
+        }
+        reconciled = await reconcileInstanceDeployment(authToken);
+      }
+
+      if (reconciled.kind === 'missing') {
+        setSecretsLookupError(reconciled.message);
+        setStep('configure');
+        setIsSubmittingSecrets(false);
+        return;
+      }
+
+      if (reconciled.kind === 'error') {
+        setSecretsLookupError(reconciled.message);
+        setIsSubmittingSecrets(false);
+        return;
+      }
+
+      if (reconciled.kind !== 'ok') {
+        setSecretsLookupError('Wallet authentication required to load bot data.');
+        setIsSubmittingSecrets(false);
+        return;
+      }
+
+      targetDeployment = reconciled.provision;
+      botId = reconciled.provision.botId!;
+    } else {
+      let botLookup = await resolveBotId({
+        botId: latestDeployment.botId,
+        sandboxId: latestDeployment.sandboxId,
+        callId: latestDeployment.callId,
+        serviceId: latestDeployment.serviceId,
+        token: authToken,
+      });
+      if (!('botId' in botLookup) && botLookup.code === 'auth_required') {
+        operatorAuth.clearCachedToken();
+        authToken = await operatorAuth.authenticate();
+        if (!authToken) {
+          setSecretsLookupError('Wallet authentication required to load bot data.');
+          setIsSubmittingSecrets(false);
+          return;
+        }
+        botLookup = await resolveBotId({
+          botId: latestDeployment.botId,
+          sandboxId: latestDeployment.sandboxId,
+          callId: latestDeployment.callId,
+          serviceId: latestDeployment.serviceId,
+          token: authToken,
+        });
+      }
+      if (!('botId' in botLookup)) {
+        if (botLookup.code === 'stale_state' || botLookup.code === 'conflict') {
+          removeProvision(latestDeployment.id);
+          setStep('configure');
+        }
+        setIsSubmittingSecrets(false);
+        return;
+      }
+      botId = botLookup.botId;
     }
 
     let pollFailures = 0;
     const pollInterval = setInterval(async () => {
       try {
-        const progressUrl = isInstance
-          ? `${OPERATOR_API_URL}/api/bot/activation-progress`
-          : `${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`;
-        const res = await fetch(progressUrl);
+        const progressUrl = operatorMeta
+          ? `${operatorApiUrl}${buildBotScopedPath(operatorMeta, botId, '/activation-progress')}`
+          : null;
+        if (!progressUrl) return;
+        const headers: Record<string, string> = {};
+        if (operatorAuth.token) {
+          headers.Authorization = `Bearer ${operatorAuth.token}`;
+        }
+        const res = await fetch(progressUrl, { headers });
         if (res.ok) {
           const data = await res.json();
           setActivationPhase(data.phase ?? null);
@@ -1058,15 +1388,10 @@ export default function ProvisionPage() {
         }
       }
 
-      let authToken = operatorAuth.token;
-      if (!authToken) {
-        authToken = await operatorAuth.authenticate();
-        if (!authToken) throw new Error('Wallet authentication failed');
+      if (!operatorMeta) {
+        throw new Error('Operator metadata not loaded');
       }
-
-      const secretsUrl = isInstance
-        ? `${OPERATOR_API_URL}/api/bot/secrets`
-        : `${OPERATOR_API_URL}/api/bots/${botId}/secrets`;
+      const secretsUrl = `${operatorApiUrl}${buildBotScopedPath(operatorMeta, botId, '/secrets')}`;
 
       const postSecrets = async (tok: string) => {
         const controller = new AbortController();
@@ -1097,22 +1422,48 @@ export default function ProvisionPage() {
       }
 
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || `HTTP ${res.status}`);
+        throw await readOperatorError(res);
       }
 
       const result = await res.json();
 
-      updateProvision(latestDeployment.id, {
-        phase: 'active',
-        workflowId: result.workflow_id,
-        sandboxId: result.sandbox_id ?? latestDeployment.sandboxId,
-      });
+      if (isInstance && userAddress) {
+        upsertInstanceProvision({
+          ...targetDeployment,
+          id: `instance-${targetDeployment.serviceId ?? 0}`,
+          owner: userAddress,
+          phase: 'active',
+          botId,
+          workflowId: result.workflow_id,
+          sandboxId: result.sandbox_id ?? targetDeployment.sandboxId,
+        });
+      } else {
+        updateProvision(targetDeployment.id, {
+          phase: 'active',
+          botId,
+          workflowId: result.workflow_id,
+          sandboxId: result.sandbox_id ?? targetDeployment.sandboxId,
+        });
+      }
 
       toast.success('API keys configured — agent is now active!');
+      dispatchBotsRefresh();
       setApiKey('');
       setExtraEnvs([]);
     } catch (err) {
+      if (isStaleStateError(err)) {
+        const staleBody = err.body as OperatorErrorBody | null;
+        if (isInstance && userAddress) {
+          removeInstanceProvisions(userAddress);
+        } else if (targetDeployment.id) {
+          updateProvision(targetDeployment.id, {
+            errorMessage: err.message,
+            sandboxId: staleBody?.sandbox_id ?? targetDeployment.sandboxId,
+          });
+        }
+        setSecretsLookupError(err.message);
+        setStep('configure');
+      }
       toast.error(
         `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`,
       );
@@ -1310,7 +1661,7 @@ export default function ProvisionPage() {
             setUseOperatorKey={setUseOperatorKey}
             isSubmittingSecrets={isSubmittingSecrets}
             activationPhase={activationPhase}
-            secretsLookupError={secretsLookupError}
+            secretsLookupError={operatorRouteMismatchMessage ?? secretsLookupError}
             handleSubmitSecrets={handleSubmitSecrets}
             setStep={setStep}
             resetTx={resetTx}

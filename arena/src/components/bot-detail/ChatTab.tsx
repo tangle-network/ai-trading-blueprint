@@ -7,8 +7,9 @@ import {
 } from '@tangle/agent-ui';
 import { Button } from '@tangle/blueprint-ui/components';
 import { AuthBanner } from '~/components/bot-detail/AuthBanner';
-import { useWagmiSidecarAuth } from '~/lib/hooks/useWagmiSidecarAuth';
-import { getApiUrlForBot } from '~/lib/config/botRegistry';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { UnsupportedFeatureCard } from '~/components/operator/OperatorAccessCard';
 
 interface ChatTabProps {
   botId: string;
@@ -178,8 +179,9 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
 // ── Main Chat Tab ───────────────────────────────────────────────────────
 
 export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
-  const apiUrl = getApiUrlForBot(botId) ?? '';
-  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useWagmiSidecarAuth(botId, apiUrl);
+  const { data: operatorMeta } = useOperatorMeta();
+  const apiUrl = operatorMeta ? `${OPERATOR_API_URL}${buildBotScopedPath(operatorMeta, botId)}` : '';
+  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useOperatorAuth(OPERATOR_API_URL);
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(() => primarySessionId);
@@ -212,11 +214,15 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
     ? sessions.map((s: Session) => ({ id: s.id, title: s.title }))
     : [{ id: primarySessionId, title: 'Main Session' }];
 
+  if (operatorMeta && !operatorMeta.features.chat) {
+    return <UnsupportedFeatureCard feature="Chat" />;
+  }
+
   if (!apiUrl) {
     return (
       <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
         <div className="i-ph:chat-slash text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No API configured for this bot. Chat requires a running bot API.
+        Chat is not ready yet for this operator.
       </div>
     );
   }

@@ -23,6 +23,7 @@ import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
+import { OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
@@ -242,6 +243,7 @@ export default function HomePage() {
   // ── Main content ───────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+      <OperatorSessionBanner />
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
         <div>

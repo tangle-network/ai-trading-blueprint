@@ -5,6 +5,7 @@ import { provisionsStore, updateProvision, type TrackedProvision } from '~/lib/s
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle/blueprint-ui';
+import { useOperatorAuth } from './useOperatorAuth';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
 
@@ -53,6 +54,7 @@ function decodeProvisionOutput(output: `0x${string}`) {
  * run via refs and direct store reads, not React state.
  */
 export function useProvisionWatcher() {
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const watchingTxs = useRef(new Set<string>());
   const repairRan = useRef(false);
   const eventWatcherActive = useRef(false);
@@ -217,17 +219,29 @@ export function useProvisionWatcher() {
       }
 
       // ── Stage 2.5: Operator API polling ──
-      const hasSubmitted = provisions.some(
-        (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+      const needsProgressPolling = provisions.some(
+        (p: TrackedProvision) =>
+          p.callId != null
+          && (
+            p.phase === 'job_submitted'
+            || p.phase === 'job_processing'
+            || ((p.phase === 'awaiting_secrets' || p.phase === 'active') && !p.botId)
+          ),
       );
 
-      if (hasSubmitted && OPERATOR_API_URL && !pollingRef.current) {
+      if (needsProgressPolling && OPERATOR_API_URL && !pollingRef.current) {
         const poll = async () => {
           if (cancelled || pollingInFlight.current) return;
           pollingInFlight.current = true;
           try {
           const submitted = provisionsStore.get().filter(
-            (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+            (p: TrackedProvision) =>
+              p.callId != null
+              && (
+                p.phase === 'job_submitted'
+                || p.phase === 'job_processing'
+                || ((p.phase === 'awaiting_secrets' || p.phase === 'active') && !p.botId)
+              ),
           );
           if (submitted.length === 0) {
             // No more pending — stop polling
@@ -248,7 +262,11 @@ export function useProvisionWatcher() {
               continue;
             }
             try {
-              const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
+              const headers: Record<string, string> = {};
+              if (operatorAuth.token) {
+                headers.Authorization = `Bearer ${operatorAuth.token}`;
+              }
+              const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`, { headers });
               if (!res.ok) continue;
               const progress = await res.json();
               if (progress?.phase) {
@@ -271,8 +289,8 @@ export function useProvisionWatcher() {
                     phase: 'awaiting_secrets',
                     progressPhase: progress.phase,
                     progressDetail: progress.message,
+                    ...(typeof progress.metadata?.bot_id === 'string' ? { botId: progress.metadata.bot_id } : {}),
                     ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
-                    ...(progress.metadata?.bot_id ? {} : {}),
                     ...(progress.metadata?.service_id ? { serviceId: progress.metadata.service_id } : {}),
                   });
                 } else {
@@ -294,7 +312,7 @@ export function useProvisionWatcher() {
         };
         poll();
         pollingRef.current = setInterval(poll, 5000); // 5s instead of 2s
-      } else if (!hasSubmitted && pollingRef.current) {
+      } else if (!needsProgressPolling && pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
@@ -363,7 +381,7 @@ export function useProvisionWatcher() {
         console.error('[provision-watcher] Repair failed:', err);
       }
     })();
-  }, []);
+  }, [operatorAuth.token]);
 }
 
 /** Decode output and update a provision with vault/sandbox data.

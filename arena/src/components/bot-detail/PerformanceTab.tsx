@@ -6,12 +6,16 @@ import { Card, CardHeader, CardTitle, CardContent } from '@tangle/blueprint-ui/c
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { useBotMetrics } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface PerformanceTabProps {
   bot: Bot;
 }
 
 export function PerformanceTab({ bot }: PerformanceTabProps) {
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
@@ -163,6 +167,10 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
     );
   }
 
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard />;
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -180,7 +188,6 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
                 <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
                 <p className="text-sm text-arena-elements-textSecondary">
                   No performance data available yet.
-                  {bot.id.startsWith('service-') && ' Connect a bot API to see real metrics.'}
                 </p>
               </div>
             </div>

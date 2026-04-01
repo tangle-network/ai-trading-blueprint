@@ -12,6 +12,7 @@ import { ScoreRing } from './shared/ValidatorComponents';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 
 const JOB_EXTEND = 6;
 
@@ -52,6 +53,10 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         ))}
       </div>
     );
+  }
+
+  if (!isAuthenticated && !detail) {
+    return <OperatorAccessCard description="Connect your wallet to load operator-managed bot controls." />;
   }
 
   if (!detail) {

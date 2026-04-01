@@ -24,6 +24,7 @@ export interface TrackedProvision {
   chainId: number;
   /** Decoded from TradingProvisionOutput */
   vaultAddress?: string;
+  botId?: string;
   sandboxId?: string;
   workflowId?: number;
   errorMessage?: string;
@@ -48,6 +49,30 @@ export function addProvision(provision: TrackedProvision) {
   provisionsStore.set([provision, ...existing].slice(0, MAX_PROVISIONS));
 }
 
+export function upsertInstanceProvision(provision: TrackedProvision) {
+  const current = provisionsStore.get();
+  const owner = provision.owner.toLowerCase();
+  const existing = current.find(
+    (p: TrackedProvision) => p.owner.toLowerCase() === owner && p.id === provision.id,
+  );
+
+  const next = current.filter(
+    (p: TrackedProvision) =>
+      p.owner.toLowerCase() !== owner || !p.id.startsWith('instance-') || p.id === provision.id,
+  );
+
+  const normalized: TrackedProvision = {
+    ...existing,
+    ...provision,
+    createdAt: existing?.createdAt ?? provision.createdAt,
+    updatedAt: Date.now(),
+  };
+
+  provisionsStore.set(
+    [normalized, ...next.filter((p: TrackedProvision) => p.id !== provision.id)].slice(0, MAX_PROVISIONS),
+  );
+}
+
 export function updateProvision(id: string, update: Partial<TrackedProvision>) {
   const current = provisionsStore.get();
   const target = current.find((p: TrackedProvision) => p.id === id);
@@ -68,6 +93,16 @@ export function updateProvision(id: string, update: Partial<TrackedProvision>) {
 
 export function removeProvision(id: string) {
   provisionsStore.set(provisionsStore.get().filter((p: TrackedProvision) => p.id !== id));
+}
+
+export function removeInstanceProvisions(owner: Address | undefined) {
+  if (!owner) return;
+  const key = owner.toLowerCase();
+  provisionsStore.set(
+    provisionsStore.get().filter(
+      (p: TrackedProvision) => p.owner.toLowerCase() !== key || !p.id.startsWith('instance-'),
+    ),
+  );
 }
 
 /** Computed store filtered to provisions owned by a specific address. Cached per address. */

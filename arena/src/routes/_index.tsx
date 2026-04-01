@@ -11,6 +11,7 @@ import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
+import { OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -172,6 +173,8 @@ export default function IndexPage() {
         timePeriod={timePeriod}
         onTimePeriodChange={setTimePeriod}
       />
+
+      <OperatorSessionBanner />
 
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

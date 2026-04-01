@@ -63,6 +63,9 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
 vi.mock('~/lib/stores/provisions', () => ({
   provisionsForOwner: () => ({ subscribe: vi.fn(), get: vi.fn(() => []) }),
   addProvision: vi.fn(),
+  upsertInstanceProvision: vi.fn(),
+  removeProvision: vi.fn(),
+  removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
 }));
 
@@ -152,5 +155,43 @@ describe('provision runtime backend helpers', () => {
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
+  });
+
+  it('prefers the current service when selecting the latest instance provision', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001';
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Older',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+          {
+            id: 'instance-12',
+            owner,
+            name: 'Newest',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 12,
+            phase: 'awaiting_secrets',
+            createdAt: 20,
+            updatedAt: 20,
+            chainId: 31337,
+          },
+        ],
+        '11',
+      )?.id,
+    ).toBe('instance-11');
   });
 });

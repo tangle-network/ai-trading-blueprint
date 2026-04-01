@@ -1,11 +1,15 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface PositionsTabProps {
   botId: string;
 }
 
 export function PositionsTab({ botId }: PositionsTabProps) {
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const { data: portfolio, isLoading } = useBotPortfolio(botId);
 
   if (isLoading) {
@@ -15,6 +19,10 @@ export function PositionsTab({ botId }: PositionsTabProps) {
         Loading positions...
       </div>
     );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard />;
   }
 
   if (!portfolio) {

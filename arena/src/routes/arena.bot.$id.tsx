@@ -13,6 +13,9 @@ import { ControlsTab } from '~/components/bot-detail/ControlsTab';
 import { TerminalTab } from '~/components/bot-detail/TerminalTab';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
+import { useAccount } from 'wagmi';
+import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -20,8 +23,17 @@ export const meta: MetaFunction = () => [
 
 export default function BotDetailPage() {
   const { id } = useParams();
+  const { isConnected } = useAccount();
   const { bots, isLoading } = useBots();
+  const { data: operatorMeta } = useOperatorMeta();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
+
+  useRouteOperatorAutoAuth({
+    enabled: Boolean(OPERATOR_API_URL && isConnected && id),
+    routeKey: `bot-detail:${id ?? 'unknown'}`,
+    apiUrl: OPERATOR_API_URL,
+  });
+
   // Match by ID, sandbox ID, or vault address (handles various link formats)
   const bot = bots.find((b) => b.id === id)
     ?? bots.find((b) => id && b.sandboxId === id)
@@ -81,8 +93,8 @@ export default function BotDetailPage() {
                 <span className="ml-1.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
               )}
             </TabsTrigger>
-            <TabsTrigger value="chat">Chat</TabsTrigger>
-            <TabsTrigger value="terminal">Terminal</TabsTrigger>
+            {operatorMeta?.features.chat && <TabsTrigger value="chat">Chat</TabsTrigger>}
+            {operatorMeta?.features.terminal && <TabsTrigger value="terminal">Terminal</TabsTrigger>}
             <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
@@ -102,17 +114,21 @@ export default function BotDetailPage() {
             <ReasoningTab botId={bot.id} botName={bot.name} />
           </TabsContent>
 
-          <TabsContent value="chat" className="mt-6">
-            <ErrorBoundary>
-              <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
-            </ErrorBoundary>
-          </TabsContent>
+          {operatorMeta?.features.chat && (
+            <TabsContent value="chat" className="mt-6">
+              <ErrorBoundary>
+                <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+              </ErrorBoundary>
+            </TabsContent>
+          )}
 
-          <TabsContent value="terminal" className="mt-6">
-            <ErrorBoundary>
-              <TerminalTab botId={bot.id} />
-            </ErrorBoundary>
-          </TabsContent>
+          {operatorMeta?.features.terminal && (
+            <TabsContent value="terminal" className="mt-6">
+              <ErrorBoundary>
+                <TerminalTab botId={bot.id} />
+              </ErrorBoundary>
+            </TabsContent>
+          )}
 
           <TabsContent value="controls" className="mt-6">
             <ControlsTab

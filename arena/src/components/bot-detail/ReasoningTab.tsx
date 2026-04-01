@@ -4,6 +4,9 @@ import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
 import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface ReasoningTabProps {
   botId: string;
@@ -241,6 +244,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
 // ── Main Tab ────────────────────────────────────────────────────────────
 
 export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const { data: allTrades, isLoading } = useBotTrades(botId, botName);
   const { data: recentTrades } = useBotRecentValidations(botId, botName);
 
@@ -265,6 +269,10 @@ export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
         ))}
       </div>
     );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard />;
   }
 
   if (pendingTrades.length === 0 && filteredHistory.length === 0) {

@@ -6,6 +6,9 @@ import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, Simulation
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -61,6 +64,7 @@ function truncateHash(hash: string): string {
 }
 
 export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
+  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const { data: trades, isLoading } = useBotTrades(botId, botName);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -75,6 +79,10 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
         </TableBody>
       </Table>
     );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard />;
   }
 
   if (!trades || trades.length === 0) {

@@ -86,6 +86,9 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
 vi.mock('~/lib/stores/provisions', () => ({
   provisionsForOwner: () => ({ subscribe: vi.fn(), get: vi.fn(() => []) }),
   addProvision: vi.fn(),
+  upsertInstanceProvision: vi.fn(),
+  removeProvision: vi.fn(),
+  removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
 }));
 
@@ -95,6 +98,14 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
     authenticate: vi.fn(),
     clearCachedToken: vi.fn(),
   }),
+}));
+
+vi.mock('~/lib/operator/meta', () => ({
+  useOperatorMeta: () => ({ data: { deployment_kind: 'fleet', features: { chat: false, terminal: false } } }),
+  buildBotScopedPath: vi.fn(),
+  getOperatorApiUrlForBlueprint: vi.fn(() => '/operator-api'),
+  getExpectedDeploymentKindForBlueprint: vi.fn(() => 'fleet'),
+  OPERATOR_API_URL: '/operator-api',
 }));
 
 vi.mock('~/lib/config/aiProviders', () => ({
