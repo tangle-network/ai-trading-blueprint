@@ -50,7 +50,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   },
 }));
 
-vi.mock('@tangle/blueprint-ui/components', () => ({
+vi.mock('@tangle-network/blueprint-ui/components', () => ({
   Card: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
@@ -66,7 +66,7 @@ vi.mock('@tangle/blueprint-ui/components', () => ({
   TabsContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 }));
 
-vi.mock('@tangle/blueprint-ui', () => ({
+vi.mock('@tangle-network/blueprint-ui', () => ({
   publicClient: {},
   selectedChainIdStore: {},
   useOperators: () => ({ operators: [], operatorCount: 0 }),

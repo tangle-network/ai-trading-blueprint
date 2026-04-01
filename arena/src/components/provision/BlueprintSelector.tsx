@@ -1,4 +1,4 @@
-import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { TradingBlueprintDef } from '~/lib/blueprints';
 
 interface BlueprintSelectorProps {

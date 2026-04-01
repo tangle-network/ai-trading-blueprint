@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
-import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import { SparklineChart } from './SparklineChart';
 

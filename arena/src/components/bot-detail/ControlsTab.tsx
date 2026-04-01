@@ -7,7 +7,7 @@ import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
-import { Badge, Button } from '@tangle/blueprint-ui/components';
+import { Badge, Button } from '@tangle-network/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';

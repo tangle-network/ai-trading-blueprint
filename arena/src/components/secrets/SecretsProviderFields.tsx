@@ -1,5 +1,5 @@
 import type { MutableRefObject } from 'react';
-import { Input } from '@tangle/blueprint-ui/components';
+import { Input } from '@tangle-network/blueprint-ui/components';
 import {
   AI_PROVIDERS,
   DEFAULT_AI_API_KEY,

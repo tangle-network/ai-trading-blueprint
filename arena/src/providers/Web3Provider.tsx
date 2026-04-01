@@ -5,8 +5,8 @@ import {
   createTangleTransports,
   defaultConnectKitOptions,
   getTangleWalletChains,
-} from '@tangle/blueprint-ui';
-import { Web3Shell } from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui';
+import { Web3Shell } from '@tangle-network/blueprint-ui/components';
 import { tangleLocal } from '~/lib/contracts/chains';
 
 const config = createConfig(

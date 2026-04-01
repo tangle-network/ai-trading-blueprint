@@ -1,5 +1,5 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';

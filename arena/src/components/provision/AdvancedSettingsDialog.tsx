@@ -1,7 +1,7 @@
 import {
   Button, Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogDescription, Input, Tabs, TabsList, TabsTrigger, TabsContent,
-} from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui/components';
 import type { StrategyPackDef } from '~/lib/blueprints';
 import { cronToHuman } from '~/routes/provision/types';
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
-import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle/blueprint-ui/components';
-import { cn } from '@tangle/blueprint-ui';
+import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
+import { cn } from '@tangle-network/blueprint-ui';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 

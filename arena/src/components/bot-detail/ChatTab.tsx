@@ -1,11 +1,18 @@
 import { useState, useCallback } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import {
-  ChatContainer, useSessionStream,
-  useSessions, useCreateSession, useDeleteSession, useRenameSession,
-  type AgentBranding, type SessionInfo, type Session,
-} from '@tangle/agent-ui';
-import { Button } from '@tangle/blueprint-ui/components';
+  ChatContainer,
+} from '@tangle-network/sandbox-ui/chat';
+import {
+  useSessionStream,
+  useSessions,
+  useCreateSession,
+  useDeleteSession,
+  useRenameSession,
+  type SessionInfo,
+} from '@tangle-network/sandbox-ui/hooks';
+import type { AgentBranding, Session } from '@tangle-network/sandbox-ui/types';
+import { Button } from '@tangle-network/blueprint-ui/components';
 import { AuthBanner } from '~/components/bot-detail/AuthBanner';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
@@ -261,7 +268,7 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
         />
       </div>
 
-      {/* Message area — @tangle/agent-ui ChatContainer */}
+      {/* Message area — ChatContainer */}
       <ChatContainer
         messages={stream.messages}
         partMap={stream.partMap}

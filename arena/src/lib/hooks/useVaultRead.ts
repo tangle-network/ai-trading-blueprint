@@ -3,7 +3,7 @@ import { useAccount } from 'wagmi';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 
 interface VaultReadState {
   tvl?: number;

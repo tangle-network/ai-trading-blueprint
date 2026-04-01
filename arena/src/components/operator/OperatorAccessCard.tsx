@@ -1,4 +1,4 @@
-import { Button } from '@tangle/blueprint-ui/components';
+import { Button } from '@tangle-network/blueprint-ui/components';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 

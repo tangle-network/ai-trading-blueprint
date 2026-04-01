@@ -1,5 +1,5 @@
 import { useAccount } from 'wagmi';
-import { Button } from '@tangle/blueprint-ui/components';
+import { Button } from '@tangle-network/blueprint-ui/components';
 
 interface AuthBannerProps {
   onAuth: () => void;

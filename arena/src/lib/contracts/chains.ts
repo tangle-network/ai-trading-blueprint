@@ -3,7 +3,7 @@ import {
   tangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
   configureNetworks, getNetworks,
   type CoreAddresses,
-} from '@tangle/blueprint-ui';
+} from '@tangle-network/blueprint-ui';
 
 export { tangleLocal };
 
@@ -11,8 +11,8 @@ export {
   tangleTestnet, tangleMainnet, rpcUrl,
   allTangleChains, mainnet, resolveRpcUrl,
   configureNetworks, getNetworks,
-} from '@tangle/blueprint-ui';
-export type { CoreAddresses, NetworkConfig } from '@tangle/blueprint-ui';
+} from '@tangle-network/blueprint-ui';
+export type { CoreAddresses, NetworkConfig } from '@tangle-network/blueprint-ui';
 
 /** Arena-specific contract addresses. */
 export interface ArenaAddresses extends CoreAddresses {

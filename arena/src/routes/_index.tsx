@@ -6,7 +6,7 @@ import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
-import { Badge, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';

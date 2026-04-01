@@ -1,21 +1,24 @@
+import type { RefObject } from 'react';
 import { ConnectKitButton } from 'connectkit';
 import { useAccount, useDisconnect, useSwitchChain, useConnectorClient } from 'wagmi';
 import { useStore } from '@nanostores/react';
 import type { Address } from 'viem';
-import { Identicon } from '@tangle/blueprint-ui/components';
-import { publicClient, selectedChainIdStore } from '@tangle/blueprint-ui';
-import {
-  ConnectWalletCta,
-  copyText,
-  truncateAddress,
-  useDropdownMenu,
-  useWalletEthBalance,
-} from '@tangle/agent-ui/primitives';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
+import { publicClient, selectedChainIdStore, useWalletEthBalance } from '@tangle-network/blueprint-ui';
+import { ConnectWalletCta } from '@tangle-network/blueprint-ui/components';
+import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
+import { copyText } from '@tangle-network/sandbox-ui/utils';
 import { networks } from '~/lib/contracts/chains';
 import { toast } from 'sonner';
 
+function truncateAddress(address?: string): string {
+  if (!address) return '';
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 export function WalletButton() {
   const { open, ref, toggle, close } = useDropdownMenu();
+  const menuRef = ref as RefObject<HTMLDivElement>;
   const { address, chainId, isConnected, status } = useAccount();
   const isReconnecting = status === 'reconnecting';
   const { disconnect } = useDisconnect();
@@ -86,7 +89,7 @@ export function WalletButton() {
         const displayBalance = ethBalance ?? (balanceError ? '—' : '...');
 
         return (
-          <div ref={ref} className="relative">
+          <div ref={menuRef} className="relative">
             <button
               onClick={toggle}
               className="relative rounded-full hover:ring-2 hover:ring-violet-500/30 transition-all"

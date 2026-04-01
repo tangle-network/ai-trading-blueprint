@@ -3,7 +3,7 @@ import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 const BLOCK_TIME_SECONDS = 12;

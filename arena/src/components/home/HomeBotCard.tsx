@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Badge, Button, Card, CardContent, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Card, CardContent, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import type { Bot } from '~/lib/types/bot';
 import { STRATEGY_SHORT } from '~/lib/format';

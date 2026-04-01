@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { parseUnits } from 'viem';
 import type { Address } from 'viem';
-import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle/blueprint-ui/components';
+import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { useApprove, useDeposit } from '~/lib/hooks/useVaultWrite';
-import { addTx, selectedChainIdStore } from '@tangle/blueprint-ui';
+import { addTx, selectedChainIdStore } from '@tangle-network/blueprint-ui';
 
 interface DepositFormProps {
   vaultAddress: Address;

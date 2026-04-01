@@ -43,7 +43,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   },
 }));
 
-vi.mock('@tangle/blueprint-ui', () => ({
+vi.mock('@tangle-network/blueprint-ui', () => ({
   publicClient: {},
   selectedChainIdStore: {},
   useOperators: () => ({ operators: [], operatorCount: 0 }),

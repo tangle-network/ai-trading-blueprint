@@ -1,6 +1,6 @@
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
-import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
 import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { SkeletonCard } from '~/components/ui/Skeleton';

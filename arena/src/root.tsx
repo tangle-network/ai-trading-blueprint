@@ -2,7 +2,7 @@ import 'virtual:uno.css';
 import './styles/global.scss';
 
 import { Outlet } from 'react-router';
-import { AppDocument, AppToaster } from '@tangle/blueprint-ui/components';
+import { AppDocument, AppToaster } from '@tangle-network/blueprint-ui/components';
 import { Header } from '~/components/layout/Header';
 import { Footer } from '~/components/layout/Footer';
 import { MotionProvider } from '~/providers/MotionProvider';

@@ -1,4 +1,4 @@
-import { Button, Card, CardContent, Input } from '@tangle/blueprint-ui/components';
+import { Button, Card, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import { strategyPacks, type StrategyPackDef } from '~/lib/blueprints';
 import type { ServiceInfo } from '~/routes/provision/types';

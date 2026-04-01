@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import {
   provisionsForOwner,
@@ -11,7 +11,7 @@ import {
   removeProvision,
   type TrackedProvision,
 } from '~/lib/stores/provisions';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { addresses } from '~/lib/contracts/addresses';
 import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';

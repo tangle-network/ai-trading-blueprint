@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
-import { Badge, Button, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 
 interface BotHeaderProps {

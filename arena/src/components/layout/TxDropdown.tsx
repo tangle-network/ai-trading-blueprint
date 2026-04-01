@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, type RefObject } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'sonner';
-import { txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle/blueprint-ui';
-import { copyText, timeAgo, useDropdownMenu } from '@tangle/agent-ui/primitives';
+import { txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle-network/blueprint-ui';
+import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
+import { copyText, timeAgo } from '@tangle-network/sandbox-ui/utils';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
 import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
 
@@ -95,11 +96,12 @@ export function TxDropdown() {
   useProvisionWatcher();
 
   const { open, ref, toggle, close } = useDropdownMenu();
+  const menuRef = ref as RefObject<HTMLDivElement>;
   const txs = useStore(txListStore);
   const pending = useStore(pendingCount);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={menuRef} className="relative">
       <button
         type="button"
         onClick={toggle}

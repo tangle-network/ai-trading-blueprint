@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
-import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';

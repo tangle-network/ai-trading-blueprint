@@ -4,7 +4,7 @@ import type { Address } from 'viem';
 import { provisionsStore, updateProvision, type TrackedProvision } from '~/lib/stores/provisions';
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { useOperatorAuth } from './useOperatorAuth';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';

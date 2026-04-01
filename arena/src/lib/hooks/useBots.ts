@@ -5,7 +5,7 @@ import type { Bot, BotStatus, StrategyType } from '~/lib/types/bot';
 import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { provisionsStore } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 import { useOperatorAuth } from './useOperatorAuth';

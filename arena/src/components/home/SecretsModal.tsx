@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { SecretsProviderFields, type SecretsEnvVar } from '~/components/secrets/SecretsProviderFields';
 import { removeProvision, updateProvision } from '~/lib/stores/provisions';

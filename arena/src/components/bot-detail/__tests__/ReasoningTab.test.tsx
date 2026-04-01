@@ -18,6 +18,19 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotRecentValidations: () => ({ data: recentTrades }),
 }));
 
+vi.mock('~/lib/hooks/useOperatorAuth', () => ({
+  useOperatorAuth: () => ({
+    token: 'test-token',
+    isAuthenticated: true,
+    isAuthenticating: false,
+    authenticate: vi.fn(),
+    clearCachedToken: vi.fn(),
+    error: null,
+    getCachedToken: vi.fn(() => 'test-token'),
+    getToken: vi.fn(async () => 'test-token'),
+  }),
+}));
+
 function makeTrade(overrides: Partial<Trade> = {}): Trade {
   return {
     id: 'trade-1',

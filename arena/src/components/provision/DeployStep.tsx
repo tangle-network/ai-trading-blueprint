@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { Button, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Button, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import { zeroAddress } from 'viem';
 import type { TrackedProvision } from '~/lib/stores/provisions';
 import type { TradingBlueprintDef, StrategyPackDef } from '~/lib/blueprints';

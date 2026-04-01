@@ -10,9 +10,10 @@ export default defineConfig({
     alias: {
       // Linked packages have broken transitive deps in their node_modules.
       // Alias to lightweight stubs that provide the same exports.
-      '@tangle/blueprint-ui/components': path.join(stubs, 'blueprint-ui-components.tsx'),
-      '@tangle/blueprint-ui': path.join(stubs, 'blueprint-ui.ts'),
-      '@tangle/agent-ui': path.join(stubs, 'empty.ts'),
+      '@tangle-network/blueprint-ui/components': path.join(stubs, 'blueprint-ui-components.tsx'),
+      '@tangle-network/blueprint-ui': path.join(stubs, 'blueprint-ui.ts'),
+      '@tangle-network/sandbox-ui': path.join(stubs, 'empty.ts'),
+      '@tangle-network/sandbox-ui/hooks': path.join(stubs, 'empty.ts'),
       'framer-motion': path.join(stubs, 'framer-motion.tsx'),
     },
   },

@@ -35,6 +35,13 @@ const authRegistry = new Map<string, OperatorAuthState>();
 const authListeners = new Map<string, Set<() => void>>();
 const SESSION_STORAGE_PREFIX = 'arena.operator_auth.';
 
+function isMissingWagmiProviderError(error: unknown): boolean {
+  return error instanceof Error && (
+    error.name === 'WagmiProviderNotFoundError' ||
+    error.message.includes('WagmiProvider')
+  );
+}
+
 function normalizeAddress(address: string): string {
   return address.toLowerCase();
 }
@@ -124,8 +131,21 @@ function persistSession(key: string, session: OperatorSession | null) {
 }
 
 export function useOperatorAuth(apiUrl: string): OperatorAuth {
-  const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  let address: string | undefined;
+  let signMessageAsync: ReturnType<typeof useSignMessage>['signMessageAsync'] | undefined;
+
+  try {
+    ({ address } = useAccount());
+  } catch (error) {
+    if (!isMissingWagmiProviderError(error)) throw error;
+  }
+
+  try {
+    ({ signMessageAsync } = useSignMessage());
+  } catch (error) {
+    if (!isMissingWagmiProviderError(error)) throw error;
+  }
+
   const cacheKey = address ? makeCacheKey(address, apiUrl) : null;
 
   const subscribe = useCallback((listener: () => void) => {
@@ -166,7 +186,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
   }, [cacheKey]);
 
   const getToken = useCallback(async (forceRefresh = false): Promise<string | null> => {
-    if (!address || !cacheKey || !apiUrl) return null;
+    if (!address || !cacheKey || !apiUrl || !signMessageAsync) return null;
 
     const current = getState(cacheKey);
     if (!forceRefresh && isSessionValid(current.session)) return current.session.token;

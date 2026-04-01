@@ -9,15 +9,15 @@ import {
 import { useStore } from '@nanostores/react';
 import { decodeEventLog, encodeAbiParameters, parseAbiParameters, parseGwei, zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Button } from '@tangle/blueprint-ui/components';
+import { Button } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
-import { publicClient, selectedChainIdStore, useOperators } from '@tangle/blueprint-ui';
+import { publicClient, selectedChainIdStore, useOperators } from '@tangle-network/blueprint-ui';
 import { useQuotes } from '~/lib/hooks/useQuotes';
 import { PricingModelHint } from '~/lib/gen/pricing_pb';
-import { addTx } from '@tangle/blueprint-ui';
+import { addTx } from '@tangle-network/blueprint-ui';
 import {
   provisionsForOwner,
   addProvision,

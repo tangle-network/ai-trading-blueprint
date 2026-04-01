@@ -16,6 +16,19 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotTrades: () => ({ data: mockTrades, isLoading: false }),
 }));
 
+vi.mock('~/lib/hooks/useOperatorAuth', () => ({
+  useOperatorAuth: () => ({
+    token: 'test-token',
+    isAuthenticated: true,
+    isAuthenticating: false,
+    authenticate: vi.fn(),
+    clearCachedToken: vi.fn(),
+    error: null,
+    getCachedToken: vi.fn(() => 'test-token'),
+    getToken: vi.fn(async () => 'test-token'),
+  }),
+}));
+
 function setTrades(trades: Trade[]) {
   mockTrades.length = 0;
   mockTrades.push(...trades);

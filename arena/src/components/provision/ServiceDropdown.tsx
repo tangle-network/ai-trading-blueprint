@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import type { DiscoveredService, ServiceInfo } from '~/routes/provision/types';
 

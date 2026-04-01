@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Badge, Button, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { TrackedProvision } from '~/lib/stores/provisions';
 import { ElapsedTime } from '~/components/provision/TimelineStage';
 import {

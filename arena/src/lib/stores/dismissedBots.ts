@@ -1,4 +1,4 @@
-import { persistedAtom } from '@tangle/blueprint-ui';
+import { persistedAtom } from '@tangle-network/blueprint-ui';
 
 /** Bot IDs that the user has dismissed from their dashboard view. */
 export const dismissedBotsStore = persistedAtom<string[]>({

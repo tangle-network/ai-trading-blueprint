@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useBots } from '~/lib/hooks/useBots';
-import { AnimatedPage, Button, Tabs, TabsList, TabsTrigger, TabsContent } from '@tangle/blueprint-ui/components';
+import { AnimatedPage, Button, Tabs, TabsList, TabsTrigger, TabsContent } from '@tangle-network/blueprint-ui/components';
 import { BotHeader } from '~/components/bot-detail/BotHeader';
 import { PerformanceTab } from '~/components/bot-detail/PerformanceTab';
 import { PositionsTab } from '~/components/bot-detail/PositionsTab';
