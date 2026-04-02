@@ -11,6 +11,7 @@ import { OPERATOR_API_URL } from '~/lib/operator/meta';
 interface ReasoningTabProps {
   botId: string;
   botName?: string;
+  isLive?: boolean;
 }
 
 // ── Pending Validation Card (live, animated) ────────────────────────────
@@ -243,15 +244,20 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
 
 // ── Main Tab ────────────────────────────────────────────────────────────
 
-export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
+export function ReasoningTab({ botId, botName = '', isLive = true }: ReasoningTabProps) {
   const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
-  const { data: allTrades, isLoading } = useBotTrades(botId, botName);
-  const { data: recentTrades } = useBotRecentValidations(botId, botName);
+  const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+    refetchInterval: isLive ? 15_000 : false,
+  });
+  const { data: recentTrades } = useBotRecentValidations(botId, botName, {
+    enabled: isLive,
+    refetchInterval: isLive ? 5_000 : false,
+  });
 
   // Separate pending (live) from completed (history)
-  const pendingTrades = (recentTrades ?? []).filter(
+  const pendingTrades = isLive ? (recentTrades ?? []).filter(
     (t) => t.status === 'pending' || (Date.now() - t.timestamp < 30_000 && t.validation)
-  );
+  ) : [];
 
   const historicalTrades = (allTrades ?? []).filter(
     (t) => t.validatorReasoning || (t.validation?.responses?.length ?? 0) > 0
@@ -314,7 +320,14 @@ export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
  * Returns the count of pending validations for a bot.
  * Used by the parent page to show a badge on the Reasoning tab.
  */
-export function usePendingValidationCount(botId: string, botName: string = ''): number {
-  const { data } = useBotRecentValidations(botId, botName);
+export function usePendingValidationCount(
+  botId: string,
+  botName: string = '',
+  enabled: boolean = true,
+): number {
+  const { data } = useBotRecentValidations(botId, botName, {
+    enabled,
+    refetchInterval: enabled ? 5_000 : false,
+  });
   return (data ?? []).filter((t) => t.status === 'pending').length;
 }

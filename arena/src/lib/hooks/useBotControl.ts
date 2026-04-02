@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { useOperatorAuth } from './useOperatorAuth';
 import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
 import { readOperatorError } from '~/lib/operator/errors';
+import { dispatchBotsRefresh } from '~/lib/events/bots';
 
 async function apiCall(
   path: string,
@@ -39,6 +40,11 @@ export function useBotControl(botId: string) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['bots'] });
     queryClient.invalidateQueries({ queryKey: ['bot-detail', botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-metrics', botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-trades', botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-recent-validations', botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-portfolio', botId] });
+    dispatchBotsRefresh();
   };
 
   const onMutationError = (action: string) => (err: Error) => {

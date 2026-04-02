@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import type { Bot, BotStatus, StrategyType } from '~/lib/types/bot';
+import type { Bot, BotLifecycleStatus, BotStatus, StrategyType } from '~/lib/types/bot';
 import { tradingVaultAbi, erc20Abi, tangleServicesAbi, vaultFactoryAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { getBotMeta } from '~/lib/config/botRegistry';
@@ -44,7 +44,54 @@ type VaultEntry = {
   isActive: boolean;
   isProvisioned: boolean;
   tvl: number;
+  paused: boolean;
 };
+
+type OperatorBotRecord = {
+  id: string;
+  operator_address: string;
+  vault_address: string;
+  strategy_type: string;
+  chain_id: number;
+  trading_active: boolean;
+  paper_trade: boolean;
+  created_at: number;
+  sandbox_id: string;
+  sandbox_exists: boolean;
+  sandbox_state?: string | null;
+  lifecycle_status: BotLifecycleStatus;
+  archived?: boolean;
+  control_available?: boolean;
+  secrets_configured?: boolean;
+  call_id: number;
+  service_id: number;
+};
+
+function mapOperatorLifecycleToStatus(
+  lifecycleStatus: BotLifecycleStatus,
+  paused: boolean,
+): BotStatus {
+  switch (lifecycleStatus) {
+    case 'awaiting_secrets':
+      return 'needs_config';
+    case 'active':
+      return paused ? 'paused' : 'active';
+    case 'winding_down':
+      return 'winding_down';
+    case 'archived':
+      return 'archived';
+    case 'stopped':
+      return 'stopped';
+    case 'unknown':
+    default:
+      return 'unknown';
+  }
+}
+
+function mapProvisionPhaseToStatus(phase: string): BotStatus {
+  if (phase === 'awaiting_secrets') return 'needs_config';
+  return 'stopped';
+}
 
 /**
  * Discovers bots from on-chain data.
@@ -206,7 +253,16 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
         // One entry per vault
         vaultAddrs.forEach((addr, vi) => {
-          vaultEntries.push({ serviceId: id, vaultAddress: addr, vaultIndex: vi, operators, isActive, isProvisioned, tvl: 0 });
+          vaultEntries.push({
+            serviceId: id,
+            vaultAddress: addr,
+            vaultIndex: vi,
+            operators,
+            isActive,
+            isProvisioned,
+            tvl: 0,
+            paused: false,
+          });
         });
       }
 
@@ -284,11 +340,12 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             tvlRaw = totalAssets ? Number(totalAssets) / (10 ** assetDecimals) : 0;
           }
           entry.tvl = tvlRaw;
+          entry.paused = paused;
 
           const botStatus: BotStatus = !entry.isProvisioned ? 'stopped'
             : !entry.isActive ? 'stopped'
             : paused ? 'paused'
-            : 'active';
+            : 'unknown';
 
           let name = meta?.name ?? `Bot #${entry.serviceId}`;
           if (numVaults > 1 && assetSymbol !== '???') {
@@ -313,6 +370,9 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
             tvl: tvlRaw,
             avgValidatorScore: 0,
             sparklineData: [],
+            archived: false,
+            controlAvailable: false,
+            lifecycleStatus: 'unknown',
             source: 'on_chain',
           });
         }
@@ -337,20 +397,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           });
           if (res.ok) {
             const data = await res.json();
-            const operatorBots: Array<{
-              id: string;
-              operator_address: string;
-              vault_address: string;
-              strategy_type: string;
-              chain_id: number;
-              trading_active: boolean;
-              paper_trade: boolean;
-              created_at: number;
-              sandbox_id: string;
-              secrets_configured?: boolean;
-              call_id: number;
-              service_id: number;
-            }> = operatorMeta.deployment_kind === 'instance'
+            const operatorBots: OperatorBotRecord[] = operatorMeta.deployment_kind === 'instance'
               ? [{
                   id: data.id,
                   operator_address: data.operator_address,
@@ -361,6 +408,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                   paper_trade: data.paper_trade,
                   created_at: data.created_at,
                   sandbox_id: data.sandbox_id,
+                  sandbox_exists: data.sandbox_exists,
+                  sandbox_state: data.sandbox_state,
+                  lifecycle_status: data.lifecycle_status,
+                  archived: data.archived,
+                  control_available: data.control_available,
                   secrets_configured: data.secrets_configured,
                   call_id: data.call_id ?? 0,
                   service_id: data.service_id ?? 0,
@@ -441,9 +493,9 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
               // Paper-trade/local bots can be fully active before any vault exists.
               // Keep those operator-backed records instead of falling back to stale
               // provision cache state.
-              const hasOperatorLifecycleState = ob.trading_active
+              const hasOperatorLifecycleState = ob.lifecycle_status !== 'unknown'
                 || ob.secrets_configured === true
-                || matchingProv?.phase === 'active';
+                || matchingProv?.phase === 'awaiting_secrets';
               if (vaultLower === zeroAddress && !hasOperatorLifecycleState) continue;
 
               const botId = ob.id;
@@ -452,6 +504,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
               // Find on-chain vault data (TVL, asset, etc.)
               const vaultEntry = vaultEntries.find((v) => v.vaultAddress.toLowerCase() === vaultLower);
+              const botStatus = mapOperatorLifecycleToStatus(ob.lifecycle_status, vaultEntry?.paused ?? false);
 
               const operatorBot: Bot = {
                 id: botId,
@@ -460,8 +513,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 operatorAddress: ob.operator_address || (vaultEntry?.operators[0] ?? zeroAddress),
                 vaultAddress: vaultAddr,
                 strategyType: (ob.strategy_type || 'momentum') as StrategyType,
-                status: ob.secrets_configured === false ? 'needs_config'
-                  : ob.trading_active ? 'active' : 'stopped',
+                status: botStatus,
                 createdAt: ob.created_at * 1000,
                 pnlPercent: 0,
                 pnlAbsolute: 0,
@@ -473,6 +525,10 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
                 avgValidatorScore: 0,
                 sparklineData: [],
                 sandboxId: ob.sandbox_id,
+                sandboxState: ob.sandbox_state ?? null,
+                lifecycleStatus: ob.lifecycle_status,
+                archived: ob.archived ?? ob.lifecycle_status === 'archived',
+                controlAvailable: ob.control_available ?? false,
                 tradingActive: ob.trading_active,
                 secretsConfigured: ob.secrets_configured,
                 paperTrade: ob.paper_trade,
@@ -499,6 +555,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
       for (const prov of storedProvisions) {
         // Skip failed provisions — they're shown in ProvisionsBanner
         if (prov.phase === 'failed') continue;
+        if (prov.phase === 'active') continue;
         if (matchedProvisionIds.has(prov.id)) continue;
         // If the operator has already assigned a bot ID, treat it as operator-managed
         // state and let the route-level auth flow load the real bot instead of
@@ -526,7 +583,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           operatorAddress: prov.operators?.[0] ?? zeroAddress,
           vaultAddress: (hasVault ? prov.vaultAddress! : zeroAddress) as Address,
           strategyType: (prov.strategyType || 'momentum') as StrategyType,
-          status: prov.phase === 'active' ? 'active' : prov.phase === 'awaiting_secrets' ? 'needs_config' : 'stopped',
+          status: mapProvisionPhaseToStatus(prov.phase),
           createdAt: prov.createdAt,
           pnlPercent: 0,
           pnlAbsolute: 0,
@@ -538,8 +595,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           avgValidatorScore: 0,
           sparklineData: [],
           sandboxId: prov.sandboxId,
-          secretsConfigured: prov.phase === 'active',
-          tradingActive: prov.phase === 'active',
+          lifecycleStatus: prov.phase === 'awaiting_secrets' ? 'awaiting_secrets' : 'unknown',
+          archived: false,
+          controlAvailable: false,
+          secretsConfigured: false,
+          tradingActive: false,
           callId: prov.callId,
           source: 'provision',
         });
@@ -552,6 +612,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
       const fallbackBots: Bot[] = [];
       for (const prov of provisionsStore.get()) {
         if (prov.phase === 'failed') continue;
+        if (prov.phase === 'active') continue;
 
         const fbVaultLower = prov.vaultAddress?.toLowerCase() ?? '';
         const hasVault = fbVaultLower && fbVaultLower !== zeroAddress;
@@ -570,7 +631,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           operatorAddress: prov.operators?.[0] ?? zeroAddress,
           vaultAddress: (hasVault ? prov.vaultAddress! : zeroAddress) as Address,
           strategyType: (prov.strategyType || 'momentum') as StrategyType,
-          status: prov.phase === 'active' ? 'active' : prov.phase === 'awaiting_secrets' ? 'needs_config' : 'stopped',
+          status: mapProvisionPhaseToStatus(prov.phase),
           createdAt: prov.createdAt,
           pnlPercent: 0,
           pnlAbsolute: 0,
@@ -582,6 +643,11 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
           avgValidatorScore: 0,
           sparklineData: [],
           sandboxId: prov.sandboxId,
+          lifecycleStatus: prov.phase === 'awaiting_secrets' ? 'awaiting_secrets' : 'unknown',
+          archived: false,
+          controlAvailable: false,
+          secretsConfigured: false,
+          tradingActive: false,
           source: 'provision',
         });
       }
@@ -593,8 +659,7 @@ export function useBots(): { bots: Bot[]; isLoading: boolean; isOnChain: boolean
 
   useEffect(() => {
     discover();
-    // Refresh every 60s instead of on every store change
-    const interval = setInterval(discover, 60_000);
+    const interval = setInterval(discover, 15_000);
     const unsubscribe = subscribeBotsRefresh(() => {
       void discover();
     });

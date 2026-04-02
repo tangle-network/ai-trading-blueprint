@@ -1,4 +1,5 @@
-export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config';
+export type BotLifecycleStatus = 'unknown' | 'awaiting_secrets' | 'active' | 'stopped' | 'winding_down' | 'archived';
+export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config' | 'winding_down' | 'archived' | 'unknown';
 export type StrategyType =
   | 'prediction' | 'prediction_politics' | 'prediction_crypto'
   | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
@@ -31,6 +32,10 @@ export interface Bot {
 
   // Control panel fields (populated from operator API)
   sandboxId?: string;
+  sandboxState?: string | null;
+  lifecycleStatus?: BotLifecycleStatus;
+  archived?: boolean;
+  controlAvailable?: boolean;
   tradingActive?: boolean;
   workflowId?: number;
   maxLifetimeDays?: number;

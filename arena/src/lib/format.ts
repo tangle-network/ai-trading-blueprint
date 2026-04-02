@@ -1,4 +1,5 @@
 import type { ProvisionPhase } from '~/lib/stores/provisions';
+import type { BotStatus } from '~/lib/types/bot';
 
 // ── Strategy Maps ────────────────────────────────────────────────────────
 
@@ -105,6 +106,52 @@ export function formatDuration(totalSeconds: number): string {
 
 export function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+export function botStatusLabel(status: BotStatus): string {
+  switch (status) {
+    case 'active':
+      return 'Active';
+    case 'paused':
+      return 'Paused';
+    case 'stopped':
+      return 'Stopped';
+    case 'needs_config':
+      return 'Needs Config';
+    case 'winding_down':
+      return 'Winding Down';
+    case 'archived':
+      return 'Archived';
+    case 'unknown':
+      return 'Unknown';
+    default:
+      return status;
+  }
+}
+
+export function botStatusBadgeVariant(status: BotStatus): 'success' | 'amber' | 'secondary' | 'destructive' | 'outline' {
+  switch (status) {
+    case 'active':
+      return 'success';
+    case 'paused':
+    case 'needs_config':
+    case 'winding_down':
+      return 'amber';
+    case 'unknown':
+      return 'outline';
+    case 'archived':
+    case 'stopped':
+    default:
+      return 'secondary';
+  }
+}
+
+export function isActiveSummaryStatus(status: BotStatus): boolean {
+  return status === 'active';
+}
+
+export function isLiveBotStatus(status: BotStatus): boolean {
+  return status === 'active' || status === 'paused' || status === 'winding_down';
 }
 
 const STUCK_THRESHOLD_MS = 5 * 60 * 1000;

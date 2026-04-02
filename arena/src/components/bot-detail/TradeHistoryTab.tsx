@@ -13,6 +13,7 @@ import { OPERATOR_API_URL } from '~/lib/operator/meta';
 interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
+  isLive?: boolean;
 }
 
 function VenueBadge({ venue }: { venue: TradeVenue }) {
@@ -63,9 +64,11 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
 }
 
-export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
+export function TradeHistoryTab({ botId, botName = '', isLive = false }: TradeHistoryTabProps) {
   const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
-  const { data: trades, isLoading } = useBotTrades(botId, botName);
+  const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+    refetchInterval: isLive ? 15_000 : false,
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (isLoading) {

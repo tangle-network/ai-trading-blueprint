@@ -70,6 +70,7 @@ import {
   type ServiceInfo,
   type DiscoveredService,
 } from './provision/types';
+import type { BotLifecycleStatus } from '~/lib/types/bot';
 
 export const FIRECRACKER_RUNTIME_SUPPORTED = false;
 
@@ -116,9 +117,14 @@ interface InstanceOperatorBot {
   id: string;
   sandbox_id: string;
   sandbox_exists: boolean;
+  sandbox_state?: string | null;
   vault_address: string;
   strategy_type: string;
   trading_active: boolean;
+  lifecycle_status: BotLifecycleStatus;
+  archived?: boolean;
+  control_available?: boolean;
+  secrets_configured?: boolean;
   workflow_id?: number | null;
   call_id: number;
   service_id: number;
@@ -1078,6 +1084,9 @@ export default function ProvisionPage() {
 
   const syncInstanceProvisionFromBot = useCallback((bot: InstanceOperatorBot) => {
     if (!userAddress) return null;
+    const phase = bot.lifecycle_status === 'awaiting_secrets' || bot.secrets_configured === false
+      ? 'awaiting_secrets'
+      : 'active';
 
     const normalized: TrackedProvision = {
       id: `instance-${bot.service_id}`,
@@ -1089,7 +1098,7 @@ export default function ProvisionPage() {
       blueprintType: latestDeployment?.blueprintType ?? selectedBlueprint?.id,
       serviceId: bot.service_id,
       jobIndex: latestDeployment?.jobIndex ?? 0,
-      phase: bot.trading_active ? 'active' : 'awaiting_secrets',
+      phase,
       createdAt: latestDeployment?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
       chainId: latestDeployment?.chainId ?? targetChain.id,
@@ -1156,7 +1165,7 @@ export default function ProvisionPage() {
       }
 
       const bot = await res.json() as InstanceOperatorBot;
-      if (!bot.sandbox_exists) {
+      if (!bot.sandbox_exists || bot.lifecycle_status === 'archived' || bot.archived) {
         removeInstanceProvisions(userAddress);
         return {
           kind: 'missing',

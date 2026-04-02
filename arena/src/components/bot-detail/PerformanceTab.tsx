@@ -12,16 +12,19 @@ import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface PerformanceTabProps {
   bot: Bot;
+  isLive: boolean;
 }
 
-export function PerformanceTab({ bot }: PerformanceTabProps) {
+export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
 
   // Try loading real metrics from bot API
-  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id);
+  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id, 30, {
+    refetchInterval: isLive ? 15_000 : false,
+  });
 
   // Use API metrics for sparkline if available, otherwise use bot.sparklineData
   const sparklineData = useMemo(() => {
@@ -46,7 +49,9 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
 
       const ctx = canvasRef.current.getContext('2d')!;
       const labels = sparklineData.map((_, i) => `Day ${i + 1}`);
-      const positive = bot.pnlPercent >= 0;
+      const latestPoint = sparklineData[sparklineData.length - 1] ?? 0;
+      const firstPoint = sparklineData[0] ?? latestPoint;
+      const positive = latestPoint >= firstPoint;
       const lineColor = positive ? chartTheme.positive : chartTheme.negative;
 
       const gradient = ctx.createLinearGradient(0, 0, 0, 300);
@@ -129,15 +134,21 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
     };
   }, [bot, sparklineData, chartTheme]);
 
+  const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
+  const totalReturnValue = latestMetrics
+    ? latestMetrics.realized_pnl + latestMetrics.unrealized_pnl
+    : bot.pnlAbsolute;
+  const totalTradesValue = latestMetrics?.trade_count ?? bot.totalTrades;
+
   const summaryCards = [
     {
       label: 'Total Return',
-      value: `$${bot.pnlAbsolute.toLocaleString()}`,
-      color: bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
+      value: `$${totalReturnValue.toLocaleString()}`,
+      color: totalReturnValue >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
     },
     {
       label: 'Total Trades',
-      value: bot.totalTrades.toString(),
+      value: totalTradesValue.toString(),
       color: '',
     },
     {

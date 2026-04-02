@@ -128,6 +128,7 @@ export default function HomePage() {
     const provIds = new Set(unresolvedProvisions.map((p) => p.id));
 
     return bots.filter((b) => {
+      if (b.status === 'archived') return false;
       // Provision-derived bots (directly from provisions store)
       if (b.id.startsWith('provision:') && provIds.has(b.id.slice('provision:'.length))) return true;
       // Bot vault matches a user provision
@@ -158,6 +159,7 @@ export default function HomePage() {
   const botsByService = useMemo(() => {
     const map = new Map<number, typeof bots>();
     for (const bot of bots) {
+      if (bot.status === 'archived') continue;
       const list = map.get(bot.serviceId) ?? [];
       list.push(bot);
       map.set(bot.serviceId, list);
@@ -403,7 +405,7 @@ export default function HomePage() {
                       serviceId: matchingProv.serviceId ?? bot.serviceId,
                       provisionId: matchingProv.id,
                     })
-                  : bot.status === 'needs_config'
+                  : (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
                     ? () => setSecretsTarget({
                         sandboxId: bot.sandboxId,
                         callId: bot.callId,

@@ -5,6 +5,7 @@ import type { Bot } from '~/lib/types/bot';
 import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import { SparklineChart } from './SparklineChart';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 interface LeaderboardTableProps {
   bots: Bot[];
@@ -119,8 +120,8 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
               )}
             </TableCell>
             <TableCell className="hidden lg:table-cell">
-              <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'}>
-                {bot.status === 'needs_config' ? 'needs config' : bot.status}
+              <Badge variant={botStatusBadgeVariant(bot.status)}>
+                {botStatusLabel(bot.status)}
               </Badge>
             </TableCell>
           </m.tr>

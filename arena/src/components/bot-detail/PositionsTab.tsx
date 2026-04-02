@@ -1,16 +1,23 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
+import type { BotStatus } from '~/lib/types/bot';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import { botStatusLabel, isLiveBotStatus } from '~/lib/format';
 
 interface PositionsTabProps {
   botId: string;
+  status: BotStatus;
 }
 
-export function PositionsTab({ botId }: PositionsTabProps) {
+export function PositionsTab({ botId, status }: PositionsTabProps) {
   const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
-  const { data: portfolio, isLoading } = useBotPortfolio(botId);
+  const isLive = isLiveBotStatus(status);
+  const { data: portfolio, isLoading } = useBotPortfolio(botId, {
+    enabled: isLive,
+    refetchInterval: isLive ? 10_000 : false,
+  });
 
   if (isLoading) {
     return (
@@ -23,6 +30,15 @@ export function PositionsTab({ botId }: PositionsTabProps) {
 
   if (!operatorAuth.isAuthenticated) {
     return <OperatorAccessCard />;
+  }
+
+  if (!isLive) {
+    return (
+      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+        <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+        Live portfolio is unavailable while this bot is {botStatusLabel(status).toLowerCase()}.
+      </div>
+    );
   }
 
   if (!portfolio) {

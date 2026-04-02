@@ -40,6 +40,10 @@ pub struct BotSummary {
     pub created_at: u64,
     pub secrets_configured: bool,
     pub sandbox_exists: bool,
+    pub sandbox_state: Option<String>,
+    pub lifecycle_status: String,
+    pub archived: bool,
+    pub control_available: bool,
     pub sandbox_id: String,
     pub call_id: u64,
     pub service_id: u64,
@@ -47,12 +51,7 @@ pub struct BotSummary {
 
 impl BotSummary {
     fn from_record(b: TradingBotRecord) -> Self {
-        let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id).ok();
-        let secrets_configured = sandbox
-            .as_ref()
-            .map(|s| s.has_user_secrets())
-            .unwrap_or(false);
-        let sandbox_exists = sandbox.is_some();
+        let runtime = state::bot_runtime_status(&b);
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -62,8 +61,12 @@ impl BotSummary {
             trading_active: b.trading_active,
             paper_trade: b.paper_trade,
             created_at: b.created_at,
-            secrets_configured,
-            sandbox_exists,
+            secrets_configured: runtime.secrets_configured,
+            sandbox_exists: runtime.sandbox_exists,
+            sandbox_state: runtime.sandbox_state,
+            lifecycle_status: runtime.lifecycle_status.as_str().to_string(),
+            archived: runtime.archived,
+            control_available: runtime.control_available,
             sandbox_id: b.sandbox_id,
             call_id: b.call_id,
             service_id: b.service_id,
@@ -93,6 +96,10 @@ pub struct BotDetailResponse {
     pub workflow_id: Option<u64>,
     pub secrets_configured: bool,
     pub sandbox_exists: bool,
+    pub sandbox_state: Option<String>,
+    pub lifecycle_status: String,
+    pub archived: bool,
+    pub control_available: bool,
     pub wind_down_started_at: Option<u64>,
     pub validator_service_ids: Vec<u64>,
     pub validator_endpoints: Vec<String>,
@@ -102,12 +109,7 @@ pub struct BotDetailResponse {
 
 impl BotDetailResponse {
     fn from_record(b: TradingBotRecord) -> Self {
-        let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&b.sandbox_id).ok();
-        let secrets_configured = sandbox
-            .as_ref()
-            .map(|s| s.has_user_secrets())
-            .unwrap_or(false);
-        let sandbox_exists = sandbox.is_some();
+        let runtime = state::bot_runtime_status(&b);
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -125,8 +127,12 @@ impl BotDetailResponse {
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id,
-            secrets_configured,
-            sandbox_exists,
+            secrets_configured: runtime.secrets_configured,
+            sandbox_exists: runtime.sandbox_exists,
+            sandbox_state: runtime.sandbox_state,
+            lifecycle_status: runtime.lifecycle_status.as_str().to_string(),
+            archived: runtime.archived,
+            control_available: runtime.control_available,
             wind_down_started_at: b.wind_down_started_at,
             validator_service_ids: b.validator_service_ids.clone(),
             validator_endpoints: trading_blueprint_lib::discovery::endpoints_from_env(),
@@ -575,7 +581,7 @@ async fn list_bots(
     // Optional status filter (active/inactive)
     if let Some(ref status) = query.status {
         let active = status == "active";
-        bots.retain(|b| b.trading_active == active);
+        bots.retain(|b| (b.lifecycle_status == "active") == active);
     }
 
     Ok(Json(BotListResponse {
@@ -750,10 +756,11 @@ async fn run_now(
     Path(bot_id): Path<String>,
 ) -> Result<Json<RunNowResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    let runtime = state::bot_runtime_status(&bot);
 
     verify_submitter(&bot, &caller)?;
 
-    if !bot.trading_active {
+    if runtime.lifecycle_status.as_str() != "active" {
         return Err((StatusCode::CONFLICT, "Bot is not active".to_string()));
     }
 
@@ -1237,6 +1244,17 @@ async fn get_bot_portfolio(
     Path(bot_id): Path<String>,
 ) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    let runtime_status = state::bot_runtime_status(&bot);
+    if !matches!(
+        runtime_status.lifecycle_status,
+        state::BotLifecycleStatus::Active | state::BotLifecycleStatus::WindingDown
+    ) {
+        return Ok(Json(PortfolioStateResponse {
+            total_value_usd: 0.0,
+            cash_balance: 0.0,
+            positions: Vec::new(),
+        }));
+    }
     let trades = state::load_bot_trades(&bot.id);
 
     let open_trades: Vec<&serde_json::Value> = trades

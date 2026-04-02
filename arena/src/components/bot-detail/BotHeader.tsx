@@ -4,6 +4,7 @@ import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 interface BotHeaderProps {
   bot: Bot;
@@ -42,11 +43,15 @@ export function BotHeader({ bot }: BotHeaderProps) {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-2">
         <h1 className="font-display font-bold text-3xl tracking-tight">{bot.name}</h1>
         <div className="flex items-center gap-2">
-          <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'}>
+          <Badge variant={botStatusBadgeVariant(bot.status)}>
             <div className={`w-1.5 h-1.5 rounded-full ${
-              bot.status === 'active' ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'bg-amber-400' : 'bg-arena-elements-textTertiary'
+              bot.status === 'active'
+                ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse'
+                : (bot.status === 'paused' || bot.status === 'needs_config' || bot.status === 'winding_down')
+                  ? 'bg-amber-400'
+                  : 'bg-arena-elements-textTertiary'
             }`} />
-            {bot.status === 'needs_config' ? 'Needs Config' : bot.status}
+            {botStatusLabel(bot.status)}
           </Badge>
           <Badge variant="accent">{bot.strategyType}</Badge>
         </div>

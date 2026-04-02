@@ -250,6 +250,13 @@ export function useVaultRead(vaultAddress: Address | undefined) {
 
   useEffect(() => {
     fetchAll();
+    const interval = window.setInterval(() => {
+      void fetchAll();
+    }, 15_000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [fetchAll]);
 
   return {

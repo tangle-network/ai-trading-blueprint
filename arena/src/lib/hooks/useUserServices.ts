@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
+import { useBlockNumber } from 'wagmi';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle-network/blueprint-ui';
@@ -27,6 +28,7 @@ export interface UserService {
  * Queries on-chain events + multicall for service metadata.
  */
 export function useUserServices(userAddress: Address | undefined) {
+  const { data: currentBlock } = useBlockNumber({ watch: true });
   const [services, setServices] = useState<UserService[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -114,9 +116,6 @@ export function useUserServices(userAddress: Address | undefined) {
         }
       }
 
-      // Get current block for TTL computation
-      const currentBlock = Number(await publicClient.getBlockNumber());
-
       // Build service objects
       const built: UserService[] = [];
       const userLower = userAddress.toLowerCase();
@@ -168,10 +167,6 @@ export function useUserServices(userAddress: Address | undefined) {
         }
 
         // TTL
-        const expiryBlock = createdAt + ttl;
-        const remainingBlocks = Math.max(0, expiryBlock - currentBlock);
-        const remainingSeconds = ttl > 0 ? remainingBlocks * BLOCK_TIME_SECONDS : null;
-
         built.push({
           serviceId: serviceIds[i],
           blueprintId: Number(serviceData.blueprintId),
@@ -183,7 +178,7 @@ export function useUserServices(userAddress: Address | undefined) {
           operators,
           vaultAddresses,
           isActive,
-          remainingSeconds,
+          remainingSeconds: ttl > 0 ? ttl * BLOCK_TIME_SECONDS : null,
         });
       }
 
@@ -211,5 +206,26 @@ export function useUserServices(userAddress: Address | undefined) {
     };
   }, [discover]);
 
-  return { services, isLoading, refetch: discover };
+  const liveServices = useMemo(() => {
+    if (currentBlock == null) return services;
+
+    return services.map((service) => {
+      if (service.ttl <= 0) {
+        return {
+          ...service,
+          remainingSeconds: null,
+        };
+      }
+
+      const expiryBlock = service.createdAt + service.ttl;
+      const remainingBlocks = Math.max(0, expiryBlock - Number(currentBlock));
+
+      return {
+        ...service,
+        remainingSeconds: remainingBlocks * BLOCK_TIME_SECONDS,
+      };
+    });
+  }, [currentBlock, services]);
+
+  return { services: liveServices, isLoading, refetch: discover };
 }

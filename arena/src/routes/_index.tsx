@@ -15,6 +15,7 @@ import type { Bot } from '~/lib/types/bot';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
 import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -39,8 +40,8 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
             </div>
           </div>
         </div>
-        <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'} className="text-xs shrink-0">
-          {bot.status === 'needs_config' ? 'needs config' : bot.status}
+        <Badge variant={botStatusBadgeVariant(bot.status)} className="text-xs shrink-0">
+          {botStatusLabel(bot.status)}
         </Badge>
       </div>
 
@@ -102,13 +103,14 @@ export default function IndexPage() {
   // Leaderboard: only bots that are active or were previously active
   const leaderboardBots = bots.filter((b) => {
     if (b.id.startsWith('provision:')) return false;
+    if (b.status === 'archived' || b.status === 'unknown' || b.status === 'needs_config') return false;
     if (b.status === 'active') return true;
-    if (b.status === 'paused') return true; // paused implies was-active
+    if (b.status === 'paused' || b.status === 'winding_down') return true;
     if (b.status === 'stopped') {
       // Only show stopped bots with evidence of prior activity
       return (b.secretsConfigured === true || b.totalTrades > 0 || b.tvl > 0);
     }
-    return false; // needs_config → hidden from leaderboard
+    return false;
   });
 
   const filteredBots = leaderboardBots.filter(

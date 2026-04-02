@@ -4,7 +4,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import type { UserService } from '~/lib/hooks/useUserServices';
 import type { Bot } from '~/lib/types/bot';
-import { formatDuration, truncateAddress } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, formatDuration, truncateAddress } from '~/lib/format';
 
 export function ServiceCard({
   service,
@@ -175,19 +175,13 @@ export function ServiceCard({
                   <div className="space-y-1">
                     {bots.map((bot) => {
                       const isProvisioning = bot.id.startsWith('provision:');
-                      const statusVariant = bot.status === 'active' ? 'success' as const
-                        : bot.status === 'needs_config' ? 'amber' as const
-                        : bot.status === 'paused' ? 'amber' as const
-                        : 'secondary' as const;
-                      const statusText = isProvisioning ? 'provisioning'
-                        : bot.status === 'needs_config' ? 'needs config'
-                        : bot.status;
+                      const statusText = isProvisioning ? 'provisioning' : botStatusLabel(bot.status);
 
                       const inner = (
                         <>
                           <div className={`text-xs shrink-0 ${isProvisioning ? 'i-ph:gear animate-spin text-amber-400' : 'i-ph:robot text-arena-elements-textTertiary'}`} />
                           <span className="text-xs font-display font-medium truncate">{bot.name}</span>
-                          <Badge variant={isProvisioning ? 'amber' : statusVariant} className="text-[9px] ml-auto">
+                          <Badge variant={isProvisioning ? 'amber' : botStatusBadgeVariant(bot.status)} className="text-[9px] ml-auto">
                             {statusText}
                           </Badge>
                         </>

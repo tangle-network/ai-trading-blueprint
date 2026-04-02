@@ -16,6 +16,7 @@ import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { useAccount } from 'wagmi';
 import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
 import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { isLiveBotStatus } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -40,7 +41,8 @@ export default function BotDetailPage() {
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
 
   // Must call hooks before early returns (React rules of hooks)
-  const pendingValidationCount = usePendingValidationCount(bot?.id ?? '', bot?.name);
+  const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
+  const pendingValidationCount = usePendingValidationCount(bot?.id ?? '', bot?.name, botIsLive);
 
   if (isLoading) {
     return (
@@ -99,19 +101,19 @@ export default function BotDetailPage() {
           </TabsList>
 
           <TabsContent value="performance" className="mt-6">
-            <PerformanceTab bot={bot} />
+            <PerformanceTab bot={bot} isLive={botIsLive} />
           </TabsContent>
 
           <TabsContent value="positions" className="mt-6">
-            <PositionsTab botId={bot.id} />
+            <PositionsTab botId={bot.id} status={bot.status} />
           </TabsContent>
 
           <TabsContent value="trades" className="mt-6">
-            <TradeHistoryTab botId={bot.id} botName={bot.name} />
+            <TradeHistoryTab botId={bot.id} botName={bot.name} isLive={botIsLive} />
           </TabsContent>
 
           <TabsContent value="reasoning" className="mt-6">
-            <ReasoningTab botId={bot.id} botName={bot.name} />
+            <ReasoningTab botId={bot.id} botName={bot.name} isLive={botIsLive} />
           </TabsContent>
 
           {operatorMeta?.features.chat && (

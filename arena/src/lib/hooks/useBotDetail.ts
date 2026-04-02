@@ -20,6 +20,11 @@ export interface BotDetail {
   sandbox_id: string;
   workflow_id: number | null;
   secrets_configured: boolean;
+  sandbox_exists: boolean;
+  sandbox_state: string | null;
+  lifecycle_status: 'unknown' | 'awaiting_secrets' | 'active' | 'stopped' | 'winding_down' | 'archived';
+  archived: boolean;
+  control_available: boolean;
   wind_down_started_at: number | null;
   validator_service_ids: number[];
   validator_endpoints: string[];

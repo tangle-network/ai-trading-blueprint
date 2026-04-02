@@ -214,9 +214,20 @@ function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse
   return Array.isArray(data) ? data : data.snapshots;
 }
 
-export function useBotTrades(botId: string, botName: string = '', limit = 50) {
+interface BotApiQueryOptions {
+  enabled?: boolean;
+  refetchInterval?: number | false;
+}
+
+export function useBotTrades(
+  botId: string,
+  botName: string = '',
+  limit = 50,
+  options: BotApiQueryOptions = {},
+) {
   const { data: meta } = useOperatorMeta();
   const auth = useOperatorAuth(OPERATOR_API_URL);
+  const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
     queryKey: ['bot-trades', botId, limit, meta?.deployment_kind, auth.token],
@@ -227,13 +238,19 @@ export function useBotTrades(botId: string, botName: string = '', limit = 50) {
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
     staleTime: 30_000,
-    enabled: !!meta && !!auth.token,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!meta && !!auth.token,
   });
 }
 
-export function useBotRecentValidations(botId: string, botName: string = '') {
+export function useBotRecentValidations(
+  botId: string,
+  botName: string = '',
+  options: BotApiQueryOptions = {},
+) {
   const { data: meta } = useOperatorMeta();
   const auth = useOperatorAuth(OPERATOR_API_URL);
+  const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
     queryKey: ['bot-recent-validations', botId, meta?.deployment_kind, auth.token],
@@ -243,17 +260,18 @@ export function useBotRecentValidations(botId: string, botName: string = '') {
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(auth.token, path);
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
-    refetchInterval: 5_000,
+    refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
     retry: 1,
     retryDelay: 3_000,
-    enabled: !!meta && !!auth.token,
+    enabled: enabled && !!meta && !!auth.token,
   });
 }
 
-export function useBotPortfolio(botId: string) {
+export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {}) {
   const { data: meta } = useOperatorMeta();
   const auth = useOperatorAuth(OPERATOR_API_URL);
+  const enabled = options.enabled ?? true;
 
   return useQuery<Portfolio | null>({
     queryKey: ['bot-portfolio', botId, meta?.deployment_kind, auth.token],
@@ -264,13 +282,15 @@ export function useBotPortfolio(botId: string) {
       return mapApiPortfolio(data, botId);
     },
     staleTime: 30_000,
-    enabled: !!meta && !!auth.token,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!meta && !!auth.token,
   });
 }
 
-export function useBotMetrics(botId: string, days = 30) {
+export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOptions = {}) {
   const { data: meta } = useOperatorMeta();
   const auth = useOperatorAuth(OPERATOR_API_URL);
+  const enabled = options.enabled ?? true;
 
   return useQuery<ApiMetricsSnapshot[]>({
     queryKey: ['bot-metrics', botId, days, meta?.deployment_kind, auth.token],
@@ -283,6 +303,7 @@ export function useBotMetrics(botId: string, days = 30) {
       return normalizeMetrics(data);
     },
     staleTime: 60_000,
-    enabled: !!meta && !!auth.token,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!meta && !!auth.token,
   });
 }

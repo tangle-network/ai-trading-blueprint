@@ -55,6 +55,93 @@ pub struct TradingBotRecord {
     pub service_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BotLifecycleStatus {
+    Unknown,
+    AwaitingSecrets,
+    Active,
+    Stopped,
+    WindingDown,
+    Archived,
+}
+
+impl BotLifecycleStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::AwaitingSecrets => "awaiting_secrets",
+            Self::Active => "active",
+            Self::Stopped => "stopped",
+            Self::WindingDown => "winding_down",
+            Self::Archived => "archived",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotRuntimeStatus {
+    pub lifecycle_status: BotLifecycleStatus,
+    pub sandbox_state: Option<String>,
+    pub sandbox_exists: bool,
+    pub sandbox_is_running: bool,
+    pub secrets_configured: bool,
+    pub archived: bool,
+    pub control_available: bool,
+}
+
+pub fn bot_runtime_status(bot: &TradingBotRecord) -> BotRuntimeStatus {
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
+    let sandbox_state = sandbox.as_ref().map(|record| format!("{:?}", record.state));
+    let sandbox_exists = sandbox.is_some();
+    let sandbox_is_running = sandbox
+        .as_ref()
+        .map(|record| {
+            matches!(
+                record.state,
+                sandbox_runtime::runtime::SandboxState::Running
+            )
+        })
+        .unwrap_or(false);
+    let secrets_configured = sandbox
+        .as_ref()
+        .map(|record| record.has_user_secrets())
+        .unwrap_or(false);
+    let archived = !sandbox_exists;
+
+    let lifecycle_status = if archived {
+        BotLifecycleStatus::Archived
+    } else if bot.wind_down_started_at.is_some() {
+        BotLifecycleStatus::WindingDown
+    } else if !secrets_configured {
+        BotLifecycleStatus::AwaitingSecrets
+    } else if sandbox_is_running && bot.trading_active {
+        BotLifecycleStatus::Active
+    } else if sandbox_exists {
+        BotLifecycleStatus::Stopped
+    } else {
+        BotLifecycleStatus::Unknown
+    };
+
+    let control_available = sandbox_exists
+        && !matches!(
+            lifecycle_status,
+            BotLifecycleStatus::Archived
+                | BotLifecycleStatus::AwaitingSecrets
+                | BotLifecycleStatus::WindingDown
+        );
+
+    BotRuntimeStatus {
+        lifecycle_status,
+        sandbox_state,
+        sandbox_exists,
+        sandbox_is_running,
+        secrets_configured,
+        archived,
+        control_available,
+    }
+}
+
 /// A recorded paper trade (simulated execution).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PaperTrade {
