@@ -167,11 +167,19 @@ export default defineConfig(({ mode }) => {
       ],
     },
     optimizeDeps: {
-      exclude: [
+      include: [
         '@tangle-network/blueprint-ui',
         '@tangle-network/blueprint-ui/components',
-        '@tangle-network/blueprint-ui/preset',
       ],
+      esbuildOptions: {
+        jsx: 'automatic',
+        jsxImportSource: 'react',
+        tsconfigRaw: {
+          compilerOptions: {
+            jsx: 'react-jsx',
+          },
+        },
+      },
     },
     server: {
       port: 1337,

@@ -1,8 +1,15 @@
+import path from 'node:path';
+import { createRequire } from 'node:module';
 import { bpThemeTokens } from '@tangle-network/blueprint-ui/preset';
 import { icons as phIcons } from '@iconify-json/ph';
 import { defineConfig, presetIcons, transformerDirectives } from 'unocss';
 import { presetAnimations } from 'unocss-preset-animations';
 import { presetWind4 } from 'unocss/preset-wind4';
+
+const cjsRequire = createRequire(import.meta.url);
+const blueprintUiSrcGlob = `${path
+  .dirname(cjsRequire.resolve('@tangle-network/blueprint-ui/preset'))
+  .replaceAll(path.sep, '/')}/**/*.{jsx,tsx}`;
 
 /*
  * OBSIDIAN TERMINAL — Design System
@@ -150,6 +157,21 @@ const SHADCN_COLORS = {
 } as const;
 
 export default defineConfig({
+  content: {
+    pipeline: {
+      include: [
+        'src/**/*.{jsx,tsx}',
+        blueprintUiSrcGlob,
+      ],
+      exclude: [
+        '**/*.test.{jsx,tsx}',
+        '**/*.spec.{jsx,tsx}',
+        '**/test/**',
+        '**/tests/**',
+      ],
+    },
+  },
+  blocklist: ['--', '?', '??'],
   preflights: [
     {
       getCSS: () => `
@@ -287,15 +309,6 @@ export default defineConfig({
       },
     }),
   ],
-  content: {
-    filesystem: [
-      './node_modules/@tangle-network/blueprint-ui/src/**/*.{ts,tsx}',
-    ],
-    pipeline: {
-      include: [/\.(tsx?|jsx?)$/],
-      exclude: [/node_modules/, /dist/, /\.(css|postcss|sass|scss|less|stylus|styl)($|\?)/],
-    },
-  },
   safelist: [
     // Arena icons
     'i-ph:trophy',
