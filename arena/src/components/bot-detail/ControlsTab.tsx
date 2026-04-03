@@ -6,6 +6,7 @@ import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
+import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
 import { Badge, Button } from '@tangle-network/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
@@ -39,6 +40,12 @@ interface ControlsTabProps {
 export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   const { address } = useAccount();
   const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const liveSummary = useBotLiveSummary({
+    botId: bot.id,
+    botName: bot.name,
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+  });
   const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(
     bot.id,
     bot.operatorApiUrl,
@@ -101,7 +108,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         runNow={runNow}
         onConfigureSecrets={onConfigureSecrets}
       />
-      <ValidatorInfoCard bot={bot} detail={detail} />
+      <ValidatorInfoCard bot={bot} detail={detail} avgValidatorScore={liveSummary.avgValidatorScore} />
       <LifetimeCard
         bot={bot}
         detail={detail}
@@ -537,9 +544,11 @@ function StrategyCard({
 function ValidatorInfoCard({
   bot,
   detail,
+  avgValidatorScore,
 }: {
   bot: Bot;
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
+  avgValidatorScore: number | null;
 }) {
   const { data: trades } = useBotTrades(bot.id, bot.name, 50, {
     operatorApiUrl: bot.operatorApiUrl,
@@ -609,8 +618,8 @@ function ValidatorInfoCard({
         {/* Avg Score */}
         <div className="flex justify-between items-center">
           <span className="text-arena-elements-textTertiary">Avg Score</span>
-          {bot.avgValidatorScore > 0 ? (
-            <ScoreRing score={bot.avgValidatorScore} size={32} />
+          {avgValidatorScore != null ? (
+            <ScoreRing score={avgValidatorScore} size={32} />
           ) : (
             <span className="font-data text-arena-elements-textTertiary">—</span>
           )}

@@ -4,6 +4,7 @@ import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
+import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 interface BotHeaderProps {
@@ -12,28 +13,69 @@ interface BotHeaderProps {
 
 export function BotHeader({ bot }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const summary = useBotLiveSummary({
+    botId: bot.id,
+    botName: bot.name,
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+  });
   const validatorCount = detail?.validator_endpoints?.length ?? 0;
+
+  const formatSignedPercent = (value: number | null) => {
+    if (value == null) return '—';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+  };
+
+  const formatPercent = (value: number | null) => {
+    if (value == null) return '—';
+    return `${value.toFixed(1)}%`;
+  };
+
+  const formatDecimal = (value: number | null) => {
+    if (value == null) return '—';
+    return value.toFixed(2);
+  };
+
+  const formatPortfolioValue = (value: number | null) => {
+    if (value == null) return '—';
+    if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
+    return `$${value.toFixed(0)}`;
+  };
 
   const metrics = [
     {
       label: 'PnL',
-      value: `${bot.pnlPercent >= 0 ? '+' : ''}${bot.pnlPercent.toFixed(1)}%`,
-      color: bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
-      glow: bot.pnlPercent >= 0 ? 'glow-emerald' : 'glow-crimson',
+      value: formatSignedPercent(summary.pnlPercent),
+      color: summary.pnlPercent == null
+        ? ''
+        : summary.pnlPercent >= 0
+          ? 'text-arena-elements-icon-success'
+          : 'text-arena-elements-icon-error',
+      glow: summary.pnlPercent == null
+        ? ''
+        : summary.pnlPercent >= 0
+          ? 'glow-emerald'
+          : 'glow-crimson',
     },
-    { label: 'Sharpe', value: bot.sharpeRatio.toFixed(2), color: '', glow: '' },
+    { label: 'Sharpe', value: formatDecimal(summary.sharpeRatio), color: '', glow: '' },
     {
       label: 'Max DD',
-      value: `${bot.maxDrawdown.toFixed(1)}%`,
-      color: 'text-crimson-400',
+      value: formatPercent(summary.maxDrawdown),
+      color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
       glow: '',
     },
-    { label: 'Win Rate', value: `${bot.winRate}%`, color: '', glow: '' },
-    { label: 'TVL', value: `$${(bot.tvl / 1000).toFixed(0)}K`, color: '', glow: '' },
+    { label: 'Win Rate', value: formatPercent(summary.winRate), color: '', glow: '' },
+    { label: 'Portfolio Value', value: formatPortfolioValue(summary.portfolioValue), color: '', glow: '' },
     {
       label: 'Avg Score',
-      value: `${bot.avgValidatorScore}`,
-      color: bot.avgValidatorScore >= 85 ? 'text-arena-elements-icon-success' : bot.avgValidatorScore >= 70 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error',
+      value: summary.avgValidatorScore == null ? '—' : `${summary.avgValidatorScore}`,
+      color: summary.avgValidatorScore == null
+        ? ''
+        : summary.avgValidatorScore >= 85
+          ? 'text-arena-elements-icon-success'
+          : summary.avgValidatorScore >= 70
+            ? 'text-amber-700 dark:text-amber-400'
+            : 'text-arena-elements-icon-error',
       glow: '',
     },
   ];
