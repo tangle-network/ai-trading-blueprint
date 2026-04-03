@@ -8,7 +8,6 @@ import { useBotMetrics } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
 
 interface PerformanceTabProps {
   bot: Bot;
@@ -16,13 +15,15 @@ interface PerformanceTabProps {
 }
 
 export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+  const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
 
   // Try loading real metrics from bot API
   const { data: apiMetrics, isLoading } = useBotMetrics(bot.id, 30, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 15_000 : false,
   });
 
@@ -178,8 +179,18 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     );
   }
 
+  if (bot.verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Live performance unavailable"
+        description="This bot has not been verified against the operator yet, so performance data is hidden until a fresh sync succeeds."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard />;
+    return <OperatorAccessCard apiUrl={bot.operatorApiUrl ?? ''} />;
   }
 
   return (

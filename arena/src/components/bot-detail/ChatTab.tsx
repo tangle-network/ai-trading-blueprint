@@ -15,13 +15,21 @@ import type { AgentBranding, Session } from '@tangle-network/sandbox-ui/types';
 import { Button } from '@tangle-network/blueprint-ui/components';
 import { AuthBanner } from '~/components/bot-detail/AuthBanner';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
-import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
-import { UnsupportedFeatureCard } from '~/components/operator/OperatorAccessCard';
+import {
+  buildBotScopedPathForDeploymentKind,
+  getDeploymentKindForOperatorKind,
+  useOperatorMeta,
+} from '~/lib/operator/meta';
+import { OperatorAccessCard, UnsupportedFeatureCard } from '~/components/operator/OperatorAccessCard';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 
 interface ChatTabProps {
   botId: string;
   botName: string;
   operatorAddress: string;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
 // ── Branding ────────────────────────────────────────────────────────────
@@ -185,10 +193,21 @@ function SessionSelector({ sessions, activeSessionId, primarySessionId, onSelect
 
 // ── Main Chat Tab ───────────────────────────────────────────────────────
 
-export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
-  const { data: operatorMeta } = useOperatorMeta();
-  const apiUrl = operatorMeta ? `${OPERATOR_API_URL}${buildBotScopedPath(operatorMeta, botId)}` : '';
-  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useOperatorAuth(OPERATOR_API_URL);
+export function ChatTab({
+  botId,
+  botName,
+  operatorAddress,
+  operatorApiUrl,
+  operatorKind,
+  verificationState,
+}: ChatTabProps) {
+  const baseApiUrl = operatorApiUrl ?? '';
+  const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+  const apiUrl = operatorMeta && baseApiUrl
+    ? `${baseApiUrl}${buildBotScopedPathForDeploymentKind(deploymentKind, botId)}`
+    : '';
+  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useOperatorAuth(baseApiUrl);
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(() => primarySessionId);
@@ -221,6 +240,8 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
     ? sessions.map((s: Session) => ({ id: s.id, title: s.title }))
     : [{ id: primarySessionId, title: 'Main Session' }];
 
+  void operatorAddress;
+
   if (operatorMeta && !operatorMeta.features.chat) {
     return <UnsupportedFeatureCard feature="Chat" />;
   }
@@ -231,6 +252,16 @@ export function ChatTab({ botId, botName, operatorAddress }: ChatTabProps) {
         <div className="i-ph:chat-slash text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
         Chat is not ready yet for this operator.
       </div>
+    );
+  }
+
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Chat unavailable"
+        description="Chat stays disabled until this bot has been freshly verified against the operator."
+        apiUrl={baseApiUrl}
+      />
     );
   }
 

@@ -14,7 +14,7 @@ import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
-import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
@@ -43,6 +43,11 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
         <Badge variant={botStatusBadgeVariant(bot.status)} className="text-xs shrink-0">
           {botStatusLabel(bot.status)}
         </Badge>
+        {bot.verificationState === 'unverified' && (
+          <Badge variant="outline" className="text-xs shrink-0">
+            Unverified
+          </Badge>
+        )}
       </div>
 
       <div className="flex items-end justify-between gap-3">
@@ -92,16 +97,16 @@ export default function IndexPage() {
   const [search, setSearch] = useState('');
   const [timePeriod, setTimePeriod] = useState('30d');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
-  useRouteOperatorAutoAuth({
+  useTradingRouteAutoAuth({
     enabled: isConnected && !!OPERATOR_API_URL,
     routeKey: 'leaderboard',
-    apiUrl: OPERATOR_API_URL,
   });
   const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
   const bots = useBotEnrichment(rawBots);
 
   // Leaderboard: only bots that are active or were previously active
   const leaderboardBots = bots.filter((b) => {
+    if (b.verificationState === 'unverified') return false;
     if (b.id.startsWith('provision:')) return false;
     if (b.status === 'archived' || b.status === 'unknown' || b.status === 'needs_config') return false;
     if (b.status === 'active') return true;

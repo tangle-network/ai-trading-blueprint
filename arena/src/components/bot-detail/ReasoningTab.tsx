@@ -6,12 +6,15 @@ import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 
 interface ReasoningTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
 // ── Pending Validation Card (live, animated) ────────────────────────────
@@ -244,12 +247,23 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
 
 // ── Main Tab ────────────────────────────────────────────────────────────
 
-export function ReasoningTab({ botId, botName = '', isLive = true }: ReasoningTabProps) {
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+export function ReasoningTab({
+  botId,
+  botName = '',
+  isLive = true,
+  operatorApiUrl,
+  operatorKind,
+  verificationState,
+}: ReasoningTabProps) {
+  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+    operatorApiUrl,
+    operatorKind,
     refetchInterval: isLive ? 15_000 : false,
   });
   const { data: recentTrades } = useBotRecentValidations(botId, botName, {
+    operatorApiUrl,
+    operatorKind,
     enabled: isLive,
     refetchInterval: isLive ? 5_000 : false,
   });
@@ -277,8 +291,18 @@ export function ReasoningTab({ botId, botName = '', isLive = true }: ReasoningTa
     );
   }
 
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Validator reasoning unavailable"
+        description="Reasoning is hidden until this bot has been verified against the operator and live trade data is fresh."
+        apiUrl={operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard />;
+    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
   if (pendingTrades.length === 0 && filteredHistory.length === 0) {
@@ -324,8 +348,12 @@ export function usePendingValidationCount(
   botId: string,
   botName: string = '',
   enabled: boolean = true,
+  operatorApiUrl?: string | null,
+  operatorKind?: BotOperatorKind,
 ): number {
   const { data } = useBotRecentValidations(botId, botName, {
+    operatorApiUrl,
+    operatorKind,
     enabled,
     refetchInterval: enabled ? 5_000 : false,
   });

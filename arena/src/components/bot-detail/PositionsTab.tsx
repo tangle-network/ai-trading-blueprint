@@ -3,18 +3,23 @@ import type { BotStatus } from '~/lib/types/bot';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import { botStatusLabel, isLiveBotStatus } from '~/lib/format';
 
 interface PositionsTabProps {
   botId: string;
   status: BotStatus;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
-export function PositionsTab({ botId, status }: PositionsTabProps) {
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, verificationState }: PositionsTabProps) {
+  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const isLive = isLiveBotStatus(status);
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
+    operatorApiUrl,
+    operatorKind,
     enabled: isLive,
     refetchInterval: isLive ? 10_000 : false,
   });
@@ -28,8 +33,18 @@ export function PositionsTab({ botId, status }: PositionsTabProps) {
     );
   }
 
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Live portfolio unavailable"
+        description="This bot is still using unverified fallback data, so portfolio positions are hidden until the operator confirms the runtime state."
+        apiUrl={operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard />;
+    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
   if (!isLive) {

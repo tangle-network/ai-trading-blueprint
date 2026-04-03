@@ -38,8 +38,12 @@ interface ControlsTabProps {
 
 export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   const { address } = useAccount();
-  const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id);
-  const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(bot.id);
+  const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(
+    bot.id,
+    bot.operatorApiUrl,
+    bot.operatorKind,
+  );
   const { service, remainingSeconds: serviceRemainingSeconds } = useServiceInfo(bot.serviceId || undefined);
 
   const isOwner = detail?.submitter_address
@@ -56,8 +60,23 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
     );
   }
 
+  if (bot.verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Controls unavailable"
+        description="This bot is still using unverified fallback data, so runtime controls stay disabled until the operator confirms the current state."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!isAuthenticated && !detail) {
-    return <OperatorAccessCard description="Connect your wallet to load operator-managed bot controls." />;
+    return (
+      <OperatorAccessCard
+        description="Connect your wallet to load operator-managed bot controls."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
   }
 
   if (!detail) {
@@ -522,7 +541,10 @@ function ValidatorInfoCard({
   bot: Bot;
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
 }) {
-  const { data: trades } = useBotTrades(bot.id, bot.name);
+  const { data: trades } = useBotTrades(bot.id, bot.name, 50, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+  });
 
   const stats = useMemo(() => {
     if (!trades || trades.length === 0) return { approvalRate: null, totalValidated: 0 };

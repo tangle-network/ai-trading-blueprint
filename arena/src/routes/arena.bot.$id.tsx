@@ -15,7 +15,7 @@ import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { useAccount } from 'wagmi';
 import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
-import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { isLiveBotStatus } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
@@ -26,23 +26,28 @@ export default function BotDetailPage() {
   const { id } = useParams();
   const { isConnected } = useAccount();
   const { bots, isLoading } = useBots();
-  const { data: operatorMeta } = useOperatorMeta();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
 
-  useRouteOperatorAutoAuth({
+  useTradingRouteAutoAuth({
     enabled: Boolean(OPERATOR_API_URL && isConnected && id),
     routeKey: `bot-detail:${id ?? 'unknown'}`,
-    apiUrl: OPERATOR_API_URL,
   });
 
   // Match by ID, sandbox ID, or vault address (handles various link formats)
   const bot = bots.find((b) => b.id === id)
     ?? bots.find((b) => id && b.sandboxId === id)
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
+  const { data: operatorMeta } = useOperatorMeta(bot?.operatorApiUrl ?? OPERATOR_API_URL);
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
-  const pendingValidationCount = usePendingValidationCount(bot?.id ?? '', bot?.name, botIsLive);
+  const pendingValidationCount = usePendingValidationCount(
+    bot?.id ?? '',
+    bot?.name,
+    botIsLive,
+    bot?.operatorApiUrl,
+    bot?.operatorKind,
+  );
 
   if (isLoading) {
     return (
@@ -105,21 +110,48 @@ export default function BotDetailPage() {
           </TabsContent>
 
           <TabsContent value="positions" className="mt-6">
-            <PositionsTab botId={bot.id} status={bot.status} />
+            <PositionsTab
+              botId={bot.id}
+              status={bot.status}
+              operatorApiUrl={bot.operatorApiUrl}
+              operatorKind={bot.operatorKind}
+              verificationState={bot.verificationState}
+            />
           </TabsContent>
 
           <TabsContent value="trades" className="mt-6">
-            <TradeHistoryTab botId={bot.id} botName={bot.name} isLive={botIsLive} />
+            <TradeHistoryTab
+              botId={bot.id}
+              botName={bot.name}
+              isLive={botIsLive}
+              operatorApiUrl={bot.operatorApiUrl}
+              operatorKind={bot.operatorKind}
+              verificationState={bot.verificationState}
+            />
           </TabsContent>
 
           <TabsContent value="reasoning" className="mt-6">
-            <ReasoningTab botId={bot.id} botName={bot.name} isLive={botIsLive} />
+            <ReasoningTab
+              botId={bot.id}
+              botName={bot.name}
+              isLive={botIsLive}
+              operatorApiUrl={bot.operatorApiUrl}
+              operatorKind={bot.operatorKind}
+              verificationState={bot.verificationState}
+            />
           </TabsContent>
 
           {operatorMeta?.features.chat && (
             <TabsContent value="chat" className="mt-6">
               <ErrorBoundary>
-                <ChatTab botId={bot.id} botName={bot.name} operatorAddress={bot.operatorAddress} />
+                <ChatTab
+                  botId={bot.id}
+                  botName={bot.name}
+                  operatorAddress={bot.operatorAddress}
+                  operatorApiUrl={bot.operatorApiUrl}
+                  operatorKind={bot.operatorKind}
+                  verificationState={bot.verificationState}
+                />
               </ErrorBoundary>
             </TabsContent>
           )}

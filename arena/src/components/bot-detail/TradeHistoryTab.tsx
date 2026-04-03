@@ -8,12 +8,15 @@ import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 
 interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
 function VenueBadge({ venue }: { venue: TradeVenue }) {
@@ -64,9 +67,18 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
 }
 
-export function TradeHistoryTab({ botId, botName = '', isLive = false }: TradeHistoryTabProps) {
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+export function TradeHistoryTab({
+  botId,
+  botName = '',
+  isLive = false,
+  operatorApiUrl,
+  operatorKind,
+  verificationState,
+}: TradeHistoryTabProps) {
+  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+    operatorApiUrl,
+    operatorKind,
     refetchInterval: isLive ? 15_000 : false,
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -84,8 +96,18 @@ export function TradeHistoryTab({ botId, botName = '', isLive = false }: TradeHi
     );
   }
 
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Trade history unavailable"
+        description="Trade history only appears for bots that have been freshly verified against their operator."
+        apiUrl={operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard />;
+    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
   if (!trades || trades.length === 0) {

@@ -76,6 +76,11 @@ export function HomeBotCard({
               <Badge variant={badge.variant} className="text-[10px]">
                 {badge.label}
               </Badge>
+              {bot.verificationState === 'unverified' && (
+                <Badge variant="outline" className="text-[10px]">
+                  Unverified
+                </Badge>
+              )}
               {isPaper && (
                 <Badge variant="outline" className="text-[10px]">Paper</Badge>
               )}

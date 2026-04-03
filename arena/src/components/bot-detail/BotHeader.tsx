@@ -11,7 +11,7 @@ interface BotHeaderProps {
 }
 
 export function BotHeader({ bot }: BotHeaderProps) {
-  const { data: detail } = useBotDetail(bot.id);
+  const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const validatorCount = detail?.validator_endpoints?.length ?? 0;
 
   const metrics = [
@@ -54,6 +54,9 @@ export function BotHeader({ bot }: BotHeaderProps) {
             {botStatusLabel(bot.status)}
           </Badge>
           <Badge variant="accent">{bot.strategyType}</Badge>
+          {bot.verificationState === 'unverified' && (
+            <Badge variant="outline">Unverified</Badge>
+          )}
         </div>
       </div>
 
