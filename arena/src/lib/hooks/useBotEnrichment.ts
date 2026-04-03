@@ -1,8 +1,12 @@
 import { useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import type { Bot } from '~/lib/types/bot';
-import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import {
+  buildBotScopedPathForDeploymentKind,
+  getDeploymentKindForOperatorKind,
+} from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
+import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 
 interface MetricsSnapshot {
   timestamp: string;
@@ -26,43 +30,57 @@ function normalizeSnapshots(data: MetricsSnapshot[] | MetricsHistoryResponse): M
 
 export function useBotEnrichment(bots: Bot[]): Bot[] {
   const botIds = bots.map((b) => b.id).join(',');
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
 
   const enrichable = useMemo(() => {
     const indices: number[] = [];
-    const entries: Array<{ botId: string }> = [];
-    if (!meta || !auth.token) {
-      return { indices, entries };
-    }
+    const entries: Array<{ botId: string; operatorApiUrl: string; operatorKind: Bot['operatorKind'] }> = [];
     for (let i = 0; i < bots.length; i++) {
+      const bot = bots[i];
+      if (bot.verificationState !== 'authoritative' || !bot.operatorApiUrl) continue;
       indices.push(i);
-      entries.push({ botId: bots[i].id });
+      entries.push({
+        botId: bot.id,
+        operatorApiUrl: bot.operatorApiUrl,
+        operatorKind: bot.operatorKind,
+      });
     }
     return { indices, entries };
-  }, [auth.token, botIds, meta]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botIds, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const authByUrl = {
+    cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
+    instance: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'instance')?.operatorApiUrl ?? ''),
+    tee: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'tee')?.operatorApiUrl ?? ''),
+  } as const;
 
   const results = useQueries({
-    queries: enrichable.entries.map(({ botId }) => ({
-      queryKey: ['bot-enrichment', botId, meta?.deployment_kind, auth.token] as const,
+    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => ({
+      queryKey: [
+        'bot-enrichment',
+        operatorApiUrl,
+        botId,
+        getDeploymentKindForOperatorKind(operatorKind),
+        authByUrl[operatorKind ?? 'cloud'].authCacheKey,
+      ] as const,
       queryFn: async (): Promise<MetricsSnapshot[]> => {
         const from = new Date(Date.now() - 30 * 86400000).toISOString();
         const to = new Date().toISOString();
-        const path = `${buildBotScopedPath(meta, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
-        const res = await fetch(`${OPERATOR_API_URL}${path}`, {
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${auth.token}`,
-          },
-        });
-        if (!res.ok) throw new Error(`API ${res.status}`);
-        const data = await res.json() as MetricsSnapshot[] | MetricsHistoryResponse;
+        const path = `${buildBotScopedPathForDeploymentKind(
+          getDeploymentKindForOperatorKind(operatorKind),
+          botId,
+          '/metrics/history',
+        )}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+        const data = await operatorJsonWithAuth<MetricsSnapshot[] | MetricsHistoryResponse>(
+          operatorApiUrl,
+          path,
+          authByUrl[operatorKind ?? 'cloud'],
+        );
         return normalizeSnapshots(data);
       },
       staleTime: 60_000,
       refetchInterval: 60_000,
       retry: 1,
-      enabled: !!meta && !!auth.token,
+      enabled: !!operatorApiUrl && !!authByUrl[operatorKind ?? 'cloud'].getCachedToken(),
     })),
   });
 

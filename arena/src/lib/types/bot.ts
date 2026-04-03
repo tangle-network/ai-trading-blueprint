@@ -1,5 +1,7 @@
 export type BotLifecycleStatus = 'unknown' | 'awaiting_secrets' | 'active' | 'stopped' | 'winding_down' | 'archived';
 export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config' | 'winding_down' | 'archived' | 'unknown';
+export type BotVerificationState = 'authoritative' | 'unverified';
+export type BotOperatorKind = 'cloud' | 'instance' | 'tee' | null;
 export type StrategyType =
   | 'prediction' | 'prediction_politics' | 'prediction_crypto'
   | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
@@ -51,4 +53,9 @@ export interface Bot {
 
   // Internal UI source tracking
   source?: 'on_chain' | 'operator' | 'provision';
+  verificationState?: BotVerificationState;
+  operatorKind?: BotOperatorKind;
+  operatorApiUrl?: string | null;
+  lastVerifiedAt?: number | null;
+  isUnverified?: boolean;
 }

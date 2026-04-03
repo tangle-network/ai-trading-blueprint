@@ -2,8 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
-import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import {
+  buildBotScopedPathForDeploymentKind,
+  getDeploymentKindForOperatorKind,
+} from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
+import { operatorJsonWithAuth } from '~/lib/operator/fetch';
+import type { BotOperatorKind } from '~/lib/types/bot';
 
 interface ApiTrade {
   id: string;
@@ -83,17 +88,11 @@ interface ApiPortfolioState {
 }
 
 async function fetchOperatorBotApi<T>(
-  token: string,
+  apiUrl: string,
+  auth: Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken' | 'getToken'>,
   path: string,
 ): Promise<T> {
-  const res = await fetch(`${OPERATOR_API_URL}${path}`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  if (!res.ok) throw new Error(`Bot API error: ${res.status} ${res.statusText}`);
-  return res.json();
+  return operatorJsonWithAuth<T>(apiUrl, path, auth);
 }
 
 function mapApiSimulation(trade: ApiTrade): TradeSimulation | undefined {
@@ -217,6 +216,8 @@ function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse
 interface BotApiQueryOptions {
   enabled?: boolean;
   refetchInterval?: number | false;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
 }
 
 export function useBotTrades(
@@ -225,21 +226,21 @@ export function useBotTrades(
   limit = 50,
   options: BotApiQueryOptions = {},
 ) {
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-trades', botId, limit, meta?.deployment_kind, auth.token],
+    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
-      if (!meta || !auth.token) return [];
-      const path = `${buildBotScopedPath(meta, botId, '/trades')}?limit=${limit}`;
-      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(auth.token, path);
+      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
     staleTime: 30_000,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!meta && !!auth.token,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
 }
 
@@ -248,62 +249,62 @@ export function useBotRecentValidations(
   botName: string = '',
   options: BotApiQueryOptions = {},
 ) {
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-recent-validations', botId, meta?.deployment_kind, auth.token],
+    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
-      if (!meta || !auth.token) return [];
-      const path = `${buildBotScopedPath(meta, botId, '/trades')}?limit=5`;
-      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(auth.token, path);
+      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=5`;
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
     retry: 1,
     retryDelay: 3_000,
-    enabled: enabled && !!meta && !!auth.token,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
 }
 
 export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {}) {
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
 
   return useQuery<Portfolio | null>({
-    queryKey: ['bot-portfolio', botId, meta?.deployment_kind, auth.token],
+    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
-      if (!meta || !auth.token) return null;
-      const path = buildBotScopedPath(meta, botId, '/portfolio/state');
-      const data = await fetchOperatorBotApi<ApiPortfolioState>(auth.token, path);
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/portfolio/state');
+      const data = await fetchOperatorBotApi<ApiPortfolioState>(apiUrl, auth, path);
       return mapApiPortfolio(data, botId);
     },
     staleTime: 30_000,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!meta && !!auth.token,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
 }
 
 export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOptions = {}) {
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
 
   return useQuery<ApiMetricsSnapshot[]>({
-    queryKey: ['bot-metrics', botId, days, meta?.deployment_kind, auth.token],
+    queryKey: ['bot-metrics', apiUrl, botId, days, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
-      if (!meta || !auth.token) return [];
       const from = new Date(Date.now() - days * 86400000).toISOString();
       const to = new Date().toISOString();
-      const path = `${buildBotScopedPath(meta, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
-      const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(auth.token, path);
+      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+      const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(apiUrl, auth, path);
       return normalizeMetrics(data);
     },
     staleTime: 60_000,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!meta && !!auth.token,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
 }

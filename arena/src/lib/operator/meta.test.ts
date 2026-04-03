@@ -35,3 +35,14 @@ describe('getExpectedDeploymentKindForBlueprint', () => {
     expect(getExpectedDeploymentKindForBlueprint('trading-tee-instance')).toBe('instance');
   });
 });
+
+describe('getDeploymentKindForOperatorKind', () => {
+  it('maps cloud bots to fleet and instance-style bots to instance', async () => {
+    vi.resetModules();
+    const { getDeploymentKindForOperatorKind } = await import('./meta');
+    expect(getDeploymentKindForOperatorKind('cloud')).toBe('fleet');
+    expect(getDeploymentKindForOperatorKind('instance')).toBe('instance');
+    expect(getDeploymentKindForOperatorKind('tee')).toBe('instance');
+    expect(getDeploymentKindForOperatorKind(null)).toBe('instance');
+  });
+});

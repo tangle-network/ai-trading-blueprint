@@ -1,17 +1,22 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useOperatorAuth } from './useOperatorAuth';
-import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import {
+  buildBotScopedPathForDeploymentKind,
+  getDeploymentKindForOperatorKind,
+} from '~/lib/operator/meta';
 import { readOperatorError } from '~/lib/operator/errors';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
+import type { BotOperatorKind } from '~/lib/types/bot';
 
 async function apiCall(
+  apiUrl: string,
   path: string,
   method: string,
   token: string,
   body?: unknown,
 ) {
-  const res = await fetch(`${OPERATOR_API_URL}${path}`, {
+  const res = await fetch(`${apiUrl}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -25,9 +30,14 @@ async function apiCall(
   return res.json();
 }
 
-export function useBotControl(botId: string) {
-  const { data: meta } = useOperatorMeta();
-  const { token, authenticate, isAuthenticated } = useOperatorAuth(OPERATOR_API_URL);
+export function useBotControl(
+  botId: string,
+  operatorApiUrl?: string | null,
+  operatorKind?: BotOperatorKind,
+) {
+  const apiUrl = operatorApiUrl ?? '';
+  const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+  const { token, authenticate, isAuthenticated } = useOperatorAuth(apiUrl);
   const queryClient = useQueryClient();
 
   const ensureToken = async (): Promise<string> => {
@@ -38,12 +48,12 @@ export function useBotControl(botId: string) {
   };
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['bots'] });
-    queryClient.invalidateQueries({ queryKey: ['bot-detail', botId] });
-    queryClient.invalidateQueries({ queryKey: ['bot-metrics', botId] });
-    queryClient.invalidateQueries({ queryKey: ['bot-trades', botId] });
-    queryClient.invalidateQueries({ queryKey: ['bot-recent-validations', botId] });
-    queryClient.invalidateQueries({ queryKey: ['bot-portfolio', botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-detail', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-metrics', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-trades', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-recent-validations', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-portfolio', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-enrichment', apiUrl, botId] });
     dispatchBotsRefresh();
   };
 
@@ -54,7 +64,7 @@ export function useBotControl(botId: string) {
   const startBot = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(buildBotScopedPath(meta, botId, '/start'), 'POST', t);
+      return apiCall(apiUrl, buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/start'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Start bot'),
@@ -63,7 +73,7 @@ export function useBotControl(botId: string) {
   const stopBot = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(buildBotScopedPath(meta, botId, '/stop'), 'POST', t);
+      return apiCall(apiUrl, buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/stop'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Stop bot'),
@@ -72,7 +82,7 @@ export function useBotControl(botId: string) {
   const runNow = useMutation({
     mutationFn: async () => {
       const t = await ensureToken();
-      return apiCall(buildBotScopedPath(meta, botId, '/run-now'), 'POST', t);
+      return apiCall(apiUrl, buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/run-now'), 'POST', t);
     },
     onSuccess: invalidate,
     onError: onMutationError('Run now'),
@@ -84,7 +94,7 @@ export function useBotControl(botId: string) {
       riskParamsJson?: string;
     }) => {
       const t = await ensureToken();
-      return apiCall(buildBotScopedPath(meta, botId, '/config'), 'PATCH', t, {
+      return apiCall(apiUrl, buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/config'), 'PATCH', t, {
         strategy_config_json: params.strategyConfigJson,
         risk_params_json: params.riskParamsJson,
       });

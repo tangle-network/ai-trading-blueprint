@@ -1,6 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { buildBotScopedPath, OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
+import {
+  buildBotScopedPathForDeploymentKind,
+  getDeploymentKindForOperatorKind,
+} from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
+import type { BotOperatorKind } from '~/lib/types/bot';
+import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 
 export interface BotDetail {
   id: string;
@@ -32,24 +37,22 @@ export interface BotDetail {
   service_id: number;
 }
 
-export function useBotDetail(botId: string | undefined) {
-  const { data: meta } = useOperatorMeta();
-  const auth = useOperatorAuth(OPERATOR_API_URL);
+export function useBotDetail(
+  botId: string | undefined,
+  operatorApiUrl?: string | null,
+  operatorKind?: BotOperatorKind,
+) {
+  const apiUrl = operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
 
   return useQuery<BotDetail>({
-    queryKey: ['bot-detail', botId, meta?.deployment_kind, auth.token],
+    queryKey: ['bot-detail', apiUrl, botId, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
-      const path = buildBotScopedPath(meta, botId);
-      const res = await fetch(`${OPERATOR_API_URL}${path}`, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${auth.token}`,
-        },
-      });
-      if (!res.ok) throw new Error(`Failed to fetch bot: ${res.status}`);
-      return res.json();
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId);
+      return operatorJsonWithAuth<BotDetail>(apiUrl, path, auth);
     },
-    enabled: !!botId && !!OPERATOR_API_URL && !!meta && !!auth.token,
+    enabled: !!botId && !!apiUrl && !!auth.getCachedToken(),
     staleTime: 10_000,
     refetchInterval: 15_000,
   });

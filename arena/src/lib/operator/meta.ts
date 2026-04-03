@@ -8,6 +8,9 @@ export const INSTANCE_OPERATOR_API_URL =
 export const TEE_OPERATOR_API_URL =
   import.meta.env.VITE_TEE_OPERATOR_API_URL ?? INSTANCE_OPERATOR_API_URL;
 export const OPERATOR_API_URL = CLOUD_OPERATOR_API_URL;
+export const ALL_TRADING_OPERATOR_API_URLS = Array.from(
+  new Set([CLOUD_OPERATOR_API_URL, INSTANCE_OPERATOR_API_URL, TEE_OPERATOR_API_URL].filter(Boolean)),
+);
 
 export type OperatorDeploymentKind = 'fleet' | 'instance';
 
@@ -43,6 +46,26 @@ export function getOperatorApiUrlForBlueprint(
     default:
       return CLOUD_OPERATOR_API_URL;
   }
+}
+
+export function getOperatorKindForBlueprint(
+  blueprintType?: string,
+): 'cloud' | 'instance' | 'tee' {
+  switch (blueprintType) {
+    case 'trading-tee-instance':
+      return 'tee';
+    case 'trading-instance':
+      return 'instance';
+    case 'trading-cloud':
+    default:
+      return 'cloud';
+  }
+}
+
+export function getDeploymentKindForOperatorKind(
+  operatorKind: 'cloud' | 'instance' | 'tee' | null | undefined,
+): OperatorDeploymentKind {
+  return operatorKind === 'cloud' ? 'fleet' : 'instance';
 }
 
 export function getExpectedDeploymentKindForBlueprint(
@@ -82,8 +105,16 @@ export function buildBotScopedPath(
   botId: string | undefined,
   suffix = '',
 ): string {
+  return buildBotScopedPathForDeploymentKind(meta?.deployment_kind, botId, suffix);
+}
+
+export function buildBotScopedPathForDeploymentKind(
+  deploymentKind: OperatorDeploymentKind | undefined,
+  botId: string | undefined,
+  suffix = '',
+): string {
   const tail = suffix.startsWith('/') || suffix.length === 0 ? suffix : `/${suffix}`;
-  if (meta?.deployment_kind === 'instance') {
+  if (deploymentKind === 'instance') {
     return `/api/bot${tail}`;
   }
   if (!botId) {
