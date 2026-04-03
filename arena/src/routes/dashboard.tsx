@@ -25,9 +25,12 @@ import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
-import { partitionProvisionsForBots } from '~/lib/utils/botProvisionReconciliation';
+import {
+  doesProvisionLikelyReferToBot,
+  partitionProvisionsForBots,
+} from '~/lib/utils/botProvisionReconciliation';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
-import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
@@ -65,10 +68,9 @@ export const meta: MetaFunction = () => [
 export default function HomePage() {
   const { address: userAddress, isConnected } = useAccount();
 
-  useRouteOperatorAutoAuth({
+  useTradingRouteAutoAuth({
     enabled: isConnected && !!OPERATOR_API_URL,
     routeKey: 'dashboard',
-    apiUrl: OPERATOR_API_URL,
   });
 
   // Data sources
@@ -171,7 +173,18 @@ export default function HomePage() {
   const inProgressProvisions = unresolvedProvisions.filter((p) =>
     ['pending_confirmation', 'job_submitted', 'job_processing', 'awaiting_secrets'].includes(p.phase),
   );
-  const failedProvisions = unresolvedProvisions.filter((p) => p.phase === 'failed');
+  const currentConcreteBots = useMemo(
+    () => bots.filter((bot) => bot.source !== 'provision'),
+    [bots],
+  );
+  const failedProvisions = useMemo(
+    () => unresolvedProvisions.filter(
+      (provision) =>
+        provision.phase === 'failed'
+        && !currentConcreteBots.some((bot) => doesProvisionLikelyReferToBot(provision, bot)),
+    ),
+    [currentConcreteBots, unresolvedProvisions],
+  );
 
   // Match awaiting-secrets provisions to bots for the configure button
   const awaitingSecretsForBot = useMemo(() => {

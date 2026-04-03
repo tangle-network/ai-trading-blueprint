@@ -5,7 +5,12 @@ import { useBlockNumber } from 'wagmi';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle-network/blueprint-ui';
-import { provisionsStore, getProvisionStructuralFingerprint } from '~/lib/stores/provisions';
+import {
+  provisionsStore,
+  getProvisionStructuralFingerprint,
+  isProvisionServiceHint,
+  type TrackedProvision,
+} from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 const BLOCK_TIME_SECONDS = 12;
 
@@ -78,6 +83,7 @@ export function useUserServices(userAddress: Address | undefined) {
 
       // Also include service IDs from tracked provisions (catches newly created services)
       for (const prov of provisionsStore.get()) {
+        if (!isProvisionServiceHint(prov)) continue;
         if (prov.serviceId != null && !serviceIds.includes(prov.serviceId)) {
           serviceIds.push(prov.serviceId);
         }
@@ -123,8 +129,12 @@ export function useUserServices(userAddress: Address | undefined) {
       // Service IDs from user's provisions (user should always see services they provisioned)
       const provisionServiceIds = new Set(
         provisionsStore.get()
-          .filter((p: { owner: string; serviceId?: number }) => p.owner.toLowerCase() === userLower && p.serviceId != null)
-          .map((p: { serviceId?: number }) => p.serviceId!),
+          .filter((p: TrackedProvision) =>
+            p.owner.toLowerCase() === userLower
+            && p.serviceId != null
+            && isProvisionServiceHint(p),
+          )
+          .map((p: TrackedProvision) => p.serviceId!),
       );
 
       for (let i = 0; i < serviceIds.length; i++) {
@@ -158,6 +168,7 @@ export function useUserServices(userAddress: Address | undefined) {
         }
         // Also pull vault addresses from provisions
         for (const prov of provisionsStore.get()) {
+          if (!isProvisionServiceHint(prov)) continue;
           if (prov.serviceId === serviceIds[i] && prov.vaultAddress) {
             const va = prov.vaultAddress as Address;
             if (va !== zeroAddress && !vaultAddresses.some((a) => a.toLowerCase() === va.toLowerCase())) {

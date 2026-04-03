@@ -41,6 +41,25 @@ export function doesProvisionMatchBot(provision: TrackedProvision, bot: Bot): bo
   return false;
 }
 
+function normalizeBotLikeName(value: string | undefined): string {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+export function doesProvisionLikelyReferToBot(provision: TrackedProvision, bot: Bot): boolean {
+  if (doesProvisionMatchBot(provision, bot)) return true;
+
+  if (provision.serviceId == null || provision.serviceId !== bot.serviceId) return false;
+
+  const provisionName = normalizeBotLikeName(provision.name);
+  const botName = normalizeBotLikeName(bot.name);
+  if (!provisionName || provisionName !== botName) return false;
+
+  return provision.strategyType === bot.strategyType;
+}
+
 export function collectMatchedProvisionIds(
   provisions: TrackedProvision[],
   bots: Bot[],
@@ -49,6 +68,21 @@ export function collectMatchedProvisionIds(
 
   for (const provision of provisions) {
     if (bots.some((bot) => doesProvisionMatchBot(provision, bot))) {
+      matched.add(provision.id);
+    }
+  }
+
+  return matched;
+}
+
+export function collectLikelyMatchedProvisionIds(
+  provisions: TrackedProvision[],
+  bots: Bot[],
+): Set<string> {
+  const matched = new Set<string>();
+
+  for (const provision of provisions) {
+    if (bots.some((bot) => doesProvisionLikelyReferToBot(provision, bot))) {
       matched.add(provision.id);
     }
   }

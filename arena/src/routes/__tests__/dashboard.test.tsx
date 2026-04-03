@@ -117,8 +117,8 @@ vi.mock('~/lib/hooks/useBotEnrichment', () => ({
   useBotEnrichment: (bots: any[]) => bots,
 }));
 
-vi.mock('~/lib/hooks/useRouteOperatorAutoAuth', () => ({
-  useRouteOperatorAutoAuth: vi.fn(),
+vi.mock('~/lib/hooks/useTradingRouteAutoAuth', () => ({
+  useTradingRouteAutoAuth: vi.fn(),
 }));
 
 vi.mock('~/lib/contracts/addresses', () => ({
@@ -138,7 +138,11 @@ vi.mock('~/components/home/HomeBotCard', () => ({
 }));
 
 vi.mock('~/components/home/ProvisionsBanner', () => ({
-  ProvisionsBanner: ({ provisions }: any) => <div>provisioning-{provisions.length}</div>,
+  ProvisionsBanner: ({ provisions, failedProvisions }: any) => (
+    <div>
+      provisioning-{provisions.length}-failed-{failedProvisions.length}
+    </div>
+  ),
 }));
 
 vi.mock('~/components/home/SecretsModal', () => ({
@@ -193,7 +197,7 @@ describe('dashboard auth-aware rendering', () => {
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
     expect(screen.getByText(/Authenticate to load 1 operator-managed bot/i)).toBeInTheDocument();
     expect(screen.getByText('service-1-locked-1')).toBeInTheDocument();
-    expect(screen.queryByText('provisioning-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('provisioning-1-failed-0')).not.toBeInTheDocument();
     expect(screen.getByText('Active Bots').parentElement).toHaveTextContent('—');
   });
 
@@ -218,7 +222,55 @@ describe('dashboard auth-aware rendering', () => {
     const { default: HomePage } = await import('../dashboard');
     render(<HomePage />);
 
-    expect(screen.getByText('provisioning-1')).toBeInTheDocument();
+    expect(screen.getByText('provisioning-1-failed-0')).toBeInTheDocument();
     expect(screen.queryByText('Operator authentication required')).not.toBeInTheDocument();
+  });
+
+  it('hides failed historical provisions when a real bot for the same logical bot already exists', async () => {
+    botsState.bots = [
+      {
+        id: 'bot-real-1',
+        serviceId: 1,
+        name: 'bot1',
+        operatorAddress: accountState.address,
+        vaultAddress: '0x00000000000000000000000000000000000000aa',
+        strategyType: 'dex',
+        status: 'stopped',
+        createdAt: 1,
+        pnlPercent: 0,
+        pnlAbsolute: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        tvl: 0,
+        avgValidatorScore: 0,
+        sparklineData: [],
+        source: 'operator',
+      },
+    ];
+    provisionsState = [
+      {
+        id: 'prov-failed',
+        owner: accountState.address,
+        name: 'bot1',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        phase: 'failed',
+        createdAt: 1,
+        updatedAt: 1,
+        chainId: 31338,
+        serviceId: 1,
+        errorMessage: 'Provision timed out after 30 minutes',
+      },
+    ];
+
+    const { default: HomePage } = await import('../dashboard');
+    render(<HomePage />);
+
+    expect(screen.queryByText('provisioning-0-failed-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('provisioning-0-failed-0')).not.toBeInTheDocument();
+    expect(screen.getByText('bot-bot1')).toBeInTheDocument();
   });
 });

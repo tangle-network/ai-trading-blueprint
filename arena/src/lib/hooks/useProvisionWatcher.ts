@@ -46,6 +46,26 @@ function decodeProvisionOutput(output: `0x${string}`) {
   };
 }
 
+function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
+  if (provision.callId == null) return false;
+
+  if (provision.phase === 'job_submitted' || provision.phase === 'job_processing') {
+    return true;
+  }
+
+  if ((provision.phase === 'awaiting_secrets' || provision.phase === 'active') && !provision.botId) {
+    return true;
+  }
+
+  // Allow recently failed provisions to recover if the operator later reports
+  // ready for the same call_id after a transient local/runtime issue.
+  if (provision.phase === 'failed' && !provision.botId) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Global provision watcher. Mount once near the app root.
  *
@@ -219,15 +239,7 @@ export function useProvisionWatcher() {
       }
 
       // ── Stage 2.5: Operator API polling ──
-      const needsProgressPolling = provisions.some(
-        (p: TrackedProvision) =>
-          p.callId != null
-          && (
-            p.phase === 'job_submitted'
-            || p.phase === 'job_processing'
-            || ((p.phase === 'awaiting_secrets' || p.phase === 'active') && !p.botId)
-          ),
-      );
+      const needsProgressPolling = provisions.some((p: TrackedProvision) => shouldPollOperatorProgress(p));
 
       if (needsProgressPolling && OPERATOR_API_URL && !pollingRef.current) {
         const poll = async () => {
@@ -235,13 +247,7 @@ export function useProvisionWatcher() {
           pollingInFlight.current = true;
           try {
           const submitted = provisionsStore.get().filter(
-            (p: TrackedProvision) =>
-              p.callId != null
-              && (
-                p.phase === 'job_submitted'
-                || p.phase === 'job_processing'
-                || ((p.phase === 'awaiting_secrets' || p.phase === 'active') && !p.botId)
-              ),
+            (p: TrackedProvision) => shouldPollOperatorProgress(p),
           );
           if (submitted.length === 0) {
             // No more pending — stop polling
@@ -252,22 +258,22 @@ export function useProvisionWatcher() {
             return;
           }
           for (const prov of submitted) {
-            // Timeout stale provisions
-            const elapsed = Date.now() - prov.createdAt;
-            if (elapsed > PROVISION_TIMEOUT_MS) {
-              updateProvision(prov.id, {
-                phase: 'failed',
-                errorMessage: 'Provision timed out after 30 minutes',
-              });
-              continue;
-            }
             try {
               const headers: Record<string, string> = {};
               if (operatorAuth.token) {
                 headers.Authorization = `Bearer ${operatorAuth.token}`;
               }
               const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`, { headers });
-              if (!res.ok) continue;
+              if (!res.ok) {
+                const elapsed = Date.now() - prov.createdAt;
+                if (elapsed > PROVISION_TIMEOUT_MS) {
+                  updateProvision(prov.id, {
+                    phase: 'failed',
+                    errorMessage: 'Provision timed out after 30 minutes',
+                  });
+                }
+                continue;
+              }
               const progress = await res.json();
               if (progress?.phase) {
                 if (progress.phase === 'failed') {
@@ -287,6 +293,7 @@ export function useProvisionWatcher() {
                 if (progress.phase === 'ready' && progress.progress_pct === 100) {
                   updateProvision(prov.id, {
                     phase: 'awaiting_secrets',
+                    errorMessage: undefined,
                     progressPhase: progress.phase,
                     progressDetail: progress.message,
                     ...(typeof progress.metadata?.bot_id === 'string' ? { botId: progress.metadata.bot_id } : {}),
@@ -296,6 +303,7 @@ export function useProvisionWatcher() {
                 } else {
                   updateProvision(prov.id, {
                     phase: 'job_processing',
+                    errorMessage: undefined,
                     progressPhase: progress.phase,
                     progressDetail: progress.message,
                     ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
@@ -303,7 +311,13 @@ export function useProvisionWatcher() {
                 }
               }
             } catch {
-              // Operator API unreachable
+              const elapsed = Date.now() - prov.createdAt;
+              if (elapsed > PROVISION_TIMEOUT_MS) {
+                updateProvision(prov.id, {
+                  phase: 'failed',
+                  errorMessage: 'Provision timed out after 30 minutes',
+                });
+              }
             }
           }
           } finally {

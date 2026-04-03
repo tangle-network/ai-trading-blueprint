@@ -3,7 +3,9 @@ import type { TrackedProvision } from '~/lib/stores/provisions';
 import type { Bot } from '~/lib/types/bot';
 import {
   collectMatchedProvisionIds,
+  collectLikelyMatchedProvisionIds,
   doesProvisionMatchBot,
+  doesProvisionLikelyReferToBot,
   isInstanceProvision,
   partitionProvisionsForBots,
 } from './botProvisionReconciliation';
@@ -135,5 +137,28 @@ describe('bot/provision reconciliation', () => {
     expect(
       isInstanceProvision(makeProvision({ id: 'prov-4', blueprintType: 'trading-cloud' })),
     ).toBe(false);
+  });
+
+  it('treats same-name same-service failed provisions as historical once a real bot exists', () => {
+    const failedProvision = makeProvision({
+      id: 'prov-failed',
+      phase: 'failed',
+      serviceId: 11,
+      name: 'bot1',
+      strategyType: 'dex',
+      errorMessage: 'Provision timed out after 30 minutes',
+    });
+    const bot = makeBot({
+      id: 'operator-bot-11',
+      serviceId: 11,
+      name: 'bot1',
+      strategyType: 'dex',
+      source: 'operator',
+    });
+
+    expect(doesProvisionLikelyReferToBot(failedProvision, bot)).toBe(true);
+    expect(collectLikelyMatchedProvisionIds([failedProvision], [bot])).toEqual(
+      new Set(['prov-failed']),
+    );
   });
 });

@@ -1267,7 +1267,8 @@ export default function ProvisionPage() {
 
   const handleSubmitSecrets = async () => {
     if (!latestDeployment) return;
-    if (!latestDeployment.sandboxId && !latestDeployment.callId) return;
+    const canResumeInstanceProvision = isInstance && latestDeployment.serviceId != null;
+    if (!canResumeInstanceProvision && !latestDeployment.sandboxId && latestDeployment.callId == null) return;
     if (!useOperatorKey && !apiKey.trim()) return;
     if (operatorRouteMismatchMessage) {
       setSecretsLookupError(operatorRouteMismatchMessage);
