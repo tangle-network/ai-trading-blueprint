@@ -52,6 +52,9 @@ describe('provision storage helpers', () => {
       serviceId: 7,
       callId: 9,
       vaultAddress: '0x00000000000000000000000000000000000000aa',
+      botId: 'bot-1',
+      sandboxId: 'sandbox-1',
+      workflowId: 42,
     });
   });
 
@@ -63,7 +66,7 @@ describe('provision storage helpers', () => {
     ])).toEqual([]);
   });
 
-  it('keeps awaiting-secrets drafts but strips transient operator identity fields on reload', () => {
+  it('keeps awaiting-secrets drafts with stable operator identity fields on reload', () => {
     expect(sanitizePersistedProvisionList([
       makeProvision({
         botId: 'bot-1',
@@ -73,15 +76,19 @@ describe('provision storage helpers', () => {
         progressDetail: 'done',
       }),
     ])).toEqual([
-      makeProvision(),
+      makeProvision({
+        botId: 'bot-1',
+        sandboxId: 'sandbox-1',
+        workflowId: 12,
+      }),
     ]);
   });
 
-  it('treats bot ids as non-structural and blocks fallback rendering once operator identity is known', () => {
+  it('treats operator identity as structural and blocks fallback rendering once known', () => {
     const before = makeProvision({ botId: undefined });
     const after = makeProvision({ botId: 'bot-1', sandboxId: 'sandbox-1', workflowId: 4 });
 
-    expect(getProvisionStructuralFingerprint([before])).toBe(getProvisionStructuralFingerprint([after]));
+    expect(getProvisionStructuralFingerprint([before])).not.toBe(getProvisionStructuralFingerprint([after]));
     expect(shouldRenderProvisionFallbackBot(before)).toBe(true);
     expect(shouldRenderProvisionFallbackBot(after)).toBe(false);
     expect(isProvisionServiceHint(after)).toBe(true);

@@ -6,8 +6,16 @@ import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { publicClient } from '@tangle-network/blueprint-ui';
 import { useOperatorAuth } from './useOperatorAuth';
+import {
+  CLOUD_OPERATOR_API_URL,
+  INSTANCE_OPERATOR_API_URL,
+  TEE_OPERATOR_API_URL,
+  getOperatorApiUrlForBlueprint,
+} from '~/lib/operator/meta';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+
+type OperatorAuthSnapshot = Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken'>;
 
 /** Max time (ms) a provision can stay in job_submitted/job_processing before timing out */
 const PROVISION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -74,13 +82,23 @@ function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
  * run via refs and direct store reads, not React state.
  */
 export function useProvisionWatcher() {
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+  const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
+  const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
+  const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
   const watchingTxs = useRef(new Set<string>());
   const repairRan = useRef(false);
   const eventWatcherActive = useRef(false);
   const unwatchRef = useRef<(() => void) | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingInFlight = useRef(false);
+  const authTargetsRef = useRef<Record<string, OperatorAuthSnapshot>>({});
+
+  authTargetsRef.current = {
+    ...(CLOUD_OPERATOR_API_URL ? { [CLOUD_OPERATOR_API_URL]: cloudAuth } : {}),
+    ...(INSTANCE_OPERATOR_API_URL ? { [INSTANCE_OPERATOR_API_URL]: instanceAuth } : {}),
+    ...(TEE_OPERATOR_API_URL ? { [TEE_OPERATOR_API_URL]: teeAuth } : {}),
+    ...(OPERATOR_API_URL ? { [OPERATOR_API_URL]: cloudAuth } : {}),
+  };
 
   // Stage 1 + 2 + 2.5: Single subscription drives all logic without re-rendering
   useEffect(() => {
@@ -241,7 +259,7 @@ export function useProvisionWatcher() {
       // ── Stage 2.5: Operator API polling ──
       const needsProgressPolling = provisions.some((p: TrackedProvision) => shouldPollOperatorProgress(p));
 
-      if (needsProgressPolling && OPERATOR_API_URL && !pollingRef.current) {
+      if (needsProgressPolling && !pollingRef.current) {
         const poll = async () => {
           if (cancelled || pollingInFlight.current) return;
           pollingInFlight.current = true;
@@ -259,11 +277,16 @@ export function useProvisionWatcher() {
           }
           for (const prov of submitted) {
             try {
+              const apiUrl = getOperatorApiUrlForBlueprint(prov.blueprintType) || OPERATOR_API_URL;
+              if (!apiUrl) continue;
+
+              const auth = authTargetsRef.current[apiUrl];
               const headers: Record<string, string> = {};
-              if (operatorAuth.token) {
-                headers.Authorization = `Bearer ${operatorAuth.token}`;
+              const token = auth?.getCachedToken() ?? null;
+              if (token) {
+                headers.Authorization = `Bearer ${token}`;
               }
-              const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`, { headers });
+              const res = await fetch(`${apiUrl}/api/provisions/${prov.callId}`, { headers });
               if (!res.ok) {
                 const elapsed = Date.now() - prov.createdAt;
                 if (elapsed > PROVISION_TIMEOUT_MS) {
@@ -395,7 +418,7 @@ export function useProvisionWatcher() {
         console.error('[provision-watcher] Repair failed:', err);
       }
     })();
-  }, [operatorAuth.token]);
+  }, [cloudAuth.token, instanceAuth.token, teeAuth.token]);
 }
 
 /** Decode output and update a provision with vault/sandbox data.

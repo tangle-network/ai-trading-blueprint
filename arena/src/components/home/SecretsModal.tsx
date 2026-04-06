@@ -23,6 +23,7 @@ const WALLET_AUTH_REQUIRED_MESSAGE = 'Wallet authentication required to load bot
 
 /** Generic target for secrets configuration — works from provisions or bot detail. */
 export type SecretsTarget = {
+  apiUrl?: string;
   sandboxId?: string;
   callId?: number;
   serviceId?: number;
@@ -37,6 +38,7 @@ export function SecretsModal({
   target: SecretsTarget | null;
   onClose: () => void;
 }) {
+  const apiUrl = target?.apiUrl ?? OPERATOR_API_URL;
   const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
   const [provider, setProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
@@ -44,8 +46,8 @@ export function SecretsModal({
   const envIdRef = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
-  const { data: operatorMeta } = useOperatorMeta();
+  const operatorAuth = useOperatorAuth(apiUrl);
+  const { data: operatorMeta } = useOperatorMeta(apiUrl);
 
   const [lookupError, setLookupError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -85,7 +87,7 @@ export function SecretsModal({
     let authToken = await getOperatorToken();
     if (!authToken) return null;
 
-    let result = await resolveBot(OPERATOR_API_URL, {
+    let result = await resolveBot(apiUrl, {
       botId: t.botId,
       callId: t.callId,
       serviceId: t.serviceId,
@@ -95,7 +97,7 @@ export function SecretsModal({
     if (!('botId' in result) && result.code === 'auth_required') {
       authToken = await getOperatorToken(true);
       if (!authToken) return null;
-      result = await resolveBot(OPERATOR_API_URL, {
+      result = await resolveBot(apiUrl, {
         botId: t.botId,
         callId: t.callId,
         serviceId: t.serviceId,
@@ -116,7 +118,7 @@ export function SecretsModal({
     }
     setLookupError(result.error);
     return null;
-  }, [getOperatorToken]);
+  }, [apiUrl, getOperatorToken]);
 
   const startActivationPolling = useCallback((botId: string): void => {
     clearPolling();
@@ -140,7 +142,7 @@ export function SecretsModal({
         }
 
         const res = await fetch(
-          `${OPERATOR_API_URL}${buildBotScopedPath(operatorMeta, botId, '/activation-progress')}`,
+          `${apiUrl}${buildBotScopedPath(operatorMeta, botId, '/activation-progress')}`,
           { headers },
         );
 
@@ -159,7 +161,7 @@ export function SecretsModal({
         clearPolling();
       }
     }, 1000);
-  }, [clearPolling, operatorAuth.token, operatorMeta]);
+  }, [apiUrl, clearPolling, operatorAuth.token, operatorMeta]);
 
   const buildSecretsEnv = useCallback((): Record<string, string> => {
     const envJson = buildEnvForProvider(provider, apiKey.trim());
@@ -182,7 +184,7 @@ export function SecretsModal({
       throw new Error('Operator metadata not loaded');
     }
 
-    const secretsPath = `${OPERATOR_API_URL}${buildBotScopedPath(operatorMeta, botId, '/secrets')}`;
+    const secretsPath = `${apiUrl}${buildBotScopedPath(operatorMeta, botId, '/secrets')}`;
 
     const postSecrets = async (authToken: string): Promise<Response> => {
       return fetch(secretsPath, {
@@ -214,7 +216,7 @@ export function SecretsModal({
     }
 
     return res.json();
-  }, [getOperatorToken, operatorMeta]);
+  }, [apiUrl, getOperatorToken, operatorMeta]);
 
   const handleSubmit = async () => {
     if (!target || !apiKey.trim()) return;

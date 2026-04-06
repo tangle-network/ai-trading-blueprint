@@ -62,6 +62,9 @@ export type PersistedTrackedProvision = Pick<
   | 'jobIndex'
   | 'costWei'
   | 'vaultAddress'
+  | 'botId'
+  | 'sandboxId'
+  | 'workflowId'
   | 'errorMessage'
   | 'blueprintType'
 >>;
@@ -120,6 +123,9 @@ export function serializeProvisionForPersistence(
   if (provision.callId != null) persisted.callId = provision.callId;
   if (provision.jobIndex != null) persisted.jobIndex = provision.jobIndex;
   if (provision.costWei) persisted.costWei = provision.costWei;
+  if (provision.botId) persisted.botId = provision.botId;
+  if (provision.sandboxId) persisted.sandboxId = provision.sandboxId;
+  if (provision.workflowId != null) persisted.workflowId = provision.workflowId;
   if (provision.errorMessage) persisted.errorMessage = provision.errorMessage;
   if (provision.blueprintType) persisted.blueprintType = provision.blueprintType;
 
@@ -163,6 +169,9 @@ export function sanitizePersistedProvision(record: unknown): TrackedProvision | 
   if (typeof raw.callId === 'number' && Number.isFinite(raw.callId)) sanitized.callId = raw.callId;
   if (typeof raw.jobIndex === 'number' && Number.isFinite(raw.jobIndex)) sanitized.jobIndex = raw.jobIndex;
   if (typeof raw.costWei === 'string' && raw.costWei.length > 0) sanitized.costWei = raw.costWei;
+  if (typeof raw.botId === 'string' && raw.botId.length > 0) sanitized.botId = raw.botId;
+  if (typeof raw.sandboxId === 'string' && raw.sandboxId.length > 0) sanitized.sandboxId = raw.sandboxId;
+  if (typeof raw.workflowId === 'number' && Number.isFinite(raw.workflowId)) sanitized.workflowId = raw.workflowId;
   if (typeof raw.errorMessage === 'string' && raw.errorMessage.length > 0) sanitized.errorMessage = raw.errorMessage;
   if (typeof raw.blueprintType === 'string' && raw.blueprintType.length > 0) sanitized.blueprintType = raw.blueprintType;
 
@@ -188,6 +197,9 @@ export function getProvisionStructuralFingerprint(provisions: TrackedProvision[]
       p.serviceId ?? '',
       p.vaultAddress ?? '',
       p.callId ?? '',
+      p.botId ?? '',
+      p.sandboxId ?? '',
+      p.workflowId ?? '',
     ].join('|'))
     .join(';');
 }

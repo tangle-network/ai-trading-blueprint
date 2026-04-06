@@ -170,6 +170,7 @@ export default function BotDetailPage() {
               onConfigureSecrets={
                 (bot.status === 'needs_config' || bot.secretsConfigured === false)
                   ? () => setSecretsTarget({
+                      apiUrl: bot.operatorApiUrl ?? undefined,
                       botId: bot.id,
                       sandboxId: bot.sandboxId,
                       callId: bot.callId,

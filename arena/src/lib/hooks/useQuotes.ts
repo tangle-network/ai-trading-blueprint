@@ -111,13 +111,21 @@ async function solvePoW(blueprintId: bigint, timestamp: bigint): Promise<Uint8Ar
 /**
  * Convert a USD cost rate to the on-chain totalCost value.
  * Must match the pricing engine's `decimal_to_scaled_amount()`:
- *   totalCost = costRate * 10^PRICING_SCALE_PLACES
- * where PRICING_SCALE_PLACES = 9.
+ *   totalCost = costRate * 10^9
+ * matching the pricing engine's EIP-712 quote signer.
  */
 const PRICING_SCALE = 1_000_000_000; // 10^9
 
 function costRateToScaledAmount(costRate: number): bigint {
   return BigInt(Math.floor(costRate * PRICING_SCALE));
+}
+
+function operatorIdToAddress(operatorId: Uint8Array): Address | null {
+  if (operatorId.length !== 20) return null;
+  const hex = Array.from(operatorId)
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  return `0x${hex}` as Address;
 }
 
 function mapQuoteDetails(
@@ -224,7 +232,7 @@ export function useQuotes(
 
           const quote = mapQuoteDetails(
             response.quoteDetails,
-            op.address,
+            operatorIdToAddress(response.operatorId) ?? op.address,
             response.signature,
           );
           if (!cancelled) results.push(quote);
