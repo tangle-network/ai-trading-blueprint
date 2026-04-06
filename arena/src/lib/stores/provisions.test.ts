@@ -58,12 +58,14 @@ describe('provision storage helpers', () => {
     });
   });
 
-  it('drops active verified provisions during persistence sanitization', () => {
-    expect(isPersistableDraftProvision(makeProvision({ phase: 'active', botId: 'bot-1' }))).toBe(false);
+  it('keeps active provisions with bot identity so names survive reloads', () => {
+    expect(isPersistableDraftProvision(makeProvision({ phase: 'active', botId: 'bot-1' }))).toBe(true);
 
     expect(sanitizePersistedProvisionList([
       makeProvision({ phase: 'active', botId: 'bot-1', sandboxId: 'sandbox-1' }),
-    ])).toEqual([]);
+    ])).toEqual([
+      makeProvision({ phase: 'active', botId: 'bot-1', sandboxId: 'sandbox-1' }),
+    ]);
   });
 
   it('keeps awaiting-secrets drafts with stable operator identity fields on reload', () => {

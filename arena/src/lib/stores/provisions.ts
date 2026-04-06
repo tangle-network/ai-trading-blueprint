@@ -83,7 +83,6 @@ function normalizeProvisionAddress(value: unknown): string | undefined {
 }
 
 export function isPersistableDraftProvision(provision: Pick<TrackedProvision, 'phase' | 'botId'>): boolean {
-  if (provision.phase === 'active') return !provision.botId;
   return true;
 }
 
@@ -146,7 +145,6 @@ export function sanitizePersistedProvision(record: unknown): TrackedProvision | 
   if (!Array.isArray(raw.operators) || raw.operators.some((value) => typeof value !== 'string')) return null;
   if (typeof raw.blueprintId !== 'string' || raw.blueprintId.length === 0) return null;
   if (!isProvisionPhase(raw.phase)) return null;
-  if (raw.phase === 'active' && typeof raw.botId === 'string' && raw.botId.length > 0) return null;
   if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
   if (typeof raw.updatedAt !== 'number' || !Number.isFinite(raw.updatedAt)) return null;
   if (typeof raw.chainId !== 'number' || !Number.isFinite(raw.chainId)) return null;
