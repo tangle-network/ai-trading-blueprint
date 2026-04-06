@@ -1,5 +1,5 @@
 export type TradeAction = 'buy' | 'sell';
-export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper';
+export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 
 export interface ValidatorResponseDetail {
   validator: string;
@@ -39,7 +39,7 @@ export interface Trade {
   tokenOut: string;
   amountIn: number;
   amountOut: number;
-  priceUsd: number;
+  priceUsd: number | null;
   timestamp: number;
   status: TradeStatus;
   txHash?: string;

@@ -6,6 +6,7 @@ import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, Simulation
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
+import type { Trade, TradeStatus } from '~/lib/types/trade';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
@@ -52,7 +53,7 @@ function TradeTableHead() {
         <TableHead>Action</TableHead>
         <TableHead className="hidden sm:table-cell">Venue</TableHead>
         <TableHead>Pair</TableHead>
-        <TableHead className="text-right">Amount</TableHead>
+        <TableHead className="text-right">Input</TableHead>
         <TableHead className="text-right">Price</TableHead>
         <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
         <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
@@ -65,6 +66,29 @@ function TradeTableHead() {
 function truncateHash(hash: string): string {
   if (hash.length <= 14) return hash;
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
+}
+
+function formatTradeAmount(amount: number): string {
+  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+function renderTradePrice(trade: Trade): string {
+  if (trade.priceUsd != null && trade.priceUsd > 0) {
+    return `$${trade.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  }
+  if (trade.paperTrade) return 'No USD leg';
+  return '—';
+}
+
+function getStatusLabel(status: TradeStatus): string {
+  return status === 'failed' ? 'sim failed' : status;
+}
+
+function getStatusVariant(status: TradeStatus): 'success' | 'destructive' | 'secondary' | 'outline' {
+  if (status === 'executed') return 'success';
+  if (status === 'rejected' || status === 'failed') return 'destructive';
+  if (status === 'paper') return 'secondary';
+  return 'outline';
 }
 
 export function TradeHistoryTab({
@@ -252,10 +276,10 @@ export function TradeHistoryTab({
                     {trade.tokenIn}/{trade.tokenOut}
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
-                    {trade.amountOut.toLocaleString()} {trade.tokenOut}
+                    {formatTradeAmount(trade.amountIn)} {trade.tokenIn}
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
-                    {trade.priceUsd > 0 ? `$${trade.priceUsd.toLocaleString()}` : '—'}
+                    {renderTradePrice(trade)}
                   </TableCell>
                   <TableCell className="text-right hidden sm:table-cell">
                     <div className="flex items-center justify-end gap-1.5">
@@ -297,11 +321,7 @@ export function TradeHistoryTab({
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <Badge
-                        variant={
-                          trade.status === 'executed' ? 'success' :
-                          trade.status === 'rejected' ? 'destructive' :
-                          trade.status === 'paper' ? 'secondary' : 'outline'
-                        }
+                        variant={getStatusVariant(trade.status)}
                       >
                         {trade.status === 'pending' ? (
                           <span className="inline-flex items-center gap-1">
@@ -309,7 +329,7 @@ export function TradeHistoryTab({
                             pending
                           </span>
                         ) : (
-                          trade.status
+                          getStatusLabel(trade.status)
                         )}
                       </Badge>
                       {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (() => {

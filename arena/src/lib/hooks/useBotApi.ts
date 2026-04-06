@@ -48,6 +48,35 @@ interface ApiTrade {
   status?: string;
 }
 
+const KNOWN_STABLECOINS = new Set(['usd', 'usdc', 'usdt', 'dai', 'fdusd', 'pyusd', 'tusd', 'usde']);
+
+type TradePriceInput = {
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  min_amount_out: string;
+};
+
+type TradeStatusInput = {
+  paper_trade: boolean;
+  tx_hash?: string;
+  validation?: {
+    approved: boolean;
+    simulation?: {
+      success: boolean;
+    };
+  };
+};
+
+type TradeAmountOutInput = {
+  min_amount_out: string;
+  validation?: {
+    simulation?: {
+      output_amount: string;
+    };
+  };
+};
+
 interface ApiTradeListResponse {
   trades: ApiTrade[];
 }
@@ -129,15 +158,39 @@ function mapApiValidation(trade: ApiTrade): TradeValidation | undefined {
   };
 }
 
-function getTradeStatus(trade: ApiTrade): Trade['status'] {
-  if (trade.paper_trade) return 'paper';
+function parseTradeAmount(value: string | undefined): number {
+  return Number(value ?? 0);
+}
+
+function isStablecoin(symbol: string): boolean {
+  return KNOWN_STABLECOINS.has(symbol.trim().toLowerCase());
+}
+
+export function deriveTradePriceUsd(trade: TradePriceInput): number | null {
+  const amountIn = parseTradeAmount(trade.amount_in);
+  const amountOut = parseTradeAmount(trade.min_amount_out);
+
+  if (amountIn <= 0 || amountOut <= 0) return null;
+  if (isStablecoin(trade.token_out)) return amountOut / amountIn;
+  if (isStablecoin(trade.token_in)) return amountIn / amountOut;
+  return null;
+}
+
+export function getTradeStatus(trade: TradeStatusInput): Trade['status'] {
   if (trade.validation?.approved === false) return 'rejected';
+  if (trade.paper_trade && trade.validation?.simulation?.success === false) return 'failed';
+  if (trade.paper_trade) return 'paper';
   if (trade.tx_hash) return 'executed';
   return 'pending';
 }
 
-function mapApiTrade(trade: ApiTrade, botName: string): Trade {
+export function deriveTradeAmountOut(trade: TradeAmountOutInput): number {
+  return parseTradeAmount(trade.validation?.simulation?.output_amount ?? trade.min_amount_out);
+}
+
+export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
   const validation = mapApiValidation(trade);
+  const amountOut = deriveTradeAmountOut(trade);
 
   return {
     id: trade.id,
@@ -146,9 +199,9 @@ function mapApiTrade(trade: ApiTrade, botName: string): Trade {
     action: trade.action,
     tokenIn: trade.token_in,
     tokenOut: trade.token_out,
-    amountIn: Number(trade.amount_in),
-    amountOut: Number(trade.min_amount_out),
-    priceUsd: 0,
+    amountIn: parseTradeAmount(trade.amount_in),
+    amountOut,
+    priceUsd: deriveTradePriceUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
     status: getTradeStatus(trade),
     txHash: trade.tx_hash,
