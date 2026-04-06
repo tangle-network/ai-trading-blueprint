@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { TrackedProvision } from '~/lib/stores/provisions';
+
+const setSearchParams = vi.fn();
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
-  useSearchParams: () => [new URLSearchParams()],
+  useSearchParams: () => [new URLSearchParams(), setSearchParams],
 }));
 
 vi.mock('wagmi', () => ({
@@ -65,8 +68,10 @@ vi.mock('~/lib/stores/provisions', () => ({
   addProvision: vi.fn(),
   upsertInstanceProvision: vi.fn(),
   removeProvision: vi.fn(),
+  removeMatchingInstanceProvision: vi.fn(),
   removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
+  findMatchingInstanceProvision: vi.fn(),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
@@ -159,7 +164,7 @@ describe('provision runtime backend helpers', () => {
 
   it('prefers the current service when selecting the latest instance provision', async () => {
     const { selectLatestInstanceProvision } = await import('../provision');
-    const owner = '0x0000000000000000000000000000000000000001';
+    const owner = '0x0000000000000000000000000000000000000001' as const;
     expect(
       selectLatestInstanceProvision(
         [
@@ -191,6 +196,113 @@ describe('provision runtime backend helpers', () => {
           },
         ],
         '11',
+      )?.id,
+    ).toBe('instance-11');
+  });
+
+  it('resumes the explicitly targeted instance draft by bot or sandbox identity', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+    const provisions: TrackedProvision[] = [
+      {
+        id: 'instance-11',
+        owner,
+        name: 'Older',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        serviceId: 11,
+        botId: 'bot-11',
+        sandboxId: 'sandbox-11',
+        phase: 'awaiting_secrets',
+        createdAt: 10,
+        updatedAt: 10,
+        chainId: 31337,
+      },
+      {
+        id: 'instance-12',
+        owner,
+        name: 'Newest',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        serviceId: 12,
+        botId: 'bot-12',
+        sandboxId: 'sandbox-12',
+        phase: 'awaiting_secrets',
+        createdAt: 20,
+        updatedAt: 20,
+        chainId: 31337,
+      },
+    ];
+
+    expect(
+      selectLatestInstanceProvision(provisions, undefined, { botId: 'bot-11' })?.id,
+    ).toBe('instance-11');
+    expect(
+      selectLatestInstanceProvision(provisions, undefined, { sandboxId: 'sandbox-12' })?.id,
+    ).toBe('instance-12');
+  });
+
+  it('does not guess when multiple instance drafts exist without a route target', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Older',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+          {
+            id: 'instance-12',
+            owner,
+            name: 'Newest',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 12,
+            phase: 'awaiting_secrets',
+            createdAt: 20,
+            updatedAt: 20,
+            chainId: 31337,
+          },
+        ],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('still auto-resumes when there is exactly one instance draft', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Only Draft',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+        ],
       )?.id,
     ).toBe('instance-11');
   });

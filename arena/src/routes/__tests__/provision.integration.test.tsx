@@ -3,10 +3,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 let latestInfrastructureProps: any;
+const setSearchParams = vi.fn();
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
-  useSearchParams: () => [new URLSearchParams()],
+  useSearchParams: () => [new URLSearchParams(), setSearchParams],
 }));
 
 vi.mock('wagmi', () => ({
@@ -88,8 +89,10 @@ vi.mock('~/lib/stores/provisions', () => ({
   addProvision: vi.fn(),
   upsertInstanceProvision: vi.fn(),
   removeProvision: vi.fn(),
+  removeMatchingInstanceProvision: vi.fn(),
   removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
+  findMatchingInstanceProvision: vi.fn(),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
@@ -105,6 +108,7 @@ vi.mock('~/lib/operator/meta', () => ({
   buildBotScopedPath: vi.fn(),
   getOperatorApiUrlForBlueprint: vi.fn(() => '/operator-api'),
   getExpectedDeploymentKindForBlueprint: vi.fn(() => 'fleet'),
+  getOperatorKindForBlueprint: vi.fn(() => 'cloud'),
   OPERATOR_API_URL: '/operator-api',
 }));
 

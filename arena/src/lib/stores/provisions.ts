@@ -42,6 +42,12 @@ export interface TrackedProvision {
   blueprintType?: string;
 }
 
+export interface InstanceProvisionIdentity {
+  serviceId?: number | string;
+  botId?: string | null;
+  sandboxId?: string | null;
+}
+
 export type PersistedTrackedProvision = Pick<
   TrackedProvision,
   | 'id'
@@ -80,6 +86,23 @@ function isProvisionPhase(value: unknown): value is ProvisionPhase {
 
 function normalizeProvisionAddress(value: unknown): string | undefined {
   return typeof value === 'string' && value && value !== zeroAddress ? value : undefined;
+}
+
+function normalizeIdentityServiceId(value: number | string | undefined): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return undefined;
+}
+
+function isMatchingInstanceProvision(
+  provision: TrackedProvision,
+  identity: InstanceProvisionIdentity,
+): boolean {
+  const serviceId = normalizeIdentityServiceId(identity.serviceId);
+  if (serviceId != null && provision.serviceId === serviceId) return true;
+  if (identity.botId && provision.botId === identity.botId) return true;
+  if (identity.sandboxId && provision.sandboxId === identity.sandboxId) return true;
+  return false;
 }
 
 export function isPersistableDraftProvision(provision: Pick<TrackedProvision, 'phase' | 'botId'>): boolean {
@@ -307,6 +330,29 @@ export function updateProvision(id: string, update: Partial<TrackedProvision>) {
 
 export function removeProvision(id: string) {
   setProvisions(provisionsStore.get().filter((p: TrackedProvision) => p.id !== id));
+}
+
+export function findMatchingInstanceProvision(
+  provisions: TrackedProvision[],
+  identity: InstanceProvisionIdentity,
+) {
+  return provisions.find((p: TrackedProvision) =>
+    p.id.startsWith('instance-') && isMatchingInstanceProvision(p, identity),
+  );
+}
+
+export function removeMatchingInstanceProvision(
+  owner: Address | undefined,
+  identity: InstanceProvisionIdentity,
+) {
+  if (!owner) return;
+  const key = owner.toLowerCase();
+  setProvisions(
+    provisionsStore.get().filter((p: TrackedProvision) => {
+      if (p.owner.toLowerCase() !== key || !p.id.startsWith('instance-')) return true;
+      return !isMatchingInstanceProvision(p, identity);
+    }),
+  );
 }
 
 export function removeInstanceProvisions(owner: Address | undefined) {

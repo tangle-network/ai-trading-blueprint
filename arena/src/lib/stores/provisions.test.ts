@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackedProvision } from './provisions';
 import {
+  findMatchingInstanceProvision,
   getProvisionStructuralFingerprint,
   isPersistableDraftProvision,
   isProvisionServiceHint,
+  provisionsStore,
+  removeMatchingInstanceProvision,
   sanitizePersistedProvisionList,
   serializeProvisionForPersistence,
   shouldRenderProvisionFallbackBot,
@@ -94,5 +97,43 @@ describe('provision storage helpers', () => {
     expect(shouldRenderProvisionFallbackBot(before)).toBe(true);
     expect(shouldRenderProvisionFallbackBot(after)).toBe(false);
     expect(isProvisionServiceHint(after)).toBe(true);
+  });
+
+  it('finds and removes only the targeted instance draft', () => {
+    const owner = '0x0000000000000000000000000000000000000001';
+    const otherOwner = '0x0000000000000000000000000000000000000002';
+    const serviceMatch = makeProvision({
+      id: 'instance-11',
+      owner,
+      serviceId: 11,
+      botId: 'bot-11',
+      sandboxId: 'sandbox-11',
+    });
+    const keepSameOwner = makeProvision({
+      id: 'instance-12',
+      owner,
+      serviceId: 12,
+      botId: 'bot-12',
+      sandboxId: 'sandbox-12',
+    });
+    const keepOtherOwner = makeProvision({
+      id: 'instance-21',
+      owner: otherOwner,
+      serviceId: 11,
+      botId: 'bot-11',
+      sandboxId: 'sandbox-11',
+    });
+
+    provisionsStore.set([serviceMatch, keepSameOwner, keepOtherOwner]);
+
+    expect(
+      findMatchingInstanceProvision(provisionsStore.get(), { botId: 'bot-11' })?.id,
+    ).toBe('instance-11');
+
+    removeMatchingInstanceProvision(owner, { sandboxId: 'sandbox-11' });
+
+    expect(provisionsStore.get()).toEqual([keepSameOwner, keepOtherOwner]);
+
+    provisionsStore.set([]);
   });
 });

@@ -23,9 +23,10 @@ import {
   addProvision,
   upsertInstanceProvision,
   removeProvision,
-  removeInstanceProvisions,
+  removeMatchingInstanceProvision,
   updateProvision,
   type TrackedProvision,
+  type InstanceProvisionIdentity,
 } from '~/lib/stores/provisions';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
@@ -133,6 +134,7 @@ interface InstanceOperatorBot {
 export function selectLatestInstanceProvision(
   provisions: TrackedProvision[],
   activeServiceId?: string,
+  target: InstanceProvisionIdentity = {},
 ): TrackedProvision | undefined {
   const candidates = provisions.filter(
     (p) => p.id.startsWith('instance-') && p.phase !== 'failed',
@@ -152,7 +154,38 @@ export function selectLatestInstanceProvision(
     if (matching[0]) return matching[0];
   }
 
-  return [...candidates].sort(sortNewest)[0];
+  const targetServiceId = typeof target.serviceId === 'number'
+    ? target.serviceId
+    : (typeof target.serviceId === 'string' && /^\d+$/.test(target.serviceId))
+      ? Number(target.serviceId)
+      : undefined;
+
+  if (targetServiceId != null) {
+    const matching = candidates
+      .filter((p) => p.serviceId === targetServiceId)
+      .sort(sortNewest);
+    if (matching[0]) return matching[0];
+  }
+
+  if (target.botId) {
+    const matching = candidates
+      .filter((p) => p.botId === target.botId)
+      .sort(sortNewest);
+    if (matching[0]) return matching[0];
+  }
+
+  if (target.sandboxId) {
+    const matching = candidates
+      .filter((p) => p.sandboxId === target.sandboxId)
+      .sort(sortNewest);
+    if (matching[0]) return matching[0];
+  }
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  return undefined;
 }
 
 export const meta: MetaFunction = () => [
@@ -198,9 +231,12 @@ export default function ProvisionPage() {
     }
   }, [isConnected, walletChainId, switchChainAsync]);
 
-  // URL param for pre-selecting a blueprint
-  const [searchParams] = useSearchParams();
+  // URL params for pre-selecting a blueprint or targeting an instance draft
+  const [searchParams, setSearchParams] = useSearchParams();
   const preselectedBlueprintId = searchParams.get('blueprint');
+  const targetServiceId = searchParams.get('serviceId');
+  const targetBotId = searchParams.get('botId');
+  const targetSandboxId = searchParams.get('sandboxId');
 
   // Blueprint selection state
   const initialBlueprint = preselectedBlueprintId
@@ -240,6 +276,14 @@ export default function ProvisionPage() {
   // Instance auto-provision state
   const [instanceProvisioning, setInstanceProvisioning] = useState(false);
   const [instanceProvisionError, setInstanceProvisionError] = useState<string | null>(null);
+  const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(() => ({
+    serviceId: targetServiceId ?? undefined,
+    botId: targetBotId ?? undefined,
+    sandboxId: targetSandboxId ?? undefined,
+  }), [targetBotId, targetSandboxId, targetServiceId]);
+  const hasExplicitInstanceRouteTarget = Boolean(
+    instanceRouteTarget.serviceId || instanceRouteTarget.botId || instanceRouteTarget.sandboxId,
+  );
 
   // Configure — agent settings
   const [name, setName] = useState('');
@@ -360,9 +404,55 @@ export default function ProvisionPage() {
   const latestDeployment = useMemo(() => {
     const txMatch = myProvisions.find((p) => p.txHash === txHash);
     if (txMatch) return txMatch;
-    if (isInstance) return selectLatestInstanceProvision(myProvisions, serviceId);
+    if (isInstance) {
+      return selectLatestInstanceProvision(myProvisions, serviceId, instanceRouteTarget);
+    }
     return undefined;
-  }, [myProvisions, txHash, isInstance, serviceId]);
+  }, [instanceRouteTarget, isInstance, myProvisions, serviceId, txHash]);
+
+  const ambiguousInstanceProvisionMessage = useMemo(() => {
+    if (!isInstance || latestDeployment || hasExplicitInstanceRouteTarget) return null;
+    const candidates = myProvisions.filter(
+      (p) => p.id.startsWith('instance-') && p.phase !== 'failed',
+    );
+    if (candidates.length <= 1) return null;
+    return 'Multiple instance bot drafts exist for this wallet. Open the intended bot from the dashboard or use a route with serviceId, botId, or sandboxId so the correct draft is resumed.';
+  }, [hasExplicitInstanceRouteTarget, isInstance, latestDeployment, myProvisions]);
+
+  const syncInstanceRouteTarget = useCallback((target: InstanceProvisionIdentity) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (target.serviceId != null) {
+        next.set('serviceId', String(target.serviceId));
+      } else {
+        next.delete('serviceId');
+      }
+      if (target.botId) {
+        next.set('botId', target.botId);
+      } else {
+        next.delete('botId');
+      }
+      if (target.sandboxId) {
+        next.set('sandboxId', target.sandboxId);
+      } else {
+        next.delete('sandboxId');
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const currentInstanceIdentity = useMemo<InstanceProvisionIdentity>(() => ({
+    serviceId: latestDeployment?.serviceId ?? instanceRouteTarget.serviceId,
+    botId: latestDeployment?.botId ?? instanceRouteTarget.botId,
+    sandboxId: latestDeployment?.sandboxId ?? instanceRouteTarget.sandboxId,
+  }), [
+    instanceRouteTarget.botId,
+    instanceRouteTarget.sandboxId,
+    instanceRouteTarget.serviceId,
+    latestDeployment?.botId,
+    latestDeployment?.sandboxId,
+    latestDeployment?.serviceId,
+  ]);
 
   const operatorApiUrl = useMemo(
     () => getOperatorApiUrlForBlueprint(selectedBlueprint?.id ?? latestDeployment?.blueprintType),
@@ -490,6 +580,11 @@ export default function ProvisionPage() {
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
     setInstanceProvisioning(false);
     setServiceId(activatedServiceId);
+    syncInstanceRouteTarget({
+      serviceId: activatedServiceId,
+      botId: result.bot_id,
+      sandboxId: result.sandbox_id,
+    });
 
     if (userAddress) {
       upsertInstanceProvision({
@@ -515,7 +610,7 @@ export default function ProvisionPage() {
     resetTx();
     toast.success(`Instance provisioned! Configure API keys to start trading.`);
     setStep('secrets');
-  }, [userAddress, name, strategyType, blueprintId, selectedBlueprint, targetChain.id, resetTx]);
+  }, [userAddress, name, strategyType, blueprintId, selectedBlueprint, targetChain.id, resetTx, syncInstanceRouteTarget]);
 
   // ── Service validation ─────────────────────────────────────────────────
 
@@ -1110,16 +1205,22 @@ export default function ProvisionPage() {
     };
 
     upsertInstanceProvision(normalized);
+    syncInstanceRouteTarget({
+      serviceId: normalized.serviceId,
+      botId: normalized.botId,
+      sandboxId: normalized.sandboxId,
+    });
     setSecretsLookupError(null);
     return normalized;
   }, [
-    userAddress,
+    blueprintId,
     latestDeployment,
     name,
-    strategyType,
-    blueprintId,
     selectedBlueprint?.id,
+    strategyType,
+    syncInstanceRouteTarget,
     targetChain.id,
+    userAddress,
   ]);
 
   const reconcileInstanceDeployment = useCallback(async (
@@ -1150,7 +1251,7 @@ export default function ProvisionPage() {
       }
 
       if (res.status === 404) {
-        removeInstanceProvisions(userAddress);
+        removeMatchingInstanceProvision(userAddress, currentInstanceIdentity);
         return {
           kind: 'missing',
           message: 'Instance bot is no longer provisioned on the operator. Reprovision it from the deploy step.',
@@ -1166,7 +1267,11 @@ export default function ProvisionPage() {
 
       const bot = await res.json() as InstanceOperatorBot;
       if (!bot.sandbox_exists || bot.lifecycle_status === 'archived' || bot.archived) {
-        removeInstanceProvisions(userAddress);
+        removeMatchingInstanceProvision(userAddress, {
+          serviceId: bot.service_id || currentInstanceIdentity.serviceId,
+          botId: bot.id || currentInstanceIdentity.botId,
+          sandboxId: bot.sandbox_id || currentInstanceIdentity.sandboxId,
+        });
         return {
           kind: 'missing',
           message: `Instance bot ${bot.id} points to missing sandbox ${bot.sandbox_id}. Reprovision it from the deploy step.`,
@@ -1189,6 +1294,7 @@ export default function ProvisionPage() {
     operatorMeta?.deployment_kind,
     latestDeployment,
     operatorApiUrl,
+    currentInstanceIdentity,
     syncInstanceProvisionFromBot,
   ]);
 
@@ -1447,6 +1553,11 @@ export default function ProvisionPage() {
           workflowId: result.workflow_id,
           sandboxId: result.sandbox_id ?? targetDeployment.sandboxId,
         });
+        syncInstanceRouteTarget({
+          serviceId: targetDeployment.serviceId,
+          botId,
+          sandboxId: result.sandbox_id ?? targetDeployment.sandboxId,
+        });
       } else {
         updateProvision(targetDeployment.id, {
           phase: 'active',
@@ -1464,7 +1575,11 @@ export default function ProvisionPage() {
       if (isStaleStateError(err)) {
         const staleBody = err.body as OperatorErrorBody | null;
         if (isInstance && userAddress) {
-          removeInstanceProvisions(userAddress);
+          removeMatchingInstanceProvision(userAddress, {
+            serviceId: targetDeployment.serviceId ?? currentInstanceIdentity.serviceId,
+            botId: targetDeployment.botId ?? botId ?? currentInstanceIdentity.botId,
+            sandboxId: staleBody?.sandbox_id ?? targetDeployment.sandboxId ?? currentInstanceIdentity.sandboxId,
+          });
         } else if (targetDeployment.id) {
           updateProvision(targetDeployment.id, {
             errorMessage: err.message,
@@ -1552,6 +1667,20 @@ export default function ProvisionPage() {
       </div>
 
       <div className="space-y-5">
+        {ambiguousInstanceProvisionMessage && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
+            <div>
+              <div className="text-sm font-display font-medium text-amber-700 dark:text-amber-400">
+                Instance Draft Needs Disambiguation
+              </div>
+              <div className="mt-0.5 text-xs text-arena-elements-textSecondary">
+                {ambiguousInstanceProvisionMessage}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Wrong chain banner */}
         {isWrongChain && (
           <div className="flex items-center gap-3 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
