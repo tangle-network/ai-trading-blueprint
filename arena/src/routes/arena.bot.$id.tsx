@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
+import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';
 import { AnimatedPage, Button, Tabs, TabsList, TabsTrigger, TabsContent } from '@tangle-network/blueprint-ui/components';
 import { BotHeader } from '~/components/bot-detail/BotHeader';
@@ -14,9 +15,24 @@ import { TerminalTab } from '~/components/bot-detail/TerminalTab';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { useAccount } from 'wagmi';
-import { OPERATOR_API_URL, useOperatorMeta } from '~/lib/operator/meta';
-import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
+import { useBotDetail } from '~/lib/hooks/useBotDetail';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
+import { useOperatorSyncScope } from '~/lib/hooks/useOperatorSyncScope';
+import {
+  INSTANCE_OPERATOR_API_URL,
+  OPERATOR_API_URL,
+  getOperatorApiUrlForBlueprint,
+  getOperatorKindForBlueprint,
+  useOperatorMeta,
+} from '~/lib/operator/meta';
 import { isLiveBotStatus } from '~/lib/format';
+import { provisionsForOwner, type TrackedProvision } from '~/lib/stores/provisions';
+import type { Bot } from '~/lib/types/bot';
+import {
+  buildInstanceFallbackBot,
+  findMatchingInstanceRouteProvision,
+} from '~/lib/utils/instanceBotRoute';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -24,20 +40,68 @@ export const meta: MetaFunction = () => [
 
 export default function BotDetailPage() {
   const { id } = useParams();
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const { bots, isLoading } = useBots();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
+  const myProvisions = useStore(provisionsForOwner(address)) as TrackedProvision[];
 
-  useTradingRouteAutoAuth({
-    enabled: Boolean(OPERATOR_API_URL && isConnected && id),
-    routeKey: `bot-detail:${id ?? 'unknown'}`,
-  });
+  const matchingProvision = useMemo(() => {
+    return findMatchingInstanceRouteProvision(myProvisions, id);
+  }, [id, myProvisions]);
+
+  const fallbackOperatorKind = matchingProvision?.blueprintType
+    ? getOperatorKindForBlueprint(matchingProvision.blueprintType)
+    : matchingProvision
+      ? 'instance'
+      : null;
+  const fallbackOperatorApiUrl = matchingProvision?.blueprintType
+    ? getOperatorApiUrlForBlueprint(matchingProvision.blueprintType)
+    : matchingProvision
+      ? INSTANCE_OPERATOR_API_URL
+      : null;
+  const fallbackLookupId = matchingProvision?.botId ?? id;
+  const fallbackAuth = useOperatorAuth(fallbackOperatorApiUrl ?? '');
 
   // Match by ID, sandbox ID, or vault address (handles various link formats)
-  const bot = bots.find((b) => b.id === id)
+  const storeBot = bots.find((b) => b.id === id)
     ?? bots.find((b) => id && b.sandboxId === id)
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
-  const { data: operatorMeta } = useOperatorMeta(bot?.operatorApiUrl ?? OPERATOR_API_URL);
+  const scopedOperatorApiUrl = storeBot?.operatorApiUrl ?? fallbackOperatorApiUrl;
+  const routeOperatorApiUrl = scopedOperatorApiUrl ?? OPERATOR_API_URL;
+
+  useRouteOperatorAutoAuth({
+    enabled: Boolean(routeOperatorApiUrl && isConnected && id),
+    routeKey: `bot-detail:${id ?? 'unknown'}`,
+    apiUrl: routeOperatorApiUrl,
+  });
+  useOperatorSyncScope(scopedOperatorApiUrl ? [scopedOperatorApiUrl] : []);
+
+  const fallbackDetail = useBotDetail(
+    !storeBot && fallbackOperatorApiUrl && fallbackOperatorKind ? (fallbackLookupId ?? undefined) : undefined,
+    fallbackOperatorApiUrl,
+    fallbackOperatorKind,
+  );
+
+  const fallbackBot = useMemo<Bot | undefined>(() => {
+    if (storeBot || !id || !matchingProvision) return undefined;
+    return buildInstanceFallbackBot({
+      routeId: id,
+      provision: matchingProvision,
+      detail: fallbackDetail.data,
+      operatorApiUrl: fallbackOperatorApiUrl,
+      operatorKind: fallbackOperatorKind,
+    });
+  }, [
+    fallbackDetail.data,
+    fallbackOperatorApiUrl,
+    fallbackOperatorKind,
+    id,
+    matchingProvision,
+    storeBot,
+  ]);
+
+  const bot = storeBot ?? fallbackBot;
+  const { data: operatorMeta } = useOperatorMeta(bot?.operatorApiUrl ?? routeOperatorApiUrl);
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
@@ -49,7 +113,15 @@ export default function BotDetailPage() {
     bot?.operatorKind,
   );
 
-  if (isLoading) {
+  const isRouteFallbackLoading = !storeBot
+    && !fallbackBot
+    && (
+      fallbackAuth.isAuthenticating
+      || fallbackDetail.isLoading
+      || fallbackDetail.isFetching
+    );
+
+  if (!bot && (isLoading || isRouteFallbackLoading)) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 text-center">
         <div className="glass-card rounded-xl p-12 max-w-md mx-auto">

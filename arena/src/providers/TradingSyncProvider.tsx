@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useStore } from '@nanostores/react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { publicClient } from '@tangle-network/blueprint-ui';
@@ -18,6 +19,11 @@ import {
   type TrackedProvision,
 } from '~/lib/stores/provisions';
 import { hydratedBotsStore, setHydratedBotsState, type OperatorDataState } from '~/lib/stores/hydratedBots';
+import {
+  isOperatorSourceInScope,
+  operatorSyncScopeStore,
+  type OperatorSyncScope,
+} from '~/lib/stores/operatorSyncScope';
 import type { Bot, BotLifecycleStatus, BotOperatorKind, BotStatus, StrategyType } from '~/lib/types/bot';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { useOperatorMeta } from '~/lib/operator/meta';
@@ -126,6 +132,13 @@ function getOperatorDataState(sources: OperatorSource[]): OperatorDataState {
   return readyCount === sources.length ? 'ready' : 'partial';
 }
 
+function filterOperatorSources(
+  sources: OperatorSource[],
+  syncScope: OperatorSyncScope,
+): OperatorSource[] {
+  return sources.filter((source) => isOperatorSourceInScope(source.apiUrl, syncScope));
+}
+
 async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotResponse[]> {
   const path = source.deploymentKind === 'instance' ? '/api/bot' : '/api/bots?limit=200';
   const data = await operatorJsonWithAuth<any>(
@@ -213,6 +226,7 @@ function makeBaseBot(partial: Partial<Bot>, authoritative: boolean): Bot {
 }
 
 export function TradingSyncProvider({ children }: { children: ReactNode }) {
+  const syncScope = useStore(operatorSyncScopeStore);
   const cloudMeta = useOperatorMeta(CLOUD_OPERATOR_API_URL);
   const instanceMeta = useOperatorMeta(INSTANCE_OPERATOR_API_URL);
   const teeMeta = useOperatorMeta(TEE_OPERATOR_API_URL);
@@ -273,6 +287,11 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
     teeMeta.data?.deployment_kind,
   ]);
 
+  const activeOperatorSources = useMemo(
+    () => filterOperatorSources(operatorSources, syncScope),
+    [operatorSources, syncScope],
+  );
+
   const refresh = useCallback(async () => {
     const refreshSeq = refreshSeqRef.current + 1;
     refreshSeqRef.current = refreshSeq;
@@ -284,7 +303,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
     setHydratedBotsState((current) => ({
       ...current,
       isLoading: true,
-      operatorDataState: getOperatorDataState(operatorSources),
+      operatorDataState: getOperatorDataState(activeOperatorSources),
     }));
 
     try {
@@ -530,7 +549,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       }
 
       const operatorBackedBots: Bot[] = [];
-      const operatorFetches = operatorSources
+      const operatorFetches = activeOperatorSources
         .filter((source) => source.apiUrl && source.token)
         .map(async (source) => {
           try {
@@ -659,7 +678,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         bots: builtBots,
         isLoading: false,
         isOnChain: builtBots.length > 0,
-        operatorDataState: getOperatorDataState(operatorSources),
+        operatorDataState: getOperatorDataState(activeOperatorSources),
         lastSyncedAt: Date.now(),
       };
 
@@ -671,7 +690,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         setHydratedBotsState((current) => ({
           ...current,
           isLoading: false,
-          operatorDataState: getOperatorDataState(operatorSources),
+          operatorDataState: getOperatorDataState(activeOperatorSources),
         }));
       }
     } finally {
@@ -679,7 +698,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         controllerRef.current = null;
       }
     }
-  }, [operatorSources]);
+  }, [activeOperatorSources]);
 
   useEffect(() => {
     void refresh();
