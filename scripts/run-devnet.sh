@@ -118,6 +118,43 @@ verify_distinct_proxy_targets() {
   fi
 }
 
+sync_tangle_domain_separator() {
+  local rpc_url="$1"
+  local chain_id="$2"
+  local tangle_proxy="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+  local domain_slot="0x3"
+
+  if [[ "$(cast code "$tangle_proxy" --rpc-url "$rpc_url" 2>/dev/null)" == "0x" ]]; then
+    return
+  fi
+
+  local type_hash name_hash version_hash encoded expected expected_lower current
+  type_hash="$(cast keccak "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")"
+  name_hash="$(cast keccak "TangleQuote")"
+  version_hash="$(cast keccak "1")"
+  encoded="$(cast abi-encode "f(bytes32,bytes32,bytes32,uint256,address)" \
+    "$type_hash" \
+    "$name_hash" \
+    "$version_hash" \
+    "$chain_id" \
+    "$tangle_proxy")"
+  expected="$(cast keccak "$encoded")"
+  expected_lower="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  current="$(cast storage "$tangle_proxy" "$domain_slot" --rpc-url "$rpc_url" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$current" == "$expected_lower" ]]; then
+    echo "  Tangle domain separator already matches chain $chain_id"
+    return
+  fi
+
+  cast rpc anvil_setStorageAt \
+    "$tangle_proxy" \
+    "$domain_slot" \
+    "$expected" \
+    --rpc-url "$rpc_url" > /dev/null
+  echo "  Patched Tangle domain separator for chain $chain_id"
+}
+
 ensure_release_binaries() {
   local sandbox_root="$ROOT_DIR/../ai-agent-sandbox-blueprint"
   local cloud_bin="$ROOT_DIR/target/release/trading-blueprint"
@@ -219,6 +256,7 @@ if ! cast chain-id --rpc-url "$RPC_URL" > /dev/null 2>&1; then
   exit 1
 fi
 echo "  Anvil running at $RPC_URL (chain $(cast chain-id --rpc-url "$RPC_URL"))"
+sync_tangle_domain_separator "$RPC_URL" "$CHAIN_ID"
 
 # ── 2. Deploy contracts + register operators ───────────────────────
 echo ""

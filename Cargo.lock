@@ -10289,6 +10289,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "trading-blueprint-lib",
+ "trading-http-api",
  "uuid 1.22.0",
 ]
 

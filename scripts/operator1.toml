@@ -15,3 +15,4 @@ rpc_timeout = 30
 rpc_max_connections = 256
 
 quote_validity_duration_secs = 300
+rfq_signature_schema = "legacy_v1"

@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 trading-blueprint-lib = { path = "../trading-blueprint-lib" }
+trading-http-api = { path = "../trading-http-api" }
 sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
 ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
 axum = "0.8"

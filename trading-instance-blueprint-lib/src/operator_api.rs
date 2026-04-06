@@ -500,8 +500,122 @@ fn extract_json_array(
     }
 }
 
+fn parse_trade_number(value: &str) -> Option<f64> {
+    value.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+fn action_opens_position(action: &str) -> bool {
+    matches!(
+        action.to_lowercase().as_str(),
+        "buy" | "swap" | "open_long" | "open_short" | "supply" | "borrow"
+    )
+}
+
+fn synthetic_paper_move_bps(seed: &str) -> i64 {
+    let checksum = seed
+        .bytes()
+        .enumerate()
+        .fold(0u64, |acc, (idx, byte)| acc + ((idx as u64) + 1) * (byte as u64));
+    (checksum % 2401) as i64 - 1200
+}
+
+fn synthesize_trade_entry_from_record(
+    rec: &trading_http_api::trade_store::TradeRecord,
+) -> serde_json::Value {
+    let amount_in = parse_trade_number(&rec.amount_in).unwrap_or(0.0);
+    let min_amount_out = parse_trade_number(&rec.min_amount_out).unwrap_or(0.0);
+    let (size, entry_price) = if amount_in > 0.0 && min_amount_out > 0.0 {
+        (min_amount_out, amount_in / min_amount_out)
+    } else if amount_in > 0.0 {
+        (amount_in, 1.0)
+    } else {
+        (0.0, 0.0)
+    };
+    let status = if action_opens_position(&rec.action) {
+        "open"
+    } else {
+        "closed"
+    };
+    let move_bps = synthetic_paper_move_bps(&rec.id) as f64 / 10_000.0;
+    let current_price = if entry_price > 0.0 {
+        (entry_price * (1.0 + move_bps)).max(0.01)
+    } else {
+        0.0
+    };
+    let pnl = if size > 0.0 {
+        match rec.action.to_lowercase().as_str() {
+            "open_short" => (entry_price - current_price) * size,
+            _ => (current_price - entry_price) * size,
+        }
+    } else {
+        0.0
+    };
+
+    serde_json::json!({
+        "id": rec.id,
+        "created_at": rec.timestamp.to_rfc3339(),
+        "market_id": rec.token_out,
+        "question": rec.token_out,
+        "symbol": rec.token_out,
+        "side": rec.action,
+        "status": status,
+        "size": size,
+        "entry_price": entry_price,
+        "current_price": current_price,
+        "pnl": pnl,
+        "target_protocol": rec.target_protocol,
+        "paper_trade": rec.paper_trade,
+    })
+}
+
+fn fallback_trade_dataset(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
+    let mut trades = state::load_bot_trades(&bot.id);
+    let mut seen_ids: std::collections::HashSet<String> = trades
+        .iter()
+        .filter_map(|t| t.get("id"))
+        .map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => v.to_string(),
+        })
+        .collect();
+
+    if let Ok(paginated) = trading_http_api::trade_store::trades_for_bot(&bot.id, 1000, 0) {
+        for rec in paginated.trades {
+            if seen_ids.insert(rec.id.clone()) {
+                trades.push(synthesize_trade_entry_from_record(&rec));
+            }
+        }
+    }
+
+    trades
+}
+
+fn fallback_trade_quantity(t: &serde_json::Value) -> f64 {
+    t.get("size")
+        .or_else(|| t.get("amount_usd"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
+fn fallback_trade_price(t: &serde_json::Value) -> f64 {
+    let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let current_price = t
+        .get("current_price")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(entry_price);
+    current_price.max(entry_price)
+}
+
+fn fallback_trade_value_usd(t: &serde_json::Value) -> f64 {
+    if let Some(amount_usd) = t.get("amount_usd").and_then(|v| v.as_f64()) {
+        return amount_usd;
+    }
+    fallback_trade_quantity(t) * fallback_trade_price(t)
+}
+
 fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
-    let trades = state::load_bot_trades(&bot.id);
+    let trades = fallback_trade_dataset(bot);
     synthesize_metrics(bot, &trades)
         .into_iter()
         .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
@@ -987,52 +1101,50 @@ fn synthesize_metrics(
             hwm = val;
         }
 
-        if (i + 1) % 5 == 0 || i == sorted.len() - 1 {
-            let open_count = sorted[..=i]
-                .iter()
-                .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
-                .count() as u32;
+        let open_count = sorted[..=i]
+            .iter()
+            .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+            .count() as u32;
 
-            let realized: f64 = sorted[..=i]
-                .iter()
-                .filter(|t| t.get("status").and_then(|v| v.as_str()) != Some("open"))
-                .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
-                .sum();
+        let realized: f64 = sorted[..=i]
+            .iter()
+            .filter(|t| t.get("status").and_then(|v| v.as_str()) != Some("open"))
+            .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+            .sum();
 
-            let unrealized: f64 = sorted[..=i]
-                .iter()
-                .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
-                .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
-                .sum();
+        let unrealized: f64 = sorted[..=i]
+            .iter()
+            .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+            .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+            .sum();
 
-            let ts = trade
-                .get("created_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+        let ts = trade
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-            let dd = if hwm > 0.0 {
-                ((hwm - val) / hwm) * 100.0
+        let dd = if hwm > 0.0 {
+            ((hwm - val) / hwm) * 100.0
+        } else {
+            0.0
+        };
+
+        snapshots.push(MetricsSnapshotResponse {
+            timestamp: if ts.is_empty() {
+                chrono::Utc::now().to_rfc3339()
             } else {
-                0.0
-            };
-
-            snapshots.push(MetricsSnapshotResponse {
-                timestamp: if ts.is_empty() {
-                    chrono::Utc::now().to_rfc3339()
-                } else {
-                    ts
-                },
-                bot_id: bot.id.clone(),
-                account_value_usd: val,
-                unrealized_pnl: unrealized,
-                realized_pnl: realized,
-                high_water_mark: hwm,
-                drawdown_pct: dd,
-                positions_count: open_count,
-                trade_count: (i + 1) as u32,
-            });
-        }
+                ts
+            },
+            bot_id: bot.id.clone(),
+            account_value_usd: val,
+            unrealized_pnl: unrealized,
+            realized_pnl: realized,
+            high_water_mark: hwm,
+            drawdown_pct: dd,
+            positions_count: open_count,
+            trade_count: (i + 1) as u32,
+        });
     }
 
     snapshots
@@ -1044,7 +1156,7 @@ async fn get_bot_metrics(
     SessionAuth(_caller): SessionAuth,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
-    let trades = state::load_bot_trades(&bot.id);
+    let trades = fallback_trade_dataset(&bot);
 
     let total_pnl: f64 = trades
         .iter()
@@ -1123,7 +1235,7 @@ async fn get_bot_portfolio(
             positions: Vec::new(),
         }));
     }
-    let trades = state::load_bot_trades(&bot.id);
+    let trades = fallback_trade_dataset(&bot);
 
     let open_trades: Vec<&serde_json::Value> = trades
         .iter()
@@ -1138,12 +1250,7 @@ async fn get_bot_portfolio(
 
     let position_value: f64 = open_trades
         .iter()
-        .map(|t| {
-            t.get("amount_usd")
-                .or_else(|| t.get("size"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0)
-        })
+        .map(|t| fallback_trade_value_usd(t))
         .sum();
 
     let positions: Vec<PortfolioPosition> = open_trades
@@ -1159,11 +1266,7 @@ async fn get_bot_portfolio(
                 .or_else(|| t.get("symbol"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown");
-            let amount = t
-                .get("amount_usd")
-                .or_else(|| t.get("size"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let amount = fallback_trade_quantity(t);
             let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let current_price = t
                 .get("current_price")
@@ -1179,12 +1282,12 @@ async fn get_bot_portfolio(
                 token: mid.chars().take(10).collect(),
                 symbol: question.chars().take(30).collect(),
                 amount,
-                value_usd: amount * current_price.max(entry_price),
+                value_usd: fallback_trade_value_usd(t),
                 entry_price,
                 current_price,
                 pnl_percent: pnl_pct,
                 weight: if total_value > 0.0 {
-                    (amount / total_value) * 100.0
+                    (fallback_trade_value_usd(t) / total_value) * 100.0
                 } else {
                     0.0
                 },
