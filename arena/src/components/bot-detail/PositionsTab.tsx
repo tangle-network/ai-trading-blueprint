@@ -1,6 +1,6 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
 import type { BotStatus } from '~/lib/types/bot';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
+import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
@@ -65,16 +65,38 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
     );
   }
 
+  const formatCurrency = (value: number | null) => {
+    if (value == null) return 'Unavailable';
+    return `$${value.toLocaleString()}`;
+  };
+
+  const formatPercent = (value: number | null) => {
+    if (value == null) return 'Unavailable';
+    return `${value.toFixed(1)}%`;
+  };
+
   return (
     <div className="space-y-4">
+      {portfolio.warnings.length > 0 && (
+        <div className="glass-card rounded-xl px-4 py-3 flex items-start gap-3 text-sm text-amber-700 dark:text-amber-400">
+          <div className="i-ph:warning-circle text-lg shrink-0 mt-0.5" />
+          <div>
+            <div className="font-display font-semibold text-arena-elements-textPrimary mb-1">
+              Portfolio metrics partially hidden
+            </div>
+            <p>{portfolio.warnings[0]}</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-6 mb-4">
         <div className="glass-card rounded-lg px-4 py-2">
           <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Total Value </span>
-          <span className="font-display font-bold text-lg">${portfolio.totalValueUsd.toLocaleString()}</span>
+          <span className="font-display font-bold text-lg">{formatCurrency(portfolio.displayTotalValueUsd)}</span>
         </div>
         <div className="glass-card rounded-lg px-4 py-2">
           <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Cash </span>
-          <span className="font-data font-medium">${portfolio.cashBalance.toLocaleString()}</span>
+          <span className="font-data font-medium">{formatCurrency(portfolio.displayCashBalance)}</span>
         </div>
       </div>
 
@@ -93,15 +115,40 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
         <TableBody>
           {portfolio.positions.map((pos) => (
             <TableRow key={pos.symbol}>
-              <TableCell className="font-display font-semibold">{pos.symbol}</TableCell>
+              <TableCell className="font-display font-semibold">
+                <div className="flex items-center justify-between gap-2">
+                  <span>{pos.symbol}</span>
+                  {pos.isSuspicious && (
+                    <Badge
+                      variant="amber"
+                      className="text-[10px]"
+                      title={pos.warnings.join(' ')}
+                    >
+                      Warning
+                    </Badge>
+                  )}
+                </div>
+              </TableCell>
               <TableCell className="text-right font-data text-sm">{pos.amount.toLocaleString()}</TableCell>
-              <TableCell className="text-right font-data text-sm">${pos.valueUsd.toLocaleString()}</TableCell>
+              <TableCell className={`text-right font-data text-sm ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
+                {formatCurrency(pos.displayValueUsd)}
+              </TableCell>
               <TableCell className="text-right font-data text-sm text-arena-elements-textSecondary">${pos.entryPrice.toLocaleString()}</TableCell>
               <TableCell className="text-right font-data text-sm">${pos.currentPrice.toLocaleString()}</TableCell>
-              <TableCell className={`text-right font-data text-sm font-bold ${pos.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`}>
-                {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
+              <TableCell className={`text-right font-data text-sm font-bold ${
+                pos.displayPnlPercent == null
+                  ? 'text-arena-elements-textTertiary'
+                  : pos.displayPnlPercent >= 0
+                    ? 'text-arena-elements-icon-success'
+                    : 'text-arena-elements-icon-error'
+              }`}>
+                {pos.displayPnlPercent == null
+                  ? 'Unavailable'
+                  : `${pos.displayPnlPercent >= 0 ? '+' : ''}${pos.displayPnlPercent.toFixed(2)}%`}
               </TableCell>
-              <TableCell className="text-right font-data text-sm text-arena-elements-textSecondary">{pos.weight.toFixed(1)}%</TableCell>
+              <TableCell className={`text-right font-data text-sm ${pos.displayWeight == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
+                {formatPercent(pos.displayWeight)}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

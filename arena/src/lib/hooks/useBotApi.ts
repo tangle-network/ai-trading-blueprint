@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
+import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
@@ -95,25 +96,6 @@ interface ApiMetricsSnapshot {
 
 interface ApiMetricsHistoryResponse {
   snapshots: ApiMetricsSnapshot[];
-}
-
-interface ApiPortfolioState {
-  positions: Array<{
-    token: string;
-    symbol?: string;
-    amount: number | string;
-    value_usd?: number;
-    entry_price: number | string;
-    current_price: number | string;
-    pnl_percent?: number;
-    weight?: number;
-    unrealized_pnl?: string;
-    protocol?: string;
-  }>;
-  total_value_usd: number | string;
-  cash_balance?: number | string;
-  unrealized_pnl?: string;
-  realized_pnl?: string;
 }
 
 async function fetchOperatorBotApi<T>(
@@ -215,49 +197,6 @@ export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
   };
 }
 
-function calculatePnlPercent(currentPrice: number, entryPrice: number): number {
-  if (entryPrice <= 0) return 0;
-  return ((currentPrice - entryPrice) / entryPrice) * 100;
-}
-
-function calculateWeight(valueUsd: number, totalValueUsd: number): number {
-  if (totalValueUsd <= 0) return 0;
-  return (valueUsd / totalValueUsd) * 100;
-}
-
-function mapApiPortfolio(p: ApiPortfolioState, botId: string): Portfolio {
-  const totalValueUsd = Number(p.total_value_usd ?? 0);
-  const cashBalance = Number(p.cash_balance ?? 0);
-  return {
-    botId,
-    totalValueUsd,
-    cashBalance,
-    positions: p.positions.map((pos) => {
-      const amount = Number(pos.amount);
-      const entryPrice = Number(pos.entry_price);
-      const currentPrice = Number(pos.current_price);
-      const valueUsd = pos.value_usd != null ? Number(pos.value_usd) : amount * currentPrice;
-      const pnlPercent = pos.pnl_percent != null
-        ? Number(pos.pnl_percent)
-        : calculatePnlPercent(currentPrice, entryPrice);
-      const weight = pos.weight != null
-        ? Number(pos.weight)
-        : calculateWeight(valueUsd, totalValueUsd);
-
-      return {
-        token: pos.token,
-        symbol: pos.symbol ?? pos.token,
-        amount,
-        valueUsd,
-        entryPrice,
-        currentPrice,
-        pnlPercent,
-        weight,
-      };
-    }),
-  };
-}
-
 function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
   return Array.isArray(data) ? data : data.trades;
 }
@@ -332,8 +271,8 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
     queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/portfolio/state');
-      const data = await fetchOperatorBotApi<ApiPortfolioState>(apiUrl, auth, path);
-      return mapApiPortfolio(data, botId);
+      const data = await fetchOperatorBotApi<RawPortfolioState>(apiUrl, auth, path);
+      return mapApiPortfolioState(data, botId);
     },
     staleTime: 30_000,
     refetchInterval: options.refetchInterval,

@@ -260,6 +260,20 @@ impl IntoResponse for ApiError {
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
+const KNOWN_STABLECOINS: &[&str] = &[
+    "usdc",
+    "usdc.e",
+    "usdt",
+    "dai",
+    "fdusd",
+    "usde",
+    "usdbc",
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "0x6b175474e89094c44da98b954eedeac495271d0f",
+    "0x2791bcaf2de4661ed88a30c99a7a9449aa84174",
+];
+
 // ── Instance provision types ─────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -511,12 +525,61 @@ fn action_opens_position(action: &str) -> bool {
     )
 }
 
-fn synthetic_paper_move_bps(seed: &str) -> i64 {
-    let checksum = seed
-        .bytes()
-        .enumerate()
-        .fold(0u64, |acc, (idx, byte)| acc + ((idx as u64) + 1) * (byte as u64));
-    (checksum % 2401) as i64 - 1200
+fn is_known_stablecoin(token: &str) -> bool {
+    let normalized = token.trim().to_ascii_lowercase();
+    KNOWN_STABLECOINS.contains(&normalized.as_str())
+}
+
+struct SyntheticTradeValuation {
+    size: f64,
+    entry_price: f64,
+    current_price: f64,
+    pnl: f64,
+    amount_usd: Option<f64>,
+}
+
+fn synthesize_trade_valuation(
+    token_in: &str,
+    token_out: &str,
+    amount_in: f64,
+    amount_out: f64,
+) -> SyntheticTradeValuation {
+    let size = if amount_out > 0.0 {
+        amount_out
+    } else {
+        amount_in.max(0.0)
+    };
+    if size <= 0.0 {
+        return SyntheticTradeValuation {
+            size: 0.0,
+            entry_price: 0.0,
+            current_price: 0.0,
+            pnl: 0.0,
+            amount_usd: None,
+        };
+    }
+
+    let token_in_stable = is_known_stablecoin(token_in);
+    let token_out_stable = is_known_stablecoin(token_out);
+
+    let (entry_price, amount_usd) = if token_out_stable {
+        (1.0, Some(size))
+    } else if token_in_stable && amount_in > 0.0 && amount_out > 0.0 {
+        let price = amount_in / amount_out;
+        (price, Some(size * price))
+    } else if token_in_stable || token_out_stable {
+        (1.0, Some(size))
+    } else {
+        (0.0, None)
+    };
+
+    SyntheticTradeValuation {
+        size,
+        entry_price,
+        current_price: entry_price,
+        pnl: 0.0,
+        amount_usd,
+    }
 }
 
 fn synthesize_trade_entry_from_record(
@@ -524,34 +587,15 @@ fn synthesize_trade_entry_from_record(
 ) -> serde_json::Value {
     let amount_in = parse_trade_number(&rec.amount_in).unwrap_or(0.0);
     let min_amount_out = parse_trade_number(&rec.min_amount_out).unwrap_or(0.0);
-    let (size, entry_price) = if amount_in > 0.0 && min_amount_out > 0.0 {
-        (min_amount_out, amount_in / min_amount_out)
-    } else if amount_in > 0.0 {
-        (amount_in, 1.0)
-    } else {
-        (0.0, 0.0)
-    };
+    let valuation =
+        synthesize_trade_valuation(&rec.token_in, &rec.token_out, amount_in, min_amount_out);
     let status = if action_opens_position(&rec.action) {
         "open"
     } else {
         "closed"
     };
-    let move_bps = synthetic_paper_move_bps(&rec.id) as f64 / 10_000.0;
-    let current_price = if entry_price > 0.0 {
-        (entry_price * (1.0 + move_bps)).max(0.01)
-    } else {
-        0.0
-    };
-    let pnl = if size > 0.0 {
-        match rec.action.to_lowercase().as_str() {
-            "open_short" => (entry_price - current_price) * size,
-            _ => (current_price - entry_price) * size,
-        }
-    } else {
-        0.0
-    };
 
-    serde_json::json!({
+    let mut entry = serde_json::json!({
         "id": rec.id,
         "created_at": rec.timestamp.to_rfc3339(),
         "market_id": rec.token_out,
@@ -559,13 +603,19 @@ fn synthesize_trade_entry_from_record(
         "symbol": rec.token_out,
         "side": rec.action,
         "status": status,
-        "size": size,
-        "entry_price": entry_price,
-        "current_price": current_price,
-        "pnl": pnl,
+        "size": valuation.size,
+        "entry_price": valuation.entry_price,
+        "current_price": valuation.current_price,
+        "pnl": valuation.pnl,
         "target_protocol": rec.target_protocol,
         "paper_trade": rec.paper_trade,
-    })
+    });
+
+    if let Some(amount_usd) = valuation.amount_usd {
+        entry["amount_usd"] = serde_json::json!(amount_usd);
+    }
+
+    entry
 }
 
 fn fallback_trade_dataset(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
@@ -1517,6 +1567,36 @@ mod tests {
     use hyper::Request;
     use tower::ServiceExt;
 
+    fn make_trade_record(
+        token_in: &str,
+        token_out: &str,
+        amount_in: &str,
+        min_amount_out: &str,
+    ) -> trading_http_api::trade_store::TradeRecord {
+        trading_http_api::trade_store::TradeRecord {
+            id: "trade-1".to_string(),
+            bot_id: "bot-1".to_string(),
+            timestamp: chrono::Utc::now(),
+            action: "swap".to_string(),
+            token_in: token_in.to_string(),
+            token_out: token_out.to_string(),
+            amount_in: amount_in.to_string(),
+            min_amount_out: min_amount_out.to_string(),
+            target_protocol: "uniswap_v3".to_string(),
+            tx_hash: "0xpaper".to_string(),
+            block_number: Some(0),
+            gas_used: Some("0".to_string()),
+            paper_trade: true,
+            validation: trading_http_api::trade_store::StoredValidation {
+                approved: true,
+                aggregate_score: 100,
+                intent_hash: "0xintent".to_string(),
+                responses: Vec::new(),
+                simulation: None,
+            },
+        }
+    }
+
     fn test_auth_header() -> String {
         let token = sandbox_runtime::session_auth::create_test_token(
             "0x1234567890abcdef1234567890abcdef12345678",
@@ -1669,5 +1749,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn synthesize_trade_entry_keeps_stablecoin_outputs_priced_at_one_dollar() {
+        let rec = make_trade_record("WETH", "USDC", "1.25", "3200");
+        let entry = synthesize_trade_entry_from_record(&rec);
+
+        assert_eq!(entry["size"], 3200.0);
+        assert_eq!(entry["entry_price"], 1.0);
+        assert_eq!(entry["current_price"], 1.0);
+        assert_eq!(entry["pnl"], 0.0);
+        assert_eq!(entry["amount_usd"], 3200.0);
+    }
+
+    #[test]
+    fn synthesize_trade_entry_prices_assets_bought_with_stablecoins_from_cost_basis() {
+        let rec = make_trade_record("USDC", "WETH", "1000", "0.5");
+        let entry = synthesize_trade_entry_from_record(&rec);
+
+        assert_eq!(entry["size"], 0.5);
+        assert_eq!(entry["entry_price"], 2000.0);
+        assert_eq!(entry["current_price"], 2000.0);
+        assert_eq!(entry["amount_usd"], 1000.0);
     }
 }

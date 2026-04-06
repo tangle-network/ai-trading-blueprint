@@ -22,6 +22,20 @@ use trading_runtime::{
 
 use super::validate::parse_action;
 
+const KNOWN_STABLECOINS: &[&str] = &[
+    "usdc",
+    "usdc.e",
+    "usdt",
+    "dai",
+    "fdusd",
+    "usde",
+    "usdbc",
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "0x6b175474e89094c44da98b954eedeac495271d0f",
+    "0x2791bcaf2de4661ed88a30c99a7a9449aa84174",
+];
+
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ExecuteRequest {
     pub intent: IntentPayload,
@@ -93,6 +107,11 @@ pub fn router() -> Router<Arc<TradingApiState>> {
 /// Router for multi-bot mode (state = MultiBotTradingState, bot resolved from extensions).
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new().route("/execute", post(execute_multi_bot))
+}
+
+fn is_known_stablecoin(token: &str) -> bool {
+    let normalized = token.trim().to_ascii_lowercase();
+    KNOWN_STABLECOINS.contains(&normalized.as_str())
 }
 
 // ── Intent hash deduplication ────────────────────────────────────────────────
@@ -605,35 +624,43 @@ async fn execute(
     Ok(result)
 }
 
-/// Derive entry price and size from intent amounts.
+/// Derive a coherent output position from the trade intent.
 ///
-/// For swaps: price = amount_in / min_amount_out (exchange rate estimate).
-/// For other actions: price defaults to 1:1 if min_amount_out is zero.
-///
-/// Returns error instead of silently defaulting to zero on parse failure.
+/// For swaps, the portfolio should track the output asset (`token_out`) using
+/// the output amount. If either side is a stablecoin we can anchor the entry
+/// price in USD; otherwise we preserve the output amount and use the trade
+/// ratio as a best-effort placeholder.
 fn estimate_trade_price_size(
     intent: &IntentPayload,
 ) -> Result<(Decimal, Decimal), (StatusCode, String)> {
-    let size: Decimal = intent.amount_in.parse().map_err(|e| {
+    let amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             format!("Invalid amount_in '{}': {e}", intent.amount_in),
         )
     })?;
 
-    let min_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
 
-    let price = if min_out > Decimal::ZERO && size > Decimal::ZERO {
-        // Exchange rate: how many output tokens per input token.
-        min_out / size
-    } else {
-        // No output estimate available — use 1:1 as placeholder.
-        // This is acceptable for non-swap actions (supply, borrow, etc.)
-        // where the "price" concept doesn't map cleanly.
+    if amount_out > Decimal::ZERO {
+        let price = if is_known_stablecoin(&intent.token_out) {
+            Decimal::ONE
+        } else if amount_in > Decimal::ZERO {
+            amount_in / amount_out
+        } else {
+            Decimal::ZERO
+        };
+
+        return Ok((price, amount_out));
+    }
+
+    let price = if is_known_stablecoin(&intent.token_out) || is_known_stablecoin(&intent.token_in) {
         Decimal::ONE
+    } else {
+        Decimal::ZERO
     };
 
-    Ok((price, size))
+    Ok((price, amount_in))
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -714,4 +741,50 @@ async fn execute_multi_bot(
     };
 
     execute_real_trade(&bot.bot_id, &executor, &intent, &req, stored_validation).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_intent(
+        token_in: &str,
+        token_out: &str,
+        amount_in: &str,
+        min_amount_out: &str,
+    ) -> IntentPayload {
+        IntentPayload {
+            strategy_id: "test".to_string(),
+            action: "swap".to_string(),
+            token_in: token_in.to_string(),
+            token_out: token_out.to_string(),
+            amount_in: amount_in.to_string(),
+            min_amount_out: min_amount_out.to_string(),
+            target_protocol: "uniswap_v3".to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn estimate_trade_price_size_uses_output_amount_for_stablecoin_outputs() {
+        let intent = make_intent(
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "1.25",
+            "3200",
+        );
+
+        let (price, size) = estimate_trade_price_size(&intent).expect("valuation");
+        assert_eq!(size, Decimal::new(3200, 0));
+        assert_eq!(price, Decimal::ONE);
+    }
+
+    #[test]
+    fn estimate_trade_price_size_anchors_output_assets_bought_with_stablecoins() {
+        let intent = make_intent("USDC", "WETH", "1000", "0.5");
+
+        let (price, size) = estimate_trade_price_size(&intent).expect("valuation");
+        assert_eq!(size, Decimal::new(5, 1));
+        assert_eq!(price, Decimal::new(2000, 0));
+    }
 }

@@ -126,7 +126,7 @@ export function useBotLiveSummary({
   return useMemo(() => {
     const summary = summarizeBotLiveData(
       metricsQuery.data,
-      portfolioQuery.data?.totalValueUsd ?? null,
+      portfolioQuery.data?.displayTotalValueUsd ?? null,
       (tradesQuery.data ?? []).map((trade) => trade.validatorScore),
     );
 

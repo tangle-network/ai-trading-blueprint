@@ -79,8 +79,11 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        service_id: None,
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
     }
 }
