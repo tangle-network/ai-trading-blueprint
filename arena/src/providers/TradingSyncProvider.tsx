@@ -15,7 +15,6 @@ import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 import {
   getProvisionStructuralFingerprint,
   provisionsStore,
-  shouldRenderProvisionFallbackBot,
   type TrackedProvision,
 } from '~/lib/stores/provisions';
 import { hydratedBotsStore, setHydratedBotsState, type OperatorDataState } from '~/lib/stores/hydratedBots';
@@ -26,11 +25,9 @@ import {
   CLOUD_OPERATOR_API_URL,
   INSTANCE_OPERATOR_API_URL,
   TEE_OPERATOR_API_URL,
-  getOperatorApiUrlForBlueprint,
 } from '~/lib/operator/meta';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { subscribeBotsRefresh } from '~/lib/events/bots';
-import { collectMatchedProvisionIds } from '~/lib/utils/botProvisionReconciliation';
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -118,11 +115,6 @@ function mapOperatorLifecycleToStatus(
     default:
       return 'unknown';
   }
-}
-
-function mapProvisionPhaseToStatus(phase: string): BotStatus {
-  if (phase === 'awaiting_secrets') return 'needs_config';
-  return 'stopped';
 }
 
 function getOperatorDataState(sources: OperatorSource[]): OperatorDataState {
@@ -661,52 +653,6 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
 
         builtBots.push(authoritativeBot);
         operatorBackedBots.push(authoritativeBot);
-      }
-
-      const matchedProvisionIds = collectMatchedProvisionIds(storedProvisions, operatorBackedBots);
-
-      for (const provision of storedProvisions) {
-        if (matchedProvisionIds.has(provision.id)) continue;
-        if (!shouldRenderProvisionFallbackBot(provision)) continue;
-
-        const vaultLower = provision.vaultAddress?.toLowerCase() ?? '';
-        const hasVault = vaultLower && vaultLower !== zeroAddress;
-        if (hasVault && (
-          vaultLower === addresses.vaultFactory.toLowerCase()
-          || vaultLower === addresses.tangle.toLowerCase()
-        )) {
-          continue;
-        }
-
-        const botId = provision.botId ?? provision.sandboxId ?? `provision:${provision.id}`;
-        if (builtBots.some((bot) => bot.id === botId)) continue;
-        if (provision.sandboxId && builtBots.some((bot) => bot.sandboxId === provision.sandboxId)) continue;
-
-        builtBots.push(makeBaseBot({
-          id: botId,
-          serviceId: provision.serviceId ?? 0,
-          name: provision.name || 'Agent',
-          operatorAddress: provision.operators?.[0] ?? zeroAddress,
-          vaultAddress: (hasVault ? provision.vaultAddress! : zeroAddress) as Address,
-          strategyType: (provision.strategyType || 'momentum') as StrategyType,
-          status: mapProvisionPhaseToStatus(provision.phase),
-          createdAt: provision.createdAt,
-          sandboxId: provision.sandboxId,
-          lifecycleStatus: provision.phase === 'awaiting_secrets' ? 'awaiting_secrets' : 'unknown',
-          archived: false,
-          controlAvailable: false,
-          secretsConfigured: false,
-          tradingActive: false,
-          paperTrade: false,
-          callId: provision.callId,
-          source: 'provision',
-          operatorKind: provision.blueprintType === 'trading-tee-instance'
-            ? 'tee'
-            : provision.blueprintType === 'trading-instance'
-              ? 'instance'
-              : 'cloud',
-          operatorApiUrl: getOperatorApiUrlForBlueprint(provision.blueprintType),
-        }, false));
       }
 
       const nextState = {

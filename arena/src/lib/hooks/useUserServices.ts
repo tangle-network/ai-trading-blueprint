@@ -8,8 +8,6 @@ import { publicClient } from '@tangle-network/blueprint-ui';
 import {
   provisionsStore,
   getProvisionStructuralFingerprint,
-  isProvisionServiceHint,
-  type TrackedProvision,
 } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
 const BLOCK_TIME_SECONDS = 12;
@@ -81,14 +79,6 @@ export function useUserServices(userAddress: Address | undefined) {
         }
       }
 
-      // Also include service IDs from tracked provisions (catches newly created services)
-      for (const prov of provisionsStore.get()) {
-        if (!isProvisionServiceHint(prov)) continue;
-        if (prov.serviceId != null && !serviceIds.includes(prov.serviceId)) {
-          serviceIds.push(prov.serviceId);
-        }
-      }
-
       if (serviceIds.length === 0) {
         setServices([]);
         setIsLoading(false);
@@ -126,17 +116,6 @@ export function useUserServices(userAddress: Address | undefined) {
       const built: UserService[] = [];
       const userLower = userAddress.toLowerCase();
 
-      // Service IDs from user's provisions (user should always see services they provisioned)
-      const provisionServiceIds = new Set(
-        provisionsStore.get()
-          .filter((p: TrackedProvision) =>
-            p.owner.toLowerCase() === userLower
-            && p.serviceId != null
-            && isProvisionServiceHint(p),
-          )
-          .map((p: TrackedProvision) => p.serviceId!),
-      );
-
       for (let i = 0; i < serviceIds.length; i++) {
         const serviceData = serviceResults[i * 3]?.result as any;
         const isActive = (serviceResults[i * 3 + 1]?.result as boolean | undefined) ?? false;
@@ -150,11 +129,11 @@ export function useUserServices(userAddress: Address | undefined) {
         const terminatedAt = Number(serviceData.terminatedAt);
         const status = Number(serviceData.status);
 
-        // Filter: show services user owns, operates, or provisioned
+        // Filter: show services user owns or operates. Local provision drafts
+        // can trigger a refresh, but they should not grant visibility.
         const isOwner = owner.toLowerCase() === userLower;
         const isOperator = operators.some((op) => op.toLowerCase() === userLower);
-        const hasProvision = provisionServiceIds.has(serviceIds[i]);
-        if (!isOwner && !isOperator && !hasProvision) continue;
+        if (!isOwner && !isOperator) continue;
 
         // Vault addresses
         const vaultAddresses: Address[] = [];
@@ -166,17 +145,6 @@ export function useUserServices(userAddress: Address | undefined) {
             }
           }
         }
-        // Also pull vault addresses from provisions
-        for (const prov of provisionsStore.get()) {
-          if (!isProvisionServiceHint(prov)) continue;
-          if (prov.serviceId === serviceIds[i] && prov.vaultAddress) {
-            const va = prov.vaultAddress as Address;
-            if (va !== zeroAddress && !vaultAddresses.some((a) => a.toLowerCase() === va.toLowerCase())) {
-              vaultAddresses.push(va);
-            }
-          }
-        }
-
         // TTL
         built.push({
           serviceId: serviceIds[i],

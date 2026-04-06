@@ -224,6 +224,7 @@ describe('dashboard auth-aware rendering', () => {
 
     expect(screen.getByText('provisioning-1-failed-0')).toBeInTheDocument();
     expect(screen.queryByText('Operator authentication required')).not.toBeInTheDocument();
+    expect(screen.queryByText('bot-bot2')).not.toBeInTheDocument();
   });
 
   it('hides failed historical provisions when a real bot for the same logical bot already exists', async () => {

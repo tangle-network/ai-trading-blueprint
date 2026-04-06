@@ -14,28 +14,26 @@ import {
 } from '~/lib/stores/provisions';
 import { publicClient } from '@tangle-network/blueprint-ui';
 import { addresses } from '~/lib/contracts/addresses';
-import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useUserServices } from '~/lib/hooks/useUserServices';
-import { dismissedBotsStore, dismissBot, undismissBot } from '~/lib/stores/dismissedBots';
-import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import {
+  doesProvisionMatchBot,
   doesProvisionLikelyReferToBot,
   partitionProvisionsForBots,
 } from '~/lib/utils/botProvisionReconciliation';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import { getOperatorApiUrlForBlueprint, OPERATOR_API_URL } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
- * (phase, serviceId, vaultAddress, callId, id count). Ignores progressDetail/progressPhase
- * updates that the watcher emits every few seconds.
+ * (phase, serviceId, vaultAddress, callId, bot/sandbox identity, id count).
+ * Ignores progressDetail/progressPhase updates that the watcher emits every few seconds.
  */
 function useStableProvisions(userAddress: string | undefined): TrackedProvision[] {
   const storeRef = useRef(provisionsForOwner(userAddress as any));
@@ -110,73 +108,44 @@ export default function HomePage() {
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
   // Derived data
-  const myServiceIds = useMemo(() => {
-    const ids = new Set(services.map((s) => s.serviceId));
-    // Also include service IDs from provisions (catches newly created services)
-    for (const p of unresolvedProvisions) {
-      if (p.serviceId != null) ids.add(p.serviceId);
-    }
-    return ids;
-  }, [services, unresolvedProvisions]);
-
-  // Bots the user has actually provisioned or that are confirmed active.
-  // Excludes on-chain-only bots that were never provisioned by anyone.
-  const myBots = useMemo(() => {
-    const provVaults = new Set(
-      unresolvedProvisions
-        .filter((p) => p.vaultAddress)
-        .map((p) => p.vaultAddress!.toLowerCase()),
-    );
-    const provIds = new Set(unresolvedProvisions.map((p) => p.id));
-
-    return bots.filter((b) => {
-      if (b.status === 'archived') return false;
-      // Provision-derived bots (directly from provisions store)
-      if (b.id.startsWith('provision:') && provIds.has(b.id.slice('provision:'.length))) return true;
-      // Bot vault matches a user provision
-      if (provVaults.has(b.vaultAddress.toLowerCase())) return true;
-      // Bot belongs to one of the user's services
-      if (myServiceIds.has(b.serviceId)) return true;
-      return false;
-    });
-  }, [bots, myServiceIds, unresolvedProvisions]);
-
-  // Filter out dismissed bots from user's view (auto-undismiss if they become active)
-  const dismissedBots = useStore(dismissedBotsStore);
-  const dismissedSet = useMemo(() => new Set(dismissedBots), [dismissedBots]);
-  const visibleMyBots = useMemo(
-    () => myBots.filter((b) => {
-      if (!dismissedSet.has(b.id)) return true;
-      // Auto-undismiss bots that have become active or paused
-      if (b.status === 'active' || b.status === 'paused') {
-        undismissBot(b.id);
-        return true;
-      }
-      return false;
-    }),
-    [myBots, dismissedSet],
+  const confirmedServiceIds = useMemo(
+    () => new Set(services.map((service) => service.serviceId)),
+    [services],
   );
+  const confirmedServiceVaults = useMemo(() => new Set(
+    services.flatMap((service) => service.vaultAddresses).map((address) => address.toLowerCase()),
+  ), [services]);
+
+  // Main dashboard bots are strict-authoritative only.
+  const myBots = useMemo(() => {
+    return authoritativeBots.filter((b) => {
+      if (b.status === 'archived') return false;
+      if (confirmedServiceIds.has(b.serviceId)) return true;
+      if (confirmedServiceVaults.has(b.vaultAddress.toLowerCase())) return true;
+      return myProvisions.some((provision) =>
+        provision.phase !== 'failed' && doesProvisionMatchBot(provision, b),
+      );
+    });
+  }, [authoritativeBots, confirmedServiceIds, confirmedServiceVaults, myProvisions]);
+  const visibleMyBots = myBots;
 
   // Bots grouped by service
   const botsByService = useMemo(() => {
     const map = new Map<number, typeof bots>();
-    for (const bot of bots) {
+    for (const bot of authoritativeBots) {
       if (bot.status === 'archived') continue;
       const list = map.get(bot.serviceId) ?? [];
       list.push(bot);
       map.set(bot.serviceId, list);
     }
     return map;
-  }, [bots]);
+  }, [authoritativeBots]);
 
   // Provision groups
   const inProgressProvisions = unresolvedProvisions.filter((p) =>
     ['pending_confirmation', 'job_submitted', 'job_processing', 'awaiting_secrets'].includes(p.phase),
   );
-  const currentConcreteBots = useMemo(
-    () => bots.filter((bot) => bot.source !== 'provision'),
-    [bots],
-  );
+  const currentConcreteBots = bots;
   const failedProvisions = useMemo(
     () => unresolvedProvisions.filter(
       (provision) =>
@@ -186,26 +155,12 @@ export default function HomePage() {
     [currentConcreteBots, unresolvedProvisions],
   );
 
-  // Match awaiting-secrets provisions to bots for the configure button
-  const awaitingSecretsForBot = useMemo(() => {
-    const map = new Map<string, TrackedProvision>();
-    for (const prov of unresolvedProvisions) {
-      if (prov.phase !== 'awaiting_secrets') continue;
-      if (prov.vaultAddress) {
-        map.set(prov.vaultAddress.toLowerCase(), prov);
-      }
-    }
-    return map;
-  }, [unresolvedProvisions]);
-
   // Aggregate stats (use visible bots for display)
   const activeBots = visibleMyBots.filter((b) => b.status === 'active');
-  const pendingBots = visibleMyBots.filter((b) => b.status === 'needs_config');
   const totalTvl = visibleMyBots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalPnl = visibleMyBots.reduce((sum, b) => sum + b.pnlAbsolute, 0);
   const totalPnlPct = visibleMyBots.reduce((sum, b) => sum + b.pnlPercent, 0);
   const totalTrades = visibleMyBots.reduce((sum, b) => sum + b.totalTrades, 0);
-  const knownBotCount = visibleMyBots.length + lockedOperatorProvisions.length;
+  const knownBotCount = visibleMyBots.length;
 
   // Handlers
   const dismissProvision = useCallback((id: string) => {
@@ -288,7 +243,12 @@ export default function HomePage() {
     );
   }
 
-  const hasContent = services.length > 0 || visibleMyBots.length > 0 || inProgressProvisions.length > 0;
+  const hasLockedBots = lockedOperatorProvisions.length > 0 && operatorDataState !== 'ready';
+  const hasBotSection = visibleMyBots.length > 0 || hasLockedBots;
+  const hasContent = services.length > 0
+    || hasBotSection
+    || inProgressProvisions.length > 0
+    || failedProvisions.length > 0;
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
@@ -347,6 +307,7 @@ export default function HomePage() {
           provisions={inProgressProvisions}
           failedProvisions={failedProvisions}
           onConfigure={(prov) => setSecretsTarget({
+            apiUrl: getOperatorApiUrlForBlueprint(prov.blueprintType),
             sandboxId: prov.sandboxId,
             callId: prov.callId,
             serviceId: prov.serviceId,
@@ -385,52 +346,36 @@ export default function HomePage() {
       )}
 
       {/* ── My Bots ─────────────────────────────────────────────────────── */}
-      {knownBotCount > 0 ? (
+      {hasBotSection ? (
         <section>
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
               My Bots
             </h2>
             <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
-            {lockedOperatorProvisions.length > 0 && operatorDataState !== 'ready' && (
+            {hasLockedBots && (
               <span className="text-xs font-data text-arena-elements-textTertiary ml-1">
                 {lockedOperatorProvisions.length} require operator auth
               </span>
-            )}
-            {pendingBots.length > 0 && (
-              <button
-                onClick={() => { pendingBots.forEach((b) => dismissBot(b.id)); toast.info(`Cleared ${pendingBots.length} pending`); }}
-                className="ml-auto text-xs font-data text-arena-elements-textTertiary hover:text-crimson-400 transition-colors"
-              >
-                Clear pending ({pendingBots.length})
-              </button>
             )}
           </div>
           {visibleMyBots.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {visibleMyBots.map((bot) => {
-                const matchingProv = awaitingSecretsForBot.get(bot.vaultAddress.toLowerCase());
-                // Configure button: prefer provision-backed target, fall back to bot identifiers
-                const configureHandler = matchingProv
+                const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
                   ? () => setSecretsTarget({
-                      sandboxId: matchingProv.sandboxId,
-                      callId: matchingProv.callId ?? bot.callId,
-                      serviceId: matchingProv.serviceId ?? bot.serviceId,
-                      provisionId: matchingProv.id,
+                      apiUrl: bot.operatorApiUrl ?? undefined,
+                      botId: bot.id,
+                      sandboxId: bot.sandboxId,
+                      callId: bot.callId,
+                      serviceId: bot.serviceId,
                     })
-                  : (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
-                    ? () => setSecretsTarget({
-                        sandboxId: bot.sandboxId,
-                        callId: bot.callId,
-                        serviceId: bot.serviceId,
-                      })
-                    : undefined;
+                  : undefined;
                 return (
                   <HomeBotCard
                     key={bot.id}
                     bot={bot}
                     onConfigure={configureHandler}
-                    onDismiss={() => { dismissBot(bot.id); toast.info('Dismissed'); }}
                   />
                 );
               })}

@@ -49,13 +49,17 @@ export function ProvisionsBanner({
       >
         <div className={`i-ph:caret-right text-sm text-arena-elements-textTertiary transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary group-hover:text-arena-elements-textPrimary transition-colors">
-          Provisioning
+          Pending Setup
         </h2>
         <Badge variant="secondary" className="text-[10px]">{total}</Badge>
       </button>
 
       {!collapsed && (
         <div className="space-y-2">
+          <p className="text-xs font-data text-arena-elements-textTertiary">
+            Local deployment and configuration progress. Items here are not confirmed live bots until operator data is available.
+          </p>
+
           {/* Awaiting secrets */}
           {awaitingSecrets.map((prov) => (
             <Card key={prov.id} className="border-amber-500/20">
