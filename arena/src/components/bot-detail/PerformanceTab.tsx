@@ -8,6 +8,7 @@ import { useBotMetrics } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { buildPerformanceChartPoints } from './performanceChart';
 
 interface PerformanceTabProps {
   bot: Bot;
@@ -27,16 +28,13 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     refetchInterval: isLive ? 15_000 : false,
   });
 
-  // Use API metrics for sparkline if available, otherwise use bot.sparklineData
-  const sparklineData = useMemo(() => {
-    if (apiMetrics && apiMetrics.length > 0) {
-      return apiMetrics.map(m => m.account_value_usd);
-    }
-    return bot.sparklineData;
-  }, [apiMetrics, bot.sparklineData]);
+  const chartPoints = useMemo(
+    () => buildPerformanceChartPoints(apiMetrics, bot.sparklineData),
+    [apiMetrics, bot.sparklineData],
+  );
 
   useEffect(() => {
-    if (!canvasRef.current || sparklineData.length === 0) return;
+    if (!canvasRef.current || chartPoints.length === 0) return;
 
     let cancelled = false;
 
@@ -49,9 +47,10 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       }
 
       const ctx = canvasRef.current.getContext('2d')!;
-      const labels = sparklineData.map((_, i) => `Day ${i + 1}`);
-      const latestPoint = sparklineData[sparklineData.length - 1] ?? 0;
-      const firstPoint = sparklineData[0] ?? latestPoint;
+      const labels = chartPoints.map((point) => point.label);
+      const values = chartPoints.map((point) => point.value);
+      const latestPoint = values[values.length - 1] ?? 0;
+      const firstPoint = values[0] ?? latestPoint;
       const positive = latestPoint >= firstPoint;
       const lineColor = positive ? chartTheme.positive : chartTheme.negative;
 
@@ -66,7 +65,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
           datasets: [
             {
               label: 'Portfolio Value',
-              data: sparklineData,
+              data: values,
               borderColor: lineColor,
               backgroundColor: gradient,
               borderWidth: 2,
@@ -100,6 +99,12 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               padding: 10,
               cornerRadius: 8,
               displayColors: false,
+              callbacks: {
+                title: (tooltipItems) => {
+                  const dataIndex = tooltipItems[0]?.dataIndex ?? 0;
+                  return chartPoints[dataIndex]?.tooltipLabel ?? tooltipItems[0]?.label ?? '';
+                },
+              },
             },
           },
           scales: {
@@ -133,7 +138,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       cancelled = true;
       chartRef.current?.destroy();
     };
-  }, [bot, sparklineData, chartTheme]);
+  }, [chartPoints, chartTheme]);
 
   const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
   const totalReturnValue = latestMetrics
@@ -200,7 +205,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
           <CardTitle>Performance (30D)</CardTitle>
         </CardHeader>
         <CardContent>
-          {sparklineData.length > 0 ? (
+          {chartPoints.length > 0 ? (
             <div className="h-[320px]">
               <canvas ref={canvasRef} />
             </div>
