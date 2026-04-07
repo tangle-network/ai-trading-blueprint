@@ -27,7 +27,11 @@ import {
   doesProvisionLikelyReferToBot,
   partitionProvisionsForBots,
 } from '~/lib/utils/botProvisionReconciliation';
-import { getOperatorApiUrlForBlueprint, OPERATOR_API_URL } from '~/lib/operator/meta';
+import {
+  ALL_TRADING_OPERATOR_API_URLS,
+  getOperatorApiUrlForBlueprint,
+  HAS_TRADING_OPERATOR_API,
+} from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 
 /**
@@ -67,7 +71,7 @@ export default function HomePage() {
   const { address: userAddress, isConnected } = useAccount();
 
   useTradingRouteAutoAuth({
-    enabled: isConnected && !!OPERATOR_API_URL,
+    enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'dashboard',
   });
 
@@ -382,6 +386,7 @@ export default function HomePage() {
             </div>
           ) : (
             <OperatorAccessCard
+              apiUrls={ALL_TRADING_OPERATOR_API_URLS}
               title="Operator authentication required"
               description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed bot${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
             />

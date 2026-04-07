@@ -46,3 +46,38 @@ describe('getDeploymentKindForOperatorKind', () => {
     expect(getDeploymentKindForOperatorKind(null)).toBe('instance');
   });
 });
+
+describe('HAS_TRADING_OPERATOR_API', () => {
+  it('is true for instance-only deployments', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '/instance-operator-api');
+    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '');
+    const { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } = await import('./meta');
+    expect(HAS_TRADING_OPERATOR_API).toBe(true);
+    expect(ALL_TRADING_OPERATOR_API_URLS).toEqual(['/instance-operator-api']);
+  });
+
+  it('is true for TEE-only deployments', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '/tee-operator-api');
+    const { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } = await import('./meta');
+    expect(HAS_TRADING_OPERATOR_API).toBe(true);
+    expect(ALL_TRADING_OPERATOR_API_URLS).toEqual(['/tee-operator-api']);
+  });
+
+  it('deduplicates duplicate instance and TEE URLs', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '/shared-operator-api');
+    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '/shared-operator-api');
+    const { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } = await import('./meta');
+    expect(HAS_TRADING_OPERATOR_API).toBe(true);
+    expect(ALL_TRADING_OPERATOR_API_URLS).toEqual(['/shared-operator-api']);
+  });
+});

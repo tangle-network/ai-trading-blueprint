@@ -11,6 +11,7 @@ export const OPERATOR_API_URL = CLOUD_OPERATOR_API_URL;
 export const ALL_TRADING_OPERATOR_API_URLS = Array.from(
   new Set([CLOUD_OPERATOR_API_URL, INSTANCE_OPERATOR_API_URL, TEE_OPERATOR_API_URL].filter(Boolean)),
 );
+export const HAS_TRADING_OPERATOR_API = ALL_TRADING_OPERATOR_API_URLS.length > 0;
 
 export type OperatorDeploymentKind = 'fleet' | 'instance';
 

@@ -4,21 +4,58 @@ import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { hydratedBotsStore } from '~/lib/stores/hydratedBots';
 import {
   CLOUD_OPERATOR_API_URL,
+  HAS_TRADING_OPERATOR_API,
   INSTANCE_OPERATOR_API_URL,
   OPERATOR_API_URL,
   TEE_OPERATOR_API_URL,
 } from '~/lib/operator/meta';
 
+interface AuthTarget {
+  apiUrl: string;
+  auth: ReturnType<typeof useOperatorAuth>;
+}
+
 export function OperatorAccessCard({
   title = 'Operator authentication required',
   description = 'Connect your wallet to load operator-managed bot data.',
   apiUrl = OPERATOR_API_URL,
+  apiUrls,
 }: {
   title?: string;
   description?: string;
   apiUrl?: string;
+  apiUrls?: string[];
 }) {
   const operatorAuth = useOperatorAuth(apiUrl);
+  const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
+  const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
+  const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
+  const knownTargets: AuthTarget[] = [
+    { apiUrl: CLOUD_OPERATOR_API_URL, auth: cloudAuth },
+    { apiUrl: INSTANCE_OPERATOR_API_URL, auth: instanceAuth },
+    { apiUrl: TEE_OPERATOR_API_URL, auth: teeAuth },
+  ].filter((target) => target.apiUrl);
+
+  const selectedTargets = (() => {
+    const dedupedApiUrls = Array.from(new Set((apiUrls ?? []).filter(Boolean)));
+    if (dedupedApiUrls.length > 0) {
+      return dedupedApiUrls.map((url) => (
+        knownTargets.find((target) => target.apiUrl === url)
+        ?? { apiUrl: url, auth: operatorAuth }
+      ));
+    }
+    if (!apiUrl) return [];
+    return [knownTargets.find((target) => target.apiUrl === apiUrl) ?? { apiUrl, auth: operatorAuth }];
+  })();
+  const isAuthenticating = selectedTargets.some((target) => target.auth.isAuthenticating);
+  const error = selectedTargets.find((target) => target.auth.error)?.auth.error ?? null;
+
+  const authenticate = async () => {
+    for (const target of selectedTargets) {
+      if (target.auth.isAuthenticated || target.auth.isAuthenticating) continue;
+      await target.auth.authenticate();
+    }
+  };
 
   return (
     <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
@@ -28,13 +65,13 @@ export function OperatorAccessCard({
       </h3>
       <p className="text-sm mb-4">{description}</p>
       <Button
-        onClick={() => operatorAuth.authenticate()}
-        disabled={operatorAuth.isAuthenticating}
+        onClick={() => { void authenticate(); }}
+        disabled={isAuthenticating}
       >
-        {operatorAuth.isAuthenticating ? 'Connecting...' : 'Connect Wallet'}
+        {isAuthenticating ? 'Connecting...' : 'Connect Wallet'}
       </Button>
-      {operatorAuth.error && (
-        <p className="mt-3 text-xs text-crimson-500">{operatorAuth.error}</p>
+      {error && (
+        <p className="mt-3 text-xs text-crimson-500">{error}</p>
       )}
     </div>
   );
@@ -70,7 +107,7 @@ export function OperatorSessionBanner() {
     { apiUrl: TEE_OPERATOR_API_URL, auth: teeAuth },
   ].filter((target) => target.apiUrl);
 
-  if (!OPERATOR_API_URL || syncState.operatorDataState === 'ready') {
+  if (!HAS_TRADING_OPERATOR_API || syncState.operatorDataState === 'ready') {
     return null;
   }
 

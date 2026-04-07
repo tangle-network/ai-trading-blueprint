@@ -2,6 +2,16 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { TrackedProvision } from '~/lib/stores/provisions';
 
+const hoisted = vi.hoisted(() => ({
+  operatorAccessCardMock: vi.fn(({ title, description }: any) => (
+    <div>
+      <div>{title}</div>
+      <div>{description}</div>
+    </div>
+  )),
+  useTradingRouteAutoAuthMock: vi.fn(),
+}));
+
 const accountAddress = '0x0000000000000000000000000000000000000001' as const;
 
 const accountState = {
@@ -118,7 +128,14 @@ vi.mock('~/lib/hooks/useBotEnrichment', () => ({
 }));
 
 vi.mock('~/lib/hooks/useTradingRouteAutoAuth', () => ({
-  useTradingRouteAutoAuth: vi.fn(),
+  useTradingRouteAutoAuth: hoisted.useTradingRouteAutoAuthMock,
+}));
+
+vi.mock('~/lib/operator/meta', () => ({
+  ALL_TRADING_OPERATOR_API_URLS: ['/instance-operator-api'],
+  HAS_TRADING_OPERATOR_API: true,
+  OPERATOR_API_URL: '',
+  getOperatorApiUrlForBlueprint: () => '/instance-operator-api',
 }));
 
 vi.mock('~/lib/contracts/addresses', () => ({
@@ -150,12 +167,7 @@ vi.mock('~/components/home/SecretsModal', () => ({
 }));
 
 vi.mock('~/components/operator/OperatorAccessCard', () => ({
-  OperatorAccessCard: ({ title, description }: any) => (
-    <div>
-      <div>{title}</div>
-      <div>{description}</div>
-    </div>
-  ),
+  OperatorAccessCard: (props: any) => hoisted.operatorAccessCardMock(props),
   OperatorSessionBanner: () => null,
 }));
 
@@ -169,6 +181,41 @@ describe('dashboard auth-aware rendering', () => {
     botsState.isLoading = false;
     botsState.operatorDataState = 'locked';
     provisionsState = [];
+    hoisted.operatorAccessCardMock.mockClear();
+    hoisted.useTradingRouteAutoAuthMock.mockClear();
+  });
+
+  it('enables trading auto-auth and passes all trading operator URLs to the fallback card', async () => {
+    provisionsState = [
+      {
+        id: 'prov-1',
+        owner: accountState.address,
+        name: 'bot1',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        phase: 'awaiting_secrets',
+        createdAt: 1,
+        updatedAt: 1,
+        chainId: 31338,
+        serviceId: 1,
+        callId: 7,
+        botId: 'trading-real-bot',
+        sandboxId: 'sandbox-1',
+      },
+    ];
+
+    const { default: HomePage } = await import('../dashboard');
+    render(<HomePage />);
+
+    expect(hoisted.useTradingRouteAutoAuthMock).toHaveBeenCalledWith({
+      enabled: true,
+      routeKey: 'dashboard',
+    });
+    expect(hoisted.operatorAccessCardMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiUrls: ['/instance-operator-api'],
+      title: 'Operator authentication required',
+    }));
   });
 
   it('shows locked bot access instead of a fake provisioning row when botId is already known', async () => {
@@ -196,6 +243,9 @@ describe('dashboard auth-aware rendering', () => {
 
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
     expect(screen.getByText(/Authenticate to load 1 operator-managed bot/i)).toBeInTheDocument();
+    expect(hoisted.operatorAccessCardMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiUrls: ['/instance-operator-api'],
+    }));
     expect(screen.getByText('service-1-locked-1')).toBeInTheDocument();
     expect(screen.queryByText('provisioning-1-failed-0')).not.toBeInTheDocument();
     expect(screen.getByText('Active Bots').parentElement).toHaveTextContent('—');

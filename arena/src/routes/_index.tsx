@@ -13,7 +13,7 @@ import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
-import { OPERATOR_API_URL } from '~/lib/operator/meta';
+import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
@@ -98,7 +98,7 @@ export default function IndexPage() {
   const [timePeriod, setTimePeriod] = useState('30d');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
   useTradingRouteAutoAuth({
-    enabled: isConnected && !!OPERATOR_API_URL,
+    enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
   });
   const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
@@ -201,6 +201,7 @@ export default function IndexPage() {
       ) : sorted.length === 0 ? (
         operatorDataState !== 'ready' && isConnected ? (
           <OperatorAccessCard
+            apiUrls={ALL_TRADING_OPERATOR_API_URLS}
             title="Operator authentication required"
             description="Authenticate to load operator-managed agents and live leaderboard metrics."
           />
