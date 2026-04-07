@@ -46,10 +46,10 @@ importers:
         version: 7.13.0(react-router@7.13.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(typescript@5.9.3)
       '@tangle-network/blueprint-ui':
         specifier: ^0.1.1
-        version: 0.1.1(i7awfymvxzvhxdjldoeqj6ek5a)
+        version: 0.1.1(fa4fce1c832152d2cfa17886f7dc81db)
       '@tangle-network/sandbox-ui':
-        specifier: ^0.5.2
-        version: 0.5.2(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+        specifier: ^0.8.4
+        version: 0.8.4(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@tanstack/react-query':
         specifier: ^5.90.16
         version: 5.90.21(react@19.0.0)
@@ -1467,8 +1467,8 @@ packages:
       viem: ^2.31.0
       wagmi: ^3.3.0
 
-  '@tangle-network/sandbox-ui@0.5.2':
-    resolution: {integrity: sha512-Wpu+UmlatV6QRlEA0VtAM8anPrnBa67rNwtirDFdMna+0Px92g4Q32a06LMzomQvsDB5IQJCYA0i8gK9wAqkYg==}
+  '@tangle-network/sandbox-ui@0.8.4':
+    resolution: {integrity: sha512-1ZjWxtCmaM702BU2iq94FqJ5LsjiydWSvjScqlJw4PaB2o2Gp6kY6fdxuQeD6mc9EuZGUizco/taXbiVK1qv/g==}
     peerDependencies:
       '@hocuspocus/provider': '*'
       '@tanstack/react-query': '*'
@@ -4810,7 +4810,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tangle-network/blueprint-ui@0.1.1(i7awfymvxzvhxdjldoeqj6ek5a)':
+  '@tangle-network/blueprint-ui@0.1.1(fa4fce1c832152d2cfa17886f7dc81db)':
     dependencies:
       '@nanostores/react': 0.7.3(nanostores@0.10.3)(react@19.0.0)
       '@radix-ui/react-dialog': 1.1.15(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -4833,7 +4833,7 @@ snapshots:
       viem: 2.46.2(typescript@5.9.3)
       wagmi: 3.4.4(@tanstack/query-core@5.90.20)(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react@18.3.1)(ox@0.12.4(typescript@5.9.3))(react@19.0.0)(typescript@5.9.3)(viem@2.46.2(typescript@5.9.3))
 
-  '@tangle-network/sandbox-ui@0.5.2(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)':
+  '@tangle-network/sandbox-ui@0.8.4(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)':
     dependencies:
       '@nanostores/react': 1.1.0(nanostores@1.2.0)(react@19.0.0)
       '@radix-ui/react-avatar': 1.1.11(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
