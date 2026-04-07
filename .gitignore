@@ -58,3 +58,6 @@ arena/scripts/data/
 
 # Playwright MCP
 .playwright-mcp
+
+# Local Playwright Web3 extension manifest
+.codex/skills/playwright-web3/extensions/mock-wallet/manifest.json
