@@ -5,6 +5,7 @@
 //! `tower::ServiceExt::oneshot`.
 
 use axum::body::Body;
+use axum::http::header::CONTENT_TYPE;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
@@ -87,6 +88,15 @@ fn seed_sandbox_record(id: &str) {
 fn mark_sandbox_secrets_configured(id: &str) {
     let mut record = sandbox_runtime::runtime::get_sandbox_by_id(id).expect("sandbox exists");
     record.user_env_json = r#"{"ANTHROPIC_API_KEY":"sk-test"}"#.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .insert(id.to_string(), record)
+        .expect("update sandbox");
+}
+
+fn set_sandbox_sidecar_url(id: &str, sidecar_url: &str) {
+    let mut record = sandbox_runtime::runtime::get_sandbox_by_id(id).expect("sandbox exists");
+    record.sidecar_url = sidecar_url.to_string();
     sandbox_runtime::runtime::sandboxes()
         .expect("sandbox store")
         .insert(id.to_string(), record)
@@ -295,6 +305,88 @@ async fn spawn_mock_trading_api() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_terminal_sidecar() -> String {
+    let app = Router::new()
+        .route(
+            "/terminals",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": [{
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }]
+                }))
+            })
+            .post(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            })
+            .patch(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            })
+            .delete(|| async {
+                Json(json!({
+                    "success": true
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1/input",
+            post(|| async {
+                Json(json!({
+                    "success": true
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1/stream",
+            get(|| async move {
+                (
+                    [(CONTENT_TYPE, "text/event-stream")],
+                    "event: data.stdout\ndata: {\"type\":\"data.stdout\",\"properties\":{\"text\":\"hello from shell\\r\\n\"}}\n\n",
+                )
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock terminal sidecar");
+    let addr = listener.local_addr().expect("mock terminal sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock terminal sidecar");
+    });
+    format!("http://{addr}")
+}
+
 // ---------------------------------------------------------------------------
 // Auth endpoint tests
 // ---------------------------------------------------------------------------
@@ -391,6 +483,12 @@ async fn test_protected_routes_reject_no_auth() {
         ("GET", "/api/bots/test/trades"),
         ("GET", "/api/bots/test/portfolio/state"),
         ("GET", "/api/bots/test/activation-progress"),
+        ("GET", "/api/bots/test/live/terminal/sessions"),
+        ("POST", "/api/bots/test/live/terminal/sessions"),
+        ("GET", "/api/bots/test/live/terminal/sessions/term-1/stream"),
+        ("PATCH", "/api/bots/test/live/terminal/sessions/term-1"),
+        ("DELETE", "/api/bots/test/live/terminal/sessions/term-1"),
+        ("POST", "/api/bots/test/live/terminal/sessions/term-1/input"),
         ("GET", "/api/debug/sandboxes"),
         ("GET", "/api/debug/workflows"),
     ];
@@ -578,6 +676,144 @@ async fn test_get_bot_not_found() {
         .unwrap();
 
     assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn test_terminal_routes_proxy_live_session_lifecycle() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("terminal-bot-1", "dex", true);
+    let sidecar_url = spawn_mock_terminal_sidecar().await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    let list_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/live/terminal/sessions", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_body = list_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
+    assert_eq!(list_json["sessions"][0]["session_id"], "term-1");
+
+    let create_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/bots/{}/live/terminal/sessions", bot.id))
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cols":120,"rows":32}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let create_body = create_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let create_json: serde_json::Value = serde_json::from_slice(&create_body).unwrap();
+    assert_eq!(create_json["session_id"], "term-1");
+
+    let resize_response = app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/api/bots/{}/live/terminal/sessions/term-1",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cols":100,"rows":28}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resize_response.status(), StatusCode::OK);
+
+    let input_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/live/terminal/sessions/term-1/input",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"data":"pwd\n"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(input_response.status(), StatusCode::OK);
+
+    let stream_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/live/terminal/sessions/term-1/stream",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream_response.status(), StatusCode::OK);
+    assert_eq!(
+        stream_response.headers().get(CONTENT_TYPE).unwrap(),
+        "text/event-stream"
+    );
+    let stream_body = stream_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let stream_text = String::from_utf8(stream_body.to_vec()).unwrap();
+    assert!(stream_text.contains("hello from shell"));
+
+    let delete_response = app()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/bots/{}/live/terminal/sessions/term-1",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::OK);
+    let delete_body = delete_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let delete_json: serde_json::Value = serde_json::from_slice(&delete_body).unwrap();
+    assert_eq!(delete_json["deleted"], true);
+    assert_eq!(delete_json["session_id"], "term-1");
 }
 
 // ---------------------------------------------------------------------------

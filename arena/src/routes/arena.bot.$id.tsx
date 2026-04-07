@@ -243,7 +243,13 @@ export default function BotDetailPage() {
           {operatorMeta?.features.terminal && (
             <TabsContent value="terminal" className="mt-6">
               <ErrorBoundary>
-                <TerminalTab botId={bot.id} />
+                <TerminalTab
+                  botId={bot.id}
+                  botName={bot.name}
+                  operatorApiUrl={bot.operatorApiUrl}
+                  operatorKind={bot.operatorKind}
+                  verificationState={bot.verificationState}
+                />
               </ErrorBoundary>
             </TabsContent>
           )}

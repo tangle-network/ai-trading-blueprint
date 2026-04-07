@@ -3,6 +3,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
+use sandbox_runtime::api_types::{
+    CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
+};
+use sandbox_runtime::operator_api::TerminalRelayError;
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -187,12 +191,14 @@ struct ConfigResponse {
 
 #[derive(Serialize)]
 struct OperatorErrorResponse {
-    code: &'static str,
+    code: String,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     bot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after_ms: Option<u64>,
 }
 
 enum ApiError {
@@ -229,36 +235,51 @@ impl From<(StatusCode, String)> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        match self {
-            ApiError::Message(status, message) => (
-                status,
-                Json(OperatorErrorResponse {
-                    code: "operator_error",
-                    message,
-                    bot_id: None,
-                    sandbox_id: None,
-                }),
-            )
-                .into_response(),
-            ApiError::StaleState {
-                message,
-                bot_id,
-                sandbox_id,
-            } => (
-                StatusCode::CONFLICT,
-                Json(OperatorErrorResponse {
-                    code: "stale_state",
-                    message,
-                    bot_id: Some(bot_id),
-                    sandbox_id: Some(sandbox_id),
-                }),
-            )
-                .into_response(),
-        }
+        api_error_response(self).into_response()
     }
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
+
+fn error_json(
+    status: StatusCode,
+    code: impl Into<String>,
+    message: impl Into<String>,
+    bot_id: Option<String>,
+    sandbox_id: Option<String>,
+    retry_after_ms: Option<u64>,
+) -> (StatusCode, Json<OperatorErrorResponse>) {
+    (
+        status,
+        Json(OperatorErrorResponse {
+            code: code.into(),
+            message: message.into(),
+            bot_id,
+            sandbox_id,
+            retry_after_ms,
+        }),
+    )
+}
+
+fn api_error_response(error: ApiError) -> (StatusCode, Json<OperatorErrorResponse>) {
+    match error {
+        ApiError::Message(status, message) => {
+            error_json(status, "operator_error", message, None, None, None)
+        }
+        ApiError::StaleState {
+            message,
+            bot_id,
+            sandbox_id,
+        } => error_json(
+            StatusCode::CONFLICT,
+            "stale_state",
+            message,
+            Some(bot_id),
+            Some(sandbox_id),
+            None,
+        ),
+    }
+}
 
 // ── Instance provision types ─────────────────────────────────────────────
 
@@ -419,6 +440,22 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot/portfolio/state", get(get_bot_portfolio))
         .route("/api/bot/activation-progress", get(get_activation_progress))
         .route(
+            "/api/bot/live/terminal/sessions",
+            get(list_terminal_sessions).post(create_terminal_session),
+        )
+        .route(
+            "/api/bot/live/terminal/sessions/{session_id}",
+            patch(resize_terminal_session).delete(delete_terminal_session),
+        )
+        .route(
+            "/api/bot/live/terminal/sessions/{session_id}/stream",
+            get(stream_terminal_session),
+        )
+        .route(
+            "/api/bot/live/terminal/sessions/{session_id}/input",
+            post(send_terminal_input),
+        )
+        .route(
             "/api/bot/session/sessions",
             get(list_chat_sessions).post(create_chat_gateway_session),
         )
@@ -457,7 +494,7 @@ async fn get_operator_meta() -> Json<OperatorMetaResponse> {
         deployment_kind: "instance".to_string(),
         features: OperatorFeatureFlags {
             chat: true,
-            terminal: false,
+            terminal: true,
         },
     })
 }
@@ -480,6 +517,57 @@ fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiErr
         return Err(ApiError::stale_bot(&bot));
     }
     Ok(bot)
+}
+
+struct LiveTerminalTarget {
+    bot: TradingBotRecord,
+    sandbox: sandbox_runtime::runtime::SandboxRecord,
+}
+
+fn terminal_error_response(
+    err: TerminalRelayError,
+    bot: &TradingBotRecord,
+) -> (StatusCode, Json<OperatorErrorResponse>) {
+    error_json(
+        err.status,
+        err.code.unwrap_or_else(|| "operator_error".to_string()),
+        err.message,
+        Some(bot.id.clone()),
+        Some(bot.sandbox_id.clone()),
+        err.retry_after_ms,
+    )
+}
+
+fn resolve_live_terminal_target(
+    caller: &str,
+) -> Result<LiveTerminalTarget, (StatusCode, Json<OperatorErrorResponse>)> {
+    let bot = resolve_singleton_live().map_err(api_error_response)?;
+    verify_submitter(&bot, caller).map_err(|(status, message)| {
+        error_json(
+            status,
+            "operator_error",
+            message,
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        )
+    })?;
+    let sandbox =
+        sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).map_err(|_| {
+            error_json(
+                StatusCode::CONFLICT,
+                "stale_state",
+                format!(
+                    "Instance bot {} points to missing sandbox {}. Operator state is stale; reprovision the agent from the deploy step.",
+                    bot.id, bot.sandbox_id
+                ),
+                Some(bot.id.clone()),
+                Some(bot.sandbox_id.clone()),
+                None,
+            )
+        })?;
+
+    Ok(LiveTerminalTarget { bot, sandbox })
 }
 
 async fn fetch_trading_api_json(
@@ -1206,6 +1294,110 @@ async fn stream_chat_events(
     let target = resolve_live_chat_target(&caller)?;
     let session_id = params.get("sessionId").cloned();
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
+}
+
+// ── Terminal session proxy handlers ─────────────────────────────────────
+
+async fn list_terminal_sessions(
+    SessionAuth(caller): SessionAuth,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let target = resolve_live_terminal_target(&caller)?;
+    let sessions = sandbox_runtime::operator_api::list_live_terminal_sessions(&target.sandbox)
+        .await
+        .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(serde_json::json!({ "sessions": sessions })))
+}
+
+async fn create_terminal_session(
+    SessionAuth(caller): SessionAuth,
+    Json(req): Json<CreateLiveTerminalSessionRequest>,
+) -> Result<
+    Json<sandbox_runtime::operator_api::LiveSessionSummary>,
+    (StatusCode, Json<OperatorErrorResponse>),
+> {
+    let target = resolve_live_terminal_target(&caller)?;
+    let session =
+        sandbox_runtime::operator_api::create_live_terminal_session(&target.sandbox, &req)
+            .await
+            .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(session))
+}
+
+async fn stream_terminal_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+) -> Result<Response, (StatusCode, Json<OperatorErrorResponse>)> {
+    let target = resolve_live_terminal_target(&caller)?;
+    sandbox_runtime::operator_api::stream_live_terminal_session(&target.sandbox, &session_id)
+        .await
+        .map_err(|err| terminal_error_response(err, &target.bot))
+}
+
+async fn delete_terminal_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let target = resolve_live_terminal_target(&caller)?;
+    let result =
+        sandbox_runtime::operator_api::delete_live_terminal_session(&target.sandbox, &session_id)
+            .await
+            .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(result))
+}
+
+async fn resize_terminal_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+    Json(req): Json<TerminalResizeApiRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    if let Err(message) = req.validate() {
+        return Err(error_json(
+            StatusCode::BAD_REQUEST,
+            "operator_error",
+            message,
+            None,
+            None,
+            None,
+        ));
+    }
+
+    let target = resolve_live_terminal_target(&caller)?;
+    sandbox_runtime::operator_api::resize_live_terminal_session(
+        &target.sandbox,
+        &session_id,
+        req.cols,
+        req.rows,
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn send_terminal_input(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+    Json(req): Json<TerminalInputApiRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    if let Err(message) = req.validate() {
+        return Err(error_json(
+            StatusCode::BAD_REQUEST,
+            "operator_error",
+            message,
+            None,
+            None,
+            None,
+        ));
+    }
+
+    let target = resolve_live_terminal_target(&caller)?;
+    sandbox_runtime::operator_api::send_live_terminal_input(
+        &target.sandbox,
+        &session_id,
+        &req.data,
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 // ── Auth handlers ───────────────────────────────────────────────────────
