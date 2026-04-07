@@ -223,6 +223,18 @@ export default function BotDetailPage() {
                   operatorApiUrl={bot.operatorApiUrl}
                   operatorKind={bot.operatorKind}
                   verificationState={bot.verificationState}
+                  requiresSecrets={bot.status === 'needs_config' || bot.secretsConfigured === false}
+                  onConfigureSecrets={
+                    (bot.status === 'needs_config' || bot.secretsConfigured === false)
+                      ? () => setSecretsTarget({
+                          apiUrl: bot.operatorApiUrl ?? undefined,
+                          botId: bot.id,
+                          sandboxId: bot.sandboxId,
+                          callId: bot.callId,
+                          serviceId: bot.serviceId,
+                        })
+                      : undefined
+                  }
                 />
               </ErrorBoundary>
             </TabsContent>

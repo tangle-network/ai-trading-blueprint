@@ -86,6 +86,7 @@ pub async fn activate_bot_with_secrets(
         // Wait for sidecar HTTP server to be ready (container just recreated).
         // Without this, setup commands get ConnectionReset.
         wait_for_sidecar_health(&record.sidecar_url, 20).await;
+        ensure_sidecar_runtime_dirs(&record.sidecar_url, &record.token).await?;
 
         for cmd in &p.setup_commands {
             let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
@@ -242,6 +243,21 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     tracing::warn!("Sidecar health check timed out after {max_secs}s — proceeding anyway");
+}
+
+async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar && chmod 0777 /home/agent/.sidecar'"
+            .to_string(),
+        cwd: String::new(),
+        env_json: String::new(),
+        timeout_ms: 30_000,
+    };
+    ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
+        .await
+        .map_err(|e| format!("Failed to prepare sidecar runtime directories: {e}"))?;
+    Ok(())
 }
 
 /// Deploy pre-built trading tools to the sidecar filesystem.

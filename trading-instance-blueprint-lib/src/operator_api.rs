@@ -1,4 +1,4 @@
-use axum::extract::Query;
+use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
@@ -418,6 +418,25 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot/trades", get(get_bot_trades))
         .route("/api/bot/portfolio/state", get(get_bot_portfolio))
         .route("/api/bot/activation-progress", get(get_activation_progress))
+        .route(
+            "/api/bot/session/sessions",
+            get(list_chat_sessions).post(create_chat_gateway_session),
+        )
+        .route(
+            "/api/bot/session/sessions/{session_id}",
+            get(get_chat_session)
+                .patch(update_chat_session)
+                .delete(delete_chat_session),
+        )
+        .route(
+            "/api/bot/session/sessions/{session_id}/messages",
+            get(list_chat_messages).post(send_chat_message),
+        )
+        .route(
+            "/api/bot/session/sessions/{session_id}/abort",
+            post(abort_chat_session),
+        )
+        .route("/api/bot/session/events", get(stream_chat_events))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
@@ -437,7 +456,7 @@ async fn get_operator_meta() -> Json<OperatorMetaResponse> {
         api_version: "1".to_string(),
         deployment_kind: "instance".to_string(),
         features: OperatorFeatureFlags {
-            chat: false,
+            chat: true,
             terminal: false,
         },
     })
@@ -1045,6 +1064,148 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
         ));
     }
     Ok(())
+}
+
+fn resolve_live_chat_target(
+    caller: &str,
+) -> Result<trading_blueprint_lib::operator_chat::SidecarChatTarget, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    verify_submitter(&bot, caller)?;
+    trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::CONFLICT, e))
+}
+
+// ── Chat session proxy handlers ─────────────────────────────────────────
+
+async fn list_chat_sessions(
+    SessionAuth(caller): SessionAuth,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        "/agents/sessions",
+        None,
+        None,
+    )
+    .await
+}
+
+async fn create_chat_gateway_session(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        "/agents/sessions",
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn get_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn update_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::PATCH,
+        &format!("/agents/sessions/{session_id}"),
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn delete_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::DELETE,
+        &format!("/agents/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn list_chat_messages(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}/messages"),
+        None,
+        query.as_deref(),
+    )
+    .await
+}
+
+async fn send_chat_message(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        &format!("/agents/sessions/{session_id}/messages"),
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn abort_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path(session_id): Path<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        &format!("/agents/sessions/{session_id}/abort"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn stream_chat_events(
+    SessionAuth(caller): SessionAuth,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&caller)?;
+    let session_id = params.get("sessionId").cloned();
+    trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
 // ── Auth handlers ───────────────────────────────────────────────────────

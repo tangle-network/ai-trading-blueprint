@@ -1,19 +1,18 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import {
   ChatContainer,
 } from '@tangle-network/sandbox-ui/chat';
 import {
-  useSessionStream,
   useSessions,
   useCreateSession,
   useDeleteSession,
   useRenameSession,
-  type SessionInfo,
 } from '@tangle-network/sandbox-ui/hooks';
 import type { AgentBranding, Session } from '@tangle-network/sandbox-ui/types';
 import { Button } from '@tangle-network/blueprint-ui/components';
 import { AuthBanner } from '~/components/bot-detail/AuthBanner';
+import { useBotSessionStream } from '~/lib/hooks/useBotSessionStream';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
   buildBotScopedPathForDeploymentKind,
@@ -30,6 +29,27 @@ interface ChatTabProps {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  requiresSecrets?: boolean;
+  onConfigureSecrets?: () => void;
+}
+
+function extractChatErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+
+  const raw = error instanceof Error ? error.message : String(error);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: {
+        message?: string;
+      };
+      message?: string;
+    };
+    return parsed.error?.message ?? parsed.message ?? raw;
+  } catch {
+    return raw;
+  }
 }
 
 // ── Branding ────────────────────────────────────────────────────────────
@@ -200,6 +220,8 @@ export function ChatTab({
   operatorApiUrl,
   operatorKind,
   verificationState,
+  requiresSecrets = false,
+  onConfigureSecrets,
 }: ChatTabProps) {
   const baseApiUrl = operatorApiUrl ?? '';
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
@@ -212,22 +234,84 @@ export function ChatTab({
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(() => primarySessionId);
   const [isAborting, setIsAborting] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   // Session CRUD hooks
   const { data: sessions = [] } = useSessions(apiUrl, token);
   const deleteMutation = useDeleteSession(apiUrl, token);
   const renameMutation = useRenameSession(apiUrl, token);
   const createMutation = useCreateSession(apiUrl, token);
+  const hasKnownActiveSession = sessions.some((session) => session.id === activeSessionId);
+  const streamSessionId = hasKnownActiveSession
+    ? activeSessionId
+    : activeSessionId === primarySessionId
+      ? (sessions[0]?.id ?? null)
+      : (activeSessionId || sessions[0]?.id || null);
+
+  useEffect(() => {
+    if (hasKnownActiveSession || sessions.length === 0) return;
+    if (activeSessionId === primarySessionId && sessions[0]?.id) {
+      setActiveSessionId(sessions[0].id);
+    }
+  }, [activeSessionId, hasKnownActiveSession, primarySessionId, sessions]);
 
   // agent-ui streaming hook — replaces manual SSE + message state
-  const stream = useSessionStream({
+  const stream = useBotSessionStream({
     apiUrl,
     token,
-    sessionId: activeSessionId,
-    enabled: isAuthenticated && !!apiUrl,
+    sessionId: streamSessionId ?? '',
+    enabled: isAuthenticated && !!apiUrl && !!streamSessionId,
+    cacheKey: chatCacheKey,
   });
+  const chatErrorMessage = extractChatErrorMessage(sendError ?? stream.error);
 
-  const agentStatus = stream.isStreaming ? 'running' : stream.error ? 'error' : 'idle';
+  const agentStatus = stream.isStreaming ? 'running' : chatErrorMessage ? 'error' : 'idle';
+
+  const createSession = useCallback(async (title: string): Promise<Session> => {
+    setSendError(null);
+    const session = await createMutation.mutateAsync(title);
+    setActiveSessionId(session.id);
+    return session;
+  }, [createMutation]);
+
+  const sendToSession = useCallback(async (sessionId: string, text: string): Promise<void> => {
+    if (!token || !apiUrl) {
+      throw new Error('Chat is not authenticated');
+    }
+
+    const response = await fetch(`${apiUrl}/session/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ parts: [{ type: 'text', text }] }),
+    });
+
+    if (!response.ok) {
+      throw new Error((await response.text()) || `Failed to send message: ${response.status}`);
+    }
+  }, [apiUrl, token]);
+
+  const handleSend = useCallback(async (text: string): Promise<void> => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    setSendError(null);
+
+    try {
+      if (streamSessionId) {
+        await stream.send(trimmed);
+        return;
+      }
+
+      const created = await createSession('Main Session');
+      await sendToSession(created.id, trimmed);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Failed to send message');
+    }
+  }, [createSession, sendToSession, stream, streamSessionId]);
 
   const handleAbort = useCallback(async () => {
     setIsAborting(true);
@@ -275,6 +359,25 @@ export function ChatTab({
     );
   }
 
+  if (requiresSecrets) {
+    return (
+      <div className="glass-card rounded-xl border border-arena-elements-dividerColor p-6 sm:p-8 text-center">
+        <div className="i-ph:key text-3xl mb-3 mx-auto text-amber-400" />
+        <h3 className="text-lg font-display font-semibold text-arena-elements-textPrimary mb-2">
+          Configure API keys first
+        </h3>
+        <p className="text-sm text-arena-elements-textSecondary max-w-xl mx-auto">
+          This bot&apos;s sidecar is provisioned, but chat stays unavailable until the bot has an AI provider key.
+        </p>
+        {onConfigureSecrets && (
+          <Button className="mt-4" onClick={onConfigureSecrets}>
+            Configure API Keys
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card rounded-xl overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 400px)', minHeight: '480px' }}>
       {/* Header */}
@@ -292,19 +395,23 @@ export function ChatTab({
           }}
           onRename={(id, title) => renameMutation.mutate({ sessionId: id, title })}
           onCreate={() => {
-            createMutation.mutate(`Session ${sessions.length + 1}`, {
-              onSuccess: (session) => setActiveSessionId(session.id),
-            });
+            void createSession(`Session ${sessions.length + 1}`);
           }}
         />
       </div>
+
+      {chatErrorMessage && (
+        <div className="mx-4 mt-4 rounded-xl border border-crimson-500/25 bg-crimson-500/10 px-4 py-3 text-sm text-crimson-200">
+          {chatErrorMessage}
+        </div>
+      )}
 
       {/* Message area — ChatContainer */}
       <ChatContainer
         messages={stream.messages}
         partMap={stream.partMap}
         isStreaming={stream.isStreaming}
-        onSend={stream.send}
+        onSend={handleSend}
         branding={TRADING_BRANDING}
         placeholder={stream.isStreaming ? 'Agent is working...' : `Message ${botName}...`}
         className="flex-1 min-h-0"

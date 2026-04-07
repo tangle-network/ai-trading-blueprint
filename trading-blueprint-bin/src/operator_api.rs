@@ -1,4 +1,4 @@
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
@@ -475,6 +475,25 @@ pub fn build_operator_router() -> Router {
             "/api/bots/{bot_id}/activation-progress",
             get(get_activation_progress),
         )
+        .route(
+            "/api/bots/{bot_id}/session/sessions",
+            get(list_chat_sessions).post(create_chat_gateway_session),
+        )
+        .route(
+            "/api/bots/{bot_id}/session/sessions/{session_id}",
+            get(get_chat_session)
+                .patch(update_chat_session)
+                .delete(delete_chat_session),
+        )
+        .route(
+            "/api/bots/{bot_id}/session/sessions/{session_id}/messages",
+            get(list_chat_messages).post(send_chat_message),
+        )
+        .route(
+            "/api/bots/{bot_id}/session/sessions/{session_id}/abort",
+            post(abort_chat_session),
+        )
+        .route("/api/bots/{bot_id}/session/events", get(stream_chat_events))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
@@ -496,7 +515,7 @@ async fn get_operator_meta() -> Json<OperatorMetaResponse> {
         api_version: "1".to_string(),
         deployment_kind: "fleet".to_string(),
         features: OperatorFeatureFlags {
-            chat: false,
+            chat: true,
             terminal: false,
         },
     })
@@ -855,6 +874,16 @@ fn resolve_live_bot(bot_id: &str) -> Result<TradingBotRecord, ApiError> {
     ensure_live_sandbox(bot)
 }
 
+fn resolve_live_chat_target(
+    bot_id: &str,
+    caller: &str,
+) -> Result<trading_blueprint_lib::operator_chat::SidecarChatTarget, (StatusCode, String)> {
+    let bot = resolve_bot(bot_id)?;
+    verify_submitter(&bot, caller)?;
+    trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::CONFLICT, e))
+}
+
 fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiError> {
     if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_err() {
         return Err(ApiError::stale_bot(&bot));
@@ -905,6 +934,142 @@ async fn fetch_trading_api_json_with_method(
         .await
         .map(Some)
         .map_err(|e| format!("failed to decode trading api response: {e}"))
+}
+
+// ── Chat session proxy handlers ─────────────────────────────────────────
+
+async fn list_chat_sessions(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        "/agents/sessions",
+        None,
+        None,
+    )
+    .await
+}
+
+async fn create_chat_gateway_session(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        "/agents/sessions",
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn get_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn update_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::PATCH,
+        &format!("/agents/sessions/{session_id}"),
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn delete_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::DELETE,
+        &format!("/agents/sessions/{session_id}"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn list_chat_messages(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}/messages"),
+        None,
+        query.as_deref(),
+    )
+    .await
+}
+
+async fn send_chat_message(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        &format!("/agents/sessions/{session_id}/messages"),
+        Some(body),
+        None,
+    )
+    .await
+}
+
+async fn abort_chat_session(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, session_id)): Path<(String, String)>,
+) -> Result<Response, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        &format!("/agents/sessions/{session_id}/abort"),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn stream_chat_events(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let session_id = params.get("sessionId").cloned();
+    trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
 fn extract_json_array(
