@@ -867,6 +867,15 @@ async fn fetch_trading_api_json(
     path: &str,
     query: &[(&str, String)],
 ) -> Result<Option<serde_json::Value>, String> {
+    fetch_trading_api_json_with_method(bot, reqwest::Method::GET, path, query).await
+}
+
+async fn fetch_trading_api_json_with_method(
+    bot: &TradingBotRecord,
+    method: reqwest::Method,
+    path: &str,
+    query: &[(&str, String)],
+) -> Result<Option<serde_json::Value>, String> {
     if bot.trading_api_url.trim().is_empty() || bot.trading_api_token.trim().is_empty() {
         return Ok(None);
     }
@@ -878,7 +887,7 @@ async fn fetch_trading_api_json(
 
     let url = format!("{}{}", bot.trading_api_url.trim_end_matches('/'), path);
     let response = client
-        .get(url)
+        .request(method, url)
         .bearer_auth(&bot.trading_api_token)
         .header(reqwest::header::ACCEPT, "application/json")
         .query(query)
@@ -913,6 +922,46 @@ fn extract_json_array(
     }
 }
 
+fn deserialize_f64_from_string_or_number<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(number) => number
+            .as_f64()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| serde::de::Error::custom("expected finite number")),
+        serde_json::Value::String(text) => text
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| serde::de::Error::custom("expected numeric string")),
+        _ => Err(serde::de::Error::custom(
+            "expected number or numeric string",
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+struct TradingApiPortfolioPosition {
+    token: String,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
+    amount: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
+    entry_price: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
+    current_price: f64,
+}
+
+#[derive(Deserialize)]
+struct TradingApiPortfolioResponse {
+    #[serde(default)]
+    positions: Vec<TradingApiPortfolioPosition>,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
+    total_value_usd: f64,
+}
+
 fn parse_trade_number(value: &str) -> Option<f64> {
     value.parse::<f64>().ok().filter(|v| v.is_finite())
 }
@@ -920,7 +969,7 @@ fn parse_trade_number(value: &str) -> Option<f64> {
 fn action_opens_position(action: &str) -> bool {
     matches!(
         action.to_lowercase().as_str(),
-        "buy" | "swap" | "open_long" | "open_short" | "supply" | "borrow"
+        "buy" | "open_long" | "open_short" | "supply" | "borrow"
     )
 }
 
@@ -1069,6 +1118,114 @@ fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
         .into_iter()
         .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
         .collect()
+}
+
+fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStateResponse, String> {
+    let portfolio: TradingApiPortfolioResponse =
+        serde_json::from_value(payload).map_err(|e| format!("invalid portfolio payload: {e}"))?;
+
+    let total_value = portfolio.total_value_usd;
+    let positions = portfolio
+        .positions
+        .into_iter()
+        .map(|position| {
+            let value_usd = position.amount * position.current_price;
+            let pnl_percent = if position.entry_price > 0.0 {
+                ((position.current_price - position.entry_price) / position.entry_price) * 100.0
+            } else {
+                0.0
+            };
+
+            PortfolioPosition {
+                token: position.token.chars().take(10).collect(),
+                symbol: position.token.chars().take(30).collect(),
+                amount: position.amount,
+                value_usd,
+                entry_price: position.entry_price,
+                current_price: position.current_price,
+                pnl_percent,
+                weight: if total_value > 0.0 {
+                    (value_usd / total_value) * 100.0
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
+
+    Ok(PortfolioStateResponse {
+        total_value_usd: total_value,
+        cash_balance: 0.0,
+        positions,
+    })
+}
+
+fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
+    let trades = fallback_trade_dataset(bot);
+
+    let open_trades: Vec<&serde_json::Value> = trades
+        .iter()
+        .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
+        .collect();
+
+    let total_pnl: f64 = trades
+        .iter()
+        .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
+        .sum();
+    let total_value = 10_000.0 + total_pnl;
+
+    let position_value: f64 = open_trades
+        .iter()
+        .map(|t| fallback_trade_value_usd(t))
+        .sum();
+
+    let positions: Vec<PortfolioPosition> = open_trades
+        .iter()
+        .map(|t| {
+            let mid = t
+                .get("market_id")
+                .or_else(|| t.get("symbol"))
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let question = t
+                .get("question")
+                .or_else(|| t.get("symbol"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let amount = fallback_trade_quantity(t);
+            let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = t
+                .get("current_price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(entry_price);
+            let pnl_pct = if entry_price > 0.0 {
+                ((current_price - entry_price) / entry_price) * 100.0
+            } else {
+                0.0
+            };
+
+            PortfolioPosition {
+                token: mid.chars().take(10).collect(),
+                symbol: question.chars().take(30).collect(),
+                amount,
+                value_usd: fallback_trade_value_usd(t),
+                entry_price,
+                current_price,
+                pnl_percent: pnl_pct,
+                weight: if total_value > 0.0 {
+                    (fallback_trade_value_usd(t) / total_value) * 100.0
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
+
+    PortfolioStateResponse {
+        total_value_usd: total_value,
+        cash_balance: total_value - position_value,
+        positions,
+    }
 }
 
 fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
@@ -1416,71 +1573,23 @@ async fn get_bot_portfolio(
             positions: Vec::new(),
         }));
     }
-    let trades = fallback_trade_dataset(&bot);
 
-    let open_trades: Vec<&serde_json::Value> = trades
-        .iter()
-        .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
-        .collect();
-
-    let total_pnl: f64 = trades
-        .iter()
-        .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
-        .sum();
-    let total_value = 10_000.0 + total_pnl;
-
-    let position_value: f64 = open_trades
-        .iter()
-        .map(|t| fallback_trade_value_usd(t))
-        .sum();
-
-    let positions: Vec<PortfolioPosition> = open_trades
-        .iter()
-        .map(|t| {
-            let mid = t
-                .get("market_id")
-                .or_else(|| t.get("symbol"))
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-            let question = t
-                .get("question")
-                .or_else(|| t.get("symbol"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown");
-            let amount = fallback_trade_quantity(t);
-            let entry_price = t.get("entry_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let current_price = t
-                .get("current_price")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(entry_price);
-            let pnl_pct = if entry_price > 0.0 {
-                ((current_price - entry_price) / entry_price) * 100.0
-            } else {
-                0.0
-            };
-
-            PortfolioPosition {
-                token: mid.chars().take(10).collect(),
-                symbol: question.chars().take(30).collect(),
-                amount,
-                value_usd: fallback_trade_value_usd(t),
-                entry_price,
-                current_price,
-                pnl_percent: pnl_pct,
-                weight: if total_value > 0.0 {
-                    (fallback_trade_value_usd(t) / total_value) * 100.0
-                } else {
-                    0.0
-                },
+    match fetch_trading_api_json_with_method(&bot, reqwest::Method::POST, "/portfolio/state", &[])
+        .await
+    {
+        Ok(Some(payload)) => match map_trading_api_portfolio(payload) {
+            Ok(portfolio) => Ok(Json(portfolio)),
+            Err(err) => {
+                tracing::warn!(bot_id = %bot.id, "invalid trading api portfolio payload: {err}");
+                Ok(Json(fallback_portfolio_state(&bot)))
             }
-        })
-        .collect();
-
-    Ok(Json(PortfolioStateResponse {
-        total_value_usd: total_value,
-        cash_balance: total_value - position_value,
-        positions,
-    }))
+        },
+        Ok(None) => Ok(Json(fallback_portfolio_state(&bot))),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api portfolio request failed, using fallback: {err}");
+            Ok(Json(fallback_portfolio_state(&bot)))
+        }
+    }
 }
 
 // ── Activation progress handler ──────────────────────────────────────────
@@ -2748,5 +2857,13 @@ mod tests {
         assert_eq!(entry["entry_price"], 2000.0);
         assert_eq!(entry["current_price"], 2000.0);
         assert_eq!(entry["amount_usd"], 1000.0);
+    }
+
+    #[test]
+    fn synthesize_trade_entry_marks_swap_records_closed() {
+        let rec = make_trade_record("USDC", "WETH", "1000", "0.5");
+        let entry = synthesize_trade_entry_from_record(&rec);
+
+        assert_eq!(entry["status"], "closed");
     }
 }

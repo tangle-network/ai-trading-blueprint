@@ -5,7 +5,7 @@
 //! `tower::ServiceExt::oneshot`.
 
 use axum::body::Body;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
 use hyper::{Request, StatusCode};
@@ -82,6 +82,15 @@ fn seed_sandbox_record(id: &str) {
         .expect("sandbox store")
         .insert(id.to_string(), record)
         .expect("insert sandbox");
+}
+
+fn mark_sandbox_secrets_configured(id: &str) {
+    let mut record = sandbox_runtime::runtime::get_sandbox_by_id(id).expect("sandbox exists");
+    record.user_env_json = r#"{"ANTHROPIC_API_KEY":"sk-test"}"#.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .insert(id.to_string(), record)
+        .expect("update sandbox");
 }
 
 fn seed_bot(id: &str, strategy: &str, active: bool) -> TradingBotRecord {
@@ -251,6 +260,20 @@ async fn spawn_mock_trading_api() -> String {
                         "trade_count": 1
                     }],
                     "total": 1
+                }))
+            }),
+        )
+        .route(
+            "/portfolio/state",
+            post(|| async {
+                Json(json!({
+                    "positions": [{
+                        "token": "WETH",
+                        "amount": "0.5",
+                        "entry_price": "2000",
+                        "current_price": "2100"
+                    }],
+                    "total_value_usd": "1050"
                 }))
             }),
         );
@@ -768,6 +791,7 @@ async fn test_get_bot_portfolio() {
     let _dir = init_test_env();
 
     let bot = seed_bot("portfolio-bot-1", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
 
     let response = app()
         .oneshot(
@@ -786,6 +810,129 @@ async fn test_get_bot_portfolio() {
     assert!(json["total_value_usd"].is_number());
     assert!(json["cash_balance"].is_number());
     assert!(json["positions"].is_array());
+}
+
+#[tokio::test]
+async fn test_get_bot_portfolio_prefers_remote_trading_api_payload() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-remote", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total_value_usd"], 1050.0);
+    assert_eq!(json["cash_balance"], 0.0);
+    assert_eq!(json["positions"][0]["token"], "WETH");
+    assert_eq!(json["positions"][0]["value_usd"], 1050.0);
+}
+
+#[tokio::test]
+async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-swap-fallback", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url.clear();
+            record.trading_api_token.clear();
+        })
+        .expect("update bot");
+
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: "swap-only-trade".to_string(),
+        bot_id: bot.id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "WETH".to_string(),
+        amount_in: "1000".to_string(),
+        min_amount_out: "0.5".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xfallback".to_string(),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: true,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-fallback".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+    })
+    .await
+    .expect("record trade");
+
+    let portfolio_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(portfolio_response.status(), 200);
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+    assert_eq!(portfolio_json["positions"], json!([]));
+    assert_eq!(portfolio_json["cash_balance"], 10000.0);
+
+    let metrics_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics/history", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(metrics_response.status(), 200);
+    let metrics_body = metrics_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
+    let latest = metrics_json
+        .as_array()
+        .and_then(|snapshots| snapshots.last())
+        .expect("latest snapshot");
+    assert_eq!(latest["positions_count"], 0);
+    assert_eq!(latest["unrealized_pnl"], 0.0);
 }
 
 #[tokio::test]

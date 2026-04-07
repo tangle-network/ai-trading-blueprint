@@ -9,7 +9,7 @@
 mod common;
 
 use axum::body::Body;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
 use hyper::Request;
@@ -42,6 +42,16 @@ fn seed_singleton(strategy: &str) -> (String, String) {
         })
         .unwrap();
     (bot_id, sandbox_id)
+}
+
+fn mark_sandbox_secrets_configured(sandbox_id: &str) {
+    let mut record =
+        sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id).expect("sandbox exists");
+    record.user_env_json = r#"{"ANTHROPIC_API_KEY":"sk-test"}"#.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .unwrap()
+        .insert(sandbox_id.to_string(), record)
+        .unwrap();
 }
 
 fn app() -> axum::Router {
@@ -102,6 +112,20 @@ async fn spawn_mock_trading_api() -> String {
                     "total": 1
                 }))
             }),
+        )
+        .route(
+            "/portfolio/state",
+            post(|| async {
+                Json(json!({
+                    "positions": [{
+                        "token": "WETH",
+                        "amount": "0.5",
+                        "entry_price": "2000",
+                        "current_price": "2100"
+                    }],
+                    "total_value_usd": "1050"
+                }))
+            }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -127,6 +151,7 @@ async fn test_get_bot_when_provisioned() {
     let _ = clear_instance_bot_id();
 
     let (_bot_id, _sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&_sandbox_id);
 
     let response = app()
         .oneshot(
@@ -454,7 +479,8 @@ async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
     let _lock = common::HARNESS_LOCK.lock().await;
     let _ = clear_instance_bot_id();
 
-    let (bot_id, _) = seed_singleton("prediction");
+    let (bot_id, sandbox_id) = seed_singleton("prediction");
+    mark_sandbox_secrets_configured(&sandbox_id);
     let trading_api_url = spawn_mock_trading_api().await;
     state::bots()
         .unwrap()
@@ -496,6 +522,134 @@ async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json[0]["account_value_usd"], 10123.45);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_portfolio_prefers_remote_trading_api_payload() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url = trading_api_url.clone();
+            b.trading_api_token = "remote-token".to_string();
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/portfolio/state")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total_value_usd"], 1050.0);
+    assert_eq!(json["cash_balance"], 0.0);
+    assert_eq!(json["positions"][0]["token"], "WETH");
+    assert_eq!(json["positions"][0]["value_usd"], 1050.0);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url.clear();
+            b.trading_api_token.clear();
+        })
+        .unwrap();
+
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: "instance-swap-only-trade".to_string(),
+        bot_id: bot_id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "WETH".to_string(),
+        amount_in: "1000".to_string(),
+        min_amount_out: "0.5".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xfallback".to_string(),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: true,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xinstance-intent-fallback".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+    })
+    .await
+    .expect("record trade");
+
+    let portfolio_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/portfolio/state")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(portfolio_response.status(), 200);
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+    assert_eq!(portfolio_json["positions"], json!([]));
+    assert_eq!(portfolio_json["cash_balance"], 10000.0);
+
+    let metrics_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics/history")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), 200);
+    let metrics_body = metrics_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
+    let latest = metrics_json
+        .as_array()
+        .and_then(|snapshots| snapshots.last())
+        .expect("latest snapshot");
+    assert_eq!(latest["positions_count"], 0);
+    assert_eq!(latest["unrealized_pnl"], 0.0);
 
     let _ = clear_instance_bot_id();
 }
