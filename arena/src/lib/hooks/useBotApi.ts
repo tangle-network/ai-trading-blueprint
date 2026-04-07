@@ -47,16 +47,11 @@ interface ApiTrade {
     };
   };
   status?: string;
+  amount_out?: string;
+  entry_price_usd?: string;
+  notional_usd?: string;
+  valuation_status?: 'priced' | 'unpriced';
 }
-
-const KNOWN_STABLECOINS = new Set(['usd', 'usdc', 'usdt', 'dai', 'fdusd', 'pyusd', 'tusd', 'usde']);
-
-type TradePriceInput = {
-  token_in: string;
-  token_out: string;
-  amount_in: string;
-  min_amount_out: string;
-};
 
 type TradeStatusInput = {
   paper_trade: boolean;
@@ -71,6 +66,7 @@ type TradeStatusInput = {
 
 type TradeAmountOutInput = {
   min_amount_out: string;
+  amount_out?: string;
   validation?: {
     simulation?: {
       output_amount: string;
@@ -144,20 +140,6 @@ function parseTradeAmount(value: string | undefined): number {
   return Number(value ?? 0);
 }
 
-function isStablecoin(symbol: string): boolean {
-  return KNOWN_STABLECOINS.has(symbol.trim().toLowerCase());
-}
-
-export function deriveTradePriceUsd(trade: TradePriceInput): number | null {
-  const amountIn = parseTradeAmount(trade.amount_in);
-  const amountOut = parseTradeAmount(trade.min_amount_out);
-
-  if (amountIn <= 0 || amountOut <= 0) return null;
-  if (isStablecoin(trade.token_out)) return amountOut / amountIn;
-  if (isStablecoin(trade.token_in)) return amountIn / amountOut;
-  return null;
-}
-
 export function getTradeStatus(trade: TradeStatusInput): Trade['status'] {
   if (trade.validation?.approved === false) return 'rejected';
   if (trade.paper_trade && trade.validation?.simulation?.success === false) return 'failed';
@@ -167,7 +149,15 @@ export function getTradeStatus(trade: TradeStatusInput): Trade['status'] {
 }
 
 export function deriveTradeAmountOut(trade: TradeAmountOutInput): number {
-  return parseTradeAmount(trade.validation?.simulation?.output_amount ?? trade.min_amount_out);
+  return parseTradeAmount(
+    trade.amount_out ?? trade.validation?.simulation?.output_amount ?? trade.min_amount_out,
+  );
+}
+
+function getTradePriceUsd(trade: ApiTrade): number | null {
+  if (trade.valuation_status !== 'priced') return null;
+  const priceUsd = parseTradeAmount(trade.entry_price_usd);
+  return Number.isFinite(priceUsd) && priceUsd > 0 ? priceUsd : null;
 }
 
 export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
@@ -183,7 +173,7 @@ export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
     tokenOut: trade.token_out,
     amountIn: parseTradeAmount(trade.amount_in),
     amountOut,
-    priceUsd: deriveTradePriceUsd(trade),
+    priceUsd: getTradePriceUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
     status: getTradeStatus(trade),
     txHash: trade.tx_hash,

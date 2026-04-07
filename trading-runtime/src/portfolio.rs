@@ -1,4 +1,4 @@
-use crate::types::{PortfolioState, Position, PositionType, PriceData};
+use crate::types::{PortfolioState, Position, PositionType, PriceData, ValuationStatus};
 use chrono::Utc;
 use rust_decimal::Decimal;
 
@@ -6,6 +6,9 @@ impl PortfolioState {
     /// Update portfolio with new price data
     pub fn update_prices(&mut self, prices: &[PriceData]) {
         for position in &mut self.positions {
+            if position.valuation_status != ValuationStatus::Priced {
+                continue;
+            }
             if let Some(price_data) = prices.iter().find(|p| p.token == position.token) {
                 position.current_price = price_data.price_usd;
                 position.unrealized_pnl = match position.position_type {
@@ -46,10 +49,25 @@ impl PortfolioState {
         self.total_value_usd = self
             .positions
             .iter()
+            .filter(|p| p.valuation_status == ValuationStatus::Priced)
             .map(|p| p.current_price * p.amount)
             .sum();
 
-        self.unrealized_pnl = self.positions.iter().map(|p| p.unrealized_pnl).sum();
+        self.unrealized_pnl = self
+            .positions
+            .iter()
+            .filter(|p| p.valuation_status == ValuationStatus::Priced)
+            .map(|p| p.unrealized_pnl)
+            .sum();
+
+        if self
+            .positions
+            .iter()
+            .any(|p| p.valuation_status != ValuationStatus::Priced)
+        {
+            self.last_updated = Some(Utc::now());
+            return;
+        }
 
         // Update high water mark
         let total_with_realized = self.total_value_usd + self.realized_pnl;
@@ -91,6 +109,7 @@ mod tests {
             unrealized_pnl: (current_price - entry_price) * amount,
             protocol: "test".into(),
             position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Priced,
         }
     }
 

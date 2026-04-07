@@ -34,7 +34,7 @@ function makePortfolio(overrides: Partial<Portfolio> = {}): Portfolio {
     displayTotalValueUsd: 10000,
     displayCashBalance: 9000,
     warnings: [],
-    hasSuspiciousPositions: false,
+    hasUnpricedPositions: false,
     positions: [
       {
         token: 'WETH',
@@ -49,7 +49,7 @@ function makePortfolio(overrides: Partial<Portfolio> = {}): Portfolio {
         displayPnlPercent: 0,
         displayWeight: 10,
         warnings: [],
-        isSuspicious: false,
+        valuationStatus: 'priced',
       },
     ],
     ...overrides,
@@ -72,35 +72,37 @@ describe('PositionsTab', () => {
     expect(screen.getByText('10.0%')).toBeInTheDocument();
   });
 
-  it('warns and masks suspicious portfolio values', () => {
+  it('warns and masks unpriced portfolio values', () => {
     mockPortfolio = makePortfolio({
+      totalValueUsd: null,
+      cashBalance: null,
       displayTotalValueUsd: null,
       displayCashBalance: null,
-      warnings: ['Some portfolio metrics were hidden because the operator returned values that failed sanity checks.'],
-      hasSuspiciousPositions: true,
+      warnings: ['Some portfolio values are unavailable because trade valuation data is missing.'],
+      hasUnpricedPositions: true,
       positions: [
         {
           token: 'USDC',
           symbol: 'USDC',
           amount: 3200,
-          valueUsd: 32,
-          entryPrice: 0.000390625,
-          currentPrice: 0.01,
-          pnlPercent: 2460,
-          weight: 0.3,
+          valueUsd: null,
+          entryPrice: null,
+          currentPrice: null,
+          pnlPercent: null,
+          weight: null,
           displayValueUsd: null,
           displayPnlPercent: null,
           displayWeight: null,
-          warnings: ['Stablecoin value is inconsistent with its reported amount.'],
-          isSuspicious: true,
+          warnings: ['Valuation data is unavailable for this position.'],
+          valuationStatus: 'unpriced',
         },
       ],
     });
 
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
-    expect(screen.getByText('Portfolio metrics partially hidden')).toBeInTheDocument();
-    expect(screen.getByText('Warning')).toBeInTheDocument();
+    expect(screen.getByText('Portfolio valuation unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Unpriced')).toBeInTheDocument();
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(5);
     expect(screen.getByText('USDC')).toBeInTheDocument();
     expect(screen.getByText('3,200')).toBeInTheDocument();

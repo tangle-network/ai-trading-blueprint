@@ -14,27 +14,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::executor::TradeExecutor;
+use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient};
 use trading_runtime::{
     PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
-    ValidatorResponse,
+    ValidatorResponse, ValuationStatus,
 };
 
 use super::validate::parse_action;
-
-const KNOWN_STABLECOINS: &[&str] = &[
-    "usdc",
-    "usdc.e",
-    "usdt",
-    "dai",
-    "fdusd",
-    "usde",
-    "usdbc",
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    "0x6b175474e89094c44da98b954eedeac495271d0f",
-    "0x2791bcaf2de4661ed88a30c99a7a9449aa84174",
-];
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ExecuteRequest {
@@ -107,11 +94,6 @@ pub fn router() -> Router<Arc<TradingApiState>> {
 /// Router for multi-bot mode (state = MultiBotTradingState, bot resolved from extensions).
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new().route("/execute", post(execute_multi_bot))
-}
-
-fn is_known_stablecoin(token: &str) -> bool {
-    let normalized = token.trim().to_ascii_lowercase();
-    KNOWN_STABLECOINS.contains(&normalized.as_str())
 }
 
 // ── Intent hash deduplication ────────────────────────────────────────────────
@@ -288,6 +270,99 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
+#[derive(Clone, Debug)]
+struct TradeValuationSnapshot {
+    amount_out: Option<Decimal>,
+    position_size: Decimal,
+    entry_price_usd: Option<Decimal>,
+    notional_usd: Option<Decimal>,
+    valuation_status: trade_store::TradeValuationStatus,
+}
+
+impl TradeValuationSnapshot {
+    fn unpriced(position_size: Decimal, amount_out: Option<Decimal>) -> Self {
+        Self {
+            amount_out,
+            position_size,
+            entry_price_usd: None,
+            notional_usd: None,
+            valuation_status: trade_store::TradeValuationStatus::Unpriced,
+        }
+    }
+
+    fn priced(
+        position_size: Decimal,
+        amount_out: Option<Decimal>,
+        entry_price_usd: Decimal,
+    ) -> Self {
+        Self {
+            amount_out,
+            position_size,
+            entry_price_usd: Some(entry_price_usd),
+            notional_usd: Some(position_size * entry_price_usd),
+            valuation_status: trade_store::TradeValuationStatus::Priced,
+        }
+    }
+
+    fn position_valuation_status(&self) -> ValuationStatus {
+        match self.valuation_status {
+            trade_store::TradeValuationStatus::Priced => ValuationStatus::Priced,
+            trade_store::TradeValuationStatus::Unpriced => ValuationStatus::Unpriced,
+        }
+    }
+}
+
+fn resolve_position_size(
+    intent: &IntentPayload,
+) -> Result<(Decimal, Option<Decimal>), (StatusCode, String)> {
+    let amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in '{}': {e}", intent.amount_in),
+        )
+    })?;
+    let amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let size = if amount_out > Decimal::ZERO {
+        amount_out
+    } else {
+        amount_in
+    };
+    Ok((size, (amount_out > Decimal::ZERO).then_some(amount_out)))
+}
+
+async fn resolve_market_valuation(
+    market_client: &MarketDataClient,
+    intent: &IntentPayload,
+) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    let (position_size, amount_out) = resolve_position_size(intent)?;
+    if position_size <= Decimal::ZERO {
+        return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
+    }
+
+    match market_client.get_price(&intent.token_out).await {
+        Ok(price) => Ok(TradeValuationSnapshot::priced(
+            position_size,
+            amount_out,
+            price.price_usd,
+        )),
+        Err(error) => {
+            tracing::warn!(
+                token = %intent.token_out,
+                error = %error,
+                "Trade valuation unavailable; recording unpriced trade"
+            );
+            Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
+        }
+    }
+}
+
+fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapshot {
+    if size <= Decimal::ZERO || price <= Decimal::ZERO {
+        return TradeValuationSnapshot::unpriced(size, None);
+    }
+    TradeValuationSnapshot::priced(size, None, price)
+}
+
 /// Check if the portfolio circuit breaker should block this trade.
 ///
 /// Reads the current portfolio state and checks max drawdown against the
@@ -321,8 +396,7 @@ async fn check_circuit_breaker(
 async fn update_portfolio_after_trade(
     portfolio: &RwLock<PortfolioState>,
     req: &ExecuteRequest,
-    entry_price: Decimal,
-    size: Decimal,
+    valuation: &TradeValuationSnapshot,
 ) {
     let action_str = req.intent.action.to_lowercase();
     let is_close = matches!(
@@ -356,19 +430,21 @@ async fn update_portfolio_after_trade(
 
         state.add_position(Position {
             token: req.intent.token_out.clone(),
-            amount: size,
-            entry_price,
-            current_price: entry_price,
+            amount: valuation.position_size,
+            entry_price: valuation.entry_price_usd.unwrap_or(Decimal::ZERO),
+            current_price: valuation.entry_price_usd.unwrap_or(Decimal::ZERO),
             unrealized_pnl: Decimal::ZERO,
             protocol: req.intent.target_protocol.clone(),
             position_type,
+            valuation_status: valuation.position_valuation_status(),
         });
 
         tracing::info!(
             token = %req.intent.token_out,
             protocol = %req.intent.target_protocol,
-            size = %size,
-            entry_price = %entry_price,
+            size = %valuation.position_size,
+            entry_price = ?valuation.entry_price_usd,
+            valuation_status = ?valuation.valuation_status,
             "Position added to portfolio"
         );
     }
@@ -379,6 +455,7 @@ async fn execute_paper_trade(
     bot_id: &str,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let mock_tx_hash = format!("0xpaper_{}", uuid::Uuid::new_v4());
     let trade_id = uuid::Uuid::new_v4().to_string();
@@ -406,6 +483,10 @@ async fn execute_paper_trade(
         block_number: Some(0),
         gas_used: Some("0".to_string()),
         paper_trade: true,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     trade_store::record_trade(record).await.map_err(|e| {
@@ -435,6 +516,7 @@ async fn execute_real_trade(
     intent: &TradeIntent,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let validation = build_validation_result(&req.validation);
 
@@ -458,6 +540,10 @@ async fn execute_real_trade(
         block_number: outcome.block_number,
         gas_used: outcome.gas_used.map(|g| g.to_string()),
         paper_trade: false,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     // On-chain tx already succeeded — persistence failure must NOT return 500
@@ -495,6 +581,7 @@ async fn execute_clob_trade(
     clob: &ClobClient,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     // Extract CLOB-specific params from intent metadata.
     let clob_params = polymarket_clob::extract_clob_params(
@@ -528,6 +615,10 @@ async fn execute_clob_trade(
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     // CLOB order already submitted — persistence failure must NOT return 500
@@ -578,10 +669,12 @@ async fn execute(
     let max_drawdown = Decimal::new(10, 0);
     check_circuit_breaker(&state.portfolio, max_drawdown).await?;
 
+    let valuation = resolve_market_valuation(&state.market_client, &request.intent).await?;
+
     if state.paper_trade {
-        let result = execute_paper_trade(&state.bot_id, &request, stored_validation).await?;
-        let (price, size) = estimate_trade_price_size(&request.intent)?;
-        update_portfolio_after_trade(&state.portfolio, &request, price, size).await;
+        let result =
+            execute_paper_trade(&state.bot_id, &request, stored_validation, &valuation).await?;
+        update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
         return Ok(result);
     }
 
@@ -599,14 +692,16 @@ async fn execute(
             &request.intent.metadata,
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
-        let result = execute_clob_trade(&state.bot_id, clob, &request, stored_validation).await?;
-        update_portfolio_after_trade(
-            &state.portfolio,
+        let clob_valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        let result = execute_clob_trade(
+            &state.bot_id,
+            clob,
             &request,
-            clob_params.price,
-            clob_params.size,
+            stored_validation,
+            &clob_valuation,
         )
-        .await;
+        .await?;
+        update_portfolio_after_trade(&state.portfolio, &request, &clob_valuation).await;
         return Ok(result);
     }
 
@@ -616,51 +711,12 @@ async fn execute(
         &intent,
         &request,
         stored_validation,
+        &valuation,
     )
     .await?;
 
-    let (price, size) = estimate_trade_price_size(&request.intent)?;
-    update_portfolio_after_trade(&state.portfolio, &request, price, size).await;
+    update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
     Ok(result)
-}
-
-/// Derive a coherent output position from the trade intent.
-///
-/// For swaps, the portfolio should track the output asset (`token_out`) using
-/// the output amount. If either side is a stablecoin we can anchor the entry
-/// price in USD; otherwise we preserve the output amount and use the trade
-/// ratio as a best-effort placeholder.
-fn estimate_trade_price_size(
-    intent: &IntentPayload,
-) -> Result<(Decimal, Decimal), (StatusCode, String)> {
-    let amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid amount_in '{}': {e}", intent.amount_in),
-        )
-    })?;
-
-    let amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
-
-    if amount_out > Decimal::ZERO {
-        let price = if is_known_stablecoin(&intent.token_out) {
-            Decimal::ONE
-        } else if amount_in > Decimal::ZERO {
-            amount_in / amount_out
-        } else {
-            Decimal::ZERO
-        };
-
-        return Ok((price, amount_out));
-    }
-
-    let price = if is_known_stablecoin(&intent.token_out) || is_known_stablecoin(&intent.token_in) {
-        Decimal::ONE
-    } else {
-        Decimal::ZERO
-    };
-
-    Ok((price, amount_in))
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -700,9 +756,11 @@ async fn execute_multi_bot(
 
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
+    let market_client = MarketDataClient::new(state.market_data_base_url.clone());
+    let valuation = resolve_market_valuation(&market_client, &req.intent).await?;
 
     if bot.paper_trade {
-        return execute_paper_trade(&bot.bot_id, &req, stored_validation).await;
+        return execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await;
     }
 
     // CLOB trades bypass the vault executor entirely.
@@ -713,7 +771,14 @@ async fn execute_multi_bot(
                 "Polymarket CLOB client not configured".into(),
             )
         })?;
-        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation).await;
+        let clob_params = polymarket_clob::extract_clob_params(
+            &req.intent.action,
+            &req.intent.amount_in,
+            &req.intent.metadata,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
+        let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await;
     }
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions
@@ -740,7 +805,15 @@ async fn execute_multi_bot(
         })?
     };
 
-    execute_real_trade(&bot.bot_id, &executor, &intent, &req, stored_validation).await
+    execute_real_trade(
+        &bot.bot_id,
+        &executor,
+        &intent,
+        &req,
+        stored_validation,
+        &valuation,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -766,25 +839,20 @@ mod tests {
     }
 
     #[test]
-    fn estimate_trade_price_size_uses_output_amount_for_stablecoin_outputs() {
-        let intent = make_intent(
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-            "1.25",
-            "3200",
-        );
+    fn resolve_position_size_prefers_output_amount_when_available() {
+        let intent = make_intent("WETH", "USDC", "1.25", "3200");
 
-        let (price, size) = estimate_trade_price_size(&intent).expect("valuation");
+        let (size, amount_out) = resolve_position_size(&intent).expect("size");
         assert_eq!(size, Decimal::new(3200, 0));
-        assert_eq!(price, Decimal::ONE);
+        assert_eq!(amount_out, Some(Decimal::new(3200, 0)));
     }
 
     #[test]
-    fn estimate_trade_price_size_anchors_output_assets_bought_with_stablecoins() {
-        let intent = make_intent("USDC", "WETH", "1000", "0.5");
+    fn resolve_position_size_falls_back_to_input_amount() {
+        let intent = make_intent("WETH", "WBTC", "2", "0");
 
-        let (price, size) = estimate_trade_price_size(&intent).expect("valuation");
-        assert_eq!(size, Decimal::new(5, 1));
-        assert_eq!(price, Decimal::new(2000, 0));
+        let (size, amount_out) = resolve_position_size(&intent).expect("size");
+        assert_eq!(size, Decimal::new(2, 0));
+        assert_eq!(amount_out, None);
     }
 }

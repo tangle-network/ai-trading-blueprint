@@ -3,25 +3,36 @@ use axum::{Json, Router, extract::State, routing::post};
 use chrono::Utc;
 use serde::Serialize;
 use std::sync::Arc;
-use trading_runtime::types::{PositionType, PriceData};
+use trading_runtime::types::{PositionType, PriceData, ValuationStatus};
 
 #[derive(Serialize)]
 pub struct PortfolioResponse {
     pub positions: Vec<PositionEntry>,
     pub total_value_usd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cash_balance: Option<String>,
     pub unrealized_pnl: String,
     pub realized_pnl: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub has_unpriced_positions: bool,
 }
 
 #[derive(Serialize)]
 pub struct PositionEntry {
     pub token: String,
     pub amount: String,
-    pub entry_price: String,
-    pub current_price: String,
-    pub unrealized_pnl: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl: Option<String>,
     pub protocol: String,
     pub position_type: String,
+    pub valuation_status: ValuationStatus,
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
@@ -102,27 +113,46 @@ async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioR
 
     // Read final state and serialize.
     let portfolio = state.portfolio.read().await;
+    let has_unpriced_positions = portfolio
+        .positions
+        .iter()
+        .any(|position| position.valuation_status != ValuationStatus::Priced);
     let entries: Vec<PositionEntry> = portfolio
         .positions
         .iter()
-        .map(|p| PositionEntry {
-            token: p.token.clone(),
-            amount: p.amount.to_string(),
-            entry_price: p.entry_price.to_string(),
-            current_price: p.current_price.to_string(),
-            unrealized_pnl: p.unrealized_pnl.to_string(),
-            protocol: p.protocol.clone(),
-            position_type: serde_json::to_value(&p.position_type)
-                .ok()
-                .and_then(|v| v.as_str().map(String::from))
-                .unwrap_or_else(|| format!("{:?}", p.position_type)),
+        .map(|p| {
+            let priced = p.valuation_status == ValuationStatus::Priced;
+            PositionEntry {
+                token: p.token.clone(),
+                amount: p.amount.to_string(),
+                value_usd: priced.then(|| (p.current_price * p.amount).to_string()),
+                entry_price: priced.then(|| p.entry_price.to_string()),
+                current_price: priced.then(|| p.current_price.to_string()),
+                unrealized_pnl: priced.then(|| p.unrealized_pnl.to_string()),
+                protocol: p.protocol.clone(),
+                position_type: serde_json::to_value(&p.position_type)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_else(|| format!("{:?}", p.position_type)),
+                valuation_status: p.valuation_status,
+            }
         })
         .collect();
 
     Json(PortfolioResponse {
         total_value_usd: portfolio.total_value_usd.to_string(),
+        cash_balance: None,
         unrealized_pnl: portfolio.unrealized_pnl.to_string(),
         realized_pnl: portfolio.realized_pnl.to_string(),
         positions: entries,
+        warnings: if has_unpriced_positions {
+            vec![
+                "Some portfolio values are unavailable because trade valuation data is missing."
+                    .to_string(),
+            ]
+        } else {
+            Vec::new()
+        },
+        has_unpriced_positions,
     })
 }

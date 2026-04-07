@@ -120,10 +120,15 @@ async fn spawn_mock_trading_api() -> String {
                     "positions": [{
                         "token": "WETH",
                         "amount": "0.5",
+                        "value_usd": "1050",
                         "entry_price": "2000",
-                        "current_price": "2100"
+                        "current_price": "2100",
+                        "valuation_status": "priced"
                     }],
-                    "total_value_usd": "1050"
+                    "total_value_usd": "1050",
+                    "cash_balance": null,
+                    "warnings": [],
+                    "has_unpriced_positions": false
                 }))
             }),
         );
@@ -557,9 +562,10 @@ async fn test_portfolio_prefers_remote_trading_api_payload() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["total_value_usd"], 1050.0);
-    assert_eq!(json["cash_balance"], 0.0);
+    assert!(json["cash_balance"].is_null());
     assert_eq!(json["positions"][0]["token"], "WETH");
     assert_eq!(json["positions"][0]["value_usd"], 1050.0);
+    assert_eq!(json["positions"][0]["valuation_status"], "priced");
 
     let _ = clear_instance_bot_id();
 }
@@ -594,6 +600,10 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         block_number: Some(1),
         gas_used: Some("21000".to_string()),
         paper_trade: true,
+        amount_out: None,
+        entry_price_usd: None,
+        notional_usd: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
             aggregate_score: 100,
@@ -624,7 +634,7 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         .to_bytes();
     let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
     assert_eq!(portfolio_json["positions"], json!([]));
-    assert_eq!(portfolio_json["cash_balance"], 10000.0);
+    assert!(portfolio_json["cash_balance"].is_null());
 
     let metrics_response = app()
         .oneshot(

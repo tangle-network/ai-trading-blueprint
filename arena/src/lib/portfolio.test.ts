@@ -2,38 +2,42 @@ import { describe, expect, it } from 'vitest';
 import { mapApiPortfolioState } from './portfolio';
 
 describe('mapApiPortfolioState', () => {
-  it('flags the captured stablecoin regression payload as suspicious', () => {
+  it('hides totals and position values when the backend marks positions unpriced', () => {
     const portfolio = mapApiPortfolioState({
-      total_value_usd: 10032,
-      cash_balance: 10000,
+      total_value_usd: null,
+      cash_balance: null,
+      warnings: ['Some portfolio values are unavailable because trade valuation data is missing.'],
+      has_unpriced_positions: true,
       positions: [
         {
-          token: 'USDC',
-          symbol: 'USDC',
-          amount: 3200,
-          value_usd: 32,
-          entry_price: 0.000390625,
-          current_price: 0.01,
-          pnl_percent: 2460,
-          weight: 0.3,
+          token: 'WBTC',
+          symbol: 'WBTC',
+          amount: 0.05,
+          value_usd: null,
+          entry_price: null,
+          current_price: null,
+          pnl_percent: null,
+          weight: null,
+          valuation_status: 'unpriced',
         },
       ],
     }, 'bot-1');
 
-    expect(portfolio.hasSuspiciousPositions).toBe(true);
+    expect(portfolio.hasUnpricedPositions).toBe(true);
     expect(portfolio.displayTotalValueUsd).toBeNull();
     expect(portfolio.displayCashBalance).toBeNull();
-    expect(portfolio.warnings[0]).toContain('hidden');
-    expect(portfolio.positions[0]?.isSuspicious).toBe(true);
+    expect(portfolio.warnings[0]).toContain('unavailable');
+    expect(portfolio.positions[0]?.valuationStatus).toBe('unpriced');
     expect(portfolio.positions[0]?.displayValueUsd).toBeNull();
     expect(portfolio.positions[0]?.displayPnlPercent).toBeNull();
     expect(portfolio.positions[0]?.displayWeight).toBeNull();
   });
 
-  it('keeps coherent positions visible without warnings', () => {
+  it('keeps priced positions visible without adding local heuristics', () => {
     const portfolio = mapApiPortfolioState({
       total_value_usd: 10000,
       cash_balance: 9000,
+      has_unpriced_positions: false,
       positions: [
         {
           token: 'WETH',
@@ -44,13 +48,15 @@ describe('mapApiPortfolioState', () => {
           current_price: 2000,
           pnl_percent: 0,
           weight: 10,
+          valuation_status: 'priced',
         },
       ],
     }, 'bot-1');
 
-    expect(portfolio.hasSuspiciousPositions).toBe(false);
+    expect(portfolio.hasUnpricedPositions).toBe(false);
     expect(portfolio.displayTotalValueUsd).toBe(10000);
     expect(portfolio.displayCashBalance).toBe(9000);
+    expect(portfolio.positions[0]?.valuationStatus).toBe('priced');
     expect(portfolio.positions[0]?.displayValueUsd).toBe(1000);
     expect(portfolio.positions[0]?.displayPnlPercent).toBe(0);
     expect(portfolio.positions[0]?.displayWeight).toBe(10);

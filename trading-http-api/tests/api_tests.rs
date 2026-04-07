@@ -1423,7 +1423,7 @@ async fn test_multi_bot_validate_all_fail() {
 #[tokio::test]
 async fn test_portfolio_state_with_positions() {
     use rust_decimal::Decimal;
-    use trading_runtime::{Position, PositionType};
+    use trading_runtime::{Position, PositionType, ValuationStatus};
 
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;
@@ -1439,6 +1439,7 @@ async fn test_portfolio_state_with_positions() {
             unrealized_pnl: Decimal::new(150, 0), // +150
             protocol: "uniswap_v3".to_string(),
             position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Priced,
         });
         portfolio.positions.push(Position {
             token: "USDC".to_string(),
@@ -1448,6 +1449,7 @@ async fn test_portfolio_state_with_positions() {
             unrealized_pnl: Decimal::new(0, 0), // 0
             protocol: "aave_v3".to_string(),
             position_type: PositionType::Lending,
+            valuation_status: ValuationStatus::Priced,
         });
         // total_value_usd = 1.5*2500 + 5000*1 = 3750 + 5000 = 8750
         portfolio.total_value_usd = Decimal::new(8750, 0);
@@ -1505,7 +1507,7 @@ async fn test_portfolio_state_with_positions() {
 #[tokio::test]
 async fn test_portfolio_pnl_reflects_losses() {
     use rust_decimal::Decimal;
-    use trading_runtime::{Position, PositionType};
+    use trading_runtime::{Position, PositionType, ValuationStatus};
 
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;
@@ -1521,6 +1523,7 @@ async fn test_portfolio_pnl_reflects_losses() {
             unrealized_pnl: Decimal::new(-1600, 0), // -1600 loss
             protocol: "uniswap_v3".to_string(),
             position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Priced,
         });
         // total_value_usd = 2 * 2200 = 4400
         portfolio.total_value_usd = Decimal::new(4400, 0);

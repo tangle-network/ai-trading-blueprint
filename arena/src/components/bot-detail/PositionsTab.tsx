@@ -82,7 +82,7 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
           <div className="i-ph:warning-circle text-lg shrink-0 mt-0.5" />
           <div>
             <div className="font-display font-semibold text-arena-elements-textPrimary mb-1">
-              Portfolio metrics partially hidden
+              Portfolio valuation unavailable
             </div>
             <p>{portfolio.warnings[0]}</p>
           </div>
@@ -118,13 +118,13 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
               <TableCell className="font-display font-semibold">
                 <div className="flex items-center justify-between gap-2">
                   <span>{pos.symbol}</span>
-                  {pos.isSuspicious && (
+                  {pos.valuationStatus === 'unpriced' && (
                     <Badge
                       variant="amber"
                       className="text-[10px]"
                       title={pos.warnings.join(' ')}
                     >
-                      Warning
+                      Unpriced
                     </Badge>
                   )}
                 </div>
@@ -133,8 +133,12 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
               <TableCell className={`text-right font-data text-sm ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
                 {formatCurrency(pos.displayValueUsd)}
               </TableCell>
-              <TableCell className="text-right font-data text-sm text-arena-elements-textSecondary">${pos.entryPrice.toLocaleString()}</TableCell>
-              <TableCell className="text-right font-data text-sm">${pos.currentPrice.toLocaleString()}</TableCell>
+              <TableCell className={`text-right font-data text-sm ${pos.entryPrice == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
+                {formatCurrency(pos.entryPrice)}
+              </TableCell>
+              <TableCell className={`text-right font-data text-sm ${pos.currentPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
+                {formatCurrency(pos.currentPrice)}
+              </TableCell>
               <TableCell className={`text-right font-data text-sm font-bold ${
                 pos.displayPnlPercent == null
                   ? 'text-arena-elements-textTertiary'

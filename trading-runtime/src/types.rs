@@ -61,6 +61,8 @@ pub struct Position {
     pub unrealized_pnl: Decimal,
     pub protocol: String,
     pub position_type: PositionType,
+    #[serde(default)]
+    pub valuation_status: ValuationStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +74,14 @@ pub enum PositionType {
     LongPerp,
     ShortPerp,
     ConditionalToken,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ValuationStatus {
+    #[default]
+    Unpriced,
+    Priced,
 }
 
 /// Strategy definition — supports NL, config, or code
