@@ -114,6 +114,13 @@ export function buildStrategyConfigForProvision({
   return config;
 }
 
+export function buildServiceActivationAttemptKey(
+  activatedServiceId: string,
+  txHash?: `0x${string}`,
+): string {
+  return txHash ? `${txHash}:${activatedServiceId}` : `service:${activatedServiceId}`;
+}
+
 interface InstanceOperatorBot {
   id: string;
   sandbox_id: string;
@@ -276,6 +283,9 @@ export default function ProvisionPage() {
   // Instance auto-provision state
   const [instanceProvisioning, setInstanceProvisioning] = useState(false);
   const [instanceProvisionError, setInstanceProvisionError] = useState<string | null>(null);
+  const handledActivationAttemptKeysRef = useRef<Set<string>>(new Set());
+  const instanceAutoProvisionInFlightRef = useRef<string | null>(null);
+  const activationGuardTxHashRef = useRef<`0x${string}` | undefined>();
   const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(() => ({
     serviceId: targetServiceId ?? undefined,
     botId: targetBotId ?? undefined,
@@ -374,10 +384,24 @@ export default function ProvisionPage() {
     setRuntimeBackend(selectedBlueprint?.isTee ? 'tee' : 'docker');
   }, [runtimeBackend, selectedBlueprint?.isTee]);
 
+  const resetServiceActivationGuard = useCallback((txHash?: `0x${string}`) => {
+    activationGuardTxHashRef.current = txHash;
+    handledActivationAttemptKeysRef.current = new Set();
+    instanceAutoProvisionInFlightRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (activationGuardTxHashRef.current === newServiceTxHash) return;
+    resetServiceActivationGuard(newServiceTxHash);
+  }, [newServiceTxHash, resetServiceActivationGuard]);
+
   // Reset new service deploying state when switching modes
   useEffect(() => {
-    if (serviceMode !== 'new') setNewServiceDeploying(false);
-  }, [serviceMode]);
+    if (serviceMode !== 'new') {
+      setNewServiceDeploying(false);
+      resetServiceActivationGuard(undefined);
+    }
+  }, [serviceMode, resetServiceActivationGuard]);
 
   // Track TX in history + create provision entry
   useEffect(() => {
@@ -492,6 +516,9 @@ export default function ProvisionPage() {
 
   // Auto-provision instance bot via operator API after service activation
   const autoProvisionInstance = useCallback(async (activatedServiceId: string) => {
+    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) return;
+
+    instanceAutoProvisionInFlightRef.current = activatedServiceId;
     setInstanceProvisioning(true);
     setInstanceProvisionError(null);
 
@@ -575,9 +602,15 @@ export default function ProvisionPage() {
       }
     }
     setInstanceProvisioning(false);
+    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
+      instanceAutoProvisionInFlightRef.current = null;
+    }
   }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth]);
 
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
+    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
+      instanceAutoProvisionInFlightRef.current = null;
+    }
     setInstanceProvisioning(false);
     setServiceId(activatedServiceId);
     syncInstanceRouteTarget({
@@ -805,6 +838,10 @@ export default function ProvisionPage() {
   }, [blueprintId, userAddress]);
 
   const handleServiceActivated = useCallback((activatedServiceId: string) => {
+    const activationKey = buildServiceActivationAttemptKey(activatedServiceId, newServiceTxHash);
+    if (handledActivationAttemptKeysRef.current.has(activationKey)) return;
+
+    handledActivationAttemptKeysRef.current.add(activationKey);
     setNewServiceDeploying(false);
     setShowInfra(false);
 
@@ -817,7 +854,7 @@ export default function ProvisionPage() {
       toast.success(`Service #${activatedServiceId} is live! Ready to provision agents.`);
       void discoverServices();
     }
-  }, [isInstance, autoProvisionInstance, discoverServices]);
+  }, [isInstance, autoProvisionInstance, discoverServices, newServiceTxHash]);
 
   // Wait for new service TX receipt
   useEffect(() => {
@@ -847,14 +884,16 @@ export default function ProvisionPage() {
           toast.success('Service request submitted! Waiting for activation...');
         } else {
           toast.error('Service request transaction reverted');
+          resetServiceActivationGuard(undefined);
           setNewServiceDeploying(false);
         }
       })
       .catch(() => {
         toast.error('Failed to confirm service request');
+        resetServiceActivationGuard(undefined);
         setNewServiceDeploying(false);
       });
-  }, [newServiceTxHash, newServiceDeploying, blueprintId, handleServiceActivated]);
+  }, [newServiceTxHash, newServiceDeploying, blueprintId, handleServiceActivated, resetServiceActivationGuard]);
 
   // Watch for ServiceActivated when deploying new service
   useEffect(() => {
@@ -1136,11 +1175,13 @@ export default function ProvisionPage() {
       },
       {
         onSuccess(hash) {
+          resetServiceActivationGuard(hash);
           setNewServiceTxHash(hash);
           setNewServiceDeploying(true);
         },
         onError(err) {
           toast.error(`New service failed: ${err.message.slice(0, 120)}`);
+          resetServiceActivationGuard(undefined);
           setNewServiceDeploying(false);
         },
       },
