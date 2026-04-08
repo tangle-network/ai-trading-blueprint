@@ -7,9 +7,9 @@ use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
 
-fn parse_runtime_backend_from_strategy_config(
+fn parse_strategy_config_object(
     strategy_config_json: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Map<String, Value>>, String> {
     let trimmed = strategy_config_json.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -20,6 +20,16 @@ fn parse_runtime_backend_from_strategy_config(
     let obj = parsed
         .as_object()
         .ok_or_else(|| "strategy_config_json must be a JSON object".to_string())?;
+
+    Ok(Some(obj.clone()))
+}
+
+fn parse_runtime_backend_from_strategy_config(
+    strategy_config: Option<&Map<String, Value>>,
+) -> Result<Option<String>, String> {
+    let Some(obj) = strategy_config else {
+        return Ok(None);
+    };
 
     let Some(raw) = obj.get("runtime_backend").and_then(Value::as_str) else {
         return Ok(None);
@@ -33,6 +43,20 @@ fn parse_runtime_backend_from_strategy_config(
         _ => Err(format!(
             "strategy_config_json.runtime_backend must be one of: docker, firecracker, tee (got '{raw}')"
         )),
+    }
+}
+
+fn parse_paper_trade_from_strategy_config(
+    strategy_config: Option<&Map<String, Value>>,
+) -> Result<Option<bool>, String> {
+    let Some(obj) = strategy_config else {
+        return Ok(None);
+    };
+
+    match obj.get("paper_trade") {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err("strategy_config_json.paper_trade must be a boolean".to_string()),
+        None => Ok(None),
     }
 }
 
@@ -89,8 +113,14 @@ pub async fn provision_core(
         tracing::warn!("Provision metadata update failed: {e}");
     }
 
-    let runtime_backend = parse_runtime_backend_from_strategy_config(&request.strategy_config_json)
+    let parsed_strategy_config = parse_strategy_config_object(&request.strategy_config_json)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
+    let runtime_backend =
+        parse_runtime_backend_from_strategy_config(parsed_strategy_config.as_ref())
+            .inspect_err(|e| mark_provision_failed(call_id, e))?;
+    let paper_trade = parse_paper_trade_from_strategy_config(parsed_strategy_config.as_ref())
+        .inspect_err(|e| mark_provision_failed(call_id, e))?
+        .unwrap_or(true);
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
@@ -276,10 +306,7 @@ pub async fn provision_core(
         vault_address: vault_address.clone(),
         share_token: String::new(),
         strategy_type: request.strategy_type.clone(),
-        strategy_config: serde_json::from_str(&request.strategy_config_json).unwrap_or_else(|e| {
-            tracing::warn!("Invalid strategy_config_json (using empty): {e}");
-            serde_json::Value::Object(Default::default())
-        }),
+        strategy_config: serde_json::Value::Object(parsed_strategy_config.unwrap_or_default()),
         risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_else(|e| {
             tracing::warn!("Invalid risk_params_json (using empty): {e}");
             serde_json::Value::Object(Default::default())
@@ -294,7 +321,7 @@ pub async fn provision_core(
         operator_address,
         validator_service_ids,
         max_lifetime_days,
-        paper_trade: true,
+        paper_trade,
         wind_down_started_at: None,
         submitter_address: caller,
         trading_loop_cron: request.trading_loop_cron.clone(),
