@@ -3,7 +3,7 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 
 use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, parse_address_or,
+    ActionParams, EncodedAction, ProtocolAdapter, encode_vault_token_approve, parse_address_or,
     validate_vault_address,
 };
 use crate::error::TradingError;
@@ -161,7 +161,8 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
+                    pre_calls: vec![encode_vault_token_approve(
+                        params.vault_address,
                         params.token_in,
                         self.exchange_router,
                         params.amount,
@@ -183,7 +184,8 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
+                    pre_calls: vec![encode_vault_token_approve(
+                        params.vault_address,
                         params.token_in,
                         self.exchange_router,
                         params.amount,

@@ -129,6 +129,23 @@ contract TradingVaultTest is Setup {
         assertEq(shareToken.balanceOf(user), 500 ether);
     }
 
+    function test_operator_can_approve_spender_for_vault_assets() public {
+        address spender = makeAddr("spender");
+
+        vm.prank(operator);
+        vault.approveSpender(address(tokenA), spender, 123 ether);
+
+        assertEq(tokenA.allowance(address(vault), spender), 123 ether);
+    }
+
+    function test_non_operator_cannot_approve_spender() public {
+        address spender = makeAddr("spender");
+
+        vm.expectRevert();
+        vm.prank(user);
+        vault.approveSpender(address(tokenA), spender, 123 ether);
+    }
+
     function test_multipleDepositors() public {
         vm.prank(user);
         vault.deposit(1000 ether, user);

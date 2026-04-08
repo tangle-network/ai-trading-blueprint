@@ -64,14 +64,27 @@ pub struct EncodedAction {
 }
 
 sol! {
-    function approve(address spender, uint256 amount) external returns (bool);
+    function approveSpender(address token, address spender, uint256 amount) external;
 }
 
-/// Encode an ERC20 approve pre-call.
-pub fn encode_erc20_approve(token: Address, spender: Address, amount: U256) -> PreCall {
-    let calldata = approveCall { spender, amount }.abi_encode();
+/// Encode a vault-mediated token approval pre-call.
+///
+/// The vault, not the operator EOA, owns the assets being traded. Pre-calls
+/// therefore target the vault and instruct it to update the token allowance.
+pub fn encode_vault_token_approve(
+    vault: Address,
+    token: Address,
+    spender: Address,
+    amount: U256,
+) -> PreCall {
+    let calldata = approveSpenderCall {
+        token,
+        spender,
+        amount,
+    }
+    .abi_encode();
     PreCall {
-        target: token,
+        target: vault,
         calldata: Bytes::from(calldata),
         value: U256::ZERO,
     }

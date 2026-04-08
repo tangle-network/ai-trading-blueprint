@@ -165,7 +165,31 @@ impl TradeExecutor {
         // 3. Encode the action
         let encoded: EncodedAction = adapter.encode_action(&params)?;
 
-        // 3b. Simulate the transaction before execution
+        // 3b. Execute pre-calls (e.g., ERC20 approvals) before simulation and main vault call.
+        //
+        // Many protocol actions are only valid after pre-calls mutate allowance state.
+        // Running simulation after pre-calls avoids false negatives on first-time routes.
+        for pre_call in &encoded.pre_calls {
+            let pre_target: Address = pre_call.target;
+            let pre_request = alloy::rpc::types::TransactionRequest::default()
+                .to(pre_target)
+                .input(pre_call.calldata.clone().into())
+                .value(pre_call.value);
+
+            let pre_pending = self
+                .chain_client
+                .provider
+                .send_transaction(pre_request)
+                .await
+                .map_err(|e| TradingError::VaultError(format!("Pre-call send failed: {e}")))?;
+
+            pre_pending
+                .get_receipt()
+                .await
+                .map_err(|e| TradingError::VaultError(format!("Pre-call receipt failed: {e}")))?;
+        }
+
+        // 3c. Simulate the transaction before execution
         if let Some(ref simulator) = self.simulator {
             let sim_request = SimulationRequest {
                 from: vault_address,
@@ -214,27 +238,6 @@ impl TradeExecutor {
                     tracing::warn!("Transaction simulation failed (non-fatal): {e}");
                 }
             }
-        }
-
-        // 3c. Execute pre-calls (e.g., ERC20 approvals) before the main vault call
-        for pre_call in &encoded.pre_calls {
-            let pre_target: Address = pre_call.target;
-            let pre_request = alloy::rpc::types::TransactionRequest::default()
-                .to(pre_target)
-                .input(pre_call.calldata.clone().into())
-                .value(pre_call.value);
-
-            let pre_pending = self
-                .chain_client
-                .provider
-                .send_transaction(pre_request)
-                .await
-                .map_err(|e| TradingError::VaultError(format!("Pre-call send failed: {e}")))?;
-
-            pre_pending
-                .get_receipt()
-                .await
-                .map_err(|e| TradingError::VaultError(format!("Pre-call receipt failed: {e}")))?;
         }
 
         // 4. Collect validator signatures and scores

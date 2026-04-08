@@ -10,7 +10,8 @@ type Uint24 = Uint<24, 1>;
 type Uint160 = Uint<160, 3>;
 
 use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, validate_vault_address,
+    ActionParams, EncodedAction, ProtocolAdapter, encode_vault_token_approve,
+    validate_vault_address,
 };
 use crate::error::TradingError;
 use crate::types::Action;
@@ -172,7 +173,12 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(params.token_in, router, params.amount)],
+                    pre_calls: vec![encode_vault_token_approve(
+                        params.vault_address,
+                        params.token_in,
+                        router,
+                        params.amount,
+                    )],
                 })
             }
             Action::Buy => {
@@ -196,7 +202,12 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(params.token_in, router, amount_in_max)],
+                    pre_calls: vec![encode_vault_token_approve(
+                        params.vault_address,
+                        params.token_in,
+                        router,
+                        amount_in_max,
+                    )],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -246,10 +257,7 @@ mod tests {
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, TOKEN_B.parse::<Address>().unwrap());
         assert_eq!(result.pre_calls.len(), 1);
-        assert_eq!(
-            result.pre_calls[0].target,
-            TOKEN_A.parse::<Address>().unwrap()
-        );
+        assert_eq!(result.pre_calls[0].target, VAULT.parse::<Address>().unwrap());
     }
 
     #[test]

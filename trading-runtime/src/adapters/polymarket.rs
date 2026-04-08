@@ -3,7 +3,8 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 
 use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, validate_vault_address,
+    ActionParams, EncodedAction, ProtocolAdapter, encode_vault_token_approve,
+    validate_vault_address,
 };
 use crate::error::TradingError;
 use crate::types::Action;
@@ -166,7 +167,8 @@ impl ProtocolAdapter for PolymarketAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
+                    pre_calls: vec![encode_vault_token_approve(
+                        params.vault_address,
                         params.token_in,
                         self.ctf_contract,
                         params.amount,

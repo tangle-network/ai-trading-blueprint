@@ -75,6 +75,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event HeldTokenDecimalMismatch(address indexed token, uint8 tokenDecimals, uint8 assetDecimals);
     event DepositAssetReserveBpsUpdated(uint256 bps);
     event AdminUnwindMaxDrawdownBpsUpdated(uint256 bps);
+    event SpenderApprovalUpdated(address indexed token, address indexed spender, uint256 amount);
     event CollateralReleased(address indexed operator, uint256 amount, address indexed recipient, bytes32 indexed intentHash);
     event CollateralReturned(address indexed operator, uint256 amount, uint256 credited);
     event CollateralWrittenDown(address indexed operator, uint256 amount);
@@ -689,6 +690,20 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @dev Uses forceApprove (SafeERC20) to handle tokens with non-standard approve behavior
     function approveFeeAllowance(uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         IERC20(asset()).forceApprove(address(feeDistributor), amount);
+    }
+
+    /// @notice Approve a spender to move a vault-held token.
+    /// @dev Vault-based protocols require allowances to be granted by the vault,
+    ///      not by the off-chain operator wallet. Operators can update allowances
+    ///      as a preparatory step before executing the main protocol action.
+    function approveSpender(address token, address spender, uint256 amount)
+        external
+        onlyRole(OPERATOR_ROLE)
+        whenNotPaused
+    {
+        if (token == address(0) || spender == address(0)) revert ZeroAddress();
+        IERC20(token).forceApprove(spender, amount);
+        emit SpenderApprovalUpdated(token, spender, amount);
     }
 
     /// @notice Set the minimum deposit asset reserve ratio (in BPS)
