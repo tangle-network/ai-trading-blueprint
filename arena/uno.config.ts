@@ -1,15 +1,8 @@
-import path from 'node:path';
-import { createRequire } from 'node:module';
 import { bpThemeTokens } from '@tangle-network/blueprint-ui/preset';
 import { icons as phIcons } from '@iconify-json/ph';
 import { defineConfig, presetIcons, transformerDirectives } from 'unocss';
 import { presetAnimations } from 'unocss-preset-animations';
 import { presetWind4 } from 'unocss/preset-wind4';
-
-const cjsRequire = createRequire(import.meta.url);
-const blueprintUiSrcGlob = `${path
-  .dirname(cjsRequire.resolve('@tangle-network/blueprint-ui/preset'))
-  .replaceAll(path.sep, '/')}/**/*.{jsx,tsx}`;
 
 /*
  * OBSIDIAN TERMINAL — Design System
@@ -161,7 +154,6 @@ export default defineConfig({
     pipeline: {
       include: [
         'src/**/*.{jsx,tsx}',
-        blueprintUiSrcGlob,
       ],
       exclude: [
         '**/*.test.{jsx,tsx}',

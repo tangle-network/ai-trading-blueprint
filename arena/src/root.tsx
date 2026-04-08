@@ -1,4 +1,5 @@
 import 'virtual:uno.css';
+import '@tangle-network/blueprint-ui/styles.css';
 import './styles/global.scss';
 
 import { Outlet } from 'react-router';
@@ -41,7 +42,7 @@ export default function App() {
       <MotionProvider>
         <ClientWeb3Provider>
           <TradingSyncProvider>
-            <div className="flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+            <div className="bp-tone-arena flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
               <a
                 href="#main-content"
                 className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"

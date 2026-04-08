@@ -166,6 +166,54 @@
   }
 }
 
+body,
+.bp-tone-arena {
+  --bp-font-display: var(--font-display, 'Outfit', system-ui, sans-serif);
+  --bp-font-data: var(--font-data, 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace);
+
+  --bp-glass-bg: var(--glass-bg, transparent);
+  --bp-glass-bg-strong: var(--glass-bg-strong, var(--bp-glass-bg, transparent));
+  --bp-glass-border: var(--glass-border, transparent);
+  --bp-glass-border-hover: var(--glass-border-hover, var(--bp-glass-border, transparent));
+  --bp-glass-blur: var(--glass-blur, 0px);
+  --bp-glass-blur-strong: 24px;
+
+  --bp-elements-borderColor: var(--arena-elements-borderColor);
+  --bp-elements-borderColorActive: var(--arena-elements-borderColorActive);
+
+  --bp-elements-bg-depth-1: var(--arena-elements-bg-depth-1);
+  --bp-elements-bg-depth-2: var(--arena-elements-bg-depth-2);
+  --bp-elements-bg-depth-3: var(--arena-elements-bg-depth-3);
+  --bp-elements-bg-depth-4: var(--arena-elements-bg-depth-4);
+
+  --bp-elements-textPrimary: var(--arena-elements-textPrimary);
+  --bp-elements-textSecondary: var(--arena-elements-textSecondary);
+  --bp-elements-textTertiary: var(--arena-elements-textTertiary);
+
+  --bp-elements-button-primary-background: var(--arena-elements-button-primary-background);
+  --bp-elements-button-primary-backgroundHover: var(--arena-elements-button-primary-backgroundHover);
+  --bp-elements-button-primary-text: var(--arena-elements-button-primary-text);
+
+  --bp-elements-button-secondary-background: var(--arena-elements-button-secondary-background);
+  --bp-elements-button-secondary-backgroundHover: var(--arena-elements-button-secondary-backgroundHover);
+  --bp-elements-button-secondary-text: var(--arena-elements-button-secondary-text);
+
+  --bp-elements-button-danger-background: var(--arena-elements-button-danger-background);
+  --bp-elements-button-danger-backgroundHover: var(--arena-elements-button-danger-backgroundHover);
+  --bp-elements-button-danger-text: var(--arena-elements-button-danger-text);
+
+  --bp-elements-icon-success: var(--arena-elements-icon-success);
+  --bp-elements-icon-error: var(--arena-elements-icon-error);
+  --bp-elements-icon-warning: var(--arena-elements-icon-warning);
+  --bp-elements-icon-primary: var(--arena-elements-icon-primary);
+  --bp-elements-icon-secondary: var(--arena-elements-icon-secondary);
+
+  --bp-elements-dividerColor: var(--arena-elements-dividerColor);
+  --bp-elements-item-backgroundHover: var(--arena-elements-item-backgroundHover);
+  --bp-elements-item-backgroundActive: var(--arena-elements-item-backgroundActive);
+  --bp-elements-focus: var(--arena-elements-focus);
+}
+
 /* ═══ Focus Indicators ═══ */
 *:focus-visible {
   outline: 2px solid var(--arena-elements-focus);

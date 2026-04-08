@@ -4,7 +4,7 @@ import UnoCSS from 'unocss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 
-// SSR browser globals shim — web3 libraries (mipd, sonner, @tangle-network/sandbox-ui)
+// SSR browser globals shim — browser-oriented dependencies (mipd, sonner, sandbox UI)
 // access document/window at module scope. Vite's SSR module runner evaluates
 // code in an isolated context, so Node-level globals don't help. This plugin
 // prepends a shim to every JS module that references browser APIs during SSR.
@@ -161,25 +161,11 @@ export default defineConfig(({ mode }) => {
         'nanostores',
         'react',
         'react-dom',
+        'react-router',
         'tailwind-merge',
         'viem',
         'wagmi',
       ],
-    },
-    optimizeDeps: {
-      include: [
-        '@tangle-network/blueprint-ui',
-        '@tangle-network/blueprint-ui/components',
-      ],
-      esbuildOptions: {
-        jsx: 'automatic',
-        jsxImportSource: 'react',
-        tsconfigRaw: {
-          compilerOptions: {
-            jsx: 'react-jsx',
-          },
-        },
-      },
     },
     server: {
       port: 1337,
