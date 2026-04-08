@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
 import { useBotMetrics, useBotPortfolio, useBotTrades } from './useBotApi';
 import type { BotOperatorKind } from '~/lib/types/bot';
+import { syncTradesIntoTxStore } from '~/lib/utils/txHistorySync';
 
 interface MetricsSnapshot {
   account_value_usd: number;
@@ -122,6 +124,13 @@ export function useBotLiveSummary({
     enabled,
     refetchInterval: enabled ? 15_000 : false,
   });
+
+  useEffect(() => {
+    const trades = tradesQuery.data ?? [];
+    if (trades.length === 0) return;
+    const fallbackChainId = selectedChainIdStore.get() || 31337;
+    syncTradesIntoTxStore(trades, fallbackChainId);
+  }, [tradesQuery.data]);
 
   return useMemo(() => {
     const summary = summarizeBotLiveData(

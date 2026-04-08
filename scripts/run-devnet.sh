@@ -208,6 +208,12 @@ ARENA_PORT="${ARENA_PORT:-1337}"
 OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
 INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 TRADING_API_PORT="${TRADING_API_PORT:-9100}"
+INSTANCE_TRADING_API_PORT="${INSTANCE_TRADING_API_PORT:-9101}"
+VALIDATOR_HTTP_PORT="${VALIDATOR_HTTP_PORT:-9090}"
+START_VALIDATOR="${START_VALIDATOR:-false}"
+FORK_URL="${FORK_URL:-}"
+FORK_BLOCK_NUMBER="${FORK_BLOCK_NUMBER:-}"
+FORK_MODE="${FORK_MODE:-false}"
 OPERATOR_PROXY_TARGET="${VITE_OPERATOR_PROXY_TARGET:-http://localhost:$OPERATOR_API_PORT}"
 INSTANCE_OPERATOR_PROXY_TARGET="${VITE_INSTANCE_OPERATOR_PROXY_TARGET:-http://localhost:$INSTANCE_OPERATOR_API_PORT}"
 
@@ -240,22 +246,52 @@ trap cleanup EXIT INT TERM
 
 # ── 1. Start Anvil ─────────────────────────────────────────────────
 echo "=== Starting Anvil ==="
-if [[ -f "$SNAPSHOT" ]]; then
+if [[ -n "$FORK_URL" ]]; then
+  FORK_MODE=true
+fi
+
+if [[ -f "$SNAPSHOT" && -n "$FORK_URL" ]]; then
+  if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
+    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  else
+    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  fi
+elif [[ -f "$SNAPSHOT" ]]; then
   anvil --load-state "$SNAPSHOT" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+elif [[ -n "$FORK_URL" ]]; then
+  if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
+    anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  else
+    anvil --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  fi
 else
   echo "WARNING: Tangle state snapshot not found at $SNAPSHOT"
   echo "Starting plain Anvil (no Tangle contracts)"
   anvil --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
 fi
 PIDS+=($!)
-sleep 2
 
-# Verify Anvil is alive
-if ! cast chain-id --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+# Verify Anvil is alive. Fork + load-state boot can take noticeably longer than
+# plain local Anvil, so poll instead of assuming a short fixed delay.
+ANVIL_CHAIN_ID=""
+for _ in $(seq 1 60); do
+  if ANVIL_CHAIN_ID="$(cast chain-id --rpc-url "$RPC_URL" 2>/dev/null)"; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ -z "$ANVIL_CHAIN_ID" ]]; then
   echo "ERROR: Anvil failed to start"
   exit 1
 fi
-echo "  Anvil running at $RPC_URL (chain $(cast chain-id --rpc-url "$RPC_URL"))"
+echo "  Anvil running at $RPC_URL (chain $ANVIL_CHAIN_ID)"
+if [[ -n "$FORK_URL" ]]; then
+  echo "  Fork source: $FORK_URL"
+  if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
+    echo "  Fork block:  $FORK_BLOCK_NUMBER"
+  fi
+fi
 sync_tangle_domain_separator "$RPC_URL" "$CHAIN_ID"
 
 # ── 2. Deploy contracts + register operators ───────────────────────
@@ -268,6 +304,9 @@ OPERATOR_API_PORT="$OPERATOR_API_PORT" \
 INSTANCE_OPERATOR_API_PORT="$INSTANCE_OPERATOR_API_PORT" \
 VITE_OPERATOR_PROXY_TARGET="$OPERATOR_PROXY_TARGET" \
 VITE_INSTANCE_OPERATOR_PROXY_TARGET="$INSTANCE_OPERATOR_PROXY_TARGET" \
+FORK_MODE="$FORK_MODE" \
+EXISTING_USDC_ADDRESS="${EXISTING_USDC_ADDRESS:-}" \
+EXISTING_WETH_ADDRESS="${EXISTING_WETH_ADDRESS:-}" \
   bash "$SCRIPT_DIR/deploy-local.sh"
 
 # ── 3. Start pricing engines ──────────────────────────────────────
@@ -292,16 +331,20 @@ else
   echo "  Build it: cd ../blueprint && cargo build -p blueprint-pricing-engine --release"
 fi
 
-# ── 4. Start cloud operator ───────────────────────────────────────
-echo ""
-echo "=== Starting cloud operator ==="
-
 CLOUD_SERVICE_ID="$(grep '^VITE_SERVICE_IDS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2 | cut -d, -f1)"
 CLOUD_SERVICE_ID="${CLOUD_SERVICE_ID:-0}"
 CLOUD_BLUEPRINT_ID="$(grep '^VITE_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
 INSTANCE_SERVICE_ID="$(grep '^VITE_SERVICE_IDS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2 | cut -d, -f2)"
 INSTANCE_SERVICE_ID="${INSTANCE_SERVICE_ID:-0}"
 INSTANCE_BLUEPRINT_ID="$(grep '^VITE_INSTANCE_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+VALIDATOR_SERVICE_ID="$(grep '^VITE_VALIDATOR_SERVICE_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+VALIDATOR_BLUEPRINT_ID="$(grep '^VITE_VALIDATOR_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+INSTANCE_VAULT_ADDRESS="$(grep '^VITE_INSTANCE_VAULT_ADDRESS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+TRADE_VALIDATOR_ADDRESS="$(grep '^VITE_TRADE_VALIDATOR_ADDRESS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+DEFAULT_VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-}"
+if [[ -z "$DEFAULT_VALIDATOR_ENDPOINTS" && "$START_VALIDATOR" == "true" ]]; then
+  DEFAULT_VALIDATOR_ENDPOINTS="http://127.0.0.1:$VALIDATOR_HTTP_PORT"
+fi
 DOCKER_SOCKET="${DOCKER_HOST:-}"
 if [[ -z "$DOCKER_SOCKET" ]]; then
   if [[ -S "$HOME/.docker/run/docker.sock" ]]; then
@@ -312,6 +355,45 @@ if [[ -z "$DOCKER_SOCKET" ]]; then
     DOCKER_SOCKET="unix:///var/run/docker.sock"
   fi
 fi
+
+if [[ "$START_VALIDATOR" == "true" ]]; then
+  # ── 3b. Start validator ─────────────────────────────────────────
+  echo ""
+  echo "=== Starting validator ==="
+
+  RUST_LOG="${RUST_LOG:-info,tangle=debug,trading=debug}" \
+  SERVICE_ID="$VALIDATOR_SERVICE_ID" \
+  BLUEPRINT_ID="$VALIDATOR_BLUEPRINT_ID" \
+  CHAIN_ID="$CHAIN_ID" \
+  RPC_URL="$RPC_URL" \
+  HTTP_RPC_URL="$RPC_URL" \
+  VALIDATOR_RPC_URL="$RPC_URL" \
+  VALIDATOR_HTTP_PORT="$VALIDATOR_HTTP_PORT" \
+  VERIFYING_CONTRACT="$TRADE_VALIDATOR_ADDRESS" \
+  OPERATOR_ADDRESS="0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
+  PRIVATE_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" \
+  "$ROOT_DIR/target/release/trading-validator" run \
+    --http-rpc-url "$RPC_URL" \
+    --ws-rpc-url "$WS_RPC_URL" \
+    --keystore-uri "$ROOT_DIR/scripts/data/operator1/keystore" \
+    --data-dir "${VALIDATOR_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/validator}" \
+    --protocol tangle -t &
+  PIDS+=($!)
+  sleep 2
+  echo "  Validator running at http://localhost:$VALIDATOR_HTTP_PORT"
+  if ! curl -fsS "http://localhost:$VALIDATOR_HTTP_PORT/health" > /dev/null 2>&1; then
+    echo "ERROR: Validator failed to start"
+    exit 1
+  fi
+else
+  echo ""
+  echo "=== Skipping validator ==="
+  echo "  START_VALIDATOR is false; operators will use VALIDATOR_ENDPOINTS='${DEFAULT_VALIDATOR_ENDPOINTS}'"
+fi
+
+# ── 4. Start cloud operator ───────────────────────────────────────
+echo ""
+echo "=== Starting cloud operator ==="
 
 DOCKER_HOST="$DOCKER_SOCKET" \
 RUST_LOG="${RUST_LOG:-info,tangle=debug,trading=debug}" \
@@ -332,7 +414,7 @@ SIDECAR_PUBLIC_HOST="${SIDECAR_PUBLIC_HOST:-127.0.0.1}" \
 OPERATOR_API_PORT="$OPERATOR_API_PORT" \
 TRADING_API_PORT="$TRADING_API_PORT" \
 BLUEPRINT_STATE_DIR="${BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/cloud}" \
-VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-}" \
+VALIDATOR_ENDPOINTS="$DEFAULT_VALIDATOR_ENDPOINTS" \
 WORKFLOW_CRON_SCHEDULE="${WORKFLOW_CRON_SCHEDULE:-0 0 1 1 * *}" \
 FEE_SETTLEMENT_INTERVAL_SECS="${FEE_SETTLEMENT_INTERVAL_SECS:-999999}" \
 BILLING_INTERVAL_SECS="${BILLING_INTERVAL_SECS:-999999}" \
@@ -368,9 +450,10 @@ SIDECAR_IMAGE="${SIDECAR_IMAGE:-tangle-sidecar:local}" \
 SIDECAR_PULL_IMAGE="${SIDECAR_PULL_IMAGE:-false}" \
 SIDECAR_PUBLIC_HOST="${SIDECAR_PUBLIC_HOST:-127.0.0.1}" \
 OPERATOR_API_PORT="$INSTANCE_OPERATOR_API_PORT" \
-TRADING_API_PORT="$TRADING_API_PORT" \
+TRADING_API_PORT="$INSTANCE_TRADING_API_PORT" \
+INSTANCE_VAULT_ADDRESS="$INSTANCE_VAULT_ADDRESS" \
 BLUEPRINT_STATE_DIR="${INSTANCE_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/instance}" \
-VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-}" \
+VALIDATOR_ENDPOINTS="$DEFAULT_VALIDATOR_ENDPOINTS" \
 WORKFLOW_CRON_SCHEDULE="${WORKFLOW_CRON_SCHEDULE:-0 0 1 1 * *}" \
 FEE_SETTLEMENT_INTERVAL_SECS="${FEE_SETTLEMENT_INTERVAL_SECS:-999999}" \
 BILLING_INTERVAL_SECS="${BILLING_INTERVAL_SECS:-999999}" \
@@ -382,7 +465,7 @@ BILLING_INTERVAL_SECS="${BILLING_INTERVAL_SECS:-999999}" \
   --protocol tangle -t &
 PIDS+=($!)
 sleep 2
-echo "  Instance operator starting on :$INSTANCE_OPERATOR_API_PORT (API)"
+echo "  Instance operator starting on :$INSTANCE_OPERATOR_API_PORT (API) and :$INSTANCE_TRADING_API_PORT (trading)"
 wait_for_operator_meta "http://localhost:$INSTANCE_OPERATOR_API_PORT/api/meta" "instance" "Instance operator"
 
 # ── 5. Start frontend ─────────────────────────────────────────────
@@ -410,8 +493,12 @@ echo "╠═══════════════════════�
 echo "║  Anvil RPC:     $RPC_URL          ║"
 echo "║  Operator 1:    http://localhost:50051 (gRPC)   ║"
 echo "║  Operator 2:    http://localhost:50052 (gRPC)   ║"
+if [[ "$START_VALIDATOR" == "true" ]]; then
+echo "║  Validator:     http://localhost:$VALIDATOR_HTTP_PORT         ║"
+fi
 echo "║  Cloud API:     http://localhost:$OPERATOR_API_PORT        ║"
 echo "║  Instance API:  http://localhost:$INSTANCE_OPERATOR_API_PORT        ║"
+echo "║  Instance Tx:   http://localhost:$INSTANCE_TRADING_API_PORT        ║"
 if [[ "$START_UI" == "true" ]]; then
 echo "║  Frontend:      http://localhost:$ARENA_PORT           ║"
 fi

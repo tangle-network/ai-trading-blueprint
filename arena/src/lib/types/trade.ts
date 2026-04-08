@@ -50,6 +50,10 @@ export interface Trade {
   venue: TradeVenue;
   /** Chain ID for explorer links. */
   chainId?: number;
+  /** On-chain block number for executed trades (when available). */
+  blockNumber?: number;
+  /** On-chain gas used for executed trades (when available). */
+  gasUsed?: string;
   /** Aggregate score across all validators */
   validatorScore?: number;
   /** First validator's reasoning (convenience accessor) */

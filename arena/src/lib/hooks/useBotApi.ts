@@ -181,6 +181,8 @@ export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
     targetProtocol: trade.target_protocol || undefined,
     venue: protocolToVenue(trade.target_protocol, trade.paper_trade),
     chainId: trade.validation?.responses?.[0]?.chain_id,
+    blockNumber: trade.block_number,
+    gasUsed: trade.gas_used,
     validatorScore: trade.validation?.aggregate_score,
     validatorReasoning: trade.validation?.responses?.[0]?.reasoning,
     validation,

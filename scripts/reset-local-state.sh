@@ -7,7 +7,7 @@ STATE_ROOT="${STATE_ROOT:-$ROOT_DIR/blueprint-state}"
 
 echo "Resetting local blueprint state under $STATE_ROOT"
 
-for dir in "$STATE_ROOT/cloud" "$STATE_ROOT/instance" "$STATE_ROOT/tee"; do
+for dir in "$STATE_ROOT/cloud" "$STATE_ROOT/instance" "$STATE_ROOT/tee" "$STATE_ROOT/validator"; do
   rm -rf "$dir"
   mkdir -p "$dir"
   echo "  cleared $dir"
