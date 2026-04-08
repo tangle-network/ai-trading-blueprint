@@ -48,6 +48,8 @@ pub struct ValidationPayload {
     pub approved: bool,
     pub aggregate_score: u32,
     pub intent_hash: String,
+    #[serde(default)]
+    pub deadline: Option<u64>,
     pub validator_responses: Vec<ValidatorResponsePayload>,
     #[serde(default)]
     pub simulation: Option<SimulationPayload>,
@@ -258,7 +260,7 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         )
     })?;
 
-    TradeIntentBuilder::new()
+    let mut intent = TradeIntentBuilder::new()
         .strategy_id(&req.intent.strategy_id)
         .action(action)
         .token_in(&req.intent.token_in)
@@ -267,7 +269,18 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         .min_amount_out(min_amount_out)
         .target_protocol(&req.intent.target_protocol)
         .build()
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    if let Some(deadline) = req.validation.deadline {
+        intent.deadline = chrono::DateTime::<Utc>::from_timestamp(deadline as i64, 0).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid validation deadline: {deadline}"),
+            )
+        })?;
+    }
+
+    Ok(intent)
 }
 
 #[derive(Clone, Debug)]
@@ -783,7 +796,15 @@ async fn execute_multi_bot(
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions
     // from concurrent requests). Falls back to creating a fresh one if not configured.
-    let executor = if let Some(shared_client) = &state.chain_client {
+    let can_use_shared_chain_client = state.chain_client.is_some()
+        && state.chain_client_chain_id == Some(bot.chain_id)
+        && state.chain_client_rpc_url.as_deref() == Some(bot.rpc_url.as_str());
+
+    let executor = if can_use_shared_chain_client {
+        let shared_client = state
+            .chain_client
+            .as_ref()
+            .expect("shared chain client checked above");
         TradeExecutor::with_shared_chain_client(
             &bot.vault_address,
             &bot.rpc_url,
@@ -854,5 +875,46 @@ mod tests {
         let (size, amount_out) = resolve_position_size(&intent).expect("size");
         assert_eq!(size, Decimal::new(2, 0));
         assert_eq!(amount_out, None);
+    }
+
+    fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {
+        ExecuteRequest {
+            intent: IntentPayload {
+                strategy_id: "deadline-test".to_string(),
+                action: "swap".to_string(),
+                token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
+                token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
+                amount_in: "10000000000000000".to_string(),
+                min_amount_out: "1000000".to_string(),
+                target_protocol: "uniswap_v3".to_string(),
+                metadata: serde_json::Value::Null,
+            },
+            validation: ValidationPayload {
+                approved: true,
+                aggregate_score: 100,
+                intent_hash: "0xdeadbeef".to_string(),
+                deadline,
+                validator_responses: vec![],
+                simulation: None,
+            },
+        }
+    }
+
+    #[test]
+    fn parse_execute_request_uses_validation_deadline_when_present() {
+        let req = make_execute_request(Some(1_777_777_777));
+        let intent = parse_execute_request(&req).expect("intent");
+        assert_eq!(intent.deadline.timestamp(), 1_777_777_777);
+    }
+
+    #[test]
+    fn parse_execute_request_uses_default_deadline_when_missing() {
+        let req = make_execute_request(None);
+        let before = chrono::Utc::now().timestamp();
+        let intent = parse_execute_request(&req).expect("intent");
+        let after = chrono::Utc::now().timestamp();
+        let ts = intent.deadline.timestamp();
+        assert!(ts >= before + 290);
+        assert!(ts <= after + 310);
     }
 }

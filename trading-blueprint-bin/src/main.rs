@@ -364,6 +364,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             }),
             clob_client,
             chain_client,
+            chain_client_rpc_url: Some(rpc_url_for_chain),
+            chain_client_chain_id: Some(chain_id_for_chain),
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

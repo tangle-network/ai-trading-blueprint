@@ -289,6 +289,11 @@ struct InstanceProvisionRequest {
     strategy_type: Option<String>,
     strategy_config_json: Option<String>,
     risk_params_json: Option<String>,
+    chain_id: Option<u64>,
+    rpc_url: Option<String>,
+    vault_address: Option<String>,
+    asset_token: Option<String>,
+    paper_trade: Option<bool>,
     trading_loop_cron: Option<String>,
     validator_service_ids: Option<Vec<u64>>,
 }
@@ -1454,24 +1459,105 @@ async fn provision_bot(
         .map(|c| c.service_id)
         .unwrap_or(0);
 
-    // Build TradingProvisionRequest from API body with sensible defaults
     use blueprint_sdk::alloy::primitives::{Address, U256};
 
+    let chain_id = body
+        .chain_id
+        .or_else(|| {
+            std::env::var("CHAIN_ID")
+                .ok()
+                .and_then(|value| value.parse().ok())
+        })
+        .unwrap_or(1);
+    let rpc_url = body
+        .rpc_url
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("RPC_URL").ok())
+        .unwrap_or_else(|| "http://localhost:8545".to_string());
+
+    let vault_address_raw = body
+        .vault_address
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("INSTANCE_VAULT_ADDRESS").ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INSTANCE_VAULT_ADDRESS is not configured for the instance operator".to_string(),
+            )
+        })?;
+    let vault_address: Address = vault_address_raw.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault_address '{vault_address_raw}': {e}"),
+        )
+    })?;
+
+    let asset_token = match body
+        .asset_token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("ASSET_TOKEN_ADDRESS").ok())
+    {
+        Some(raw) => raw.parse().map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid asset_token '{raw}': {e}"),
+            )
+        })?,
+        None => Address::ZERO,
+    };
+
+    let strategy_config_json = {
+        let raw = body
+            .strategy_config_json
+            .clone()
+            .unwrap_or_else(|| "{}".to_string());
+
+        if let Some(paper_trade) = body.paper_trade {
+            let trimmed = raw.trim();
+            let mut parsed = if trimmed.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str::<serde_json::Value>(trimmed).map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid strategy_config_json: {e}"),
+                    )
+                })?
+            };
+
+            let Some(obj) = parsed.as_object_mut() else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "strategy_config_json must be a JSON object".to_string(),
+                ));
+            };
+            obj.insert("paper_trade".into(), serde_json::Value::Bool(paper_trade));
+            parsed.to_string()
+        } else {
+            raw
+        }
+    };
+
+    // Build TradingProvisionRequest from API body with sensible defaults.
+    // `factory_address` is repurposed here as a compatibility shim so the
+    // shared provision flow stores the real singleton vault address without
+    // changing the on-chain request ABI used by cloud mode.
     let request = trading_blueprint_lib::TradingProvisionRequest {
         name: body
             .name
             .unwrap_or_else(|| format!("Instance Bot (service {service_id})")),
         strategy_type: body.strategy_type.unwrap_or_else(|| "dex".to_string()),
-        strategy_config_json: body
-            .strategy_config_json
-            .unwrap_or_else(|| "{}".to_string()),
+        strategy_config_json,
         risk_params_json: body.risk_params_json.unwrap_or_else(|| "{}".to_string()),
-        factory_address: Address::ZERO,
-        asset_token: Address::ZERO,
+        factory_address: vault_address,
+        asset_token,
         signers: vec![],
         required_signatures: U256::ZERO,
-        chain_id: U256::from(1u64),
-        rpc_url: String::new(),
+        chain_id: U256::from(chain_id),
+        rpc_url,
         trading_loop_cron: body
             .trading_loop_cron
             .unwrap_or_else(|| "0 */5 * * * *".to_string()),

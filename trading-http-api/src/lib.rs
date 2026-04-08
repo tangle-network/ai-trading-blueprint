@@ -107,6 +107,10 @@ pub struct MultiBotTradingState {
     /// on-chain nonce, resulting in one transaction reverting. Sharing a single
     /// `ChainClient` (cloned, which shares internal nonce state) prevents this.
     pub chain_client: Option<ChainClient>,
+    /// RPC URL that the shared chain client is bound to.
+    pub chain_client_rpc_url: Option<String>,
+    /// Chain ID that the shared chain client is bound to.
+    pub chain_client_chain_id: Option<u64>,
 }
 
 /// Build a multi-bot trading HTTP API router.

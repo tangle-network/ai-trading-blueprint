@@ -10262,7 +10262,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "trading-blueprint-lib",
+ "trading-http-api",
  "trading-instance-blueprint-lib",
+ "trading-runtime",
 ]
 
 [[package]]
