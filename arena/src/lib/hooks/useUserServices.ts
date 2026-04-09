@@ -10,7 +10,7 @@ import {
   getProvisionStructuralFingerprint,
 } from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
-const BLOCK_TIME_SECONDS = 12;
+import { computeServiceRemainingSeconds } from '~/lib/serviceTtl';
 
 export interface UserService {
   serviceId: number;
@@ -157,7 +157,7 @@ export function useUserServices(userAddress: Address | undefined) {
           operators,
           vaultAddresses,
           isActive,
-          remainingSeconds: ttl > 0 ? ttl * BLOCK_TIME_SECONDS : null,
+          remainingSeconds: computeServiceRemainingSeconds(createdAt, ttl),
         });
       }
 
@@ -186,22 +186,13 @@ export function useUserServices(userAddress: Address | undefined) {
   }, [discover]);
 
   const liveServices = useMemo(() => {
-    if (currentBlock == null) return services;
+    void currentBlock;
+    const nowSeconds = Math.floor(Date.now() / 1000);
 
     return services.map((service) => {
-      if (service.ttl <= 0) {
-        return {
-          ...service,
-          remainingSeconds: null,
-        };
-      }
-
-      const expiryBlock = service.createdAt + service.ttl;
-      const remainingBlocks = Math.max(0, expiryBlock - Number(currentBlock));
-
       return {
         ...service,
-        remainingSeconds: remainingBlocks * BLOCK_TIME_SECONDS,
+        remainingSeconds: computeServiceRemainingSeconds(service.createdAt, service.ttl, nowSeconds),
       };
     });
   }, [currentBlock, services]);

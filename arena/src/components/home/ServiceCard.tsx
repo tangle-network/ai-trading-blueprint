@@ -5,6 +5,7 @@ import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import type { UserService } from '~/lib/hooks/useUserServices';
 import type { Bot } from '~/lib/types/bot';
 import { botStatusBadgeVariant, botStatusLabel, formatDuration, truncateAddress } from '~/lib/format';
+import { computeServiceLifetimeSeconds } from '~/lib/serviceTtl';
 
 export function ServiceCard({
   service,
@@ -20,8 +21,9 @@ export function ServiceCard({
   const statusVariant = service.isActive ? 'success' : service.terminatedAt > 0 ? 'destructive' : 'amber';
   const statusLabel = service.isActive ? 'Active' : service.terminatedAt > 0 ? 'Terminated' : 'Pending';
 
-  const ttlFraction = service.remainingSeconds != null && service.ttl > 0
-    ? Math.min(1, Math.max(0, service.remainingSeconds / (service.ttl * 12)))
+  const totalLifetimeSeconds = computeServiceLifetimeSeconds(service.ttl);
+  const ttlFraction = service.remainingSeconds != null && totalLifetimeSeconds != null
+    ? Math.min(1, Math.max(0, service.remainingSeconds / totalLifetimeSeconds))
     : null;
 
   const totalTvl = bots.reduce((sum, b) => sum + b.tvl, 0);
