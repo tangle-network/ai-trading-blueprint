@@ -50,7 +50,7 @@ function decodeProvisionOutput(output: `0x${string}`) {
   return {
     vaultAddress: result.vault_address as string,
     sandboxId: result.sandbox_id as string,
-    workflowId: Number(result.workflow_id),
+    workflowId: result.workflow_id.toString(),
   };
 }
 
@@ -428,7 +428,7 @@ export function useProvisionWatcher() {
  */
 function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number, callId?: number) {
   let sandboxId: string | undefined;
-  let workflowId = 0;
+  let workflowId: string | undefined;
 
   // Decode operator output for sandbox_id and workflow_id
   if (output) {
@@ -455,7 +455,7 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
       const vault = vaultAddr as Address;
       console.log('[provision-watcher] botVaults resolved:', vault, 'for callId=', resolvedCallId);
       updateProvision(provId, {
-        phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+        phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
         vaultAddress: vault !== zeroAddress ? vault : undefined,
         sandboxId,
         workflowId,
@@ -472,8 +472,9 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   } else {
     // No BSM or no callId — update without vault
     updateProvision(provId, {
-      phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+      phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
       sandboxId,
+      ...(workflowId ? { workflowId } : {}),
       ...(serviceId > 0 ? { serviceId } : {}),
     });
   }

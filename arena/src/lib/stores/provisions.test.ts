@@ -36,7 +36,7 @@ describe('provision storage helpers', () => {
       vaultAddress: '0x00000000000000000000000000000000000000aa',
       botId: 'bot-1',
       sandboxId: 'sandbox-1',
-      workflowId: 42,
+      workflowId: '42',
       progressPhase: 'ready',
       progressDetail: 'done',
     }));
@@ -57,7 +57,7 @@ describe('provision storage helpers', () => {
       vaultAddress: '0x00000000000000000000000000000000000000aa',
       botId: 'bot-1',
       sandboxId: 'sandbox-1',
-      workflowId: 42,
+      workflowId: '42',
     });
   });
 
@@ -76,7 +76,7 @@ describe('provision storage helpers', () => {
       makeProvision({
         botId: 'bot-1',
         sandboxId: 'sandbox-1',
-        workflowId: 12,
+        workflowId: '12',
         progressPhase: 'ready',
         progressDetail: 'done',
       }),
@@ -84,14 +84,14 @@ describe('provision storage helpers', () => {
       makeProvision({
         botId: 'bot-1',
         sandboxId: 'sandbox-1',
-        workflowId: 12,
+        workflowId: '12',
       }),
     ]);
   });
 
   it('treats operator identity as structural and blocks fallback rendering once known', () => {
     const before = makeProvision({ botId: undefined });
-    const after = makeProvision({ botId: 'bot-1', sandboxId: 'sandbox-1', workflowId: 4 });
+    const after = makeProvision({ botId: 'bot-1', sandboxId: 'sandbox-1', workflowId: '4' });
 
     expect(getProvisionStructuralFingerprint([before])).not.toBe(getProvisionStructuralFingerprint([after]));
     expect(shouldRenderProvisionFallbackBot(before)).toBe(true);
@@ -135,5 +135,16 @@ describe('provision storage helpers', () => {
     expect(provisionsStore.get()).toEqual([keepSameOwner, keepOtherOwner]);
 
     provisionsStore.set([]);
+  });
+
+  it('accepts legacy numeric workflow ids and normalizes them to strings', () => {
+    expect(sanitizePersistedProvisionList([
+      {
+        ...makeProvision(),
+        workflowId: 42,
+      },
+    ])).toEqual([
+      makeProvision({ workflowId: '42' }),
+    ]);
   });
 });

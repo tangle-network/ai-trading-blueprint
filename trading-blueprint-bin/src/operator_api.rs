@@ -97,7 +97,7 @@ pub struct BotDetailResponse {
     #[allow(dead_code)]
     pub trading_api_token: String,
     pub sandbox_id: String,
-    pub workflow_id: Option<u64>,
+    pub workflow_id: Option<String>,
     pub workflow_running: bool,
     pub latest_execution:
         Option<ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution>,
@@ -136,7 +136,7 @@ impl BotDetailResponse {
             trading_api_url: b.trading_api_url,
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
-            workflow_id: b.workflow_id,
+            workflow_id: b.workflow_id.map(|workflow_id| workflow_id.to_string()),
             workflow_running: workflow_status
                 .as_ref()
                 .map(|status| status.running)
@@ -218,7 +218,7 @@ struct ConfigureSecretsRequest {
 struct SecretsResponse {
     status: String,
     sandbox_id: Option<String>,
-    workflow_id: Option<u64>,
+    workflow_id: Option<String>,
     /// Trading API credentials — returned on activation so the agent
     /// (or operator) knows how to authenticate with the Trading HTTP API.
     trading_api_token: Option<String>,
@@ -257,7 +257,7 @@ struct BotControlResponse {
 #[derive(Serialize)]
 struct RunNowResponse {
     status: String,
-    workflow_id: u64,
+    workflow_id: String,
     session_id: String,
     accepted_at: u64,
 }
@@ -749,7 +749,7 @@ async fn configure_secrets(
     Ok(Json(SecretsResponse {
         status: "active".to_string(),
         sandbox_id: Some(result.sandbox_id),
-        workflow_id: Some(result.workflow_id),
+        workflow_id: Some(result.workflow_id.to_string()),
         trading_api_token: Some(result.trading_api_token),
         trading_api_url: Some(result.trading_api_url),
     }))
@@ -871,7 +871,7 @@ async fn run_now(
 
     Ok(Json(RunNowResponse {
         status: "started".to_string(),
-        workflow_id: accepted.workflow_id,
+        workflow_id: accepted.workflow_id.to_string(),
         session_id: accepted.session_id,
         accepted_at: accepted.accepted_at,
     }))
@@ -2134,7 +2134,7 @@ async fn debug_run_now(
 
     Ok(Json(serde_json::json!({
         "status": "started",
-        "workflow_id": accepted.workflow_id,
+        "workflow_id": accepted.workflow_id.to_string(),
         "session_id": accepted.session_id,
         "accepted_at": accepted.accepted_at,
     })))

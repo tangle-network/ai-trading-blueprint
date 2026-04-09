@@ -38,7 +38,7 @@ vi.mock('~/lib/hooks/useBotDetail', () => ({
       trading_api_url: 'http://localhost:9101',
       trading_api_token: 'token',
       sandbox_id: 'sandbox-1',
-      workflow_id: 123,
+      workflow_id: '177571563657601274',
       secrets_configured: true,
       sandbox_exists: true,
       sandbox_state: 'Running',
@@ -129,5 +129,12 @@ describe('ControlsTab', () => {
 
     expect(screen.getByText('Avg Score')).toBeInTheDocument();
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('renders the exact workflow id string without numeric rounding', () => {
+    avgValidatorScore = 88;
+    render(<ControlsTab bot={makeBot()} />);
+
+    expect(screen.getByText('177571563657601274')).toBeInTheDocument();
   });
 });

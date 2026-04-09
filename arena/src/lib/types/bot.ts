@@ -39,7 +39,7 @@ export interface Bot {
   archived?: boolean;
   controlAvailable?: boolean;
   tradingActive?: boolean;
-  workflowId?: number;
+  workflowId?: string;
   maxLifetimeDays?: number;
   windDownStartedAt?: number;
   secretsConfigured?: boolean;

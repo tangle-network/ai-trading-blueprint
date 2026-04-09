@@ -6,6 +6,7 @@ import {
 import { useOperatorAuth } from './useOperatorAuth';
 import type { BotOperatorKind } from '~/lib/types/bot';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
+import { normalizeOptionalWorkflowId } from '~/lib/utils/workflowId';
 
 export interface BotDetail {
   id: string;
@@ -23,7 +24,7 @@ export interface BotDetail {
   trading_api_url: string;
   trading_api_token: string;
   sandbox_id: string;
-  workflow_id: number | null;
+  workflow_id: string | null;
   secrets_configured: boolean;
   sandbox_exists: boolean;
   sandbox_state: string | null;
@@ -36,6 +37,10 @@ export interface BotDetail {
   call_id: number;
   service_id: number;
 }
+
+type RawBotDetail = Omit<BotDetail, 'workflow_id'> & {
+  workflow_id: string | number | null;
+};
 
 export function useBotDetail(
   botId: string | undefined,
@@ -50,7 +55,11 @@ export function useBotDetail(
     queryKey: ['bot-detail', apiUrl, botId, deploymentKind, auth.authCacheKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId);
-      return operatorJsonWithAuth<BotDetail>(apiUrl, path, auth);
+      const detail = await operatorJsonWithAuth<RawBotDetail>(apiUrl, path, auth);
+      return {
+        ...detail,
+        workflow_id: normalizeOptionalWorkflowId(detail.workflow_id),
+      };
     },
     enabled: !!botId && !!apiUrl && !!auth.getCachedToken(),
     staleTime: 10_000,

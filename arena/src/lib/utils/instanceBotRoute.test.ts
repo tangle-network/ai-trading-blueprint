@@ -58,7 +58,7 @@ describe('instance bot route helpers', () => {
         trading_api_url: '',
         trading_api_token: '',
         sandbox_id: 'sandbox-1',
-        workflow_id: 77,
+        workflow_id: '77',
         secrets_configured: false,
         sandbox_exists: true,
         sandbox_state: 'Running',

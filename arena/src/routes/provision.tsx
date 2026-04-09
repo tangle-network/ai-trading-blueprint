@@ -64,6 +64,7 @@ import {
   readOperatorError,
   type OperatorErrorBody,
 } from '~/lib/operator/errors';
+import { normalizeWorkflowId } from '~/lib/utils/workflowId';
 import {
   type WizardStep,
   STEP_ORDER,
@@ -133,7 +134,7 @@ interface InstanceOperatorBot {
   archived?: boolean;
   control_available?: boolean;
   secrets_configured?: boolean;
-  workflow_id?: number | null;
+  workflow_id?: string | number | null;
   call_id: number;
   service_id: number;
 }
@@ -1241,7 +1242,7 @@ export default function ProvisionPage() {
       botId: bot.id,
       sandboxId: bot.sandbox_id,
       callId: bot.call_id,
-      workflowId: bot.workflow_id ?? undefined,
+      workflowId: normalizeWorkflowId(bot.workflow_id),
       vaultAddress: bot.vault_address !== zeroAddress ? bot.vault_address : undefined,
     };
 
@@ -1582,7 +1583,14 @@ export default function ProvisionPage() {
         throw await readOperatorError(res);
       }
 
-      const result = await res.json();
+      const resultJson = await res.json() as {
+        workflow_id?: string | number | null;
+        sandbox_id?: string | null;
+      };
+      const result = {
+        workflow_id: normalizeWorkflowId(resultJson.workflow_id),
+        sandbox_id: typeof resultJson.sandbox_id === 'string' ? resultJson.sandbox_id : undefined,
+      };
 
       if (isInstance && userAddress) {
         upsertInstanceProvision({

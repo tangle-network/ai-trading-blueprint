@@ -10,6 +10,7 @@ import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { buildBotScopedPath, useOperatorMeta } from '~/lib/operator/meta';
 import { isStaleStateError, readOperatorError } from '~/lib/operator/errors';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
+import { normalizeWorkflowId } from '~/lib/utils/workflowId';
 import {
   buildEnvForProvider,
   ACTIVATION_LABELS,
@@ -179,7 +180,7 @@ export function SecretsModal({
   const submitSecrets = useCallback(async (
     botId: string,
     envJson: Record<string, string>,
-  ): Promise<{ workflow_id?: number; sandbox_id?: string }> => {
+  ): Promise<{ workflow_id?: string; sandbox_id?: string }> => {
     if (!operatorMeta) {
       throw new Error('Operator metadata not loaded');
     }
@@ -215,7 +216,15 @@ export function SecretsModal({
       throw await readOperatorError(res);
     }
 
-    return res.json();
+    const result = await res.json() as {
+      workflow_id?: string | number | null;
+      sandbox_id?: string | null;
+    };
+
+    return {
+      workflow_id: normalizeWorkflowId(result.workflow_id),
+      sandbox_id: typeof result.sandbox_id === 'string' ? result.sandbox_id : undefined,
+    };
   }, [apiUrl, getOperatorToken, operatorMeta]);
 
   const handleSubmit = async () => {

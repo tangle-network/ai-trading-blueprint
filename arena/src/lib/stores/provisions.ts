@@ -7,6 +7,7 @@ import {
   migrateLegacyScopedKey,
   pruneScopedStorageKeys,
 } from '~/lib/config/deploymentFingerprint';
+import { normalizeWorkflowId } from '~/lib/utils/workflowId';
 
 export type ProvisionPhase = 'pending_confirmation' | 'job_submitted' | 'job_processing' | 'awaiting_secrets' | 'active' | 'failed';
 
@@ -32,7 +33,7 @@ export interface TrackedProvision {
   vaultAddress?: string;
   botId?: string;
   sandboxId?: string;
-  workflowId?: number;
+  workflowId?: string;
   errorMessage?: string;
   /** Intermediate progress phase from operator API */
   progressPhase?: string;
@@ -192,7 +193,8 @@ export function sanitizePersistedProvision(record: unknown): TrackedProvision | 
   if (typeof raw.costWei === 'string' && raw.costWei.length > 0) sanitized.costWei = raw.costWei;
   if (typeof raw.botId === 'string' && raw.botId.length > 0) sanitized.botId = raw.botId;
   if (typeof raw.sandboxId === 'string' && raw.sandboxId.length > 0) sanitized.sandboxId = raw.sandboxId;
-  if (typeof raw.workflowId === 'number' && Number.isFinite(raw.workflowId)) sanitized.workflowId = raw.workflowId;
+  const workflowId = normalizeWorkflowId(raw.workflowId);
+  if (workflowId) sanitized.workflowId = workflowId;
   if (typeof raw.errorMessage === 'string' && raw.errorMessage.length > 0) sanitized.errorMessage = raw.errorMessage;
   if (typeof raw.blueprintType === 'string' && raw.blueprintType.length > 0) sanitized.blueprintType = raw.blueprintType;
 

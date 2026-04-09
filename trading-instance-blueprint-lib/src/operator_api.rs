@@ -33,7 +33,7 @@ pub struct BotDetailResponse {
     pub trading_api_url: String,
     pub trading_api_token: String,
     pub sandbox_id: String,
-    pub workflow_id: Option<u64>,
+    pub workflow_id: Option<String>,
     pub secrets_configured: bool,
     pub sandbox_exists: bool,
     pub sandbox_state: Option<String>,
@@ -64,7 +64,7 @@ impl BotDetailResponse {
             trading_api_url: b.trading_api_url,
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
-            workflow_id: b.workflow_id,
+            workflow_id: b.workflow_id.map(|workflow_id| workflow_id.to_string()),
             secrets_configured: runtime.secrets_configured,
             sandbox_exists: runtime.sandbox_exists,
             sandbox_state: runtime.sandbox_state,
@@ -139,7 +139,7 @@ struct ConfigureSecretsRequest {
 struct SecretsResponse {
     status: String,
     sandbox_id: Option<String>,
-    workflow_id: Option<u64>,
+    workflow_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -174,7 +174,7 @@ struct BotControlResponse {
 #[derive(Serialize)]
 struct RunNowResponse {
     status: String,
-    workflow_id: u64,
+    workflow_id: String,
     response: serde_json::Value,
 }
 
@@ -1667,7 +1667,7 @@ async fn configure_secrets(
     Ok(Json(SecretsResponse {
         status: "active".to_string(),
         sandbox_id: Some(result.sandbox_id),
-        workflow_id: Some(result.workflow_id),
+        workflow_id: Some(result.workflow_id.to_string()),
     }))
 }
 
@@ -1763,7 +1763,7 @@ async fn run_now(
 
     Ok(Json(RunNowResponse {
         status: "executed".to_string(),
-        workflow_id,
+        workflow_id: workflow_id.to_string(),
         response: execution.response,
     }))
 }
@@ -2203,7 +2203,7 @@ async fn debug_run_now(
 
     Ok(Json(serde_json::json!({
         "status": "executed",
-        "workflow_id": workflow_id,
+        "workflow_id": workflow_id.to_string(),
         "response": execution.response,
     })))
 }
