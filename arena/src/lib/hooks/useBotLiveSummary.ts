@@ -30,6 +30,8 @@ export interface BotLiveSummary {
   isLoading: boolean;
 }
 
+export type PortfolioValueState = 'missing' | 'priced' | 'unpriced';
+
 function roundTo(value: number, decimals: number) {
   const scale = 10 ** decimals;
   return Math.round(value * scale) / scale;
@@ -60,6 +62,7 @@ export function summarizeBotLiveData(
   snapshots: MetricsSnapshot[] | undefined,
   portfolioValue: number | null | undefined,
   validatorScores: Array<number | undefined>,
+  portfolioValueState: PortfolioValueState = 'missing',
 ): Omit<BotLiveSummary, 'isLoading'> {
   const validSnapshots = snapshots ?? [];
   const first = validSnapshots[0];
@@ -82,9 +85,12 @@ export function summarizeBotLiveData(
     ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
     : null;
 
-  const derivedPortfolioValue = typeof portfolioValue === 'number' && Number.isFinite(portfolioValue) && portfolioValue > 0
-    ? portfolioValue
-    : latest?.account_value_usd ?? null;
+  const hasResolvedPortfolioValue = typeof portfolioValue === 'number' && Number.isFinite(portfolioValue);
+  const derivedPortfolioValue = portfolioValueState === 'priced'
+    ? (hasResolvedPortfolioValue ? portfolioValue : null)
+    : portfolioValueState === 'missing'
+      ? latest?.account_value_usd ?? null
+      : null;
 
   return {
     pnlPercent,
@@ -133,10 +139,17 @@ export function useBotLiveSummary({
   }, [tradesQuery.data]);
 
   return useMemo(() => {
+    const portfolioValueState: PortfolioValueState = !portfolioQuery.data
+      ? 'missing'
+      : portfolioQuery.data.hasUnpricedPositions || portfolioQuery.data.displayTotalValueUsd == null
+        ? 'unpriced'
+        : 'priced';
+
     const summary = summarizeBotLiveData(
       metricsQuery.data,
       portfolioQuery.data?.displayTotalValueUsd ?? null,
       (tradesQuery.data ?? []).map((trade) => trade.validatorScore),
+      portfolioValueState,
     );
 
     return {

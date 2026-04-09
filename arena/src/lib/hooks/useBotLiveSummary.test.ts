@@ -32,6 +32,7 @@ describe('summarizeBotLiveData', () => {
       ],
       10200,
       [80, undefined, 100],
+      'priced',
     );
 
     expect(summary.pnlPercent).toBe(2);
@@ -61,6 +62,7 @@ describe('summarizeBotLiveData', () => {
       ],
       null,
       [],
+      'missing',
     );
 
     expect(summary.pnlPercent).toBe(0);
@@ -72,7 +74,7 @@ describe('summarizeBotLiveData', () => {
     expect(summary.winRate).toBeNull();
   });
 
-  it('falls back to the latest account value when portfolio data is unavailable', () => {
+  it('falls back to the latest account value when portfolio data is missing', () => {
     const summary = summarizeBotLiveData(
       [
         {
@@ -90,8 +92,45 @@ describe('summarizeBotLiveData', () => {
       ],
       0,
       [100],
+      'missing',
     );
 
     expect(summary.portfolioValue).toBe(10167.04);
+  });
+
+  it('returns null when the current portfolio is explicitly unpriced', () => {
+    const summary = summarizeBotLiveData(
+      [
+        {
+          account_value_usd: 10167.04,
+          realized_pnl: 40,
+          unrealized_pnl: 127.04,
+          drawdown_pct: 0.5,
+        },
+      ],
+      null,
+      [],
+      'unpriced',
+    );
+
+    expect(summary.portfolioValue).toBeNull();
+  });
+
+  it('preserves a priced zero portfolio value', () => {
+    const summary = summarizeBotLiveData(
+      [
+        {
+          account_value_usd: 10167.04,
+          realized_pnl: 40,
+          unrealized_pnl: 127.04,
+          drawdown_pct: 0.5,
+        },
+      ],
+      0,
+      [],
+      'priced',
+    );
+
+    expect(summary.portfolioValue).toBe(0);
   });
 });
