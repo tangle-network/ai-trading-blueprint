@@ -98,6 +98,9 @@ pub struct BotDetailResponse {
     pub trading_api_token: String,
     pub sandbox_id: String,
     pub workflow_id: Option<u64>,
+    pub workflow_running: bool,
+    pub latest_execution:
+        Option<ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution>,
     pub secrets_configured: bool,
     pub sandbox_exists: bool,
     pub sandbox_state: Option<String>,
@@ -114,6 +117,9 @@ pub struct BotDetailResponse {
 impl BotDetailResponse {
     fn from_record(b: TradingBotRecord) -> Self {
         let runtime = state::bot_runtime_status(&b);
+        let workflow_status = b.workflow_id.and_then(|workflow_id| {
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_runtime_status(workflow_id).ok()
+        });
         Self {
             id: b.id,
             operator_address: b.operator_address,
@@ -131,6 +137,11 @@ impl BotDetailResponse {
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id,
+            workflow_running: workflow_status
+                .as_ref()
+                .map(|status| status.running)
+                .unwrap_or(false),
+            latest_execution: workflow_status.and_then(|status| status.latest_execution),
             secrets_configured: runtime.secrets_configured,
             sandbox_exists: runtime.sandbox_exists,
             sandbox_state: runtime.sandbox_state,
@@ -247,7 +258,8 @@ struct BotControlResponse {
 struct RunNowResponse {
     status: String,
     workflow_id: u64,
-    response: serde_json::Value,
+    session_id: String,
+    accepted_at: u64,
 }
 
 #[derive(Deserialize)]
@@ -317,6 +329,14 @@ impl IntoResponse for ApiError {
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
+
+fn map_run_now_error(err: String) -> (StatusCode, String) {
+    if err.contains("already running") {
+        (StatusCode::CONFLICT, err)
+    } else {
+        (StatusCode::INTERNAL_SERVER_ERROR, err)
+    }
+}
 
 fn error_json(
     status: StatusCode,
@@ -846,24 +866,14 @@ async fn run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    // Update workflow timestamps
-    let last_run_at = execution.last_run_at;
-    let next_run_at = execution.next_run_at;
-    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .update(&wf_key, |e| {
-            e.last_run_at = Some(last_run_at);
-            e.next_run_at = next_run_at;
-        });
+    let accepted = ai_agent_sandbox_blueprint_lib::workflows::start_workflow_run(entry)
+        .map_err(map_run_now_error)?;
 
     Ok(Json(RunNowResponse {
-        status: "executed".to_string(),
-        workflow_id,
-        response: execution.response,
+        status: "started".to_string(),
+        workflow_id: accepted.workflow_id,
+        session_id: accepted.session_id,
+        accepted_at: accepted.accepted_at,
     }))
 }
 
@@ -2119,23 +2129,14 @@ async fn debug_run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let last_run_at = execution.last_run_at;
-    let next_run_at = execution.next_run_at;
-    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .update(&wf_key, |e| {
-            e.last_run_at = Some(last_run_at);
-            e.next_run_at = next_run_at;
-        });
+    let accepted = ai_agent_sandbox_blueprint_lib::workflows::start_workflow_run(entry)
+        .map_err(map_run_now_error)?;
 
     Ok(Json(serde_json::json!({
-        "status": "executed",
-        "workflow_id": workflow_id,
-        "response": execution.response,
+        "status": "started",
+        "workflow_id": accepted.workflow_id,
+        "session_id": accepted.session_id,
+        "accepted_at": accepted.accepted_at,
     })))
 }
 

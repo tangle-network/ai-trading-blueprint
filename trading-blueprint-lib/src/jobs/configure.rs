@@ -51,12 +51,22 @@ pub async fn configure_core(
     })
 }
 
-/// Rebuild the agent profile in a workflow entry from the current bot state.
+/// Rebuild the workflow prompt/profile in a workflow entry from the current bot state.
 fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u64) {
     let pack = crate::prompts::packs::get_pack(&bot.strategy_type);
-    let profile = match &pack {
-        Some(p) => crate::prompts::build_pack_agent_profile(p, bot),
-        None => crate::prompts::packs::build_generic_agent_profile(&bot.strategy_type, bot),
+    let (prompt, profile, max_turns, timeout_ms) = match &pack {
+        Some(p) => (
+            crate::prompts::build_pack_loop_prompt(p),
+            crate::prompts::build_pack_agent_profile(p, bot),
+            p.max_turns,
+            p.timeout_ms,
+        ),
+        None => (
+            crate::prompts::build_loop_prompt(&bot.strategy_type),
+            crate::prompts::packs::build_generic_agent_profile(&bot.strategy_type, bot),
+            10,
+            600_000,
+        ),
     };
     let profile_json = serde_json::to_string(&profile).unwrap_or_default();
 
@@ -66,7 +76,14 @@ fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u
             .update(&wf_key, |entry| {
                 if let Ok(mut wf) = serde_json::from_str::<serde_json::Value>(&entry.workflow_json)
                 {
+                    wf["prompt"] = serde_json::Value::String(prompt.clone());
                     wf["backend_profile_json"] = serde_json::Value::String(profile_json.clone());
+                    if max_turns > 0 {
+                        wf["max_turns"] = serde_json::Value::from(max_turns);
+                    }
+                    if timeout_ms > 0 {
+                        wf["timeout_ms"] = serde_json::Value::from(timeout_ms);
+                    }
                     if let Ok(json_str) = serde_json::to_string(&wf) {
                         entry.workflow_json = json_str;
                     }

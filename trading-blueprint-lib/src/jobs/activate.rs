@@ -24,6 +24,37 @@ pub struct ActivateResult {
     pub trading_api_url: String,
 }
 
+fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
+    if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL") {
+        if !explicit.trim().is_empty() {
+            return explicit;
+        }
+    }
+
+    let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
+    if host_network {
+        return api_url.to_string();
+    }
+
+    let Ok(mut parsed) = reqwest::Url::parse(api_url) else {
+        return api_url.to_string();
+    };
+
+    match parsed.host_str() {
+        Some("127.0.0.1") | Some("localhost") | Some("0.0.0.0") => {
+            let replacement_host = std::env::var("SIDECAR_INTERNAL_TRADING_API_HOST")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "host.docker.internal".to_string());
+            if parsed.set_host(Some(&replacement_host)).is_ok() {
+                return parsed.to_string();
+            }
+            api_url.to_string()
+        }
+        _ => api_url.to_string(),
+    }
+}
+
 /// Activate a bot that is awaiting secrets.
 ///
 /// 1. Validates the bot exists and sandbox has no user secrets
@@ -43,6 +74,9 @@ pub async fn activate_bot_with_secrets(
     update_activation_progress(bot_id, "validating", "Loading bot configuration");
 
     let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
+    let sidecar_trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
+    let mut sidecar_bot = bot.clone();
+    sidecar_bot.trading_api_url = sidecar_trading_api_url.clone();
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
@@ -115,7 +149,7 @@ pub async fn activate_bot_with_secrets(
             &record.sidecar_url,
             &record.token,
             &bot.strategy_type,
-            &bot.trading_api_url,
+            &sidecar_trading_api_url,
             &bot.trading_api_token,
             &bot.operator_address,
         )
@@ -136,11 +170,11 @@ pub async fn activate_bot_with_secrets(
     let (loop_prompt, backend_profile) = match &pack {
         Some(p) => (
             crate::prompts::build_pack_loop_prompt(p),
-            crate::prompts::build_pack_agent_profile(p, &bot),
+            crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
         ),
         None => (
             crate::prompts::build_loop_prompt(&bot.strategy_type),
-            crate::prompts::build_generic_agent_profile(&bot.strategy_type, &bot),
+            crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
         ),
     };
 
@@ -174,7 +208,7 @@ pub async fn activate_bot_with_secrets(
         trigger_config: cron_config,
         sandbox_config_json: String::new(),
         target_kind: 0,
-        target_sandbox_id: String::new(),
+        target_sandbox_id: record.id.clone(),
         target_service_id: 0,
         active: true,
         next_run_at: next_run,
@@ -248,7 +282,7 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
 async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar && chmod 0777 /home/agent/.sidecar'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config && chmod 0777 /home/agent/.sidecar'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -325,56 +359,55 @@ async fn write_prebuilt_tools(
     )
     .await?;
 
-    // Strategy-specific smart tools
-    if strategy_type.starts_with("prediction") || strategy_type == "mm" {
-        // Smart analyzer: scans markets, fetches prices, filters to actionable opportunities
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/analyze-opportunities.js",
-            include_str!("../prompts/tools/analyze_opportunities.js"),
-        )
-        .await?;
-        // One-command trade executor: circuit-breaker → validate → execute → log
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/submit-trade.js",
-            include_str!("../prompts/tools/submit_trade.js"),
-        )
-        .await?;
-        // Order management: check fills, identify stale orders
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/check-orders.js",
-            include_str!("../prompts/tools/check_orders.js"),
-        )
-        .await?;
-        // CLOB collateral management (release/return vault funds for off-chain trading)
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/manage-collateral.js",
-            include_str!("../prompts/tools/manage_collateral.js"),
-        )
-        .await?;
-        // Keep legacy tools for fallback (agent can use either)
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/scan-markets.js",
-            include_str!("../prompts/tools/scan_markets.js"),
-        )
-        .await?;
-        write_file_to_sidecar(
-            sidecar_url,
-            token,
-            "/home/agent/tools/check-prices.js",
-            include_str!("../prompts/tools/check_prices.js"),
-        )
-        .await?;
-    }
+    // Core strategy tools used by the current pack loop prompt.
+    // Always deploy these to avoid stale/missing tools when a bot is restored
+    // from snapshot and reactivated under a different strategy path.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/analyze-opportunities.js",
+        include_str!("../prompts/tools/analyze_opportunities.js"),
+    )
+    .await?;
+    // One-command trade executor: circuit-breaker -> validate -> execute -> log
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/submit-trade.js",
+        include_str!("../prompts/tools/submit_trade.js"),
+    )
+    .await?;
+    // Order management: check fills, identify stale orders
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/check-orders.js",
+        include_str!("../prompts/tools/check_orders.js"),
+    )
+    .await?;
+    // CLOB collateral management (release/return vault funds for off-chain trading)
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/manage-collateral.js",
+        include_str!("../prompts/tools/manage_collateral.js"),
+    )
+    .await?;
+    // Legacy/raw data tools kept for fallback and diagnostics.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/scan-markets.js",
+        include_str!("../prompts/tools/scan_markets.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/check-prices.js",
+        include_str!("../prompts/tools/check_prices.js"),
+    )
+    .await?;
 
     tracing::info!("Deployed pre-built trading tools for strategy: {strategy_type}");
     Ok(())
