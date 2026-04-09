@@ -125,8 +125,14 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
             "/health",
             get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
         )
+        .merge(routes::market_data::multi_bot_router())
+        .merge(routes::portfolio::multi_bot_router())
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
+        .merge(routes::collateral::multi_bot_router())
+        .merge(routes::circuit::multi_bot_router())
+        .merge(routes::adapters::multi_bot_router())
+        .merge(routes::metrics::multi_bot_router())
         .merge(routes::trades::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

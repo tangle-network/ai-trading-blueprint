@@ -737,11 +737,15 @@ async fn test_metrics_current() {
 // ── Multi-bot trading API tests ─────────────────────────────────────────────
 
 fn multi_bot_state() -> Arc<MultiBotTradingState> {
+    multi_bot_state_with_market("http://localhost:1234")
+}
+
+fn multi_bot_state_with_market(market_data_base_url: &str) -> Arc<MultiBotTradingState> {
     ensure_state_dir();
     Arc::new(MultiBotTradingState {
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
-        market_data_base_url: "http://localhost:1234".to_string(),
+        market_data_base_url: market_data_base_url.to_string(),
         validation_deadline_secs: 300,
         min_validator_score: 50,
         resolve_bot: Box::new(|token: &str| {
@@ -760,6 +764,8 @@ fn multi_bot_state() -> Arc<MultiBotTradingState> {
         }),
         clob_client: None,
         chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
     })
 }
 
@@ -862,6 +868,191 @@ async fn test_multi_bot_validate_paper_bypass() {
     let responses = json["validator_responses"].as_array().unwrap();
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0]["validator"], "paper-mode");
+}
+
+#[tokio::test]
+async fn test_multi_bot_market_data_prices() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/price/WETH"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "price": 2500.50,
+            "symbol": "WETH"
+        })))
+        .mount(&mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/price/USDC"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "price": 1.0,
+            "symbol": "USDC"
+        })))
+        .mount(&mock)
+        .await;
+
+    let state = multi_bot_state_with_market(&mock.uri());
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/prices")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "tokens": ["WETH", "USDC"]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let prices = json["prices"].as_array().unwrap();
+    assert_eq!(prices.len(), 2);
+}
+
+#[tokio::test]
+async fn test_multi_bot_circuit_breaker_accepts_numeric_payload() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/circuit-breaker/check")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "max_drawdown_pct": 10.0
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["should_break"], false);
+}
+
+#[tokio::test]
+async fn test_multi_bot_portfolio_state_exists() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["positions"].is_array());
+    assert_eq!(json["total_value_usd"], "0");
+}
+
+#[tokio::test]
+async fn test_multi_bot_adapters_list() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/adapters")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["adapters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|adapter| adapter == "uniswap_v3")
+    );
+}
+
+#[tokio::test]
+async fn test_multi_bot_metrics_snapshot_and_history() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let snap_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/metrics/snapshot")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "account_value_usd": "10500.50",
+                        "unrealized_pnl": "500.50",
+                        "realized_pnl": "200.00",
+                        "high_water_mark": "10500.50",
+                        "drawdown_pct": "0.0",
+                        "positions_count": 0,
+                        "trade_count": 0
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(snap_response.status(), 200);
+
+    let hist_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics/history?limit=10")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(hist_response.status(), 200);
+    let hist_body = hist_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let hist_json: serde_json::Value = serde_json::from_slice(&hist_body).unwrap();
+    assert!(!hist_json["snapshots"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1170,6 +1361,8 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
         }),
         clob_client: None,
         chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
     })
 }
 
@@ -1624,6 +1817,8 @@ async fn test_multi_bot_clob_execute() {
         }),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
     });
 
     let app = build_multi_bot_router(state);
@@ -1716,6 +1911,8 @@ async fn test_multi_bot_clob_execute_not_configured() {
         }),
         clob_client: None, // not configured
         chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
     });
 
     let app = build_multi_bot_router(state);
@@ -1802,6 +1999,8 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
         }),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
     });
 
     let app = build_multi_bot_router(state);

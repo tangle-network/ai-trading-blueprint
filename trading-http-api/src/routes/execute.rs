@@ -272,12 +272,13 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     if let Some(deadline) = req.validation.deadline {
-        intent.deadline = chrono::DateTime::<Utc>::from_timestamp(deadline as i64, 0).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid validation deadline: {deadline}"),
-            )
-        })?;
+        intent.deadline =
+            chrono::DateTime::<Utc>::from_timestamp(deadline as i64, 0).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid validation deadline: {deadline}"),
+                )
+            })?;
     }
 
     Ok(intent)

@@ -70,3 +70,15 @@ pub fn snapshots_for_bot(
         total,
     })
 }
+
+pub fn latest_snapshot_for_bot(bot_id: &str) -> Result<Option<MetricSnapshot>, String> {
+    let bid = bot_id.to_string();
+    let latest = snapshots()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|s| s.bot_id == bid)
+        .max_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    Ok(latest)
+}

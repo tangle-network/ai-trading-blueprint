@@ -257,7 +257,10 @@ mod tests {
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, TOKEN_B.parse::<Address>().unwrap());
         assert_eq!(result.pre_calls.len(), 1);
-        assert_eq!(result.pre_calls[0].target, VAULT.parse::<Address>().unwrap());
+        assert_eq!(
+            result.pre_calls[0].target,
+            VAULT.parse::<Address>().unwrap()
+        );
     }
 
     #[test]

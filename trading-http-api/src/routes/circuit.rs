@@ -1,12 +1,14 @@
-use crate::TradingApiState;
-use axum::{Json, Router, extract::State, routing::post};
+use crate::metrics_store;
+use crate::{MultiBotTradingState, TradingApiState};
+use axum::{Extension, Json, Router, extract::State, routing::post};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct CircuitBreakerRequest {
-    pub max_drawdown_pct: String,
+    pub max_drawdown_pct: Value,
 }
 
 #[derive(Serialize)]
@@ -19,16 +21,36 @@ pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new().route("/circuit-breaker/check", post(check))
 }
 
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
+    Router::new().route("/circuit-breaker/check", post(check_multi_bot))
+}
+
+fn parse_max_drawdown_pct(value: &Value) -> Result<Decimal, (axum::http::StatusCode, String)> {
+    match value {
+        Value::String(s) => s.parse().map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Invalid max_drawdown_pct: {e}"),
+            )
+        }),
+        Value::Number(n) => n.to_string().parse().map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Invalid max_drawdown_pct: {e}"),
+            )
+        }),
+        _ => Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "max_drawdown_pct must be a string or number".to_string(),
+        )),
+    }
+}
+
 async fn check(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<CircuitBreakerRequest>,
 ) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
-    let max_drawdown: Decimal = request.max_drawdown_pct.parse().map_err(|e| {
-        (
-            axum::http::StatusCode::BAD_REQUEST,
-            format!("Invalid max_drawdown_pct: {e}"),
-        )
-    })?;
+    let max_drawdown = parse_max_drawdown_pct(&request.max_drawdown_pct)?;
 
     let portfolio = state.portfolio.read().await;
     let should_break = portfolio.should_circuit_break(max_drawdown);
@@ -47,5 +69,21 @@ async fn check(
     Ok(Json(CircuitBreakerResponse {
         should_break,
         current_drawdown_pct: drawdown.to_string(),
+    }))
+}
+
+async fn check_multi_bot(
+    Extension(bot): Extension<crate::BotContext>,
+    Json(request): Json<CircuitBreakerRequest>,
+) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
+    let max_drawdown = parse_max_drawdown_pct(&request.max_drawdown_pct)?;
+    let current_drawdown = metrics_store::latest_snapshot_for_bot(&bot.bot_id)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .and_then(|snapshot| snapshot.drawdown_pct.parse::<Decimal>().ok())
+        .unwrap_or(Decimal::ZERO);
+
+    Ok(Json(CircuitBreakerResponse {
+        should_break: current_drawdown >= max_drawdown,
+        current_drawdown_pct: current_drawdown.to_string(),
     }))
 }
