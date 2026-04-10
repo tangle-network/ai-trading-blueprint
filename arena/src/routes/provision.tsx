@@ -84,6 +84,38 @@ interface StrategyConfigOptions {
   customExpertKnowledge?: string;
   customInstructions?: string;
   firecrackerRuntimeSupported?: boolean;
+  paperTrade?: boolean;
+}
+
+type DexExecutionTargetId = 'ethereum' | 'arbitrum' | 'base';
+
+interface DexExecutionTargetOption {
+  id: DexExecutionTargetId;
+  label: string;
+  description: string;
+  enabled: boolean;
+  chainId?: number;
+  rpcUrl?: string;
+  vaultAddress?: string;
+  assetToken?: string;
+  paperTrade?: boolean;
+}
+
+const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'ethereum',
+  label: 'Ethereum Fork (Local QA)',
+  description: 'Uses the local fork of Ethereum for QA. This is not Ethereum mainnet.',
+  enabled: true,
+  chainId: Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?? 31339),
+  rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? 'http://127.0.0.1:42545',
+  vaultAddress: import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS ?? '0x19ba547192222d3480665d4af454270b3fbe6749',
+  assetToken: import.meta.env.VITE_DEX_ETHEREUM_ASSET_TOKEN ?? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  paperTrade: false,
+};
+
+export function resolveSelectedProvisionNetwork(selectedChainId: number | undefined | null) {
+  const configuredNetworks = Object.values(networks);
+  return (selectedChainId != null ? networks[selectedChainId] : undefined) ?? configuredNetworks[0];
 }
 
 export function resolveRuntimeBackendForProvision(
@@ -102,6 +134,7 @@ export function buildStrategyConfigForProvision({
   customExpertKnowledge,
   customInstructions,
   firecrackerRuntimeSupported,
+  paperTrade,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -110,9 +143,32 @@ export function buildStrategyConfigForProvision({
       firecrackerRuntimeSupported,
     ),
   };
+  if (paperTrade != null) config.paper_trade = paperTrade;
   if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
   return config;
+}
+
+export function resolveExecutionTargetProvisionConfig(
+  target: DexExecutionTargetOption | undefined,
+) {
+  if (!target?.enabled) return null;
+  if (
+    target.chainId == null
+    || !target.rpcUrl
+    || !target.vaultAddress
+    || !target.assetToken
+  ) {
+    return null;
+  }
+
+  return {
+    chainId: BigInt(target.chainId),
+    rpcUrl: target.rpcUrl,
+    vaultAddress: target.vaultAddress as Address,
+    assetAddress: target.assetToken as Address,
+    paperTrade: target.paperTrade ?? false,
+  };
 }
 
 export function buildServiceActivationAttemptKey(
@@ -206,10 +262,39 @@ export default function ProvisionPage() {
   const { address: userAddress, isConnected, chainId: walletChainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const selectedChainId = useStore(selectedChainIdStore);
-  const selectedNetwork = networks[selectedChainId]!;
+  const selectedNetwork = resolveSelectedProvisionNetwork(selectedChainId);
+  if (!selectedNetwork) {
+    throw new Error('No configured networks available for provisioning');
+  }
   const targetChain = selectedNetwork.chain;
   const isWrongChain = isConnected && walletChainId !== targetChain.id;
   const localChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 31337);
+  const executionTargets = useMemo<DexExecutionTargetOption[]>(() => {
+    return [
+      DEFAULT_ETHEREUM_EXECUTION_TARGET,
+      {
+        id: 'arbitrum',
+        label: 'Arbitrum',
+        description: 'Temporarily disabled until the DEX execution path is fully wired.',
+        enabled: false,
+      },
+      {
+        id: 'base',
+        label: 'Base',
+        description: 'Temporarily disabled until the DEX execution path is fully wired.',
+        enabled: false,
+      },
+    ];
+  }, []);
+  const [executionTargetId, setExecutionTargetId] = useState<DexExecutionTargetId>(
+    'ethereum',
+  );
+  const selectedExecutionTarget = useMemo(
+    () =>
+      executionTargets.find((target) => target.id === executionTargetId)
+      ?? executionTargets[0],
+    [executionTargetId, executionTargets],
+  );
   const localFeeOverrides = useMemo(
     () =>
       import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' && targetChain.id === localChainId
@@ -373,6 +458,13 @@ export default function ProvisionPage() {
   }, [isInstance]);
 
   useEffect(() => {
+    const selected = executionTargets.find((target) => target.id === executionTargetId);
+    if (selected?.enabled) return;
+    const firstEnabled = executionTargets.find((target) => target.enabled);
+    if (firstEnabled) setExecutionTargetId(firstEnabled.id);
+  }, [executionTargetId, executionTargets]);
+
+  useEffect(() => {
     if (selectedBlueprint?.isTee) {
       setRuntimeBackend('tee');
     } else if (runtimeBackend === 'tee') {
@@ -384,6 +476,13 @@ export default function ProvisionPage() {
     if (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker') return;
     setRuntimeBackend(selectedBlueprint?.isTee ? 'tee' : 'docker');
   }, [runtimeBackend, selectedBlueprint?.isTee]);
+
+  useEffect(() => {
+    if (!isInstance || serviceMode !== 'new' || selectedOperators.size > 0) return;
+    const defaultOperator = discoveredOperators[0]?.address;
+    if (!defaultOperator) return;
+    setSelectedOperators(new Set([defaultOperator]));
+  }, [discoveredOperators, isInstance, selectedOperators.size, serviceMode]);
 
   const resetServiceActivationGuard = useCallback((txHash?: `0x${string}`) => {
     activationGuardTxHashRef.current = txHash;
@@ -543,6 +642,8 @@ export default function ProvisionPage() {
               return !isNaN(n) && n > 0 ? [n] : [];
             })();
 
+        const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
+
         const provisionBody = {
           name: name || `Instance Bot (service ${activatedServiceId})`,
           strategy_type: strategyType,
@@ -552,10 +653,21 @@ export default function ProvisionPage() {
               isTeeBlueprint: !!selectedBlueprint?.isTee,
               customExpertKnowledge,
               customInstructions,
+              paperTrade: executionConfig?.paperTrade ?? false,
             }),
           ),
+          risk_params_json: '{}',
           trading_loop_cron: effectiveCron,
           validator_service_ids: resolvedValidatorIds,
+          ...(executionConfig
+            ? {
+                chain_id: Number(executionConfig.chainId),
+                rpc_url: executionConfig.rpcUrl,
+                vault_address: executionConfig.vaultAddress,
+                asset_token: executionConfig.assetAddress,
+                paper_trade: executionConfig.paperTrade,
+              }
+            : {}),
         };
 
         const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
@@ -606,7 +718,7 @@ export default function ProvisionPage() {
     if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
       instanceAutoProvisionInFlightRef.current = null;
     }
-  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth]);
+  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth, selectedExecutionTarget]);
 
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
     if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
@@ -941,11 +1053,19 @@ export default function ProvisionPage() {
       return;
     }
 
+    const requiresExecutionTarget = strategyType === 'dex';
+    const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
+    if (requiresExecutionTarget && !executionConfig) {
+      toast.error('Execution target is incomplete — select a valid local fork target in Advanced Settings');
+      return;
+    }
+
     const strategyConfig = buildStrategyConfigForProvision({
       runtimeBackend,
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
+      paperTrade: executionConfig?.paperTrade ?? true,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
@@ -1002,12 +1122,12 @@ export default function ProvisionPage() {
       strategyType,
       strategyConfig,
       riskParams: '{}',
-      vaultAddress: zeroAddress,
-      assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
-        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+      vaultAddress: executionConfig?.vaultAddress ?? zeroAddress,
+      assetAddress: executionConfig?.assetAddress ?? ((import.meta.env.VITE_USDC_ADDRESS ??
+        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       depositors: vaultSigners.length > 0 ? vaultSigners : [],
-      chainId: BigInt(targetChain.id),
-      rpcUrl: '',
+      chainId: executionConfig?.chainId ?? BigInt(targetChain.id),
+      rpcUrl: executionConfig?.rpcUrl ?? '',
       cron: effectiveCron,
       cpuCores: bp.defaults.cpuCores,
       memoryMb: bp.defaults.memoryMb,
@@ -1913,6 +2033,10 @@ export default function ProvisionPage() {
         setRuntimeBackend={setRuntimeBackend}
         firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
         isTeeBlueprint={!!selectedBlueprint?.isTee}
+        executionTargets={executionTargets}
+        executionTargetId={executionTargetId}
+        setExecutionTargetId={(value) => setExecutionTargetId(value as DexExecutionTargetId)}
+        selectedExecutionTarget={selectedExecutionTarget}
         onOpenInfrastructure={() => {
           setShowAdvanced(false);
           setShowInfra(true);

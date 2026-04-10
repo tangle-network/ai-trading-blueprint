@@ -146,6 +146,11 @@ describe('provision runtime backend helpers', () => {
     expect(resolveRuntimeBackendForProvision('firecracker', false, true)).toBe('firecracker');
   });
 
+  it('falls back to the first configured network when the selected chain is unsupported', async () => {
+    const { resolveSelectedProvisionNetwork } = await import('../provision');
+    expect(resolveSelectedProvisionNetwork(31339)?.chain.id).toBe(0);
+  });
+
   it('propagates normalized runtime and overrides into strategy config payload', async () => {
     const { buildStrategyConfigForProvision } = await import('../provision');
     expect(
@@ -154,12 +159,50 @@ describe('provision runtime backend helpers', () => {
         isTeeBlueprint: false,
         customExpertKnowledge: 'expert notes',
         customInstructions: 'custom prompt',
+        paperTrade: false,
       }),
     ).toEqual({
       runtime_backend: 'docker',
+      paper_trade: false,
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
+  });
+
+  it('resolves a complete execution target into provision-safe values', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    expect(
+      resolveExecutionTargetProvisionConfig({
+        id: 'ethereum',
+        label: 'Ethereum Fork (Local QA)',
+        description: 'Local fork',
+        enabled: true,
+        chainId: 31339,
+        rpcUrl: 'http://127.0.0.1:42545',
+        vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+        assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+        paperTrade: false,
+      }),
+    ).toEqual({
+      chainId: 31339n,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+      assetAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      paperTrade: false,
+    });
+  });
+
+  it('rejects incomplete execution targets', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    expect(
+      resolveExecutionTargetProvisionConfig({
+        id: 'ethereum',
+        label: 'Ethereum Fork (Local QA)',
+        description: 'Local fork',
+        enabled: true,
+        chainId: 31339,
+      }),
+    ).toBeNull();
   });
 
   it('prefers the current service when selecting the latest instance provision', async () => {
