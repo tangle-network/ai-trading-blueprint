@@ -840,7 +840,7 @@ async fn test_pack_profile_has_rich_content() {
     assert_eq!(profile["memory"]["enabled"], true);
 
     // Loop prompt references the pack name
-    let loop_prompt = build_pack_loop_prompt(&pack);
+    let loop_prompt = build_pack_loop_prompt(&pack, &config);
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
 }
 

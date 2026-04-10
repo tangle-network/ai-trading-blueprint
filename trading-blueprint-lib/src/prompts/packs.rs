@@ -110,6 +110,101 @@ fn compose_required_env_vars(provider_ids: &[&str]) -> Vec<String> {
     vars
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DexQaConfigSummary {
+    pub no_trade_weight: f64,
+    pub small_trade_weight: f64,
+    pub big_trade_weight: f64,
+    pub small_pct: f64,
+    pub big_pct: f64,
+    pub allowed_directions: Vec<String>,
+    pub pair: String,
+}
+
+fn qa_numeric_field(value: Option<&Value>, default: f64, min: f64, max: f64) -> f64 {
+    let parsed = match value {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+    .unwrap_or(default);
+
+    parsed.clamp(min, max)
+}
+
+pub(crate) fn dex_stochastic_qa_config(
+    config: &crate::state::TradingBotRecord,
+) -> Option<DexQaConfigSummary> {
+    let qa_mode = config
+        .strategy_config
+        .get("qa_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("off");
+    if qa_mode != "stochastic" {
+        return None;
+    }
+
+    let weights = config
+        .strategy_config
+        .get("qa_trade_weights")
+        .and_then(Value::as_object);
+    let no_trade_weight = qa_numeric_field(weights.and_then(|w| w.get("no_trade")), 0.4, 0.0, 1.0);
+    let small_trade_weight =
+        qa_numeric_field(weights.and_then(|w| w.get("small_trade")), 0.4, 0.0, 1.0);
+    let big_trade_weight =
+        qa_numeric_field(weights.and_then(|w| w.get("big_trade")), 0.2, 0.0, 1.0);
+    let total_weight = no_trade_weight + small_trade_weight + big_trade_weight;
+    let (no_trade_weight, small_trade_weight, big_trade_weight) = if total_weight <= f64::EPSILON {
+        (0.4, 0.4, 0.2)
+    } else {
+        (
+            no_trade_weight / total_weight,
+            small_trade_weight / total_weight,
+            big_trade_weight / total_weight,
+        )
+    };
+
+    let sizes = config
+        .strategy_config
+        .get("qa_trade_sizes")
+        .and_then(Value::as_object);
+    let small_pct = qa_numeric_field(sizes.and_then(|s| s.get("small_pct")), 0.05, 0.0, 1.0);
+    let big_pct = qa_numeric_field(sizes.and_then(|s| s.get("big_pct")), 0.25, small_pct, 1.0);
+
+    let allowed_directions = config
+        .strategy_config
+        .get("qa_allowed_directions")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| value == "buy" || value == "sell")
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| vec!["buy".to_string(), "sell".to_string()]);
+
+    let pair = config
+        .strategy_config
+        .get("qa_pair")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("WETH/USDC")
+        .to_string();
+
+    Some(DexQaConfigSummary {
+        no_trade_weight,
+        small_trade_weight,
+        big_trade_weight,
+        small_pct,
+        big_pct,
+        allowed_directions,
+        pair,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // StrategyPack convenience methods
 // ---------------------------------------------------------------------------
@@ -1330,6 +1425,28 @@ fn build_profile_instructions(
     let core_workflow_tools = strategy_core_workflow_tools(strategy_type);
     let typical_iteration = strategy_typical_iteration(strategy_type);
     let utility_tools = strategy_utility_tools(strategy_type);
+    let qa_section = dex_stochastic_qa_config(config)
+        .map(|qa| {
+            format!(
+                "\n\n## QA Stochastic Mode\n\n\
+This bot is running with temporary QA stochastic trading enabled.\n\
+- Pair: {}\n\
+- Outcome weights: no-trade {:.0}%, small trade {:.0}%, big trade {:.0}%\n\
+- Size policy: small {:.1}% of available inventory, big {:.1}%\n\
+- Allowed directions: {}\n\
+\n\
+At the start of every tick, run `node /home/agent/tools/qa-stochastic-dex.js`.\n\
+Treat its output as authoritative for this iteration. If it executes or skips a trade, do not place additional discretionary trades in the same tick.",
+                qa.pair,
+                qa.no_trade_weight * 100.0,
+                qa.small_trade_weight * 100.0,
+                qa.big_trade_weight * 100.0,
+                qa.small_pct * 100.0,
+                qa.big_pct * 100.0,
+                qa.allowed_directions.join(", "),
+            )
+        })
+        .unwrap_or_default();
 
     format!(
         r#"# Trading Agent Instructions
@@ -1432,7 +1549,7 @@ Endpoints:
 
 4. **Mode**: {paper_mode_note}
 
-5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition.{custom_section}"#,
+5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition.{qa_section}{custom_section}"#,
         api_url = config.trading_api_url,
         token = config.trading_api_token,
         vault = config.vault_address,
@@ -1441,6 +1558,8 @@ Endpoints:
         core_workflow_tools = core_workflow_tools,
         typical_iteration = typical_iteration,
         utility_tools = utility_tools,
+        qa_section = qa_section,
+        custom_section = custom_section,
     )
 }
 
@@ -2133,6 +2252,42 @@ mod tests {
         assert!(
             content.contains("Custom Instructions"),
             "custom instructions section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_dex_qa_stochastic_section_appears_in_profile() {
+        let pack = get_pack("dex").unwrap();
+        let mut config = test_config();
+        config.strategy_config = serde_json::json!({
+            "qa_mode": "stochastic",
+            "qa_trade_weights": {
+                "no_trade": 0.5,
+                "small_trade": 0.3,
+                "big_trade": 0.2
+            },
+            "qa_trade_sizes": {
+                "small_pct": 0.04,
+                "big_pct": 0.2
+            },
+            "qa_allowed_directions": ["buy", "sell"]
+        });
+        let profile = pack.build_agent_profile(&config);
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
+
+        assert!(
+            content.contains("QA Stochastic Mode"),
+            "qa stochastic section must appear in instructions"
+        );
+        assert!(
+            content.contains("qa-stochastic-dex.js"),
+            "qa stochastic tool must be referenced in instructions"
+        );
+        assert!(
+            content.contains("no-trade 50%"),
+            "qa stochastic section must include configured weights"
         );
     }
 

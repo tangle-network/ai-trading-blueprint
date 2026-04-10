@@ -40,6 +40,27 @@ pub async fn configure_core(
         if let Some(workflow_id) = updated_bot.workflow_id {
             rebuild_workflow_profile(&updated_bot, workflow_id);
         }
+        if let Ok(record) = sandbox_runtime::runtime::get_sandbox_by_id(&updated_bot.sandbox_id) {
+            let sidecar_trading_api_url =
+                super::activate::resolve_sidecar_trading_api_url(&updated_bot.trading_api_url);
+            if let Err(err) = super::activate::write_prebuilt_tools(
+                &record.sidecar_url,
+                &record.token,
+                &updated_bot.id,
+                &updated_bot.strategy_type,
+                &sidecar_trading_api_url,
+                &updated_bot.trading_api_token,
+                &updated_bot.operator_address,
+                &updated_bot.strategy_config,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to refresh sidecar tools/config for bot {} after configure: {err}",
+                    updated_bot.id
+                );
+            }
+        }
     }
 
     Ok(JsonResponse {
@@ -56,7 +77,7 @@ fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u
     let pack = crate::prompts::packs::get_pack(&bot.strategy_type);
     let (prompt, profile, max_turns, timeout_ms) = match &pack {
         Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p),
+            crate::prompts::build_pack_loop_prompt(p, bot),
             crate::prompts::build_pack_agent_profile(p, bot),
             p.max_turns,
             p.timeout_ms,

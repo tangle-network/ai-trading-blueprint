@@ -49,6 +49,26 @@ fn setup_log() {
     {}
 }
 
+fn resolve_execution_chain_id() -> u64 {
+    std::env::var("EXECUTION_CHAIN_ID")
+        .or_else(|_| std::env::var("CHAIN_ID"))
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+}
+
+fn resolve_verifying_contract() -> String {
+    std::env::var("EXECUTION_TRADE_VALIDATOR_ADDRESS")
+        .or_else(|_| std::env::var("VERIFYING_CONTRACT"))
+        .unwrap_or_default()
+}
+
+fn resolve_validator_rpc_url() -> Option<String> {
+    std::env::var("EXECUTION_RPC_URL")
+        .or_else(|_| std::env::var("VALIDATOR_RPC_URL"))
+        .ok()
+}
+
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
@@ -180,11 +200,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let chain_id: u64 = std::env::var("CHAIN_ID")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
-        let verifying_contract = std::env::var("VERIFYING_CONTRACT").unwrap_or_default();
+        let chain_id = resolve_execution_chain_id();
+        let verifying_contract = resolve_verifying_contract();
         let endpoint = format!(
             "http://0.0.0.0:{}",
             std::env::var("VALIDATOR_HTTP_PORT").unwrap_or_else(|_| "9090".into())
@@ -233,19 +250,15 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    let chain_id: u64 = std::env::var("CHAIN_ID")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1);
+    let chain_id = resolve_execution_chain_id();
 
-    let verifying_contract = std::env::var("VERIFYING_CONTRACT")
-        .unwrap_or_default()
+    let verifying_contract = resolve_verifying_contract()
         .parse()
         .unwrap_or(blueprint_sdk::alloy::primitives::Address::ZERO);
 
     let val_ctx = trading_validator_lib::context::ValidatorOperatorContext {
         operator_address,
-        signing_key_hex,
+        signing_key_hex: signing_key_hex.clone(),
         service_id,
         blueprint_id,
         chain_id,
@@ -262,7 +275,25 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .parse()
         .unwrap_or(9090);
 
-    let server = trading_validator_lib::server::ValidatorServer::new(http_port);
+    let mut server = trading_validator_lib::server::ValidatorServer::new(http_port);
+    if let Some(rpc_url) = resolve_validator_rpc_url() {
+        server = server.with_rpc_url(rpc_url);
+    }
+    if !signing_key_hex.is_empty() && verifying_contract != blueprint_sdk::alloy::primitives::Address::ZERO
+    {
+        server = server
+            .with_signer(&signing_key_hex, chain_id, verifying_contract)
+            .map_err(|e| {
+                blueprint_sdk::Error::Other(format!("Failed to initialize validator signer: {e}"))
+            })?;
+    } else {
+        tracing::warn!(
+            chain_id,
+            %verifying_contract,
+            has_signing_key = !signing_key_hex.is_empty(),
+            "Validator signer disabled; validation endpoint will return placeholder signatures"
+        );
+    }
     let http_router = server.router();
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{http_port}"))
@@ -275,6 +306,17 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             tracing::error!("Validator HTTP server error: {e}");
         }
     });
+
+    if service_id == 0 {
+        tracing::warn!(
+            "SERVICE_ID=0; running validator in HTTP-only endpoint mode without Tangle runner"
+        );
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| blueprint_sdk::Error::Other(format!("Validator shutdown wait failed: {e}")))?;
+        tracing::info!("Trading validator shutting down...");
+        return Ok(());
+    }
 
     // ── 5. Build and run the blueprint ───────────────────────────────────────
     let tangle_producer = TangleProducer::new(tangle_client.clone(), service_id);

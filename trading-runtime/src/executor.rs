@@ -21,6 +21,17 @@ use crate::simulator::{
 use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::VaultClient;
 
+const DEFAULT_PRECALL_GAS_LIMIT: u64 = 500_000;
+const DEFAULT_EXECUTION_GAS_LIMIT: u64 = 3_000_000;
+
+fn gas_limit_from_env(var: &str, default: u64) -> u64 {
+    std::env::var(var)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
 /// Outcome of a successfully submitted transaction.
 #[derive(Debug, Clone)]
 pub struct TransactionOutcome {
@@ -171,10 +182,12 @@ impl TradeExecutor {
         // Running simulation after pre-calls avoids false negatives on first-time routes.
         for pre_call in &encoded.pre_calls {
             let pre_target: Address = pre_call.target;
+            let pre_gas_limit = gas_limit_from_env("TRADING_PRECALL_GAS_LIMIT", DEFAULT_PRECALL_GAS_LIMIT);
             let pre_request = alloy::rpc::types::TransactionRequest::default()
                 .to(pre_target)
                 .input(pre_call.calldata.clone().into())
-                .value(pre_call.value);
+                .value(pre_call.value)
+                .gas_limit(pre_gas_limit);
 
             let pre_pending = self
                 .chain_client
@@ -271,7 +284,11 @@ impl TradeExecutor {
         let tx_request = alloy::rpc::types::TransactionRequest::default()
             .to(to_addr)
             .input(alloy::primitives::Bytes::from(tx.data).into())
-            .value(U256::from_str_radix(tx.value.trim_start_matches("0x"), 10).unwrap_or_default());
+            .value(U256::from_str_radix(tx.value.trim_start_matches("0x"), 10).unwrap_or_default())
+            .gas_limit(gas_limit_from_env(
+                "TRADING_EXECUTION_GAS_LIMIT",
+                DEFAULT_EXECUTION_GAS_LIMIT,
+            ));
 
         let pending = self
             .chain_client

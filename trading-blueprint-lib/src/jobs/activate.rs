@@ -24,7 +24,7 @@ pub struct ActivateResult {
     pub trading_api_url: String,
 }
 
-fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
+pub(crate) fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
     if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL") {
         if !explicit.trim().is_empty() {
             return explicit;
@@ -148,10 +148,12 @@ pub async fn activate_bot_with_secrets(
         if let Err(e) = write_prebuilt_tools(
             &record.sidecar_url,
             &record.token,
+            bot_id,
             &bot.strategy_type,
             &sidecar_trading_api_url,
             &bot.trading_api_token,
             &bot.operator_address,
+            &bot.strategy_config,
         )
         .await
         {
@@ -169,7 +171,7 @@ pub async fn activate_bot_with_secrets(
 
     let (loop_prompt, backend_profile) = match &pack {
         Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p),
+            crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
             crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
         ),
         None => (
@@ -299,19 +301,23 @@ async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(
 /// Writes smart, self-contained tools that do the heavy lifting so the agent
 /// can focus on decision-making. Common tools for all strategies + strategy-specific tools.
 /// Also writes `/home/agent/config/api.json` so tools can call the Trading HTTP API.
-async fn write_prebuilt_tools(
+pub(crate) async fn write_prebuilt_tools(
     sidecar_url: &str,
     token: &str,
+    bot_id: &str,
     strategy_type: &str,
     api_url: &str,
     api_token: &str,
     operator_address: &str,
+    strategy_config: &serde_json::Value,
 ) -> Result<(), String> {
     // Write API config so tools can find the Trading HTTP API
     let config_json = serde_json::json!({
+        "bot_id": bot_id,
         "api_url": api_url,
         "token": api_token,
         "operator_address": operator_address,
+        "strategy_config": strategy_config,
     })
     .to_string();
     write_file_to_sidecar(
@@ -406,6 +412,13 @@ async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/check-prices.js",
         include_str!("../prompts/tools/check_prices.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/qa-stochastic-dex.js",
+        include_str!("../prompts/tools/qa_stochastic_dex.js"),
     )
     .await?;
 
