@@ -383,7 +383,7 @@ fn api_error_response(error: ApiError) -> (StatusCode, Json<OperatorErrorRespons
 
 // ── Metrics / trades response types ─────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct MetricsSnapshotResponse {
     timestamp: String,
     bot_id: String,
@@ -1498,11 +1498,58 @@ fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn fallback_metrics_snapshots(bot: &TradingBotRecord) -> Vec<MetricsSnapshotResponse> {
+    let trades = fallback_trade_dataset(bot);
+    synthesize_metrics(bot, &trades)
+}
+
+fn parse_metrics_snapshots(
+    snapshots: Vec<serde_json::Value>,
+) -> Result<Vec<MetricsSnapshotResponse>, String> {
+    serde_json::from_value(serde_json::Value::Array(snapshots))
+        .map_err(|e| format!("invalid metrics snapshot array: {e}"))
+}
+
+async fn resolve_metrics_history_for_bot(
+    bot: &TradingBotRecord,
+    query: &MetricsHistoryQuery,
+) -> Vec<MetricsSnapshotResponse> {
+    let mut remote_query = Vec::new();
+    if let Some(from) = &query.from {
+        remote_query.push(("from", from.clone()));
+    }
+    if let Some(to) = &query.to {
+        remote_query.push(("to", to.clone()));
+    }
+    if let Some(limit) = query.limit {
+        remote_query.push(("limit", limit.to_string()));
+    }
+
+    match fetch_trading_api_json(bot, "/metrics/history", &remote_query).await {
+        Ok(Some(payload)) => match extract_json_array(payload, "snapshots")
+            .and_then(parse_metrics_snapshots)
+        {
+            Ok(snapshots) if !snapshots.is_empty() => snapshots,
+            Ok(_) => fallback_metrics_snapshots(bot),
+            Err(err) => {
+                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
+                fallback_metrics_snapshots(bot)
+            }
+        },
+        Ok(None) => fallback_metrics_snapshots(bot),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
+            fallback_metrics_snapshots(bot)
+        }
+    }
+}
+
 fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStateResponse, String> {
     let portfolio: TradingApiPortfolioResponse =
         serde_json::from_value(payload).map_err(|e| format!("invalid portfolio payload: {e}"))?;
 
     let total_value = portfolio.total_value_usd;
+    let has_unpriced_positions = portfolio.has_unpriced_positions;
     let positions = portfolio
         .positions
         .into_iter()
@@ -1517,6 +1564,14 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                     Some(((current_price - entry_price) / entry_price) * 100.0)
                 }
                 _ => None,
+            };
+            let valuation_status = if value_usd.is_some()
+                || position.current_price.is_some()
+                || (!has_unpriced_positions && total_value.unwrap_or(0.0) > 0.0)
+            {
+                trading_http_api::trade_store::TradeValuationStatus::Priced
+            } else {
+                position.valuation_status
             };
 
             PortfolioPosition {
@@ -1533,7 +1588,7 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                     }
                     _ => None,
                 },
-                valuation_status: position.valuation_status,
+                valuation_status,
             }
         })
         .collect();
@@ -1542,7 +1597,7 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
         total_value_usd: total_value,
         cash_balance: portfolio.cash_balance,
         warnings: portfolio.warnings,
-        has_unpriced_positions: portfolio.has_unpriced_positions,
+        has_unpriced_positions,
         positions,
     })
 }
@@ -1908,17 +1963,59 @@ async fn get_bot_metrics(
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let trades = fallback_trade_dataset(&bot);
+    let metrics_history = resolve_metrics_history_for_bot(
+        &bot,
+        &MetricsHistoryQuery {
+            from: None,
+            to: None,
+            limit: Some(100),
+        },
+    )
+    .await;
+    let latest_snapshot = metrics_history.last();
+    let trades = match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
+        Ok(Some(payload)) => extract_json_array(payload, "trades")
+            .unwrap_or_else(|_| fallback_trade_dataset(&bot)),
+        Ok(None) | Err(_) => fallback_trade_dataset(&bot),
+    };
 
     let total_pnl: f64 = trades
         .iter()
         .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
         .sum();
 
+    let portfolio_value_usd = match fetch_trading_api_json_with_method(
+        &bot,
+        reqwest::Method::POST,
+        "/portfolio/state",
+        &[],
+    )
+    .await
+    {
+        Ok(Some(payload)) => map_trading_api_portfolio(payload)
+            .ok()
+            .map(|portfolio| {
+                if portfolio.has_unpriced_positions {
+                    0.0
+                } else {
+                    portfolio.total_value_usd.unwrap_or(0.0)
+                }
+            })
+            .or_else(|| latest_snapshot.map(|snapshot| snapshot.account_value_usd))
+            .unwrap_or_else(|| fallback_portfolio_state(&bot).total_value_usd.unwrap_or(0.0)),
+        Ok(None) | Err(_) => latest_snapshot
+            .map(|snapshot| snapshot.account_value_usd)
+            .unwrap_or_else(|| fallback_portfolio_state(&bot).total_value_usd.unwrap_or(0.0)),
+    };
+
     Ok(Json(BotMetricsResponse {
-        portfolio_value_usd: 10_000.0 + total_pnl,
-        total_pnl,
-        trade_count: trades.len() as u32,
+        portfolio_value_usd,
+        total_pnl: latest_snapshot
+            .map(|snapshot| snapshot.realized_pnl + snapshot.unrealized_pnl)
+            .unwrap_or(total_pnl),
+        trade_count: latest_snapshot
+            .map(|snapshot| snapshot.trade_count)
+            .unwrap_or(trades.len() as u32),
     }))
 }
 
@@ -1990,19 +2087,6 @@ async fn get_bot_portfolio(
     Path(bot_id): Path<String>,
 ) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let runtime_status = state::bot_runtime_status(&bot);
-    if !matches!(
-        runtime_status.lifecycle_status,
-        state::BotLifecycleStatus::Active | state::BotLifecycleStatus::WindingDown
-    ) {
-        return Ok(Json(PortfolioStateResponse {
-            total_value_usd: Some(0.0),
-            cash_balance: None,
-            warnings: Vec::new(),
-            has_unpriced_positions: false,
-            positions: Vec::new(),
-        }));
-    }
 
     match fetch_trading_api_json_with_method(&bot, reqwest::Method::POST, "/portfolio/state", &[])
         .await
@@ -3297,5 +3381,35 @@ mod tests {
         let entry = synthesize_trade_entry_from_record(&rec);
 
         assert_eq!(entry["status"], "closed");
+    }
+
+    #[test]
+    fn map_trading_api_portfolio_inferrs_priced_positions_when_status_is_missing() {
+        let payload = serde_json::json!({
+            "positions": [
+                {
+                    "token": "WETH",
+                    "amount": "1",
+                    "value_usd": "2220.1",
+                    "entry_price": null,
+                    "current_price": "2220.1"
+                }
+            ],
+            "total_value_usd": "2220.1",
+            "cash_balance": "1",
+            "warnings": [],
+            "has_unpriced_positions": false
+        });
+
+        let portfolio = map_trading_api_portfolio(payload).expect("portfolio should parse");
+
+        assert_eq!(portfolio.total_value_usd, Some(2220.1));
+        assert_eq!(portfolio.has_unpriced_positions, false);
+        assert_eq!(
+            portfolio.positions[0].valuation_status,
+            trading_http_api::trade_store::TradeValuationStatus::Priced
+        );
+        assert_eq!(portfolio.positions[0].value_usd, Some(2220.1));
+        assert_eq!(portfolio.positions[0].current_price, Some(2220.1));
     }
 }

@@ -188,16 +188,13 @@ async fn get_state_multi_bot(
     let mut cash_balance = None;
     let mut has_unpriced_positions = false;
 
-    let onchain_total = match read_vault_cash_position(&bot, &state.market_data_base_url).await {
+    let total_value_usd = match read_vault_cash_position(&bot, &state.market_data_base_url).await {
         Ok(Some(position)) => {
-            let onchain_value = position
-                .value_usd
-                .clone()
-                .unwrap_or_else(|| "0".to_string());
             cash_balance = Some(position.amount.clone());
             has_unpriced_positions = position.valuation_status != ValuationStatus::Priced;
+            let onchain_value = position.value_usd.clone();
             positions.push(position);
-            onchain_value
+            onchain_value.unwrap_or_else(|| "0".to_string())
         }
         Ok(None) => "0".to_string(),
         Err(e) => {
@@ -220,14 +217,7 @@ async fn get_state_multi_bot(
 
     Json(PortfolioResponse {
         positions,
-        total_value_usd: if onchain_total == "0" {
-            latest_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.account_value_usd.clone())
-                .unwrap_or_else(|| "0".to_string())
-        } else {
-            onchain_total
-        },
+        total_value_usd,
         cash_balance,
         unrealized_pnl: latest_snapshot
             .as_ref()

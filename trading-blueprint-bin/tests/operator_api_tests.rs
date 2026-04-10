@@ -970,6 +970,39 @@ async fn test_get_bot_metrics() {
 }
 
 #[tokio::test]
+async fn test_get_bot_metrics_prefers_remote_portfolio_and_history_summary() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("metrics-bot-remote", "dex", true);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["portfolio_value_usd"], 1050.0);
+    assert_eq!(json["total_pnl"], 46.0);
+    assert_eq!(json["trade_count"], 1);
+}
+
+#[tokio::test]
 async fn test_get_bot_trades() {
     let _dir = init_test_env();
 
@@ -1087,6 +1120,40 @@ async fn test_get_bot_portfolio_prefers_remote_trading_api_payload() {
     assert_eq!(json["positions"][0]["token"], "WETH");
     assert_eq!(json["positions"][0]["value_usd"], 1050.0);
     assert_eq!(json["positions"][0]["valuation_status"], "priced");
+}
+
+#[tokio::test]
+async fn test_get_bot_portfolio_prefers_remote_payload_even_when_stopped() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-stopped-remote", "dex", false);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total_value_usd"], 1050.0);
+    assert_eq!(json["positions"][0]["token"], "WETH");
+    assert_eq!(json["positions"][0]["current_price"], 2100.0);
 }
 
 #[tokio::test]
@@ -1233,6 +1300,82 @@ async fn test_get_bot_metrics_history_prefers_remote_trading_api_payload() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json[0]["account_value_usd"], 10123.45);
+}
+
+#[tokio::test]
+async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("history-bot-empty-remote", "dex", true);
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: "executed-trade-1".to_string(),
+        bot_id: bot.id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "WETH".to_string(),
+        token_out: "USDC".to_string(),
+        amount_in: "0.05".to_string(),
+        min_amount_out: "100".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xremote-empty".to_string(),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: false,
+        amount_out: Some("105".to_string()),
+        entry_price_usd: Some("2100".to_string()),
+        notional_usd: Some("105".to_string()),
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-empty-remote".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+    })
+    .await
+    .expect("record trade");
+
+    let mock_app = Router::new().route(
+        "/metrics/history",
+        get(|| async { Json(json!({ "snapshots": [], "total": 0 })) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, mock_app)
+            .await
+            .expect("serve mock trading api");
+    });
+
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = format!("http://{addr}");
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics/history", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let snapshots = json.as_array().expect("metrics history should be an array");
+    assert!(snapshots.len() >= 2, "fallback history should synthesize snapshots");
+    let latest = snapshots.last().expect("latest snapshot");
+    assert_eq!(latest["trade_count"], 1);
 }
 
 // ---------------------------------------------------------------------------
