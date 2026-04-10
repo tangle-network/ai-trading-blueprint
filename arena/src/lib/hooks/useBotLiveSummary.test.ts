@@ -133,4 +133,42 @@ describe('summarizeBotLiveData', () => {
 
     expect(summary.portfolioValue).toBe(0);
   });
+
+  it('ignores leading zero-value snapshots when valid history exists later', () => {
+    const summary = summarizeBotLiveData(
+      [
+        {
+          account_value_usd: 0,
+          realized_pnl: 0,
+          unrealized_pnl: 0,
+          drawdown_pct: 0,
+        },
+        {
+          account_value_usd: 0,
+          realized_pnl: 0,
+          unrealized_pnl: 0,
+          drawdown_pct: 0,
+        },
+        {
+          account_value_usd: 2212.61,
+          realized_pnl: 0,
+          unrealized_pnl: 0,
+          drawdown_pct: 0,
+        },
+        {
+          account_value_usd: 2243.47,
+          realized_pnl: 0,
+          unrealized_pnl: 0,
+          drawdown_pct: 0,
+        },
+      ],
+      null,
+      [100],
+      'unpriced',
+    );
+
+    expect(summary.pnlPercent).toBe(1.4);
+    expect(summary.maxDrawdown).toBe(0);
+    expect(summary.portfolioValue).toBeNull();
+  });
 });

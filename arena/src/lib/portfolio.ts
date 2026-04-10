@@ -27,14 +27,22 @@ function toFiniteNumber(value: number | string | null | undefined): number | nul
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeValuationStatus(
-  value: RawPortfolioPosition['valuation_status'],
-): Position['valuationStatus'] {
-  return value === 'priced' ? 'priced' : 'unpriced';
+function inferValuationStatus(pos: RawPortfolioPosition): Position['valuationStatus'] {
+  if (pos.valuation_status === 'priced') return 'priced';
+  if (pos.valuation_status === 'unpriced') return 'unpriced';
+
+  const hasPricedFields = [
+    pos.value_usd,
+    pos.current_price,
+    pos.weight,
+    pos.pnl_percent,
+  ].some((value) => toFiniteNumber(value) != null);
+
+  return hasPricedFields ? 'priced' : 'unpriced';
 }
 
 function mapApiPosition(pos: RawPortfolioPosition): Position {
-  const valuationStatus = normalizeValuationStatus(pos.valuation_status);
+  const valuationStatus = inferValuationStatus(pos);
   const amount = toFiniteNumber(pos.amount) ?? 0;
   const valueUsd = valuationStatus === 'priced' ? toFiniteNumber(pos.value_usd) : null;
   const entryPrice = valuationStatus === 'priced' ? toFiniteNumber(pos.entry_price) : null;
@@ -77,7 +85,7 @@ export function mapApiPortfolioState(p: RawPortfolioState, botId: string): Portf
   const positions = p.positions.map((pos) => mapApiPosition(pos));
   const hasUnpricedPositions = p.has_unpriced_positions ?? positions.some((pos) => pos.valuationStatus === 'unpriced');
   const totalValueUsd = hasUnpricedPositions ? null : toFiniteNumber(p.total_value_usd);
-  const cashBalance = hasUnpricedPositions ? null : toFiniteNumber(p.cash_balance);
+  const cashBalance = toFiniteNumber(p.cash_balance);
   const warnings = [...(p.warnings ?? [])];
 
   if (hasUnpricedPositions && warnings.length === 0) {

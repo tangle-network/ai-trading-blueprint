@@ -44,6 +44,7 @@ async function doOperatorFetch(
       requestHeaders.set('Authorization', `Bearer ${bearer}`);
     }
     return fetch(`${apiUrl}${path}`, {
+      cache: 'no-store',
       ...init,
       headers: requestHeaders,
     });

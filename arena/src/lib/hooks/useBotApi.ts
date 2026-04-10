@@ -3,6 +3,7 @@ import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail }
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
+import { getTradeTokenDisplaySymbol, parseTradeDisplayAmount } from '~/lib/tradeTokenMetadata';
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
@@ -94,6 +95,12 @@ interface ApiMetricsHistoryResponse {
   snapshots: ApiMetricsSnapshot[];
 }
 
+interface ApiBotMetricsSummary {
+  portfolio_value_usd: number;
+  total_pnl: number;
+  trade_count: number;
+}
+
 async function fetchOperatorBotApi<T>(
   apiUrl: string,
   auth: Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken' | 'getToken'>,
@@ -163,15 +170,19 @@ function getTradePriceUsd(trade: ApiTrade): number | null {
 export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
   const validation = mapApiValidation(trade);
   const amountOut = deriveTradeAmountOut(trade);
+  const tokenIn = getTradeTokenDisplaySymbol(trade.token_in);
+  const tokenOut = getTradeTokenDisplaySymbol(trade.token_out);
 
   return {
     id: trade.id,
     botId: trade.bot_id,
     botName,
     action: trade.action,
-    tokenIn: trade.token_in,
-    tokenOut: trade.token_out,
-    amountIn: parseTradeAmount(trade.amount_in),
+    tokenIn,
+    tokenOut,
+    rawTokenIn: trade.token_in,
+    rawTokenOut: trade.token_out,
+    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in),
     amountOut,
     priceUsd: getTradePriceUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
@@ -194,7 +205,17 @@ function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
 }
 
 function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse): ApiMetricsSnapshot[] {
-  return Array.isArray(data) ? data : data.snapshots;
+  const snapshots = Array.isArray(data) ? data : data.snapshots;
+  return snapshots.map((snapshot) => ({
+    ...snapshot,
+    account_value_usd: Number(snapshot.account_value_usd),
+    unrealized_pnl: Number(snapshot.unrealized_pnl),
+    realized_pnl: Number(snapshot.realized_pnl),
+    high_water_mark: Number(snapshot.high_water_mark),
+    drawdown_pct: Number(snapshot.drawdown_pct),
+    positions_count: Number(snapshot.positions_count),
+    trade_count: Number(snapshot.trade_count),
+  }));
 }
 
 interface BotApiQueryOptions {
@@ -222,7 +243,8 @@ export function useBotTrades(
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
     },
-    staleTime: 30_000,
+    staleTime: 15_000,
+    refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -247,6 +269,7 @@ export function useBotRecentValidations(
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
+    refetchOnMount: false,
     retry: 1,
     retryDelay: 3_000,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
@@ -266,7 +289,9 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
       const data = await fetchOperatorBotApi<RawPortfolioState>(apiUrl, auth, path);
       return mapApiPortfolioState(data, botId);
     },
-    staleTime: 30_000,
+    staleTime: 10_000,
+    gcTime: 60_000,
+    refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -287,7 +312,27 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
       const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(apiUrl, auth, path);
       return normalizeMetrics(data);
     },
-    staleTime: 60_000,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+  });
+}
+
+export function useBotMetricsSummary(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+
+  return useQuery<ApiBotMetricsSummary>({
+    queryKey: ['bot-metrics-summary', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryFn: async () => {
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics');
+      return fetchOperatorBotApi<ApiBotMetricsSummary>(apiUrl, auth, path);
+    },
+    staleTime: 15_000,
+    refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });

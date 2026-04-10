@@ -20,7 +20,7 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
     operatorApiUrl,
     operatorKind,
-    enabled: isLive,
+    enabled: true,
     refetchInterval: isLive ? 10_000 : false,
   });
 
@@ -47,20 +47,11 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
     return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
-  if (!isLive) {
-    return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-        <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        Live portfolio is unavailable while this bot is {botStatusLabel(status).toLowerCase()}.
-      </div>
-    );
-  }
-
   if (!portfolio) {
     return (
       <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
         <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No portfolio data available for this bot.
+        No portfolio data available for this bot{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
       </div>
     );
   }
@@ -68,6 +59,23 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
   const formatCurrency = (value: number | null) => {
     if (value == null) return 'Unavailable';
     return `$${value.toLocaleString()}`;
+  };
+
+  const formatTokenAmount = (value: number) => value.toLocaleString(undefined, {
+    minimumFractionDigits: value >= 1000 ? 0 : 0,
+    maximumFractionDigits: value >= 1000 ? 0 : 4,
+  });
+
+  const formatBalance = () => {
+    const cashBalance = portfolio.displayCashBalance;
+    if (cashBalance == null) return 'Unavailable';
+
+    const matchingPosition = portfolio.positions.find((pos) => Math.abs(pos.amount - cashBalance) <= 1e-9);
+    if (matchingPosition) {
+      return `${formatTokenAmount(cashBalance)} ${matchingPosition.symbol}`;
+    }
+
+    return formatCurrency(cashBalance);
   };
 
   const formatPercent = (value: number | null) => {
@@ -95,8 +103,8 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
           <span className="font-display font-bold text-lg">{formatCurrency(portfolio.displayTotalValueUsd)}</span>
         </div>
         <div className="glass-card rounded-lg px-4 py-2">
-          <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Cash </span>
-          <span className="font-data font-medium">{formatCurrency(portfolio.displayCashBalance)}</span>
+          <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Balance </span>
+          <span className="font-data font-medium">{formatBalance()}</span>
         </div>
       </div>
 

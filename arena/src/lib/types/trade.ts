@@ -37,6 +37,8 @@ export interface Trade {
   action: TradeAction;
   tokenIn: string;
   tokenOut: string;
+  rawTokenIn?: string;
+  rawTokenOut?: string;
   amountIn: number;
   amountOut: number;
   priceUsd: number | null;

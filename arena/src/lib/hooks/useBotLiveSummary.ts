@@ -58,13 +58,25 @@ function computeSharpeRatio(snapshots: MetricsSnapshot[]): number | null {
   return roundTo((mean / standardDeviation) * Math.sqrt(returns.length), 2);
 }
 
+function getRenderableSnapshots(snapshots: MetricsSnapshot[] | undefined): MetricsSnapshot[] {
+  const validSnapshots = (snapshots ?? []).filter((snapshot) => (
+    Number.isFinite(snapshot.account_value_usd)
+      && Number.isFinite(snapshot.realized_pnl)
+      && Number.isFinite(snapshot.unrealized_pnl)
+      && Number.isFinite(snapshot.drawdown_pct)
+  ));
+
+  const positiveSnapshots = validSnapshots.filter((snapshot) => snapshot.account_value_usd > 0);
+  return positiveSnapshots.length > 0 ? positiveSnapshots : validSnapshots;
+}
+
 export function summarizeBotLiveData(
   snapshots: MetricsSnapshot[] | undefined,
   portfolioValue: number | null | undefined,
   validatorScores: Array<number | undefined>,
   portfolioValueState: PortfolioValueState = 'missing',
 ): Omit<BotLiveSummary, 'isLoading'> {
-  const validSnapshots = snapshots ?? [];
+  const validSnapshots = getRenderableSnapshots(snapshots);
   const first = validSnapshots[0];
   const latest = validSnapshots[validSnapshots.length - 1];
 
@@ -154,6 +166,7 @@ export function useBotLiveSummary({
 
     return {
       ...summary,
+      portfolioValue: summary.portfolioValue,
       isLoading: metricsQuery.isLoading || portfolioQuery.isLoading || tradesQuery.isLoading,
     };
   }, [

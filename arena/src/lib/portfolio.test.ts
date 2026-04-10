@@ -33,7 +33,7 @@ describe('mapApiPortfolioState', () => {
     expect(portfolio.positions[0]?.displayWeight).toBeNull();
   });
 
-  it('keeps priced positions visible without adding local heuristics', () => {
+  it('keeps priced positions visible', () => {
     const portfolio = mapApiPortfolioState({
       total_value_usd: 10000,
       cash_balance: 9000,
@@ -60,5 +60,32 @@ describe('mapApiPortfolioState', () => {
     expect(portfolio.positions[0]?.displayValueUsd).toBe(1000);
     expect(portfolio.positions[0]?.displayPnlPercent).toBe(0);
     expect(portfolio.positions[0]?.displayWeight).toBe(10);
+  });
+
+  it('infers priced positions when the API omits valuation_status but pricing fields exist', () => {
+    const portfolio = mapApiPortfolioState({
+      total_value_usd: 2220.1,
+      cash_balance: 1,
+      has_unpriced_positions: false,
+      positions: [
+        {
+          token: 'WETH',
+          symbol: 'WETH',
+          amount: 1,
+          value_usd: 2220.1,
+          entry_price: null,
+          current_price: 2220.1,
+          pnl_percent: null,
+          weight: 100,
+        },
+      ],
+    }, 'bot-1');
+
+    expect(portfolio.hasUnpricedPositions).toBe(false);
+    expect(portfolio.positions[0]?.valuationStatus).toBe('priced');
+    expect(portfolio.positions[0]?.displayValueUsd).toBe(2220.1);
+    expect(portfolio.positions[0]?.currentPrice).toBe(2220.1);
+    expect(portfolio.positions[0]?.displayWeight).toBe(100);
+    expect(portfolio.warnings).toHaveLength(0);
   });
 });

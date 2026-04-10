@@ -6,11 +6,11 @@ import {
 } from './serviceTtl';
 
 describe('service TTL helpers', () => {
-  it('converts ttl blocks into seconds', () => {
+  it('treats the service ttl value as time-based seconds for display', () => {
     expect(computeServiceLifetimeSeconds(100)).toBe(100 * SERVICE_BLOCK_TIME_SECONDS);
   });
 
-  it('computes remaining seconds from created-at timestamp plus ttl blocks', () => {
+  it('computes remaining seconds from created-at timestamp plus ttl value', () => {
     const nowSeconds = 10_000;
     const createdAt = nowSeconds - 60;
     const ttlBlocks = 100;

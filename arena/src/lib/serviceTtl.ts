@@ -1,4 +1,7 @@
-export const SERVICE_BLOCK_TIME_SECONDS = 12;
+// Local service requests are provisioned with second-scale TTL values
+// (for example 31,536,000 for roughly one year), so we treat the TTL as
+// already time-based when rendering the bot detail UI.
+export const SERVICE_BLOCK_TIME_SECONDS = 1;
 
 export function computeServiceLifetimeSeconds(ttlBlocks: number): number | null {
   if (!Number.isFinite(ttlBlocks) || ttlBlocks <= 0) return null;

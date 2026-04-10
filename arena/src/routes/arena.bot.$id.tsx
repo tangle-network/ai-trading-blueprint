@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useStore } from '@nanostores/react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useBots } from '~/lib/hooks/useBots';
 import { AnimatedPage, Button, Tabs, TabsList, TabsTrigger, TabsContent } from '@tangle-network/blueprint-ui/components';
 import { BotHeader } from '~/components/bot-detail/BotHeader';
@@ -42,6 +43,7 @@ export default function BotDetailPage() {
   const { id } = useParams();
   const { address, isConnected } = useAccount();
   const { bots, isLoading } = useBots();
+  const queryClient = useQueryClient();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   const myProvisions = useStore(provisionsForOwner(address)) as TrackedProvision[];
 
@@ -102,6 +104,17 @@ export default function BotDetailPage() {
 
   const bot = storeBot ?? fallbackBot;
   const { data: operatorMeta } = useOperatorMeta(bot?.operatorApiUrl ?? routeOperatorApiUrl);
+  const detailApiUrl = bot?.operatorApiUrl ?? routeOperatorApiUrl;
+
+  useEffect(() => {
+    if (!bot?.id || !detailApiUrl) return;
+
+    queryClient.invalidateQueries({ queryKey: ['bot-detail', detailApiUrl, bot.id] });
+    queryClient.invalidateQueries({ queryKey: ['bot-portfolio', detailApiUrl, bot.id] });
+    queryClient.invalidateQueries({ queryKey: ['bot-trades', detailApiUrl, bot.id] });
+    queryClient.invalidateQueries({ queryKey: ['bot-metrics', detailApiUrl, bot.id] });
+    queryClient.invalidateQueries({ queryKey: ['bot-metrics-summary', detailApiUrl, bot.id] });
+  }, [bot?.id, detailApiUrl, queryClient]);
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;

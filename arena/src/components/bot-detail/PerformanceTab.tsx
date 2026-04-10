@@ -4,7 +4,7 @@ import type { Chart as ChartType } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
-import { useBotMetrics } from '~/lib/hooks/useBotApi';
+import { useBotMetrics, useBotMetricsSummary } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -23,6 +23,11 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
 
   // Try loading real metrics from bot API
   const { data: apiMetrics, isLoading } = useBotMetrics(bot.id, 30, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    refetchInterval: isLive ? 15_000 : false,
+  });
+  const { data: metricsSummary } = useBotMetricsSummary(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 15_000 : false,
@@ -141,10 +146,17 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   }, [chartPoints, chartTheme]);
 
   const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
-  const totalReturnValue = latestMetrics
-    ? latestMetrics.realized_pnl + latestMetrics.unrealized_pnl
-    : bot.pnlAbsolute;
-  const totalTradesValue = latestMetrics?.trade_count ?? bot.totalTrades;
+  const renderableMetrics = useMemo(() => {
+    const normalizedMetrics = apiMetrics ?? [];
+    const positiveMetrics = normalizedMetrics.filter((metric) => metric.account_value_usd > 0);
+    return positiveMetrics.length > 0 ? positiveMetrics : normalizedMetrics;
+  }, [apiMetrics]);
+  const firstRenderableMetric = renderableMetrics[0] ?? null;
+  const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
+  const totalReturnValue = latestRenderableMetric && firstRenderableMetric
+    ? latestRenderableMetric.account_value_usd - firstRenderableMetric.account_value_usd
+    : metricsSummary?.total_pnl ?? bot.pnlAbsolute;
+  const totalTradesValue = latestRenderableMetric?.trade_count ?? metricsSummary?.trade_count ?? bot.totalTrades;
 
   const summaryCards = [
     {
@@ -214,7 +226,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               <div className="text-center">
                 <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
                 <p className="text-sm text-arena-elements-textSecondary">
-                  No performance data available yet.
+                  No performance snapshots available yet.
                 </p>
               </div>
             </div>

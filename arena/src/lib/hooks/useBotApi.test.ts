@@ -42,6 +42,28 @@ describe('useBotApi trade mapping helpers', () => {
     expect(trade.priceUsd).toBeNull();
   });
 
+  it('normalizes known token addresses into display symbols and decimal amounts', () => {
+    const trade = mapApiTrade({
+      id: 'trade-3',
+      bot_id: 'bot-1',
+      timestamp: '2026-04-07T00:00:00Z',
+      action: 'sell',
+      token_in: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      token_out: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      amount_in: '160757812500000013',
+      amount_out: '1',
+      min_amount_out: '1',
+      target_protocol: 'uniswap_v3',
+      paper_trade: false,
+      valuation_status: 'unpriced',
+    }, 'Bot');
+
+    expect(trade.tokenIn).toBe('WETH');
+    expect(trade.tokenOut).toBe('USDC');
+    expect(trade.amountIn).toBeCloseTo(0.1607578125, 10);
+    expect(trade.rawTokenIn).toBe('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2');
+  });
+
   it('prefers persisted amount_out over simulation output and minimum output', () => {
     expect(deriveTradeAmountOut({
       amount_out: '3211',

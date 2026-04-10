@@ -107,4 +107,37 @@ describe('PositionsTab', () => {
     expect(screen.getByText('USDC')).toBeInTheDocument();
     expect(screen.getByText('3,200')).toBeInTheDocument();
   });
+
+  it('still renders the last known portfolio when the bot is stopped', () => {
+    mockPortfolio = makePortfolio({
+      totalValueUsd: 1042.68,
+      cashBalance: 0.4822734375,
+      displayTotalValueUsd: 1042.68,
+      displayCashBalance: 0.4822734375,
+      positions: [
+        {
+          token: 'WETH',
+          symbol: 'WETH',
+          amount: 0.4822734375,
+          valueUsd: 1042.68,
+          entryPrice: null,
+          currentPrice: 2162.02,
+          pnlPercent: null,
+          weight: 100,
+          displayValueUsd: 1042.68,
+          displayPnlPercent: null,
+          displayWeight: 100,
+          warnings: [],
+          valuationStatus: 'priced',
+        },
+      ],
+    });
+
+    render(<PositionsTab botId="bot-1" status="stopped" operatorApiUrl="/operator-api" operatorKind="cloud" />);
+
+    expect(screen.getAllByText('$1,042.68').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('$2,162.02')).toBeInTheDocument();
+    expect(screen.getByText('0.4823 WETH')).toBeInTheDocument();
+    expect(screen.queryByText(/Live portfolio is unavailable while this bot is stopped/i)).not.toBeInTheDocument();
+  });
 });
