@@ -9,6 +9,7 @@ interface MetricsSnapshot {
   unrealized_pnl: number;
   realized_pnl: number;
   drawdown_pct: number;
+  trade_count?: number;
 }
 
 interface BotLiveSummaryOptions {
@@ -56,6 +57,32 @@ function computeSharpeRatio(snapshots: MetricsSnapshot[]): number | null {
 
   const standardDeviation = Math.sqrt(variance);
   return roundTo((mean / standardDeviation) * Math.sqrt(returns.length), 2);
+}
+
+function computeWinRate(snapshots: MetricsSnapshot[]): number | null {
+  if (snapshots.length < 2) return null;
+
+  let totalTrades = 0;
+  let winningTrades = 0;
+
+  for (let i = 1; i < snapshots.length; i += 1) {
+    const previous = snapshots[i - 1];
+    const current = snapshots[i];
+    if (!previous || !current) continue;
+
+    const previousTradeCount = previous.trade_count ?? 0;
+    const currentTradeCount = current.trade_count ?? previousTradeCount;
+    const tradeDelta = currentTradeCount - previousTradeCount;
+    if (tradeDelta <= 0) continue;
+
+    totalTrades += tradeDelta;
+    if (current.account_value_usd > previous.account_value_usd) {
+      winningTrades += tradeDelta;
+    }
+  }
+
+  if (totalTrades === 0) return null;
+  return roundTo((winningTrades / totalTrades) * 100, 1);
 }
 
 function getRenderableSnapshots(snapshots: MetricsSnapshot[] | undefined): MetricsSnapshot[] {
@@ -109,7 +136,7 @@ export function summarizeBotLiveData(
     pnlAbsolute,
     sharpeRatio: computeSharpeRatio(validSnapshots),
     maxDrawdown,
-    winRate: null,
+    winRate: computeWinRate(validSnapshots),
     portfolioValue: typeof derivedPortfolioValue === 'number' && Number.isFinite(derivedPortfolioValue)
       ? roundTo(derivedPortfolioValue, 2)
       : null,

@@ -10,24 +10,28 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
         {
           account_value_usd: 10100,
           realized_pnl: 25,
           unrealized_pnl: 75,
           drawdown_pct: 1.1,
+          trade_count: 1,
         },
         {
           account_value_usd: 10050,
           realized_pnl: 25,
           unrealized_pnl: 25,
           drawdown_pct: 2.4,
+          trade_count: 2,
         },
         {
           account_value_usd: 10200,
           realized_pnl: 40,
           unrealized_pnl: 160,
           drawdown_pct: 1.3,
+          trade_count: 3,
         },
       ],
       10200,
@@ -41,7 +45,7 @@ describe('summarizeBotLiveData', () => {
     expect(summary.portfolioValue).toBe(10200);
     expect(summary.avgValidatorScore).toBe(90);
     expect(summary.sharpeRatio).not.toBeNull();
-    expect(summary.winRate).toBeNull();
+    expect(summary.winRate).toBe(66.7);
   });
 
   it('returns nulls for unsupported or insufficient live data', () => {
@@ -52,12 +56,14 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
         {
           account_value_usd: 10000,
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
       ],
       null,
@@ -82,12 +88,14 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
         {
           account_value_usd: 10167.04,
           realized_pnl: 40,
           unrealized_pnl: 127.04,
           drawdown_pct: 0.5,
+          trade_count: 1,
         },
       ],
       0,
@@ -106,6 +114,7 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 40,
           unrealized_pnl: 127.04,
           drawdown_pct: 0.5,
+          trade_count: 1,
         },
       ],
       null,
@@ -124,6 +133,7 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 40,
           unrealized_pnl: 127.04,
           drawdown_pct: 0.5,
+          trade_count: 1,
         },
       ],
       0,
@@ -142,24 +152,28 @@ describe('summarizeBotLiveData', () => {
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
         {
           account_value_usd: 0,
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 0,
         },
         {
           account_value_usd: 2212.61,
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 13,
         },
         {
           account_value_usd: 2243.47,
           realized_pnl: 0,
           unrealized_pnl: 0,
           drawdown_pct: 0,
+          trade_count: 17,
         },
       ],
       null,
@@ -170,5 +184,6 @@ describe('summarizeBotLiveData', () => {
     expect(summary.pnlPercent).toBe(1.4);
     expect(summary.maxDrawdown).toBe(0);
     expect(summary.portfolioValue).toBeNull();
+    expect(summary.winRate).toBe(100);
   });
 });

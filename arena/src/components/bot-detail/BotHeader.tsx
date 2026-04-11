@@ -57,14 +57,27 @@ export function BotHeader({ bot }: BotHeaderProps) {
           ? 'glow-emerald'
           : 'glow-crimson',
     },
-    { label: 'Sharpe', value: formatDecimal(summary.sharpeRatio), color: '', glow: '' },
+    {
+      label: 'Sharpe',
+      value: formatDecimal(summary.sharpeRatio),
+      color: '',
+      glow: '',
+      title: 'Risk-adjusted return based on the variability of portfolio returns over the sampled history.',
+    },
     {
       label: 'Max DD',
       value: formatPercent(summary.maxDrawdown),
       color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
       glow: '',
+      title: 'Maximum drawdown: the largest peak-to-trough drop in portfolio value over the sampled history.',
     },
-    { label: 'Win Rate', value: formatPercent(summary.winRate), color: '', glow: '' },
+    {
+      label: 'Win Rate',
+      value: formatPercent(summary.winRate),
+      color: '',
+      glow: '',
+      title: 'Share of trade-count increases that coincided with a higher portfolio value at the next metrics snapshot.',
+    },
     { label: 'Portfolio Value', value: formatPortfolioValue(summary.portfolioValue), color: '', glow: '' },
     {
       label: 'Avg Score',
@@ -134,7 +147,10 @@ export function BotHeader({ bot }: BotHeaderProps) {
             transition={{ delay: i * 0.05, duration: 0.4 }}
             className={`glass-card rounded-xl p-4 ${stat.glow}`}
           >
-            <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-1.5">
+            <div
+              className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-1.5"
+              title={stat.title}
+            >
               {stat.label}
             </div>
             <div className={`text-xl font-display font-bold ${stat.color}`}>
