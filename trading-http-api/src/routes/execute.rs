@@ -346,6 +346,7 @@ fn resolve_position_size(
 
 async fn resolve_market_valuation(
     market_client: &MarketDataClient,
+    chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
     let (position_size, amount_out) = resolve_position_size(intent)?;
@@ -353,7 +354,10 @@ async fn resolve_market_valuation(
         return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
     }
 
-    match market_client.get_price(&intent.token_out).await {
+    match market_client
+        .get_price_for_chain(chain_id, &intent.token_out)
+        .await
+    {
         Ok(price) => Ok(TradeValuationSnapshot::priced(
             position_size,
             amount_out,
@@ -683,7 +687,8 @@ async fn execute(
     let max_drawdown = Decimal::new(10, 0);
     check_circuit_breaker(&state.portfolio, max_drawdown).await?;
 
-    let valuation = resolve_market_valuation(&state.market_client, &request.intent).await?;
+    let valuation =
+        resolve_market_valuation(&state.market_client, state.chain_id, &request.intent).await?;
 
     if state.paper_trade {
         let result =
@@ -771,7 +776,8 @@ async fn execute_multi_bot(
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());
-    let valuation = resolve_market_valuation(&market_client, &req.intent).await?;
+    let valuation =
+        resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
 
     if bot.paper_trade {
         return execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await;

@@ -182,7 +182,8 @@ impl TradeExecutor {
         // Running simulation after pre-calls avoids false negatives on first-time routes.
         for pre_call in &encoded.pre_calls {
             let pre_target: Address = pre_call.target;
-            let pre_gas_limit = gas_limit_from_env("TRADING_PRECALL_GAS_LIMIT", DEFAULT_PRECALL_GAS_LIMIT);
+            let pre_gas_limit =
+                gas_limit_from_env("TRADING_PRECALL_GAS_LIMIT", DEFAULT_PRECALL_GAS_LIMIT);
             let pre_request = alloy::rpc::types::TransactionRequest::default()
                 .to(pre_target)
                 .input(pre_call.calldata.clone().into())

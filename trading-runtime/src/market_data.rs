@@ -26,6 +26,26 @@ fn should_try_coingecko_fallback(base_url: &str) -> bool {
     base_url.contains("coingecko.com") || normalize_base_url(base_url).ends_with("/api/v3")
 }
 
+fn normalize_token_key(token: &str) -> String {
+    token.trim().to_ascii_lowercase()
+}
+
+fn coingecko_id_for_address(chain_id: u64, token: &str) -> Option<&'static str> {
+    let token = normalize_token_key(token);
+    match chain_id {
+        // Local execution fork reuses Ethereum mainnet token addresses.
+        1 | 31339 => match token.as_str() {
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some("ethereum"),
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some("usd-coin"),
+            "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some("tether"),
+            "0x6b175474e89094c44da98b954eedeac495271d0f" => Some("dai"),
+            "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("bitcoin"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn coingecko_id_for_symbol(token: &str) -> Option<&'static str> {
     match token.to_ascii_uppercase().as_str() {
         "ETH" | "WETH" => Some("ethereum"),
@@ -39,6 +59,13 @@ fn coingecko_id_for_symbol(token: &str) -> Option<&'static str> {
         "SOL" => Some("solana"),
         _ => None,
     }
+}
+
+fn coingecko_id_for_token(chain_id: Option<u64>, token: &str) -> Option<&'static str> {
+    chain_id
+        .and_then(|chain_id| coingecko_id_for_address(chain_id, token))
+        .or_else(|| coingecko_id_for_address(1, token))
+        .or_else(|| coingecko_id_for_symbol(token))
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +86,14 @@ impl MarketDataClient {
 
     /// Fetch price for a single token
     pub async fn get_price(&self, token: &str) -> Result<PriceData, TradingError> {
+        self.get_price_for_chain(None, token).await
+    }
+
+    pub async fn get_price_for_chain(
+        &self,
+        chain_id: Option<u64>,
+        token: &str,
+    ) -> Result<PriceData, TradingError> {
         let url = format!("{}/price/{}", normalize_base_url(&self.base_url), token);
         let response = self.client.get(&url).send().await?;
 
@@ -78,7 +113,7 @@ impl MarketDataClient {
         }
 
         if should_try_coingecko_fallback(&self.base_url) {
-            return self.get_price_from_coingecko(token).await;
+            return self.get_price_from_coingecko(chain_id, token).await;
         }
 
         Err(TradingError::MarketDataUnavailable(format!(
@@ -88,8 +123,12 @@ impl MarketDataClient {
         )))
     }
 
-    async fn get_price_from_coingecko(&self, token: &str) -> Result<PriceData, TradingError> {
-        self.get_prices_from_coingecko(&[token.to_string()])
+    async fn get_price_from_coingecko(
+        &self,
+        chain_id: Option<u64>,
+        token: &str,
+    ) -> Result<PriceData, TradingError> {
+        self.get_prices_from_coingecko(chain_id, &[token.to_string()])
             .await?
             .into_iter()
             .next()
@@ -102,13 +141,15 @@ impl MarketDataClient {
 
     async fn get_prices_from_coingecko(
         &self,
+        chain_id: Option<u64>,
         tokens: &[String],
     ) -> Result<Vec<PriceData>, TradingError> {
         let mut token_pairs = Vec::new();
         for token in tokens {
-            let coin_id = coingecko_id_for_symbol(token).ok_or_else(|| {
+            let coin_id = coingecko_id_for_token(chain_id, token).ok_or_else(|| {
                 TradingError::MarketDataUnavailable(format!(
-                    "unsupported CoinGecko symbol mapping for token {token}"
+                    "unsupported CoinGecko token mapping for token {token} on chain {:?}",
+                    chain_id
                 ))
             })?;
             token_pairs.push((token.clone(), coin_id));
@@ -160,11 +201,22 @@ impl MarketDataClient {
 
     /// Fetch prices for multiple tokens
     pub async fn get_prices(&self, tokens: &[String]) -> Result<Vec<PriceData>, TradingError> {
+        self.get_prices_for_chain(None, tokens).await
+    }
+
+    pub async fn get_prices_for_chain(
+        &self,
+        chain_id: Option<u64>,
+        tokens: &[String],
+    ) -> Result<Vec<PriceData>, TradingError> {
         if should_try_coingecko_fallback(&self.base_url) {
-            return self.get_prices_from_coingecko(tokens).await;
+            return self.get_prices_from_coingecko(chain_id, tokens).await;
         }
 
-        let futures: Vec<_> = tokens.iter().map(|t| self.get_price(t)).collect();
+        let futures: Vec<_> = tokens
+            .iter()
+            .map(|t| self.get_price_for_chain(chain_id, t))
+            .collect();
         let results = futures::future::join_all(futures).await;
 
         let mut prices = Vec::new();
@@ -248,5 +300,51 @@ mod tests {
         assert_eq!(prices.len(), 2);
         assert_eq!(prices[0].token, "WETH");
         assert_eq!(prices[1].token, "USDC");
+    }
+
+    #[tokio::test]
+    async fn test_get_price_falls_back_to_coingecko_for_known_mainnet_token_address() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v3/simple/price"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "usd-coin": { "usd": 1.0 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = MarketDataClient::new(format!("{}/api/v3", mock_server.uri()));
+        let price = client
+            .get_price_for_chain(Some(31339), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+            .await
+            .unwrap();
+
+        assert_eq!(price.token, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+        assert_eq!(price.price_usd, Decimal::ONE);
+        assert!(price.source.ends_with("/simple/price"));
+    }
+
+    #[tokio::test]
+    async fn test_get_price_falls_back_to_coingecko_for_known_address_without_chain_id() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v3/simple/price"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ethereum": { "usd": 2500.50 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = MarketDataClient::new(format!("{}/api/v3", mock_server.uri()));
+        let price = client
+            .get_price("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+            .await
+            .unwrap();
+
+        assert_eq!(price.token, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        assert_eq!(price.price_usd.to_string(), "2500.5");
+        assert!(price.source.ends_with("/simple/price"));
     }
 }

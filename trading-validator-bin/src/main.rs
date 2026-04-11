@@ -279,7 +279,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     if let Some(rpc_url) = resolve_validator_rpc_url() {
         server = server.with_rpc_url(rpc_url);
     }
-    if !signing_key_hex.is_empty() && verifying_contract != blueprint_sdk::alloy::primitives::Address::ZERO
+    if !signing_key_hex.is_empty()
+        && verifying_contract != blueprint_sdk::alloy::primitives::Address::ZERO
     {
         server = server
             .with_signer(&signing_key_hex, chain_id, verifying_contract)
@@ -311,9 +312,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         tracing::warn!(
             "SERVICE_ID=0; running validator in HTTP-only endpoint mode without Tangle runner"
         );
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| blueprint_sdk::Error::Other(format!("Validator shutdown wait failed: {e}")))?;
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            blueprint_sdk::Error::Other(format!("Validator shutdown wait failed: {e}"))
+        })?;
         tracing::info!("Trading validator shutting down...");
         return Ok(());
     }
