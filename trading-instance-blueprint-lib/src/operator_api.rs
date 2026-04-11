@@ -1161,11 +1161,18 @@ fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusC
 
 fn resolve_live_chat_target(
     caller: &str,
-) -> Result<trading_blueprint_lib::operator_chat::SidecarChatTarget, (StatusCode, String)> {
+) -> Result<
+    (
+        TradingBotRecord,
+        trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    ),
+    (StatusCode, String),
+> {
     let bot = resolve_singleton()?;
     verify_submitter(&bot, caller)?;
-    trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
-        .map_err(|e| (StatusCode::CONFLICT, e))
+    let target = trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok((bot, target))
 }
 
 // ── Chat session proxy handlers ─────────────────────────────────────────
@@ -1173,22 +1180,15 @@ fn resolve_live_chat_target(
 async fn list_chat_sessions(
     SessionAuth(caller): SessionAuth,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::proxy_chat_request(
-        &target,
-        reqwest::Method::GET,
-        "/agents/sessions",
-        None,
-        None,
-    )
-    .await
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::list_manual_chat_sessions(&target, &bot.id).await
 }
 
 async fn create_chat_gateway_session(
     SessionAuth(caller): SessionAuth,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (_bot, target) = resolve_live_chat_target(&caller)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1203,7 +1203,8 @@ async fn get_chat_session(
     SessionAuth(caller): SessionAuth,
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1219,7 +1220,8 @@ async fn update_chat_session(
     Path(session_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::PATCH,
@@ -1234,7 +1236,8 @@ async fn delete_chat_session(
     SessionAuth(caller): SessionAuth,
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::DELETE,
@@ -1250,7 +1253,8 @@ async fn list_chat_messages(
     Path(session_id): Path<String>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1266,7 +1270,8 @@ async fn send_chat_message(
     Path(session_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1281,7 +1286,8 @@ async fn abort_chat_session(
     SessionAuth(caller): SessionAuth,
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1296,8 +1302,11 @@ async fn stream_chat_events(
     SessionAuth(caller): SessionAuth,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&caller)?;
+    let (bot, target) = resolve_live_chat_target(&caller)?;
     let session_id = params.get("sessionId").cloned();
+    if let Some(session_id) = session_id.as_deref() {
+        trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, session_id)?;
+    }
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 

@@ -9,6 +9,7 @@
 mod common;
 
 use axum::body::Body;
+use axum::extract::Path;
 use axum::http::header::CONTENT_TYPE;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -234,6 +235,54 @@ async fn spawn_mock_terminal_sidecar() -> String {
         axum::serve(listener, app)
             .await
             .expect("serve mock terminal sidecar");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
+    let workflow_session = format!("trading-{bot_id}");
+    let tick_session = format!("trading-{bot_id}-1775823900");
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let workflow_session = workflow_session.clone();
+                let tick_session = tick_session.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": workflow_session},
+                        {"id": tick_session}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(json!({
+                    "id": id,
+                    "title": "New Chat"
+                }))
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(|| async { Json(json!([])) }).post(|| async { Json(json!({"ok": true})) }),
+        )
+        .route(
+            "/agents/sessions/{id}/abort",
+            post(|| async { Json(json!({"ok": true})) }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
     });
     format!("http://{addr}")
 }
@@ -560,6 +609,47 @@ async fn test_terminal_routes_proxy_live_session_lifecycle() {
     let delete_json: serde_json::Value = serde_json::from_slice(&delete_body).unwrap();
     assert_eq!(delete_json["deleted"], true);
     assert_eq!(delete_json["session_id"], "term-1");
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_chat_routes_only_expose_manual_sessions() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    let sidecar_url = spawn_mock_chat_sidecar(&bot_id).await;
+    set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!([{ "id": "manual-1", "title": "New Chat" }]));
+
+    let auto_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bot/session/sessions/trading-{bot_id}"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
 
     let _ = clear_instance_bot_id();
 }

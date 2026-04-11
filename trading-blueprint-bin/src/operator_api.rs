@@ -917,11 +917,18 @@ fn resolve_live_bot(bot_id: &str) -> Result<TradingBotRecord, ApiError> {
 fn resolve_live_chat_target(
     bot_id: &str,
     caller: &str,
-) -> Result<trading_blueprint_lib::operator_chat::SidecarChatTarget, (StatusCode, String)> {
+) -> Result<
+    (
+        TradingBotRecord,
+        trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    ),
+    (StatusCode, String),
+> {
     let bot = resolve_bot(bot_id)?;
     verify_submitter(&bot, caller)?;
-    trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
-        .map_err(|e| (StatusCode::CONFLICT, e))
+    let target = trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok((bot, target))
 }
 
 fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiError> {
@@ -1034,15 +1041,8 @@ async fn list_chat_sessions(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
-    trading_blueprint_lib::operator_chat::proxy_chat_request(
-        &target,
-        reqwest::Method::GET,
-        "/agents/sessions",
-        None,
-        None,
-    )
-    .await
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::list_manual_chat_sessions(&target, &bot.id).await
 }
 
 async fn create_chat_gateway_session(
@@ -1050,7 +1050,7 @@ async fn create_chat_gateway_session(
     Path(bot_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (_bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1065,7 +1065,8 @@ async fn get_chat_session(
     SessionAuth(caller): SessionAuth,
     Path((bot_id, session_id)): Path<(String, String)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1081,7 +1082,8 @@ async fn update_chat_session(
     Path((bot_id, session_id)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::PATCH,
@@ -1096,7 +1098,8 @@ async fn delete_chat_session(
     SessionAuth(caller): SessionAuth,
     Path((bot_id, session_id)): Path<(String, String)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::DELETE,
@@ -1112,7 +1115,8 @@ async fn list_chat_messages(
     Path((bot_id, session_id)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1128,7 +1132,8 @@ async fn send_chat_message(
     Path((bot_id, session_id)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1143,7 +1148,8 @@ async fn abort_chat_session(
     SessionAuth(caller): SessionAuth,
     Path((bot_id, session_id)): Path<(String, String)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1159,8 +1165,11 @@ async fn stream_chat_events(
     Path(bot_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let target = resolve_live_chat_target(&bot_id, &caller)?;
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
     let session_id = params.get("sessionId").cloned();
+    if let Some(session_id) = session_id.as_deref() {
+        trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, session_id)?;
+    }
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
@@ -1526,16 +1535,16 @@ async fn resolve_metrics_history_for_bot(
     }
 
     match fetch_trading_api_json(bot, "/metrics/history", &remote_query).await {
-        Ok(Some(payload)) => match extract_json_array(payload, "snapshots")
-            .and_then(parse_metrics_snapshots)
-        {
-            Ok(snapshots) if !snapshots.is_empty() => snapshots,
-            Ok(_) => fallback_metrics_snapshots(bot),
-            Err(err) => {
-                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                fallback_metrics_snapshots(bot)
+        Ok(Some(payload)) => {
+            match extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots) {
+                Ok(snapshots) if !snapshots.is_empty() => snapshots,
+                Ok(_) => fallback_metrics_snapshots(bot),
+                Err(err) => {
+                    tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
+                    fallback_metrics_snapshots(bot)
+                }
             }
-        },
+        }
         Ok(None) => fallback_metrics_snapshots(bot),
         Err(err) => {
             tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
@@ -1973,11 +1982,12 @@ async fn get_bot_metrics(
     )
     .await;
     let latest_snapshot = metrics_history.last();
-    let trades = match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
-        Ok(Some(payload)) => extract_json_array(payload, "trades")
-            .unwrap_or_else(|_| fallback_trade_dataset(&bot)),
-        Ok(None) | Err(_) => fallback_trade_dataset(&bot),
-    };
+    let trades =
+        match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
+            Ok(Some(payload)) => extract_json_array(payload, "trades")
+                .unwrap_or_else(|_| fallback_trade_dataset(&bot)),
+            Ok(None) | Err(_) => fallback_trade_dataset(&bot),
+        };
 
     let total_pnl: f64 = trades
         .iter()
@@ -2002,10 +2012,18 @@ async fn get_bot_metrics(
                 }
             })
             .or_else(|| latest_snapshot.map(|snapshot| snapshot.account_value_usd))
-            .unwrap_or_else(|| fallback_portfolio_state(&bot).total_value_usd.unwrap_or(0.0)),
+            .unwrap_or_else(|| {
+                fallback_portfolio_state(&bot)
+                    .total_value_usd
+                    .unwrap_or(0.0)
+            }),
         Ok(None) | Err(_) => latest_snapshot
             .map(|snapshot| snapshot.account_value_usd)
-            .unwrap_or_else(|| fallback_portfolio_state(&bot).total_value_usd.unwrap_or(0.0)),
+            .unwrap_or_else(|| {
+                fallback_portfolio_state(&bot)
+                    .total_value_usd
+                    .unwrap_or(0.0)
+            }),
     };
 
     Ok(Json(BotMetricsResponse {
