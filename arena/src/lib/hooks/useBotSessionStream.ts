@@ -7,7 +7,7 @@ import type {
   ToolPart,
 } from '@tangle-network/sandbox-ui/types';
 
-type AppSessionMessage = SandboxSessionMessage & {
+export type AppSessionMessage = SandboxSessionMessage & {
   runId?: string;
   success?: boolean | null;
   error?: string | null;
@@ -56,6 +56,87 @@ function getCacheStorageKey(cacheKey: string, sessionId: string): string {
   return `${CACHE_PREFIX}${cacheKey}::${sessionId}`;
 }
 
+function sanitizeCachedMessage(entry: unknown, fallbackIndex: number): AppSessionMessage | null {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const raw = entry as Record<string, unknown>;
+  const id = typeof raw.id === 'string' ? raw.id : null;
+  const role = raw.role === 'user' || raw.role === 'assistant' || raw.role === 'system'
+    ? raw.role
+    : null;
+
+  if (!id || !role) {
+    return null;
+  }
+
+  const rawTime = raw.time && typeof raw.time === 'object'
+    ? raw.time as Record<string, unknown>
+    : {};
+  const created = normalizeTimestamp(rawTime.created ?? raw.timestamp);
+  const updated = typeof rawTime.updated === 'number' ? rawTime.updated : undefined;
+  const completed = typeof rawTime.completed === 'number' ? rawTime.completed : undefined;
+  const insertionIndex = typeof raw._insertionIndex === 'number'
+    ? raw._insertionIndex
+    : fallbackIndex;
+
+  return {
+    id,
+    role,
+    ...(typeof raw.sessionID === 'string' ? { sessionID: raw.sessionID } : {}),
+    ...(typeof raw.runId === 'string' ? { runId: raw.runId } : {}),
+    ...(raw.success === null || typeof raw.success === 'boolean' ? { success: raw.success } : {}),
+    ...(raw.error === null || typeof raw.error === 'string' ? { error: raw.error } : {}),
+    time: {
+      created,
+      ...(updated != null ? { updated } : {}),
+      ...(completed != null ? { completed } : {}),
+    },
+    _insertionIndex: insertionIndex,
+  };
+}
+
+function sanitizeCachedPart(part: unknown): SessionPart | null {
+  if (!part || typeof part !== 'object') {
+    return null;
+  }
+
+  return mapSessionPart(part as Record<string, unknown>);
+}
+
+function sanitizeCachedState(candidate: CachedSessionState | null): CachedSessionState | null {
+  if (!candidate) {
+    return null;
+  }
+
+  const nextMessages: AppSessionMessage[] = [];
+  const nextPartMap: Record<string, SessionPart[]> = {};
+  let nextInsertionIndex = 0;
+
+  for (const entry of candidate.messages) {
+    const message = sanitizeCachedMessage(entry, nextInsertionIndex);
+    if (!message) {
+      continue;
+    }
+
+    const rawParts = Array.isArray(candidate.partMap[message.id]) ? candidate.partMap[message.id] : [];
+    const parts = rawParts
+      .map((part) => sanitizeCachedPart(part))
+      .filter((part): part is SessionPart => part !== null);
+
+    nextMessages.push(message);
+    nextPartMap[message.id] = parts;
+    nextInsertionIndex = Math.max(nextInsertionIndex, (message._insertionIndex ?? 0) + 1);
+  }
+
+  return {
+    messages: nextMessages,
+    partMap: nextPartMap,
+    nextInsertionIndex: Math.max(nextInsertionIndex, candidate.nextInsertionIndex || 0),
+  };
+}
+
 function readCachedState(cacheKey: string | undefined, sessionId: string): CachedSessionState | null {
   if (!cacheKey || typeof window === 'undefined' || !window.sessionStorage) {
     return null;
@@ -72,11 +153,11 @@ function readCachedState(cacheKey: string | undefined, sessionId: string): Cache
       return null;
     }
 
-    return {
+    return sanitizeCachedState({
       messages: parsed.messages as AppSessionMessage[],
       partMap: parsed.partMap as Record<string, SessionPart[]>,
       nextInsertionIndex: parsed.nextInsertionIndex,
-    };
+    });
   } catch {
     return null;
   }
@@ -105,6 +186,29 @@ function normalizeTimestamp(value: unknown): number {
     }
   }
   return Date.now();
+}
+
+function makeOptimisticMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `optimistic-${crypto.randomUUID()}`;
+  }
+
+  return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function movePartMapEntry(
+  partMap: Record<string, SessionPart[]>,
+  fromId: string,
+  toId: string,
+): Record<string, SessionPart[]> {
+  if (fromId === toId || !(fromId in partMap)) {
+    return partMap;
+  }
+
+  const nextPartMap = { ...partMap };
+  nextPartMap[toId] = nextPartMap[fromId] ?? [];
+  delete nextPartMap[fromId];
+  return nextPartMap;
 }
 
 function mapToolState(state: Record<string, unknown> | undefined): ToolPart['state'] {
@@ -352,9 +456,15 @@ export function useBotSessionStream({
   const applyMessageUpdate = useCallback((payload: Record<string, unknown>) => {
     const info = (payload.info as Record<string, unknown> | undefined) ?? payload;
     const id = typeof info.id === 'string' ? info.id : '';
-    const role = typeof info.role === 'string' ? info.role : 'assistant';
+    const explicitRole = typeof info.role === 'string' ? info.role : null;
 
     if (!id) {
+      return;
+    }
+
+    const existingMessage = stateRef.current.messages.find((message) => message.id === id);
+    const role = explicitRole ?? existingMessage?.role ?? null;
+    if (!role) {
       return;
     }
 
@@ -363,6 +473,12 @@ export function useBotSessionStream({
       ? time.created
       : normalizeTimestamp(info.timestamp);
     const completedAt = typeof time.completed === 'number' ? time.completed : undefined;
+    const success = Object.prototype.hasOwnProperty.call(info, 'success')
+      ? (typeof info.success === 'boolean' ? info.success : null)
+      : undefined;
+    const errorText = Object.prototype.hasOwnProperty.call(info, 'error')
+      ? (typeof info.error === 'string' ? info.error : null)
+      : undefined;
 
     applyState((current) => {
       const existingIndex = current.messages.findIndex((message) => message.id === id);
@@ -374,12 +490,8 @@ export function useBotSessionStream({
         role: role as AppSessionMessage['role'],
         ...(typeof info.runID === 'string' ? { runId: info.runID } : {}),
         ...(typeof info.run_id === 'string' ? { runId: info.run_id } : {}),
-        ...(Object.prototype.hasOwnProperty.call(info, 'success') ? {
-          success: typeof info.success === 'boolean' ? info.success : null,
-        } : {}),
-        ...(Object.prototype.hasOwnProperty.call(info, 'error') ? {
-          error: typeof info.error === 'string' ? info.error : null,
-        } : {}),
+        ...(success !== undefined ? { success } : {}),
+        ...(errorText !== undefined ? { error: errorText } : {}),
         time: {
           created: createdAt,
           ...(completedAt ? { completed: completedAt } : {}),
@@ -408,6 +520,9 @@ export function useBotSessionStream({
     if (role === 'assistant') {
       activeAssistantMessageIdRef.current = id;
       setIsStreaming(true);
+      if (success !== false && !errorText) {
+        setError(null);
+      }
     }
   }, [applyState]);
 
@@ -494,7 +609,6 @@ export function useBotSessionStream({
     if (event.type === 'session.idle') {
       setIsStreaming(false);
       activeAssistantMessageIdRef.current = null;
-      void refetch();
       return;
     }
 
@@ -516,14 +630,39 @@ export function useBotSessionStream({
         return;
       }
 
-      applyState((current) => ({
-        messages: [...current.messages, mapped.message],
-        partMap: {
-          ...current.partMap,
-          [mapped.message.id]: mapped.parts,
-        },
-        nextInsertionIndex: current.nextInsertionIndex + 1,
-      }));
+      if (mapped.message.role === 'assistant' && mapped.message.success !== false && !mapped.message.error) {
+        setError(null);
+      }
+
+      applyState((current) => {
+        const existingIndex = current.messages.findIndex((message) => message.id === mapped.message.id);
+        if (existingIndex >= 0) {
+          const nextMessages = [...current.messages];
+          nextMessages[existingIndex] = {
+            ...nextMessages[existingIndex],
+            ...mapped.message,
+            time: mapped.message.time,
+          };
+
+          return {
+            messages: nextMessages,
+            partMap: {
+              ...current.partMap,
+              [mapped.message.id]: mapped.parts,
+            },
+            nextInsertionIndex: current.nextInsertionIndex,
+          };
+        }
+
+        return {
+          messages: [...current.messages, mapped.message],
+          partMap: {
+            ...current.partMap,
+            [mapped.message.id]: mapped.parts,
+          },
+          nextInsertionIndex: current.nextInsertionIndex + 1,
+        };
+      });
     }
   }, [applyMessagePartUpdate, applyMessageUpdate, applyState, refetch]);
 
@@ -618,6 +757,26 @@ export function useBotSessionStream({
       throw new Error('Chat is not authenticated');
     }
 
+    const optimisticMessageId = makeOptimisticMessageId();
+    const createdAt = Date.now();
+
+    applyState((current) => ({
+      messages: [
+        ...current.messages,
+        {
+          id: optimisticMessageId,
+          role: 'user',
+          time: { created: createdAt },
+          _insertionIndex: current.nextInsertionIndex,
+        },
+      ],
+      partMap: {
+        ...current.partMap,
+        [optimisticMessageId]: [{ type: 'text', text }],
+      },
+      nextInsertionIndex: current.nextInsertionIndex + 1,
+    }));
+
     const response = await fetch(`${apiUrl}/session/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
       headers: {
@@ -629,12 +788,54 @@ export function useBotSessionStream({
     });
 
     if (!response.ok) {
+      applyState((current) => ({
+        messages: current.messages.filter((message) => message.id !== optimisticMessageId),
+        partMap: Object.fromEntries(
+          Object.entries(current.partMap).filter(([messageId]) => messageId !== optimisticMessageId),
+        ),
+        nextInsertionIndex: current.nextInsertionIndex,
+      }));
       throw new Error(await readErrorText(response));
+    }
+
+    try {
+      const payload = await response.json() as {
+        userMessageId?: unknown;
+        info?: Record<string, unknown>;
+      };
+
+      if (typeof payload.userMessageId === 'string') {
+        const serverUserMessageId = payload.userMessageId;
+        applyState((current) => {
+          const optimisticIndex = current.messages.findIndex((message) => message.id === optimisticMessageId);
+          if (optimisticIndex < 0) {
+            return current;
+          }
+
+          const nextMessages = [...current.messages];
+          nextMessages[optimisticIndex] = {
+            ...nextMessages[optimisticIndex],
+            id: serverUserMessageId,
+          };
+
+          return {
+            messages: nextMessages,
+            partMap: movePartMapEntry(current.partMap, optimisticMessageId, serverUserMessageId),
+            nextInsertionIndex: current.nextInsertionIndex,
+          };
+        });
+      }
+
+      if (payload.info && typeof payload.info === 'object') {
+        applyMessageUpdate(payload);
+      }
+    } catch {
+      // Some sidecar versions return minimal or non-JSON payloads here.
     }
 
     setError(null);
     setIsStreaming(true);
-  }, [apiUrl, sessionId, token]);
+  }, [apiUrl, applyMessageUpdate, applyState, sessionId, token]);
 
   const abort = useCallback(async () => {
     if (!token || !apiUrl || !sessionId) {
