@@ -379,7 +379,12 @@ export function ChatTab({
   }
 
   return (
-    <div className="glass-card rounded-xl overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 400px)', minHeight: '480px' }}>
+    <div
+      data-sandbox-ui="true"
+      data-sandbox-theme="vault"
+      className="arena-chat-shell glass-card rounded-xl overflow-hidden flex flex-col"
+      style={{ height: 'calc(100vh - 400px)', minHeight: '480px' }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor">
         <SessionSelector
