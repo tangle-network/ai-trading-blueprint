@@ -9,10 +9,7 @@ type Uint24 = Uint<24, 1>;
 /// Alloy type alias for uint160 (used for sqrtPriceLimitX96)
 type Uint160 = Uint<160, 3>;
 
-use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_vault_token_approve,
-    validate_vault_address,
-};
+use super::{ActionParams, EncodedAction, ProtocolAdapter, approval, validate_vault_address};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -173,12 +170,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_vault_token_approve(
-                        params.vault_address,
-                        params.token_in,
-                        router,
-                        params.amount,
-                    )],
+                    approvals: vec![approval(params.token_in, router, params.amount)],
                 })
             }
             Action::Buy => {
@@ -202,12 +194,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_vault_token_approve(
-                        params.vault_address,
-                        params.token_in,
-                        router,
-                        amount_in_max,
-                    )],
+                    approvals: vec![approval(params.token_in, router, amount_in_max)],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -256,10 +243,10 @@ mod tests {
         assert_eq!(result.target, UNISWAP_V3_ROUTER.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, TOKEN_B.parse::<Address>().unwrap());
-        assert_eq!(result.pre_calls.len(), 1);
+        assert_eq!(result.approvals.len(), 1);
         assert_eq!(
-            result.pre_calls[0].target,
-            VAULT.parse::<Address>().unwrap()
+            result.approvals[0].spender,
+            UNISWAP_V3_ROUTER.parse::<Address>().unwrap()
         );
     }
 

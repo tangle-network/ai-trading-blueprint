@@ -4,6 +4,7 @@
 //! for submitting transactions.
 
 use alloy::network::{Ethereum, EthereumWallet};
+use alloy::primitives::Address;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
@@ -37,6 +38,7 @@ pub type HttpProvider = FillProvider<
 pub struct ChainClient {
     pub provider: HttpProvider,
     pub wallet: EthereumWallet,
+    pub from_address: Address,
     pub chain_id: u64,
 }
 
@@ -48,6 +50,7 @@ impl ChainClient {
         let signer: PrivateKeySigner = private_key
             .parse()
             .map_err(|e| TradingError::ConfigError(format!("Invalid private key: {e}")))?;
+        let from_address = signer.address();
 
         let wallet = EthereumWallet::from(signer);
 
@@ -62,6 +65,7 @@ impl ChainClient {
         Ok(Self {
             provider,
             wallet,
+            from_address,
             chain_id,
         })
     }
@@ -84,6 +88,7 @@ mod tests {
         assert!(client.is_ok());
         let client = client.unwrap();
         assert_eq!(client.chain_id, 31337);
+        assert_ne!(client.from_address, Address::ZERO);
     }
 
     #[test]

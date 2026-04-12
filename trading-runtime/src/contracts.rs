@@ -18,6 +18,12 @@ sol! {
             uint256 deadline;
         }
 
+        struct ApprovalCall {
+            address token;
+            address spender;
+            uint256 amount;
+        }
+
         function asset() external view returns (address);
         function share() external view returns (address);
         function totalAssets() external view returns (uint256);
@@ -27,6 +33,12 @@ sol! {
         function convertToShares(uint256 assets) external view returns (uint256);
         function convertToAssets(uint256 shares) external view returns (uint256);
         function execute(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeWithApprovals(
+            ExecuteParams calldata params,
+            ApprovalCall[] calldata approvals,
+            bytes[] calldata signatures,
+            uint256[] calldata scores
+        ) external;
         function emergencyWithdraw(address token, address to) external;
         function getBalance(address token) external view returns (uint256);
         function pause() external;

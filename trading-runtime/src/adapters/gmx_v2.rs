@@ -3,7 +3,7 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 
 use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_vault_token_approve, parse_address_or,
+    ActionParams, EncodedAction, ProtocolAdapter, approval, parse_address_or,
     validate_vault_address,
 };
 use crate::error::TradingError;
@@ -161,8 +161,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_vault_token_approve(
-                        params.vault_address,
+                    approvals: vec![approval(
                         params.token_in,
                         self.exchange_router,
                         params.amount,
@@ -184,8 +183,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_vault_token_approve(
-                        params.vault_address,
+                    approvals: vec![approval(
                         params.token_in,
                         self.exchange_router,
                         params.amount,
@@ -207,7 +205,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![],
+                    approvals: vec![],
                 })
             }
             Action::CloseShort => {
@@ -225,7 +223,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![],
+                    approvals: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -275,7 +273,7 @@ mod tests {
             GMX_V2_EXCHANGE_ROUTER.parse::<Address>().unwrap()
         );
         assert!(result.calldata.len() > 4);
-        assert_eq!(result.pre_calls.len(), 1);
+        assert_eq!(result.approvals.len(), 1);
     }
 
     #[test]

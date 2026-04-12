@@ -76,7 +76,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event DepositAssetReserveBpsUpdated(uint256 bps);
     event AdminUnwindMaxDrawdownBpsUpdated(uint256 bps);
     event SpenderApprovalUpdated(address indexed token, address indexed spender, uint256 amount);
-    event CollateralReleased(address indexed operator, uint256 amount, address indexed recipient, bytes32 indexed intentHash);
+    event CollateralReleased(
+        address indexed operator, uint256 amount, address indexed recipient, bytes32 indexed intentHash
+    );
     event CollateralReturned(address indexed operator, uint256 amount, uint256 credited);
     event CollateralWrittenDown(address indexed operator, uint256 amount);
     event MaxCollateralBpsUpdated(uint256 bps);
@@ -348,6 +350,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 deadline;
     }
 
+    /// @notice Atomic approval updates applied immediately before a trade executes.
+    struct ApprovalCall {
+        address token;
+        address spender;
+        uint256 amount;
+    }
+
     /// @notice Execute a validated trade through an arbitrary target contract
     /// @dev Requires OPERATOR_ROLE + PolicyEngine approval + TradeValidator m-of-n sigs.
     ///      Blocked when wind-down mode is active — use unwind() instead.
@@ -356,6 +365,25 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         onlyRole(OPERATOR_ROLE)
         nonReentrant
         whenNotPaused
+    {
+        _prepareExecution(params, signatures, scores);
+        _executeTrade(params);
+    }
+
+    /// @notice Execute a validated trade with vault-held token approvals applied atomically.
+    function executeWithApprovals(
+        ExecuteParams calldata params,
+        ApprovalCall[] calldata approvals,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _prepareExecution(params, signatures, scores);
+        _applyApprovals(approvals);
+        _executeTrade(params);
+    }
+
+    function _prepareExecution(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores)
+        internal
     {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
@@ -370,9 +398,15 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
         // 2. Validator signature check (m-of-n EIP-712)
         _checkValidators(params.intentHash, signatures, scores, params.deadline);
+    }
 
-        // 3. Execute the trade with output verification
-        _executeTrade(params);
+    function _applyApprovals(ApprovalCall[] calldata approvals) internal {
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall calldata approval = approvals[i];
+            if (approval.token == address(0) || approval.spender == address(0)) revert ZeroAddress();
+            IERC20(approval.token).forceApprove(approval.spender, approval.amount);
+            emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
+        }
     }
 
     function _checkPolicy(address outputToken, uint256 minOutput, address target) internal {
@@ -779,7 +813,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function _addHeldToken(address token) internal {
-        if (token == address(0) || token == asset() || isHeldToken[token] || heldTokens.length >= MAX_HELD_TOKENS) return;
+        if (token == address(0) || token == asset() || isHeldToken[token] || heldTokens.length >= MAX_HELD_TOKENS) {
+            return;
+        }
         heldTokens.push(token);
         isHeldToken[token] = true;
 

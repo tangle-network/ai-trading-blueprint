@@ -19,9 +19,8 @@ use crate::simulator::{
     risk_analyzer::{TradeContext, analyze_simulation},
 };
 use crate::types::{TradeIntent, ValidationResult};
-use crate::vault_client::VaultClient;
+use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
-const DEFAULT_PRECALL_GAS_LIMIT: u64 = 500_000;
 const DEFAULT_EXECUTION_GAS_LIMIT: u64 = 3_000_000;
 
 fn gas_limit_from_env(var: &str, default: u64) -> u64 {
@@ -176,40 +175,35 @@ impl TradeExecutor {
         // 3. Encode the action
         let encoded: EncodedAction = adapter.encode_action(&params)?;
 
-        // 3b. Execute pre-calls (e.g., ERC20 approvals) before simulation and main vault call.
-        //
-        // Many protocol actions are only valid after pre-calls mutate allowance state.
-        // Running simulation after pre-calls avoids false negatives on first-time routes.
-        for pre_call in &encoded.pre_calls {
-            let pre_target: Address = pre_call.target;
-            let pre_gas_limit =
-                gas_limit_from_env("TRADING_PRECALL_GAS_LIMIT", DEFAULT_PRECALL_GAS_LIMIT);
-            let pre_request = alloy::rpc::types::TransactionRequest::default()
-                .to(pre_target)
-                .input(pre_call.calldata.clone().into())
-                .value(pre_call.value)
-                .gas_limit(pre_gas_limit);
+        // 4. Collect validator signatures and scores before simulation so the
+        // simulated payload matches the final submitted transaction.
+        let (signatures, scores) = collect_validator_data(validation)?;
 
-            let pre_pending = self
-                .chain_client
-                .provider
-                .send_transaction(pre_request)
-                .await
-                .map_err(|e| TradingError::VaultError(format!("Pre-call send failed: {e}")))?;
+        // 5. Parse intent_hash → [u8; 32]
+        let intent_hash = parse_intent_hash(&validation.intent_hash)?;
 
-            pre_pending
-                .get_receipt()
-                .await
-                .map_err(|e| TradingError::VaultError(format!("Pre-call receipt failed: {e}")))?;
-        }
+        // 6. Compute deadline as U256
+        let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
 
-        // 3c. Simulate the transaction before execution
+        // 7. Encode the final vault transaction, with approvals folded into the
+        // same on-chain call when the adapter requires them.
+        let tx = build_execution_tx(
+            &self.vault_client,
+            &encoded,
+            intent_hash,
+            signatures,
+            scores,
+            deadline,
+        )?;
+        let tx_value = parse_tx_value(&tx.value);
+
+        // 8. Simulate the final transaction before execution.
         if let Some(ref simulator) = self.simulator {
             let sim_request = SimulationRequest {
-                from: vault_address,
-                to: encoded.target,
-                data: encoded.calldata.clone(),
-                value: encoded.value,
+                from: self.chain_client.from_address,
+                to: vault_address,
+                data: alloy::primitives::Bytes::from(tx.data.clone()),
+                value: tx_value,
                 block_number: None,
                 token_addresses: vec![token_in, token_out],
                 balance_check_account: Some(vault_address),
@@ -254,29 +248,7 @@ impl TradeExecutor {
             }
         }
 
-        // 4. Collect validator signatures and scores
-        let (signatures, scores) = collect_validator_data(validation)?;
-
-        // 5. Parse intent_hash → [u8; 32]
-        let intent_hash = parse_intent_hash(&validation.intent_hash)?;
-
-        // 6. Compute deadline as U256
-        let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
-
-        // 7. Encode vault.execute()
-        let tx = self.vault_client.encode_execute(
-            &format!("{}", encoded.target),
-            &encoded.calldata,
-            &encoded.value.to_string(),
-            &encoded.min_output.to_string(),
-            &format!("{}", encoded.output_token),
-            intent_hash,
-            signatures,
-            scores,
-            deadline,
-        )?;
-
-        // 8. Submit via ChainClient
+        // 9. Submit via ChainClient
         let to_addr: Address = tx
             .to
             .parse()
@@ -285,7 +257,7 @@ impl TradeExecutor {
         let tx_request = alloy::rpc::types::TransactionRequest::default()
             .to(to_addr)
             .input(alloy::primitives::Bytes::from(tx.data).into())
-            .value(U256::from_str_radix(tx.value.trim_start_matches("0x"), 10).unwrap_or_default())
+            .value(tx_value)
             .gas_limit(gas_limit_from_env(
                 "TRADING_EXECUTION_GAS_LIMIT",
                 DEFAULT_EXECUTION_GAS_LIMIT,
@@ -311,6 +283,55 @@ impl TradeExecutor {
             gas_used: Some(receipt.gas_used.into()),
         })
     }
+}
+
+fn build_execution_tx(
+    vault_client: &VaultClient,
+    encoded: &EncodedAction,
+    intent_hash: [u8; 32],
+    signatures: Vec<Vec<u8>>,
+    scores: Vec<U256>,
+    deadline: U256,
+) -> Result<EncodedTransaction, TradingError> {
+    if encoded.approvals.is_empty() {
+        vault_client.encode_execute(
+            &format!("{}", encoded.target),
+            &encoded.calldata,
+            &encoded.value.to_string(),
+            &encoded.min_output.to_string(),
+            &format!("{}", encoded.output_token),
+            intent_hash,
+            signatures,
+            scores,
+            deadline,
+        )
+    } else {
+        let approvals = encoded
+            .approvals
+            .iter()
+            .map(|approval| VaultApproval {
+                token: format!("{}", approval.token),
+                spender: format!("{}", approval.spender),
+                amount: approval.amount.to_string(),
+            })
+            .collect::<Vec<_>>();
+        vault_client.encode_execute_with_approvals(
+            &format!("{}", encoded.target),
+            &encoded.calldata,
+            &encoded.value.to_string(),
+            &encoded.min_output.to_string(),
+            &format!("{}", encoded.output_token),
+            intent_hash,
+            &approvals,
+            signatures,
+            scores,
+            deadline,
+        )
+    }
+}
+
+fn parse_tx_value(value: &str) -> U256 {
+    U256::from_str_radix(value.trim_start_matches("0x"), 10).unwrap_or_default()
 }
 
 /// Registry: map protocol name → adapter instance.
@@ -408,6 +429,9 @@ fn parse_intent_hash(hash: &str) -> Result<[u8; 32], TradingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::ITradingVault;
+    use alloy::primitives::{Address, Bytes};
+    use alloy::sol_types::SolCall;
     use rust_decimal::Decimal;
 
     #[test]
@@ -498,5 +522,87 @@ mod tests {
         assert_eq!(sigs[0].len(), 65);
         assert_eq!(scores[0], U256::from(85u32));
         assert_eq!(scores[1], U256::from(90u32));
+    }
+
+    #[test]
+    fn test_build_execution_tx_without_approvals_uses_execute() {
+        let vault_client = VaultClient::new(
+            "0x0000000000000000000000000000000000000001".into(),
+            "http://localhost:8545".into(),
+            42161,
+        );
+        let encoded = EncodedAction {
+            target: "0x0000000000000000000000000000000000000002"
+                .parse::<Address>()
+                .unwrap(),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::from(10u64),
+            output_token: "0x0000000000000000000000000000000000000003"
+                .parse::<Address>()
+                .unwrap(),
+            approvals: vec![],
+        };
+
+        let tx = build_execution_tx(
+            &vault_client,
+            &encoded,
+            [0x11; 32],
+            vec![vec![0xaa; 65]],
+            vec![U256::from(80u64)],
+            U256::from(123u64),
+        )
+        .unwrap();
+
+        assert_eq!(&tx.data[..4], &ITradingVault::executeCall::SELECTOR[..]);
+    }
+
+    #[test]
+    fn test_build_execution_tx_with_approvals_uses_atomic_path() {
+        let vault_client = VaultClient::new(
+            "0x0000000000000000000000000000000000000001".into(),
+            "http://localhost:8545".into(),
+            42161,
+        );
+        let encoded = EncodedAction {
+            target: "0x0000000000000000000000000000000000000002"
+                .parse::<Address>()
+                .unwrap(),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::from(10u64),
+            output_token: "0x0000000000000000000000000000000000000003"
+                .parse::<Address>()
+                .unwrap(),
+            approvals: vec![crate::adapters::Approval {
+                token: "0x0000000000000000000000000000000000000004"
+                    .parse::<Address>()
+                    .unwrap(),
+                spender: "0x0000000000000000000000000000000000000005"
+                    .parse::<Address>()
+                    .unwrap(),
+                amount: U256::from(42u64),
+            }],
+        };
+
+        let tx = build_execution_tx(
+            &vault_client,
+            &encoded,
+            [0x11; 32],
+            vec![vec![0xaa; 65]],
+            vec![U256::from(80u64)],
+            U256::from(123u64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            &tx.data[..4],
+            &ITradingVault::executeWithApprovalsCall::SELECTOR[..]
+        );
+    }
+
+    #[test]
+    fn test_parse_tx_value_decimal_string() {
+        assert_eq!(parse_tx_value("42"), U256::from(42u64));
     }
 }
