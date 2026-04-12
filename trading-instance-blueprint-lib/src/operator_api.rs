@@ -307,7 +307,7 @@ struct InstanceProvisionResponse {
 
 // ── Metrics / trades response types ─────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct MetricsSnapshotResponse {
     timestamp: String,
     bot_id: String,
@@ -846,6 +846,18 @@ fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
         .into_iter()
         .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
         .collect()
+}
+
+fn fallback_metrics_snapshots(bot: &TradingBotRecord) -> Vec<MetricsSnapshotResponse> {
+    let trades = fallback_trade_dataset(bot);
+    synthesize_metrics(bot, &trades)
+}
+
+fn parse_metrics_snapshots(
+    snapshots: Vec<serde_json::Value>,
+) -> Result<Vec<MetricsSnapshotResponse>, String> {
+    serde_json::from_value(serde_json::Value::Array(snapshots))
+        .map_err(|e| format!("invalid metrics snapshot array: {e}"))
 }
 
 fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStateResponse, String> {
@@ -1928,19 +1940,19 @@ async fn get_bot_metrics_history(
     SessionAuth(_caller): SessionAuth,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
-
     match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
         Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
-            Ok(snapshots) => Ok(Json(snapshots)),
+            Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
+            Ok(_) => Ok(Json(Vec::new())),
             Err(err) => {
                 tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                Ok(Json(fallback_metrics_history(&bot)))
+                Ok(Json(Vec::new()))
             }
         },
-        Ok(None) => Ok(Json(fallback_metrics_history(&bot))),
+        Ok(None) => Ok(Json(Vec::new())),
         Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
-            Ok(Json(fallback_metrics_history(&bot)))
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
+            Ok(Json(Vec::new()))
         }
     }
 }

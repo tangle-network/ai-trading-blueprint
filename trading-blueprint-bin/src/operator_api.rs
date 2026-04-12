@@ -1538,17 +1538,17 @@ async fn resolve_metrics_history_for_bot(
         Ok(Some(payload)) => {
             match extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots) {
                 Ok(snapshots) if !snapshots.is_empty() => snapshots,
-                Ok(_) => fallback_metrics_snapshots(bot),
+                Ok(_) => Vec::new(),
                 Err(err) => {
                     tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                    fallback_metrics_snapshots(bot)
+                    Vec::new()
                 }
             }
         }
-        Ok(None) => fallback_metrics_snapshots(bot),
+        Ok(None) => Vec::new(),
         Err(err) => {
             tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
-            fallback_metrics_snapshots(bot)
+            Vec::new()
         }
     }
 }
@@ -2056,16 +2056,17 @@ async fn get_bot_metrics_history(
 
     match fetch_trading_api_json(&bot, "/metrics/history", &remote_query).await {
         Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
-            Ok(snapshots) => Ok(Json(snapshots)),
+            Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
+            Ok(_) => Ok(Json(Vec::new())),
             Err(err) => {
                 tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                Ok(Json(fallback_metrics_history(&bot)))
+                Ok(Json(Vec::new()))
             }
         },
-        Ok(None) => Ok(Json(fallback_metrics_history(&bot))),
+        Ok(None) => Ok(Json(Vec::new())),
         Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
-            Ok(Json(fallback_metrics_history(&bot)))
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
+            Ok(Json(Vec::new()))
         }
     }
 }
