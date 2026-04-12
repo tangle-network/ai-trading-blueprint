@@ -327,6 +327,113 @@ async fn test_circuit_breaker_no_drawdown() {
     assert_eq!(json["should_break"], false);
 }
 
+#[tokio::test]
+async fn test_partial_portfolio_drawdown_triggers_circuit_breaker_and_preserves_flags() {
+    use chrono::Utc;
+    use rust_decimal::Decimal;
+    use trading_runtime::{Position, PositionType, PriceData, ValuationStatus};
+
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+
+    {
+        let mut portfolio = state.portfolio.write().await;
+        portfolio.add_position(Position {
+            token: "WETH".to_string(),
+            amount: Decimal::new(10, 0),
+            entry_price: Some(Decimal::new(2500, 0)),
+            current_price: Some(Decimal::new(2500, 0)),
+            unrealized_pnl: Some(Decimal::ZERO),
+            protocol: "uniswap_v3".to_string(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Priced,
+        });
+        portfolio.add_position(Position {
+            token: "UNKNOWN".to_string(),
+            amount: Decimal::new(1, 0),
+            entry_price: None,
+            current_price: None,
+            unrealized_pnl: None,
+            protocol: "uniswap_v3".to_string(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Unpriced,
+        });
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".to_string(),
+            price_usd: Decimal::new(1600, 0),
+            source: "test".to_string(),
+            timestamp: Utc::now(),
+        }]);
+    }
+
+    let app = build_router(state);
+
+    let circuit_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/circuit-breaker/check")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "max_drawdown_pct": "20.0"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(circuit_response.status(), 200);
+    let circuit_body = circuit_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let circuit_json: serde_json::Value = serde_json::from_slice(&circuit_body).unwrap();
+    assert_eq!(circuit_json["should_break"], true);
+    assert_eq!(
+        circuit_json["current_drawdown_pct"]
+            .as_str()
+            .unwrap()
+            .parse::<Decimal>()
+            .unwrap(),
+        Decimal::new(36, 0)
+    );
+
+    let portfolio_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(portfolio_response.status(), 200);
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+    assert_eq!(portfolio_json["total_value_usd"], "16000");
+    assert_eq!(portfolio_json["has_unpriced_positions"], true);
+    assert_eq!(portfolio_json["has_value_only_positions"], false);
+    assert_eq!(
+        portfolio_json["warnings"][0],
+        "Some positions still have no current market price, so total portfolio value is hidden."
+    );
+}
+
 // ── CORS tests ──────────────────────────────────────────────────────────────
 
 #[tokio::test]

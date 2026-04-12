@@ -82,15 +82,6 @@ impl PortfolioState {
             .filter_map(|p| p.unrealized_pnl)
             .sum();
 
-        if self
-            .positions
-            .iter()
-            .any(|p| p.valuation_status != ValuationStatus::Priced)
-        {
-            self.last_updated = Some(Utc::now());
-            return;
-        }
-
         // Update high water mark
         let total_with_realized = self.total_value_usd + self.realized_pnl;
         if total_with_realized > self.high_water_mark {
@@ -132,6 +123,32 @@ mod tests {
             protocol: "test".into(),
             position_type: PositionType::Spot,
             valuation_status: ValuationStatus::Priced,
+        }
+    }
+
+    fn make_unpriced_position(token: &str, amount: i64) -> Position {
+        Position {
+            token: token.into(),
+            amount: Decimal::new(amount, 0),
+            entry_price: None,
+            current_price: None,
+            unrealized_pnl: None,
+            protocol: "test".into(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Unpriced,
+        }
+    }
+
+    fn make_value_only_position(token: &str, amount: i64, current: i64) -> Position {
+        Position {
+            token: token.into(),
+            amount: Decimal::new(amount, 0),
+            entry_price: None,
+            current_price: Some(Decimal::new(current, 0)),
+            unrealized_pnl: None,
+            protocol: "test".into(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::ValueOnly,
         }
     }
 
@@ -225,16 +242,7 @@ mod tests {
     #[test]
     fn test_value_only_position_refreshes_without_inventing_pnl() {
         let mut portfolio = PortfolioState::default();
-        portfolio.add_position(Position {
-            token: "WETH".into(),
-            amount: Decimal::new(2, 0),
-            entry_price: None,
-            current_price: Some(Decimal::new(2000, 0)),
-            unrealized_pnl: None,
-            protocol: "test".into(),
-            position_type: PositionType::Spot,
-            valuation_status: ValuationStatus::ValueOnly,
-        });
+        portfolio.add_position(make_value_only_position("WETH", 2, 2000));
 
         portfolio.update_prices(&[PriceData {
             token: "WETH".into(),
@@ -256,20 +264,71 @@ mod tests {
     fn test_closing_value_only_position_does_not_realize_unknown_pnl() {
         let mut portfolio = PortfolioState::default();
         portfolio.realized_pnl = Decimal::new(25, 0);
-        portfolio.add_position(Position {
-            token: "WETH".into(),
-            amount: Decimal::new(2, 0),
-            entry_price: None,
-            current_price: Some(Decimal::new(2100, 0)),
-            unrealized_pnl: None,
-            protocol: "test".into(),
-            position_type: PositionType::Spot,
-            valuation_status: ValuationStatus::ValueOnly,
-        });
+        portfolio.add_position(make_value_only_position("WETH", 2, 2100));
 
         let result = portfolio.close_position("WETH", "test").unwrap();
 
         assert_eq!(result.realized_pnl, None);
         assert_eq!(portfolio.realized_pnl, Decimal::new(25, 0));
+    }
+
+    #[test]
+    fn test_drawdown_updates_with_mixed_priced_and_unpriced_positions() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2500, 2500));
+        portfolio.add_position(make_unpriced_position("UNKNOWN", 1));
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(1600, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(portfolio.total_value_usd, Decimal::new(16000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(25000, 0));
+        assert_eq!(portfolio.max_drawdown_pct, Decimal::new(36, 0));
+        assert!(portfolio.should_circuit_break(Decimal::new(20, 0)));
+    }
+
+    #[test]
+    fn test_drawdown_updates_with_value_only_positions() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2500, 2500));
+        portfolio.add_position(make_value_only_position("USDC", 1000, 1));
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2000, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(portfolio.total_value_usd, Decimal::new(21000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(26000, 0));
+        assert_eq!(
+            portfolio.max_drawdown_pct.round_dp(2),
+            Decimal::new(1923, 2)
+        );
+        assert_eq!(portfolio.unrealized_pnl, Decimal::new(-5000, 0));
+    }
+
+    #[test]
+    fn test_high_water_mark_can_increase_with_partially_priced_portfolio() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2000, 2000));
+        portfolio.add_position(make_value_only_position("USDC", 1000, 1));
+        let starting_hwm = portfolio.high_water_mark;
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2200, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(starting_hwm, Decimal::new(21000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(23000, 0));
+        assert_eq!(portfolio.max_drawdown_pct, Decimal::ZERO);
     }
 }
