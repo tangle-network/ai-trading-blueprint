@@ -146,13 +146,28 @@ impl MarketDataClient {
     ) -> Result<Vec<PriceData>, TradingError> {
         let mut token_pairs = Vec::new();
         for token in tokens {
-            let coin_id = coingecko_id_for_token(chain_id, token).ok_or_else(|| {
-                TradingError::MarketDataUnavailable(format!(
-                    "unsupported CoinGecko token mapping for token {token} on chain {:?}",
-                    chain_id
-                ))
-            })?;
-            token_pairs.push((token.clone(), coin_id));
+            match coingecko_id_for_token(chain_id, token) {
+                Some(coin_id) => token_pairs.push((token.clone(), coin_id)),
+                None => {
+                    tracing::warn!(
+                        token = %token,
+                        ?chain_id,
+                        "Skipping unmapped CoinGecko token in batch lookup"
+                    );
+                }
+            }
+        }
+
+        if token_pairs.is_empty() {
+            if tokens.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            return Err(TradingError::MarketDataUnavailable(format!(
+                "unsupported CoinGecko token mappings for tokens {} on chain {:?}",
+                tokens.join(","),
+                chain_id
+            )));
         }
 
         let ids = token_pairs
@@ -235,7 +250,7 @@ impl MarketDataClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -300,6 +315,51 @@ mod tests {
         assert_eq!(prices.len(), 2);
         assert_eq!(prices[0].token, "WETH");
         assert_eq!(prices[1].token, "USDC");
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_skips_unmapped_coingecko_tokens() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v3/simple/price"))
+            .and(query_param("ids", "ethereum,usd-coin"))
+            .and(query_param("vs_currencies", "usd"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ethereum": { "usd": 2500.50 },
+                "usd-coin": { "usd": 1.0 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = MarketDataClient::new(format!("{}/api/v3", mock_server.uri()));
+        let prices = client
+            .get_prices(&[
+                "WETH".to_string(),
+                "UNKNOWN".to_string(),
+                "USDC".to_string(),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(prices.len(), 2);
+        assert_eq!(prices[0].token, "WETH");
+        assert_eq!(prices[1].token, "USDC");
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_errors_when_all_coingecko_tokens_are_unmapped() {
+        let mock_server = MockServer::start().await;
+
+        let client = MarketDataClient::new(format!("{}/api/v3", mock_server.uri()));
+        let error = client
+            .get_prices(&["UNKNOWN".to_string(), "ALSO_UNKNOWN".to_string()])
+            .await
+            .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("unsupported CoinGecko token mappings"));
+        assert!(message.contains("UNKNOWN,ALSO_UNKNOWN"));
     }
 
     #[tokio::test]
