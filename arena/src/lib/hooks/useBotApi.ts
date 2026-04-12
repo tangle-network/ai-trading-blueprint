@@ -51,7 +51,7 @@ interface ApiTrade {
   amount_out?: string;
   entry_price_usd?: string;
   notional_usd?: string;
-  valuation_status?: 'priced' | 'unpriced';
+  valuation_status?: 'priced' | 'value_only' | 'unpriced';
 }
 
 type TradeStatusInput = {

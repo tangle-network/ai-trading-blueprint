@@ -31,7 +31,7 @@ export interface BotLiveSummary {
   isLoading: boolean;
 }
 
-export type PortfolioValueState = 'missing' | 'priced' | 'unpriced';
+export type PortfolioValueState = 'missing' | 'priced' | 'value_only' | 'unpriced';
 
 function roundTo(value: number, decimals: number) {
   const scale = 10 ** decimals;
@@ -125,7 +125,7 @@ export function summarizeBotLiveData(
     : null;
 
   const hasResolvedPortfolioValue = typeof portfolioValue === 'number' && Number.isFinite(portfolioValue);
-  const derivedPortfolioValue = portfolioValueState === 'priced'
+  const derivedPortfolioValue = portfolioValueState === 'priced' || portfolioValueState === 'value_only'
     ? (hasResolvedPortfolioValue ? portfolioValue : null)
     : portfolioValueState === 'missing'
       ? latest?.account_value_usd ?? null
@@ -182,6 +182,8 @@ export function useBotLiveSummary({
       ? 'missing'
       : portfolioQuery.data.hasUnpricedPositions || portfolioQuery.data.displayTotalValueUsd == null
         ? 'unpriced'
+        : portfolioQuery.data.hasValueOnlyPositions
+          ? 'value_only'
         : 'priced';
 
     const summary = summarizeBotLiveData(

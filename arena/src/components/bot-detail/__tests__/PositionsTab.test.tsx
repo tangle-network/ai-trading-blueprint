@@ -35,6 +35,7 @@ function makePortfolio(overrides: Partial<Portfolio> = {}): Portfolio {
     displayCashBalance: 9000,
     warnings: [],
     hasUnpricedPositions: false,
+    hasValueOnlyPositions: false,
     positions: [
       {
         token: 'WETH',
@@ -80,6 +81,7 @@ describe('PositionsTab', () => {
       displayCashBalance: null,
       warnings: ['Some portfolio values are unavailable because trade valuation data is missing.'],
       hasUnpricedPositions: true,
+      hasValueOnlyPositions: false,
       positions: [
         {
           token: 'USDC',
@@ -108,12 +110,50 @@ describe('PositionsTab', () => {
     expect(screen.getByText('3,200')).toBeInTheDocument();
   });
 
+  it('shows recovered value-only positions without inventing entry or pnl', () => {
+    mockPortfolio = makePortfolio({
+      totalValueUsd: 4200,
+      cashBalance: 1000,
+      displayTotalValueUsd: 4200,
+      displayCashBalance: 1000,
+      warnings: ['Some positions have current market value, but entry price or PnL are unavailable.'],
+      hasUnpricedPositions: false,
+      hasValueOnlyPositions: true,
+      positions: [
+        {
+          token: 'WETH',
+          symbol: 'WETH',
+          amount: 2,
+          valueUsd: 4200,
+          entryPrice: null,
+          currentPrice: 2100,
+          pnlPercent: null,
+          weight: null,
+          displayValueUsd: 4200,
+          displayPnlPercent: null,
+          displayWeight: null,
+          warnings: ['Entry price and PnL are unavailable for this position.'],
+          valuationStatus: 'value_only',
+        },
+      ],
+    });
+
+    render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
+
+    expect(screen.getByText('Portfolio valuation partially available')).toBeInTheDocument();
+    expect(screen.getByText('Value only')).toBeInTheDocument();
+    expect(screen.getAllByText('$4,200').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('$2,100')).toBeInTheDocument();
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+  });
+
   it('still renders the last known portfolio when the bot is stopped', () => {
     mockPortfolio = makePortfolio({
       totalValueUsd: 1042.68,
       cashBalance: 0.4822734375,
       displayTotalValueUsd: 1042.68,
       displayCashBalance: 0.4822734375,
+      hasValueOnlyPositions: false,
       positions: [
         {
           token: 'WETH',

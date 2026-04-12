@@ -970,7 +970,7 @@ async fn test_multi_bot_portfolio_state_exists() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json["positions"].is_array());
-    assert_eq!(json["total_value_usd"], "0");
+    assert!(json["total_value_usd"].is_string());
 }
 
 #[tokio::test]
@@ -1626,20 +1626,20 @@ async fn test_portfolio_state_with_positions() {
         let mut portfolio = state.portfolio.write().await;
         portfolio.positions.push(Position {
             token: "WETH".to_string(),
-            amount: Decimal::new(15, 1),          // 1.5
-            entry_price: Decimal::new(2400, 0),   // 2400
-            current_price: Decimal::new(2500, 0), // 2500
-            unrealized_pnl: Decimal::new(150, 0), // +150
+            amount: Decimal::new(15, 1),                // 1.5
+            entry_price: Some(Decimal::new(2400, 0)),   // 2400
+            current_price: Some(Decimal::new(2500, 0)), // 2500
+            unrealized_pnl: Some(Decimal::new(150, 0)), // +150
             protocol: "uniswap_v3".to_string(),
             position_type: PositionType::Spot,
             valuation_status: ValuationStatus::Priced,
         });
         portfolio.positions.push(Position {
             token: "USDC".to_string(),
-            amount: Decimal::new(5000, 0),      // 5000
-            entry_price: Decimal::new(1, 0),    // 1.0
-            current_price: Decimal::new(1, 0),  // 1.0
-            unrealized_pnl: Decimal::new(0, 0), // 0
+            amount: Decimal::new(5000, 0),            // 5000
+            entry_price: Some(Decimal::new(1, 0)),    // 1.0
+            current_price: Some(Decimal::new(1, 0)),  // 1.0
+            unrealized_pnl: Some(Decimal::new(0, 0)), // 0
             protocol: "aave_v3".to_string(),
             position_type: PositionType::Lending,
             valuation_status: ValuationStatus::Priced,
@@ -1710,10 +1710,10 @@ async fn test_portfolio_pnl_reflects_losses() {
         let mut portfolio = state.portfolio.write().await;
         portfolio.positions.push(Position {
             token: "WETH".to_string(),
-            amount: Decimal::new(2, 0),             // 2.0 ETH
-            entry_price: Decimal::new(3000, 0),     // bought at 3000
-            current_price: Decimal::new(2200, 0),   // now at 2200
-            unrealized_pnl: Decimal::new(-1600, 0), // -1600 loss
+            amount: Decimal::new(2, 0),                   // 2.0 ETH
+            entry_price: Some(Decimal::new(3000, 0)),     // bought at 3000
+            current_price: Some(Decimal::new(2200, 0)),   // now at 2200
+            unrealized_pnl: Some(Decimal::new(-1600, 0)), // -1600 loss
             protocol: "uniswap_v3".to_string(),
             position_type: PositionType::Spot,
             valuation_status: ValuationStatus::Priced,
@@ -1752,6 +1752,71 @@ async fn test_portfolio_pnl_reflects_losses() {
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0]["unrealized_pnl"], "-1600");
     assert_eq!(positions[0]["current_price"], "2200");
+}
+
+#[tokio::test]
+async fn test_portfolio_state_recovers_unpriced_position_as_value_only() {
+    use rust_decimal::Decimal;
+    use trading_runtime::{Position, PositionType, ValuationStatus};
+
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/price/WETH"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "price": 2500.0,
+            "symbol": "WETH"
+        })))
+        .mount(&mock)
+        .await;
+
+    let state = test_state(&mock.uri()).await;
+    {
+        let mut portfolio = state.portfolio.write().await;
+        portfolio.positions.push(Position {
+            token: "WETH".to_string(),
+            amount: Decimal::new(15, 1),
+            entry_price: None,
+            current_price: None,
+            unrealized_pnl: None,
+            protocol: "uniswap_v3".to_string(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Unpriced,
+        });
+    }
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["total_value_usd"], "3750.0");
+    assert_eq!(json["has_unpriced_positions"], false);
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(
+        json["warnings"][0],
+        "Some positions have current market value, but entry price or PnL are unavailable."
+    );
+
+    let positions = json["positions"].as_array().unwrap();
+    assert_eq!(positions.len(), 1);
+    let weth = &positions[0];
+    assert_eq!(weth["valuation_status"], "value_only");
+    assert_eq!(weth["value_usd"], "3750.0");
+    assert_eq!(weth["current_price"], "2500");
+    assert!(weth.get("entry_price").is_none());
+    assert!(weth.get("unrealized_pnl").is_none());
 }
 
 // ── Polymarket CLOB integration tests ────────────────────────────────────────

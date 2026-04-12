@@ -24,6 +24,7 @@ describe('mapApiPortfolioState', () => {
     }, 'bot-1');
 
     expect(portfolio.hasUnpricedPositions).toBe(true);
+    expect(portfolio.hasValueOnlyPositions).toBe(false);
     expect(portfolio.displayTotalValueUsd).toBeNull();
     expect(portfolio.displayCashBalance).toBeNull();
     expect(portfolio.warnings[0]).toContain('unavailable');
@@ -54,6 +55,7 @@ describe('mapApiPortfolioState', () => {
     }, 'bot-1');
 
     expect(portfolio.hasUnpricedPositions).toBe(false);
+    expect(portfolio.hasValueOnlyPositions).toBe(false);
     expect(portfolio.displayTotalValueUsd).toBe(10000);
     expect(portfolio.displayCashBalance).toBe(9000);
     expect(portfolio.positions[0]?.valuationStatus).toBe('priced');
@@ -82,10 +84,42 @@ describe('mapApiPortfolioState', () => {
     }, 'bot-1');
 
     expect(portfolio.hasUnpricedPositions).toBe(false);
+    expect(portfolio.hasValueOnlyPositions).toBe(false);
     expect(portfolio.positions[0]?.valuationStatus).toBe('priced');
     expect(portfolio.positions[0]?.displayValueUsd).toBe(2220.1);
     expect(portfolio.positions[0]?.currentPrice).toBe(2220.1);
     expect(portfolio.positions[0]?.displayWeight).toBe(100);
     expect(portfolio.warnings).toHaveLength(0);
+  });
+
+  it('keeps current value visible for value-only positions while hiding entry and pnl', () => {
+    const portfolio = mapApiPortfolioState({
+      total_value_usd: 4200,
+      cash_balance: 1000,
+      has_unpriced_positions: false,
+      has_value_only_positions: true,
+      positions: [
+        {
+          token: 'WETH',
+          symbol: 'WETH',
+          amount: 2,
+          value_usd: 4200,
+          entry_price: null,
+          current_price: 2100,
+          pnl_percent: null,
+          weight: null,
+          valuation_status: 'value_only',
+        },
+      ],
+    }, 'bot-1');
+
+    expect(portfolio.hasUnpricedPositions).toBe(false);
+    expect(portfolio.hasValueOnlyPositions).toBe(true);
+    expect(portfolio.displayTotalValueUsd).toBe(4200);
+    expect(portfolio.positions[0]?.valuationStatus).toBe('value_only');
+    expect(portfolio.positions[0]?.displayValueUsd).toBe(4200);
+    expect(portfolio.positions[0]?.currentPrice).toBe(2100);
+    expect(portfolio.positions[0]?.entryPrice).toBeNull();
+    expect(portfolio.positions[0]?.displayPnlPercent).toBeNull();
   });
 });

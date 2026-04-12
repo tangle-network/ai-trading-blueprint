@@ -83,6 +83,12 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
     return `${value.toFixed(1)}%`;
   };
 
+  const warningTitle = portfolio.hasUnpricedPositions
+    ? 'Portfolio valuation unavailable'
+    : portfolio.hasValueOnlyPositions
+      ? 'Portfolio valuation partially available'
+      : 'Portfolio warnings';
+
   return (
     <div className="space-y-4">
       {portfolio.warnings.length > 0 && (
@@ -90,9 +96,13 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
           <div className="i-ph:warning-circle text-lg shrink-0 mt-0.5" />
           <div>
             <div className="font-display font-semibold text-arena-elements-textPrimary mb-1">
-              Portfolio valuation unavailable
+              {warningTitle}
             </div>
-            <p>{portfolio.warnings[0]}</p>
+            <div className="space-y-1">
+              {portfolio.warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -126,13 +136,13 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
               <TableCell className="font-display font-semibold">
                 <div className="flex items-center justify-between gap-2">
                   <span>{pos.symbol}</span>
-                  {pos.valuationStatus === 'unpriced' && (
+                  {pos.valuationStatus !== 'priced' && (
                     <Badge
                       variant="amber"
                       className="text-[10px]"
                       title={pos.warnings.join(' ')}
                     >
-                      Unpriced
+                      {pos.valuationStatus === 'value_only' ? 'Value only' : 'Unpriced'}
                     </Badge>
                   )}
                 </div>

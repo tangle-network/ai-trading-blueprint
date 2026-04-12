@@ -11,7 +11,7 @@ export interface Position {
   displayPnlPercent: number | null;
   displayWeight: number | null;
   warnings: string[];
-  valuationStatus: 'priced' | 'unpriced';
+  valuationStatus: 'priced' | 'value_only' | 'unpriced';
 }
 
 export interface Portfolio {
@@ -22,5 +22,6 @@ export interface Portfolio {
   displayCashBalance: number | null;
   warnings: string[];
   hasUnpricedPositions: boolean;
+  hasValueOnlyPositions: boolean;
   positions: Position[];
 }

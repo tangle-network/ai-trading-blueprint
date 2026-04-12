@@ -125,6 +125,25 @@ describe('summarizeBotLiveData', () => {
     expect(summary.portfolioValue).toBeNull();
   });
 
+  it('keeps portfolio value visible when the current portfolio is value-only', () => {
+    const summary = summarizeBotLiveData(
+      [
+        {
+          account_value_usd: 10167.04,
+          realized_pnl: 40,
+          unrealized_pnl: 127.04,
+          drawdown_pct: 0.5,
+          trade_count: 1,
+        },
+      ],
+      4200,
+      [],
+      'value_only',
+    );
+
+    expect(summary.portfolioValue).toBe(4200);
+  });
+
   it('preserves a priced zero portfolio value', () => {
     const summary = summarizeBotLiveData(
       [

@@ -26,6 +26,7 @@ pub struct PortfolioResponse {
     #[serde(default)]
     pub warnings: Vec<String>,
     pub has_unpriced_positions: bool,
+    pub has_value_only_positions: bool,
 }
 
 #[derive(Serialize)]
@@ -130,27 +131,15 @@ async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioR
     let has_unpriced_positions = portfolio
         .positions
         .iter()
-        .any(|position| position.valuation_status != ValuationStatus::Priced);
+        .any(|position| position.valuation_status == ValuationStatus::Unpriced);
+    let has_value_only_positions = portfolio
+        .positions
+        .iter()
+        .any(|position| position.valuation_status == ValuationStatus::ValueOnly);
     let entries: Vec<PositionEntry> = portfolio
         .positions
         .iter()
-        .map(|p| {
-            let priced = p.valuation_status == ValuationStatus::Priced;
-            PositionEntry {
-                token: p.token.clone(),
-                amount: p.amount.to_string(),
-                value_usd: priced.then(|| (p.current_price * p.amount).to_string()),
-                entry_price: priced.then(|| p.entry_price.to_string()),
-                current_price: priced.then(|| p.current_price.to_string()),
-                unrealized_pnl: priced.then(|| p.unrealized_pnl.to_string()),
-                protocol: p.protocol.clone(),
-                position_type: serde_json::to_value(&p.position_type)
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_else(|| format!("{:?}", p.position_type)),
-                valuation_status: p.valuation_status,
-            }
-        })
+        .map(position_entry_from_runtime)
         .collect();
 
     Json(PortfolioResponse {
@@ -159,15 +148,9 @@ async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioR
         unrealized_pnl: portfolio.unrealized_pnl.to_string(),
         realized_pnl: portfolio.realized_pnl.to_string(),
         positions: entries,
-        warnings: if has_unpriced_positions {
-            vec![
-                "Some portfolio values are unavailable because trade valuation data is missing."
-                    .to_string(),
-            ]
-        } else {
-            Vec::new()
-        },
+        warnings: portfolio_warnings(has_unpriced_positions, has_value_only_positions),
         has_unpriced_positions,
+        has_value_only_positions,
     })
 }
 
@@ -187,11 +170,13 @@ async fn get_state_multi_bot(
     let mut positions = Vec::new();
     let mut cash_balance = None;
     let mut has_unpriced_positions = false;
+    let mut has_value_only_positions = false;
 
     let total_value_usd = match read_vault_cash_position(&bot, &state.market_data_base_url).await {
         Ok(Some(position)) => {
             cash_balance = Some(position.amount.clone());
-            has_unpriced_positions = position.valuation_status != ValuationStatus::Priced;
+            has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
+            has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
             let onchain_value = position.value_usd.clone();
             positions.push(position);
             onchain_value.unwrap_or_else(|| "0".to_string())
@@ -214,6 +199,10 @@ async fn get_state_multi_bot(
                 .to_string(),
         );
     }
+    warnings.extend(portfolio_warnings(
+        has_unpriced_positions,
+        has_value_only_positions,
+    ));
 
     Json(PortfolioResponse {
         positions,
@@ -229,6 +218,7 @@ async fn get_state_multi_bot(
             .unwrap_or_else(|| "0".to_string()),
         warnings,
         has_unpriced_positions,
+        has_value_only_positions,
     })
 }
 
@@ -297,15 +287,67 @@ async fn read_vault_cash_position(
         value_usd: value_usd.clone(),
         entry_price: None,
         current_price,
-        unrealized_pnl: Some("0".to_string()),
+        unrealized_pnl: None,
         protocol: "vault".to_string(),
         position_type: "spot".to_string(),
         valuation_status: if value_usd.is_some() {
-            ValuationStatus::Priced
+            ValuationStatus::ValueOnly
         } else {
             ValuationStatus::Unpriced
         },
     }))
+}
+
+fn position_entry_from_runtime(p: &trading_runtime::types::Position) -> PositionEntry {
+    let value_usd = match p.valuation_status {
+        ValuationStatus::Priced | ValuationStatus::ValueOnly => p
+            .current_price
+            .map(|current_price| (current_price * p.amount).to_string()),
+        ValuationStatus::Unpriced => None,
+    };
+
+    PositionEntry {
+        token: p.token.clone(),
+        amount: p.amount.to_string(),
+        value_usd,
+        entry_price: match p.valuation_status {
+            ValuationStatus::Priced => p.entry_price.map(|value| value.to_string()),
+            ValuationStatus::ValueOnly | ValuationStatus::Unpriced => None,
+        },
+        current_price: match p.valuation_status {
+            ValuationStatus::Priced | ValuationStatus::ValueOnly => {
+                p.current_price.map(|value| value.to_string())
+            }
+            ValuationStatus::Unpriced => None,
+        },
+        unrealized_pnl: match p.valuation_status {
+            ValuationStatus::Priced => p.unrealized_pnl.map(|value| value.to_string()),
+            ValuationStatus::ValueOnly | ValuationStatus::Unpriced => None,
+        },
+        protocol: p.protocol.clone(),
+        position_type: serde_json::to_value(&p.position_type)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| format!("{:?}", p.position_type)),
+        valuation_status: p.valuation_status,
+    }
+}
+
+fn portfolio_warnings(has_unpriced_positions: bool, has_value_only_positions: bool) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if has_unpriced_positions {
+        warnings.push(
+            "Some positions still have no current market price, so total portfolio value is hidden."
+                .to_string(),
+        );
+    }
+    if has_value_only_positions {
+        warnings.push(
+            "Some positions have current market value, but entry price or PnL are unavailable."
+                .to_string(),
+        );
+    }
+    warnings
 }
 
 async fn eth_call_u256(

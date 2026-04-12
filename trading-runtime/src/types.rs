@@ -56,9 +56,9 @@ pub struct PortfolioState {
 pub struct Position {
     pub token: String,
     pub amount: Decimal,
-    pub entry_price: Decimal,
-    pub current_price: Decimal,
-    pub unrealized_pnl: Decimal,
+    pub entry_price: Option<Decimal>,
+    pub current_price: Option<Decimal>,
+    pub unrealized_pnl: Option<Decimal>,
     pub protocol: String,
     pub position_type: PositionType,
     #[serde(default)]
@@ -81,6 +81,7 @@ pub enum PositionType {
 pub enum ValuationStatus {
     #[default]
     Unpriced,
+    ValueOnly,
     Priced,
 }
 

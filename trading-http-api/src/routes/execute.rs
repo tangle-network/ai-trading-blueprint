@@ -426,12 +426,13 @@ async fn update_portfolio_after_trade(
 
     if is_close {
         // Try to close an existing position.
-        if let Some(pnl) = state.close_position(&req.intent.token_out, &req.intent.target_protocol)
+        if let Some(result) =
+            state.close_position(&req.intent.token_out, &req.intent.target_protocol)
         {
             tracing::info!(
                 token = %req.intent.token_out,
                 protocol = %req.intent.target_protocol,
-                realized_pnl = %pnl,
+                realized_pnl = ?result.realized_pnl,
                 "Position closed in portfolio"
             );
         }
@@ -449,9 +450,9 @@ async fn update_portfolio_after_trade(
         state.add_position(Position {
             token: req.intent.token_out.clone(),
             amount: valuation.position_size,
-            entry_price: valuation.entry_price_usd.unwrap_or(Decimal::ZERO),
-            current_price: valuation.entry_price_usd.unwrap_or(Decimal::ZERO),
-            unrealized_pnl: Decimal::ZERO,
+            entry_price: valuation.entry_price_usd,
+            current_price: valuation.entry_price_usd,
+            unrealized_pnl: valuation.entry_price_usd.map(|_| Decimal::ZERO),
             protocol: req.intent.target_protocol.clone(),
             position_type,
             valuation_status: valuation.position_valuation_status(),
