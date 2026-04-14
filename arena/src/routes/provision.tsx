@@ -418,7 +418,14 @@ export default function ProvisionPage() {
     errors: quoteErrors,
     totalCost,
     refetch: refetchQuotes,
-  } = useQuotes(selectedOps, blueprintIdBig, ttlBlocks, quotesEnabled, PricingModelHint.SUBSCRIPTION);
+  } = useQuotes(
+    selectedOps,
+    blueprintIdBig,
+    ttlBlocks,
+    quotesEnabled,
+    PricingModelHint.SUBSCRIPTION,
+    !!selectedBlueprint?.isTee,
+  );
 
   // Second writeContract for new service
   const {
@@ -1276,9 +1283,14 @@ export default function ProvisionPage() {
         totalCost: q.details.totalCost,
         timestamp: q.details.timestamp,
         expiry: q.details.expiry,
+        confidentiality: q.details.confidentiality,
         securityCommitments: q.details.securityCommitments.map((sc) => ({
           asset: { kind: sc.asset.kind, token: sc.asset.token },
           exposureBps: sc.exposureBps,
+        })),
+        resourceCommitments: q.details.resourceCommitments.map((resource) => ({
+          kind: resource.kind,
+          count: resource.count,
         })),
       },
       signature: q.signature,

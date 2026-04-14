@@ -213,7 +213,9 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
           totalCost: 1n,
           timestamp: 1n,
           expiry: 2n,
+          confidentiality: 0,
           securityCommitments: [],
+          resourceCommitments: [{ kind: 0, count: 1n }],
         },
       },
     ],
@@ -372,6 +374,28 @@ describe('instance service activation auto-provision', () => {
       expect(shared.watchContractEvent).toHaveBeenCalledTimes(1);
       expect(shared.watchLogs).toBeTypeOf('function');
     });
+
+    const [writeConfig] = shared.newServiceWriteContract.mock.calls[0];
+    expect(writeConfig.functionName).toBe('createServiceFromQuotes');
+    expect(writeConfig.args[0]).toBe(2n);
+    expect(writeConfig.args[1]).toEqual([
+      {
+        details: {
+          blueprintId: 2n,
+          ttlBlocks: 1n,
+          totalCost: 1n,
+          timestamp: 1n,
+          expiry: 2n,
+          confidentiality: 0,
+          securityCommitments: [],
+          resourceCommitments: [{ kind: 0, count: 1n }],
+        },
+        signature: '0xsig',
+        operator: '0x0000000000000000000000000000000000000002',
+      },
+    ]);
+    expect(writeConfig.args[3]).toEqual(['0x0000000000000000000000000000000000000001']);
+    expect(writeConfig.args[4]).toBe(216000n);
 
     await act(async () => {
       shared.watchLogs?.([

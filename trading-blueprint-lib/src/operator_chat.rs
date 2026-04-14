@@ -465,7 +465,10 @@ mod tests {
 
     async fn spawn_mock_chat_sidecar() -> String {
         let app = Router::new()
-            .route("/health", get(|| async { Json(serde_json::json!({ "ok": true })) }))
+            .route(
+                "/health",
+                get(|| async { Json(serde_json::json!({ "ok": true })) }),
+            )
             .route(
                 "/agents/sessions",
                 get(|| async { Json(serde_json::json!([{ "id": "manual-1" }])) }),
