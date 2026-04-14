@@ -1,5 +1,5 @@
 import type { Address } from 'viem';
-import { getAddresses } from '@tangle/blueprint-ui';
+import { getAddresses } from '@tangle-network/blueprint-ui';
 import type { ArenaAddresses } from './chains';
 
 // Reactive addresses — reads from the selected chain's network config via blueprint-ui.

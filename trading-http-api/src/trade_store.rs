@@ -28,7 +28,23 @@ pub struct TradeRecord {
     pub block_number: Option<u64>,
     pub gas_used: Option<String>,
     pub paper_trade: bool,
+    #[serde(default)]
+    pub amount_out: Option<String>,
+    #[serde(default)]
+    pub entry_price_usd: Option<String>,
+    #[serde(default)]
+    pub notional_usd: Option<String>,
+    #[serde(default)]
+    pub valuation_status: TradeValuationStatus,
     pub validation: StoredValidation,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeValuationStatus {
+    #[default]
+    Unpriced,
+    Priced,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

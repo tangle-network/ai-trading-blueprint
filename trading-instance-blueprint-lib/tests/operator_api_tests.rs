@@ -9,8 +9,13 @@
 mod common;
 
 use axum::body::Body;
+use axum::extract::Path;
+use axum::http::header::CONTENT_TYPE;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use http_body_util::BodyExt;
-use hyper::Request;
+use hyper::{Request, StatusCode};
+use serde_json::json;
 use tower::ServiceExt;
 
 use trading_blueprint_lib::state;
@@ -41,8 +46,245 @@ fn seed_singleton(strategy: &str) -> (String, String) {
     (bot_id, sandbox_id)
 }
 
+fn mark_sandbox_secrets_configured(sandbox_id: &str) {
+    let mut record =
+        sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id).expect("sandbox exists");
+    record.user_env_json = r#"{"ANTHROPIC_API_KEY":"sk-test"}"#.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .unwrap()
+        .insert(sandbox_id.to_string(), record)
+        .unwrap();
+}
+
+fn set_sandbox_sidecar_url(sandbox_id: &str, sidecar_url: &str) {
+    let mut record =
+        sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id).expect("sandbox exists");
+    record.sidecar_url = sidecar_url.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .unwrap()
+        .insert(sandbox_id.to_string(), record)
+        .unwrap();
+}
+
 fn app() -> axum::Router {
     build_instance_router()
+}
+
+async fn spawn_mock_trading_api() -> String {
+    let app = Router::new()
+        .route(
+            "/trades",
+            get(|| async {
+                Json(json!({
+                    "trades": [{
+                        "id": "remote-trade-1",
+                        "bot_id": "remote-bot",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "action": "buy",
+                        "token_in": "USDC",
+                        "token_out": "ETH",
+                        "amount_in": "100",
+                        "min_amount_out": "0.05",
+                        "target_protocol": "uniswap",
+                        "tx_hash": "0xremote",
+                        "paper_trade": false,
+                        "validation": {
+                            "approved": true,
+                            "aggregate_score": 91,
+                            "intent_hash": "0xintent",
+                            "responses": [{
+                                "validator": "validator-1",
+                                "score": 91,
+                                "reasoning": "trade looks safe",
+                                "signature": "0xsig"
+                            }]
+                        }
+                    }],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0
+                }))
+            }),
+        )
+        .route(
+            "/metrics/history",
+            get(|| async {
+                Json(json!({
+                    "snapshots": [{
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "bot_id": "remote-bot",
+                        "account_value_usd": 10123.45,
+                        "unrealized_pnl": 12.0,
+                        "realized_pnl": 34.0,
+                        "high_water_mark": 10123.45,
+                        "drawdown_pct": 0.0,
+                        "positions_count": 1,
+                        "trade_count": 1
+                    }],
+                    "total": 1
+                }))
+            }),
+        )
+        .route(
+            "/portfolio/state",
+            post(|| async {
+                Json(json!({
+                    "positions": [{
+                        "token": "WETH",
+                        "amount": "0.5",
+                        "value_usd": "1050",
+                        "entry_price": "2000",
+                        "current_price": "2100",
+                        "valuation_status": "priced"
+                    }],
+                    "total_value_usd": "1050",
+                    "cash_balance": null,
+                    "warnings": [],
+                    "has_unpriced_positions": false
+                }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_terminal_sidecar() -> String {
+    let app = Router::new()
+        .route(
+            "/terminals",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": [{
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }]
+                }))
+            })
+            .post(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "title": "Shell",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            })
+            .patch(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "sessionId": "term-1",
+                        "streamUrl": "/terminals/term-1/stream"
+                    }
+                }))
+            })
+            .delete(|| async {
+                Json(json!({
+                    "success": true
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1/input",
+            post(|| async {
+                Json(json!({
+                    "success": true
+                }))
+            }),
+        )
+        .route(
+            "/terminals/term-1/stream",
+            get(|| async move {
+                (
+                    [(CONTENT_TYPE, "text/event-stream")],
+                    "event: data.stdout\ndata: {\"type\":\"data.stdout\",\"properties\":{\"text\":\"hello from instance shell\\r\\n\"}}\n\n",
+                )
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock terminal sidecar");
+    let addr = listener.local_addr().expect("mock terminal sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock terminal sidecar");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
+    let workflow_session = format!("trading-{bot_id}");
+    let tick_session = format!("trading-{bot_id}-1775823900");
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let workflow_session = workflow_session.clone();
+                let tick_session = tick_session.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": workflow_session},
+                        {"id": tick_session}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(json!({
+                    "id": id,
+                    "title": "New Chat"
+                }))
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(|| async { Json(json!([])) }).post(|| async { Json(json!({"ok": true})) }),
+        )
+        .route(
+            "/agents/sessions/{id}/abort",
+            post(|| async { Json(json!({"ok": true})) }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
+    });
+    format!("http://{addr}")
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +298,7 @@ async fn test_get_bot_when_provisioned() {
     let _ = clear_instance_bot_id();
 
     let (_bot_id, _sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&_sandbox_id);
 
     let response = app()
         .oneshot(
@@ -99,6 +342,32 @@ async fn test_get_bot_when_not_provisioned() {
     let _ = clear_instance_bot_id();
 }
 
+#[tokio::test]
+async fn test_operator_meta_reports_instance_contract() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/meta")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["deployment_kind"], "instance");
+    assert!(json["features"]["chat"].is_boolean());
+    assert!(json["features"]["terminal"].is_boolean());
+
+    let _ = clear_instance_bot_id();
+}
+
 // ---------------------------------------------------------------------------
 // Auth tests
 // ---------------------------------------------------------------------------
@@ -116,6 +385,10 @@ async fn test_protected_routes_reject_no_auth() {
         ("POST", "/api/bot/start"),
         ("POST", "/api/bot/stop"),
         ("POST", "/api/bot/run-now"),
+        ("POST", "/api/bot/live/terminal/sessions"),
+        ("PATCH", "/api/bot/live/terminal/sessions/term-1"),
+        ("DELETE", "/api/bot/live/terminal/sessions/term-1"),
+        ("POST", "/api/bot/live/terminal/sessions/term-1/input"),
         // Read endpoints
         ("GET", "/api/bot"),
         ("GET", "/api/bot/metrics"),
@@ -123,6 +396,8 @@ async fn test_protected_routes_reject_no_auth() {
         ("GET", "/api/bot/trades"),
         ("GET", "/api/bot/portfolio/state"),
         ("GET", "/api/bot/activation-progress"),
+        ("GET", "/api/bot/live/terminal/sessions"),
+        ("GET", "/api/bot/live/terminal/sessions/term-1/stream"),
         ("GET", "/api/provisions"),
         ("GET", "/api/debug/sandboxes"),
         ("GET", "/api/debug/workflows"),
@@ -204,6 +479,177 @@ async fn test_start_stop_singleton() {
         status == 200 || status == 500,
         "Expected 200 or 500 from Docker layer, got {status}"
     );
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_terminal_routes_proxy_live_session_lifecycle() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, sandbox_id) = seed_singleton("dex");
+    let sidecar_url = spawn_mock_terminal_sidecar().await;
+    set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    let list_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/live/terminal/sessions")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_body = list_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_body).unwrap();
+    assert_eq!(list_json["sessions"][0]["session_id"], "term-1");
+
+    let create_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/live/terminal/sessions")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cols":120,"rows":32}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let create_body = create_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let create_json: serde_json::Value = serde_json::from_slice(&create_body).unwrap();
+    assert_eq!(create_json["session_id"], "term-1");
+
+    let resize_response = app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/bot/live/terminal/sessions/term-1")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cols":100,"rows":28}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resize_response.status(), StatusCode::OK);
+
+    let input_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/live/terminal/sessions/term-1/input")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"data":"pwd\n"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(input_response.status(), StatusCode::OK);
+
+    let stream_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/live/terminal/sessions/term-1/stream")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream_response.status(), StatusCode::OK);
+    assert_eq!(
+        stream_response.headers().get(CONTENT_TYPE).unwrap(),
+        "text/event-stream"
+    );
+    let stream_body = stream_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let stream_text = String::from_utf8(stream_body.to_vec()).unwrap();
+    assert!(stream_text.contains("hello from instance shell"));
+
+    let delete_response = app()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/bot/live/terminal/sessions/term-1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::OK);
+    let delete_body = delete_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let delete_json: serde_json::Value = serde_json::from_slice(&delete_body).unwrap();
+    assert_eq!(delete_json["deleted"], true);
+    assert_eq!(delete_json["session_id"], "term-1");
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_chat_routes_only_expose_manual_sessions() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    let sidecar_url = spawn_mock_chat_sidecar(&bot_id).await;
+    set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!([{ "id": "manual-1", "title": "New Chat" }]));
+
+    let auto_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bot/session/sessions/trading-{bot_id}"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
 
     let _ = clear_instance_bot_id();
 }
@@ -347,6 +793,192 @@ async fn test_metrics_and_trades() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json["total_value_usd"].is_number());
     assert!(json["positions"].is_array());
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("prediction");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url = trading_api_url.clone();
+            b.trading_api_token = "remote-token".to_string();
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/trades")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json[0]["validation"]["responses"][0]["reasoning"],
+        "trade looks safe"
+    );
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics/history")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["account_value_usd"], 10123.45);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_portfolio_prefers_remote_trading_api_payload() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url = trading_api_url.clone();
+            b.trading_api_token = "remote-token".to_string();
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/portfolio/state")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total_value_usd"], 1050.0);
+    assert!(json["cash_balance"].is_null());
+    assert_eq!(json["positions"][0]["token"], "WETH");
+    assert_eq!(json["positions"][0]["value_usd"], 1050.0);
+    assert_eq!(json["positions"][0]["valuation_status"], "priced");
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url.clear();
+            b.trading_api_token.clear();
+        })
+        .unwrap();
+
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: "instance-swap-only-trade".to_string(),
+        bot_id: bot_id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "WETH".to_string(),
+        amount_in: "1000".to_string(),
+        min_amount_out: "0.5".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xfallback".to_string(),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: true,
+        amount_out: None,
+        entry_price_usd: None,
+        notional_usd: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xinstance-intent-fallback".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+    })
+    .await
+    .expect("record trade");
+
+    let portfolio_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/portfolio/state")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(portfolio_response.status(), 200);
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+    assert_eq!(portfolio_json["positions"], json!([]));
+    assert!(portfolio_json["cash_balance"].is_null());
+
+    let metrics_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics/history")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), 200);
+    let metrics_body = metrics_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
+    let latest = metrics_json
+        .as_array()
+        .and_then(|snapshots| snapshots.last())
+        .expect("latest snapshot");
+    assert_eq!(latest["positions_count"], 0);
+    assert_eq!(latest["unrealized_pnl"], 0.0);
 
     let _ = clear_instance_bot_id();
 }
@@ -603,6 +1235,50 @@ async fn test_configure_secrets_not_provisioned() {
         .unwrap();
 
     assert_eq!(response.status(), 404);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_configure_secrets_missing_sandbox_returns_stale_state_error() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, sandbox_id) = seed_singleton("dex");
+    let _ = sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .remove(&sandbox_id);
+
+    let body = serde_json::json!({
+        "env_json": { "ANTHROPIC_API_KEY": "sk-test-key-123" },
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/secrets")
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 409);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "stale_state");
+    assert_eq!(json["sandbox_id"], sandbox_id);
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Operator state is stale")
+    );
 
     let _ = clear_instance_bot_id();
 }

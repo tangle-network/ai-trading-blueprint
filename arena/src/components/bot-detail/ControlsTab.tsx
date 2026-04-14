@@ -6,12 +6,15 @@ import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
+import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
-import { Badge, Button } from '@tangle/blueprint-ui/components';
+import { Badge, Button } from '@tangle-network/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 const JOB_EXTEND = 6;
 
@@ -36,8 +39,18 @@ interface ControlsTabProps {
 
 export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   const { address } = useAccount();
-  const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id);
-  const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(bot.id);
+  const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const liveSummary = useBotLiveSummary({
+    botId: bot.id,
+    botName: bot.name,
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+  });
+  const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(
+    bot.id,
+    bot.operatorApiUrl,
+    bot.operatorKind,
+  );
   const { service, remainingSeconds: serviceRemainingSeconds } = useServiceInfo(bot.serviceId || undefined);
 
   const isOwner = detail?.submitter_address
@@ -54,6 +67,25 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
     );
   }
 
+  if (bot.verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Controls unavailable"
+        description="This bot is still using unverified fallback data, so runtime controls stay disabled until the operator confirms the current state."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
+  }
+
+  if (!isAuthenticated && !detail) {
+    return (
+      <OperatorAccessCard
+        description="Connect your wallet to load operator-managed bot controls."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
+  }
+
   if (!detail) {
     return (
       <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
@@ -66,6 +98,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <StatusCard
+        bot={bot}
         detail={detail}
         isOwner={!!isOwner}
         isAuthenticated={isAuthenticated}
@@ -75,7 +108,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         runNow={runNow}
         onConfigureSecrets={onConfigureSecrets}
       />
-      <ValidatorInfoCard bot={bot} detail={detail} />
+      <ValidatorInfoCard bot={bot} detail={detail} avgValidatorScore={liveSummary.avgValidatorScore} />
       <LifetimeCard
         bot={bot}
         detail={detail}
@@ -98,6 +131,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
 // ── Status & Control Card ────────────────────────────────────────────────
 
 function StatusCard({
+  bot,
   detail,
   isOwner,
   isAuthenticated,
@@ -107,6 +141,7 @@ function StatusCard({
   runNow,
   onConfigureSecrets,
 }: {
+  bot: Bot;
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
   isOwner: boolean;
   isAuthenticated: boolean;
@@ -116,38 +151,32 @@ function StatusCard({
   runNow: ReturnType<typeof useBotControl>['runNow'];
   onConfigureSecrets?: () => void;
 }) {
-  const isWindingDown = detail.wind_down_started_at != null;
-  const isAwaitingSecrets = !detail.secrets_configured;
-
-  const statusVariant = isWindingDown
-    ? 'amber'
-    : isAwaitingSecrets
-      ? 'outline'
-      : detail.trading_active
-        ? 'success'
-        : 'destructive';
-
-  const statusLabel = isWindingDown
-    ? 'Winding Down'
-    : isAwaitingSecrets
-      ? 'Awaiting Secrets'
-      : detail.trading_active
-        ? 'Active'
-        : 'Stopped';
-
-  const canControl = isOwner && !isWindingDown && !isAwaitingSecrets;
+  const lifecycleStatus = bot.status === 'paused' ? 'paused' : bot.status;
+  const isWindingDown = detail.lifecycle_status === 'winding_down';
+  const isAwaitingSecrets = detail.lifecycle_status === 'awaiting_secrets';
+  const isArchived = detail.lifecycle_status === 'archived';
+  const canControl = isOwner && detail.control_available && !isArchived;
+  const isRunning = detail.lifecycle_status === 'active' || bot.status === 'paused';
 
   return (
     <div className="glass-card rounded-xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display font-bold text-lg">Status & Control</h3>
-        <Badge variant={statusVariant as 'success' | 'amber' | 'destructive' | 'outline'}>
+        <Badge variant={botStatusBadgeVariant(lifecycleStatus)}>
           <div className={`w-1.5 h-1.5 rounded-full ${
-            detail.trading_active && !isWindingDown ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse' : 'bg-arena-elements-textTertiary'
+            (lifecycleStatus === 'active' || lifecycleStatus === 'paused') && !isWindingDown
+              ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse'
+              : 'bg-arena-elements-textTertiary'
           }`} />
-          {statusLabel}
+          {botStatusLabel(lifecycleStatus)}
         </Badge>
       </div>
+
+      {isArchived && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-arena-elements-background-depth-3 border border-arena-elements-borderColor/50 text-sm text-arena-elements-textSecondary">
+          This bot is archived. Historical data remains available, but runtime controls are disabled.
+        </div>
+      )}
 
       {isWindingDown && (
         <div className="mb-4 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
@@ -179,7 +208,10 @@ function StatusCard({
         </div>
         <div className="flex justify-between">
           <span className="text-arena-elements-textTertiary">Sandbox</span>
-          <span className="font-data text-xs">{detail.sandbox_id.slice(0, 16)}...</span>
+          <span className="font-data text-xs">
+            {detail.sandbox_state ? `${detail.sandbox_state} · ` : ''}
+            {detail.sandbox_id.slice(0, 16)}...
+          </span>
         </div>
       </div>
 
@@ -192,7 +224,7 @@ function StatusCard({
             </Button>
           ) : (
             <>
-              {detail.trading_active ? (
+              {isRunning ? (
                 <Button
                   size="sm"
                   variant="destructive"
@@ -223,7 +255,7 @@ function StatusCard({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!canControl || !detail.trading_active || runNow.isPending}
+                disabled={!canControl || !isRunning || runNow.isPending}
                 onClick={() => runNow.mutate()}
               >
                 {runNow.isPending ? (
@@ -512,11 +544,16 @@ function StrategyCard({
 function ValidatorInfoCard({
   bot,
   detail,
+  avgValidatorScore,
 }: {
   bot: Bot;
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
+  avgValidatorScore: number | null;
 }) {
-  const { data: trades } = useBotTrades(bot.id, bot.name);
+  const { data: trades } = useBotTrades(bot.id, bot.name, 50, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+  });
 
   const stats = useMemo(() => {
     if (!trades || trades.length === 0) return { approvalRate: null, totalValidated: 0 };
@@ -581,8 +618,8 @@ function ValidatorInfoCard({
         {/* Avg Score */}
         <div className="flex justify-between items-center">
           <span className="text-arena-elements-textTertiary">Avg Score</span>
-          {bot.avgValidatorScore > 0 ? (
-            <ScoreRing score={bot.avgValidatorScore} size={32} />
+          {avgValidatorScore != null ? (
+            <ScoreRing score={avgValidatorScore} size={32} />
           ) : (
             <span className="font-data text-arena-elements-textTertiary">—</span>
           )}

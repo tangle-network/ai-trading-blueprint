@@ -4,9 +4,18 @@ import type { Address } from 'viem';
 import { provisionsStore, updateProvision, type TrackedProvision } from '~/lib/stores/provisions';
 import { tangleJobsAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
+import { useOperatorAuth } from './useOperatorAuth';
+import {
+  CLOUD_OPERATOR_API_URL,
+  INSTANCE_OPERATOR_API_URL,
+  TEE_OPERATOR_API_URL,
+  getOperatorApiUrlForBlueprint,
+} from '~/lib/operator/meta';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+
+type OperatorAuthSnapshot = Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken'>;
 
 /** Max time (ms) a provision can stay in job_submitted/job_processing before timing out */
 const PROVISION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -41,8 +50,28 @@ function decodeProvisionOutput(output: `0x${string}`) {
   return {
     vaultAddress: result.vault_address as string,
     sandboxId: result.sandbox_id as string,
-    workflowId: Number(result.workflow_id),
+    workflowId: result.workflow_id.toString(),
   };
+}
+
+function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
+  if (provision.callId == null) return false;
+
+  if (provision.phase === 'job_submitted' || provision.phase === 'job_processing') {
+    return true;
+  }
+
+  if ((provision.phase === 'awaiting_secrets' || provision.phase === 'active') && !provision.botId) {
+    return true;
+  }
+
+  // Allow recently failed provisions to recover if the operator later reports
+  // ready for the same call_id after a transient local/runtime issue.
+  if (provision.phase === 'failed' && !provision.botId) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -53,12 +82,23 @@ function decodeProvisionOutput(output: `0x${string}`) {
  * run via refs and direct store reads, not React state.
  */
 export function useProvisionWatcher() {
+  const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
+  const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
+  const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
   const watchingTxs = useRef(new Set<string>());
   const repairRan = useRef(false);
   const eventWatcherActive = useRef(false);
   const unwatchRef = useRef<(() => void) | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingInFlight = useRef(false);
+  const authTargetsRef = useRef<Record<string, OperatorAuthSnapshot>>({});
+
+  authTargetsRef.current = {
+    ...(CLOUD_OPERATOR_API_URL ? { [CLOUD_OPERATOR_API_URL]: cloudAuth } : {}),
+    ...(INSTANCE_OPERATOR_API_URL ? { [INSTANCE_OPERATOR_API_URL]: instanceAuth } : {}),
+    ...(TEE_OPERATOR_API_URL ? { [TEE_OPERATOR_API_URL]: teeAuth } : {}),
+    ...(OPERATOR_API_URL ? { [OPERATOR_API_URL]: cloudAuth } : {}),
+  };
 
   // Stage 1 + 2 + 2.5: Single subscription drives all logic without re-rendering
   useEffect(() => {
@@ -217,17 +257,15 @@ export function useProvisionWatcher() {
       }
 
       // ── Stage 2.5: Operator API polling ──
-      const hasSubmitted = provisions.some(
-        (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
-      );
+      const needsProgressPolling = provisions.some((p: TrackedProvision) => shouldPollOperatorProgress(p));
 
-      if (hasSubmitted && OPERATOR_API_URL && !pollingRef.current) {
+      if (needsProgressPolling && !pollingRef.current) {
         const poll = async () => {
           if (cancelled || pollingInFlight.current) return;
           pollingInFlight.current = true;
           try {
           const submitted = provisionsStore.get().filter(
-            (p: TrackedProvision) => (p.phase === 'job_submitted' || p.phase === 'job_processing') && p.callId != null,
+            (p: TrackedProvision) => shouldPollOperatorProgress(p),
           );
           if (submitted.length === 0) {
             // No more pending — stop polling
@@ -238,34 +276,57 @@ export function useProvisionWatcher() {
             return;
           }
           for (const prov of submitted) {
-            // Timeout stale provisions
-            const elapsed = Date.now() - prov.createdAt;
-            if (elapsed > PROVISION_TIMEOUT_MS) {
-              updateProvision(prov.id, {
-                phase: 'failed',
-                errorMessage: 'Provision timed out after 30 minutes',
-              });
-              continue;
-            }
             try {
-              const res = await fetch(`${OPERATOR_API_URL}/api/provisions/${prov.callId}`);
-              if (!res.ok) continue;
+              const apiUrl = getOperatorApiUrlForBlueprint(prov.blueprintType) || OPERATOR_API_URL;
+              if (!apiUrl) continue;
+
+              const auth = authTargetsRef.current[apiUrl];
+              const headers: Record<string, string> = {};
+              const token = auth?.getCachedToken() ?? null;
+              if (token) {
+                headers.Authorization = `Bearer ${token}`;
+              }
+              const res = await fetch(`${apiUrl}/api/provisions/${prov.callId}`, { headers });
+              if (!res.ok) {
+                const elapsed = Date.now() - prov.createdAt;
+                if (elapsed > PROVISION_TIMEOUT_MS) {
+                  updateProvision(prov.id, {
+                    phase: 'failed',
+                    errorMessage: 'Provision timed out after 30 minutes',
+                  });
+                }
+                continue;
+              }
               const progress = await res.json();
               if (progress?.phase) {
+                if (progress.phase === 'failed') {
+                  updateProvision(prov.id, {
+                    phase: 'failed',
+                    progressPhase: progress.phase,
+                    progressDetail: progress.message,
+                    errorMessage: progress.message ?? 'Provision failed in operator runtime',
+                    ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
+                    ...(progress.metadata?.service_id ? { serviceId: progress.metadata.service_id } : {}),
+                  });
+                  continue;
+                }
+
                 // If operator reports ready (100%), transition to awaiting_secrets
                 // This is the fallback path when on-chain event decoding misses
                 if (progress.phase === 'ready' && progress.progress_pct === 100) {
                   updateProvision(prov.id, {
                     phase: 'awaiting_secrets',
+                    errorMessage: undefined,
                     progressPhase: progress.phase,
                     progressDetail: progress.message,
+                    ...(typeof progress.metadata?.bot_id === 'string' ? { botId: progress.metadata.bot_id } : {}),
                     ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
-                    ...(progress.metadata?.bot_id ? {} : {}),
                     ...(progress.metadata?.service_id ? { serviceId: progress.metadata.service_id } : {}),
                   });
                 } else {
                   updateProvision(prov.id, {
                     phase: 'job_processing',
+                    errorMessage: undefined,
                     progressPhase: progress.phase,
                     progressDetail: progress.message,
                     ...(progress.sandbox_id ? { sandboxId: progress.sandbox_id } : {}),
@@ -273,7 +334,13 @@ export function useProvisionWatcher() {
                 }
               }
             } catch {
-              // Operator API unreachable
+              const elapsed = Date.now() - prov.createdAt;
+              if (elapsed > PROVISION_TIMEOUT_MS) {
+                updateProvision(prov.id, {
+                  phase: 'failed',
+                  errorMessage: 'Provision timed out after 30 minutes',
+                });
+              }
             }
           }
           } finally {
@@ -282,7 +349,7 @@ export function useProvisionWatcher() {
         };
         poll();
         pollingRef.current = setInterval(poll, 5000); // 5s instead of 2s
-      } else if (!hasSubmitted && pollingRef.current) {
+      } else if (!needsProgressPolling && pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
@@ -351,7 +418,7 @@ export function useProvisionWatcher() {
         console.error('[provision-watcher] Repair failed:', err);
       }
     })();
-  }, []);
+  }, [cloudAuth.token, instanceAuth.token, teeAuth.token]);
 }
 
 /** Decode output and update a provision with vault/sandbox data.
@@ -361,7 +428,7 @@ export function useProvisionWatcher() {
  */
 function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number, callId?: number) {
   let sandboxId: string | undefined;
-  let workflowId = 0;
+  let workflowId: string | undefined;
 
   // Decode operator output for sandbox_id and workflow_id
   if (output) {
@@ -388,7 +455,7 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
       const vault = vaultAddr as Address;
       console.log('[provision-watcher] botVaults resolved:', vault, 'for callId=', resolvedCallId);
       updateProvision(provId, {
-        phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+        phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
         vaultAddress: vault !== zeroAddress ? vault : undefined,
         sandboxId,
         workflowId,
@@ -405,8 +472,9 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   } else {
     // No BSM or no callId — update without vault
     updateProvision(provId, {
-      phase: workflowId === 0 ? 'awaiting_secrets' : 'active',
+      phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
       sandboxId,
+      ...(workflowId ? { workflowId } : {}),
       ...(serviceId > 0 ? { serviceId } : {}),
     });
   }

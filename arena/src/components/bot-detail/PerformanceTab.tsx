@@ -2,33 +2,44 @@ import { useRef, useEffect, useMemo } from 'react';
 import { m } from 'framer-motion';
 import type { Chart as ChartType } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
-import { Card, CardHeader, CardTitle, CardContent } from '@tangle/blueprint-ui/components';
+import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
-import { useBotMetrics } from '~/lib/hooks/useBotApi';
+import { useBotMetrics, useBotMetricsSummary } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { buildPerformanceChartPoints } from './performanceChart';
 
 interface PerformanceTabProps {
   bot: Bot;
+  isLive: boolean;
 }
 
-export function PerformanceTab({ bot }: PerformanceTabProps) {
+export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
+  const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
 
   // Try loading real metrics from bot API
-  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id);
+  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id, 30, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    refetchInterval: isLive ? 15_000 : false,
+  });
+  const { data: metricsSummary } = useBotMetricsSummary(bot.id, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    refetchInterval: isLive ? 15_000 : false,
+  });
 
-  // Use API metrics for sparkline if available, otherwise use bot.sparklineData
-  const sparklineData = useMemo(() => {
-    if (apiMetrics && apiMetrics.length > 0) {
-      return apiMetrics.map(m => m.account_value_usd);
-    }
-    return bot.sparklineData;
-  }, [apiMetrics, bot.sparklineData]);
+  const chartPoints = useMemo(
+    () => buildPerformanceChartPoints(apiMetrics, bot.sparklineData),
+    [apiMetrics, bot.sparklineData],
+  );
 
   useEffect(() => {
-    if (!canvasRef.current || sparklineData.length === 0) return;
+    if (!canvasRef.current || chartPoints.length === 0) return;
 
     let cancelled = false;
 
@@ -41,8 +52,11 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
       }
 
       const ctx = canvasRef.current.getContext('2d')!;
-      const labels = sparklineData.map((_, i) => `Day ${i + 1}`);
-      const positive = bot.pnlPercent >= 0;
+      const labels = chartPoints.map((point) => point.label);
+      const values = chartPoints.map((point) => point.value);
+      const latestPoint = values[values.length - 1] ?? 0;
+      const firstPoint = values[0] ?? latestPoint;
+      const positive = latestPoint >= firstPoint;
       const lineColor = positive ? chartTheme.positive : chartTheme.negative;
 
       const gradient = ctx.createLinearGradient(0, 0, 0, 300);
@@ -56,7 +70,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
           datasets: [
             {
               label: 'Portfolio Value',
-              data: sparklineData,
+              data: values,
               borderColor: lineColor,
               backgroundColor: gradient,
               borderWidth: 2,
@@ -90,6 +104,12 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
               padding: 10,
               cornerRadius: 8,
               displayColors: false,
+              callbacks: {
+                title: (tooltipItems) => {
+                  const dataIndex = tooltipItems[0]?.dataIndex ?? 0;
+                  return chartPoints[dataIndex]?.tooltipLabel ?? tooltipItems[0]?.label ?? '';
+                },
+              },
             },
           },
           scales: {
@@ -123,17 +143,30 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
       cancelled = true;
       chartRef.current?.destroy();
     };
-  }, [bot, sparklineData, chartTheme]);
+  }, [chartPoints, chartTheme]);
+
+  const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
+  const renderableMetrics = useMemo(() => {
+    const normalizedMetrics = apiMetrics ?? [];
+    const positiveMetrics = normalizedMetrics.filter((metric) => metric.account_value_usd > 0);
+    return positiveMetrics.length > 0 ? positiveMetrics : normalizedMetrics;
+  }, [apiMetrics]);
+  const firstRenderableMetric = renderableMetrics[0] ?? null;
+  const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
+  const totalReturnValue = latestRenderableMetric && firstRenderableMetric
+    ? latestRenderableMetric.account_value_usd - firstRenderableMetric.account_value_usd
+    : metricsSummary?.total_pnl ?? bot.pnlAbsolute;
+  const totalTradesValue = latestRenderableMetric?.trade_count ?? metricsSummary?.trade_count ?? bot.totalTrades;
 
   const summaryCards = [
     {
       label: 'Total Return',
-      value: `$${bot.pnlAbsolute.toLocaleString()}`,
-      color: bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
+      value: `$${totalReturnValue.toLocaleString()}`,
+      color: totalReturnValue >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
     },
     {
       label: 'Total Trades',
-      value: bot.totalTrades.toString(),
+      value: totalTradesValue.toString(),
       color: '',
     },
     {
@@ -163,6 +196,20 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
     );
   }
 
+  if (bot.verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Live performance unavailable"
+        description="This bot has not been verified against the operator yet, so performance data is hidden until a fresh sync succeeds."
+        apiUrl={bot.operatorApiUrl ?? ''}
+      />
+    );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard apiUrl={bot.operatorApiUrl ?? ''} />;
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -170,7 +217,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
           <CardTitle>Performance (30D)</CardTitle>
         </CardHeader>
         <CardContent>
-          {sparklineData.length > 0 ? (
+          {chartPoints.length > 0 ? (
             <div className="h-[320px]">
               <canvas ref={canvasRef} />
             </div>
@@ -179,8 +226,7 @@ export function PerformanceTab({ bot }: PerformanceTabProps) {
               <div className="text-center">
                 <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
                 <p className="text-sm text-arena-elements-textSecondary">
-                  No performance data available yet.
-                  {bot.id.startsWith('service-') && ' Connect a bot API to see real metrics.'}
+                  No performance snapshots available yet.
                 </p>
               </div>
             </div>

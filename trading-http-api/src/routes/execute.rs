@@ -14,10 +14,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::executor::TradeExecutor;
+use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient};
 use trading_runtime::{
     PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
-    ValidatorResponse,
+    ValidatorResponse, ValuationStatus,
 };
 
 use super::validate::parse_action;
@@ -47,6 +48,8 @@ pub struct ValidationPayload {
     pub approved: bool,
     pub aggregate_score: u32,
     pub intent_hash: String,
+    #[serde(default)]
+    pub deadline: Option<u64>,
     pub validator_responses: Vec<ValidatorResponsePayload>,
     #[serde(default)]
     pub simulation: Option<SimulationPayload>,
@@ -257,7 +260,7 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         )
     })?;
 
-    TradeIntentBuilder::new()
+    let mut intent = TradeIntentBuilder::new()
         .strategy_id(&req.intent.strategy_id)
         .action(action)
         .token_in(&req.intent.token_in)
@@ -266,7 +269,116 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         .min_amount_out(min_amount_out)
         .target_protocol(&req.intent.target_protocol)
         .build()
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    if let Some(deadline) = req.validation.deadline {
+        intent.deadline =
+            chrono::DateTime::<Utc>::from_timestamp(deadline as i64, 0).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid validation deadline: {deadline}"),
+                )
+            })?;
+    }
+
+    Ok(intent)
+}
+
+#[derive(Clone, Debug)]
+struct TradeValuationSnapshot {
+    amount_out: Option<Decimal>,
+    position_size: Decimal,
+    entry_price_usd: Option<Decimal>,
+    notional_usd: Option<Decimal>,
+    valuation_status: trade_store::TradeValuationStatus,
+}
+
+impl TradeValuationSnapshot {
+    fn unpriced(position_size: Decimal, amount_out: Option<Decimal>) -> Self {
+        Self {
+            amount_out,
+            position_size,
+            entry_price_usd: None,
+            notional_usd: None,
+            valuation_status: trade_store::TradeValuationStatus::Unpriced,
+        }
+    }
+
+    fn priced(
+        position_size: Decimal,
+        amount_out: Option<Decimal>,
+        entry_price_usd: Decimal,
+    ) -> Self {
+        Self {
+            amount_out,
+            position_size,
+            entry_price_usd: Some(entry_price_usd),
+            notional_usd: Some(position_size * entry_price_usd),
+            valuation_status: trade_store::TradeValuationStatus::Priced,
+        }
+    }
+
+    fn position_valuation_status(&self) -> ValuationStatus {
+        match self.valuation_status {
+            trade_store::TradeValuationStatus::Priced => ValuationStatus::Priced,
+            trade_store::TradeValuationStatus::Unpriced => ValuationStatus::Unpriced,
+        }
+    }
+}
+
+fn resolve_position_size(
+    intent: &IntentPayload,
+) -> Result<(Decimal, Option<Decimal>), (StatusCode, String)> {
+    let amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in '{}': {e}", intent.amount_in),
+        )
+    })?;
+    let amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let size = if amount_out > Decimal::ZERO {
+        amount_out
+    } else {
+        amount_in
+    };
+    Ok((size, (amount_out > Decimal::ZERO).then_some(amount_out)))
+}
+
+async fn resolve_market_valuation(
+    market_client: &MarketDataClient,
+    chain_id: Option<u64>,
+    intent: &IntentPayload,
+) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    let (position_size, amount_out) = resolve_position_size(intent)?;
+    if position_size <= Decimal::ZERO {
+        return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
+    }
+
+    match market_client
+        .get_price_for_chain(chain_id, &intent.token_out)
+        .await
+    {
+        Ok(price) => Ok(TradeValuationSnapshot::priced(
+            position_size,
+            amount_out,
+            price.price_usd,
+        )),
+        Err(error) => {
+            tracing::warn!(
+                token = %intent.token_out,
+                error = %error,
+                "Trade valuation unavailable; recording unpriced trade"
+            );
+            Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
+        }
+    }
+}
+
+fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapshot {
+    if size <= Decimal::ZERO || price <= Decimal::ZERO {
+        return TradeValuationSnapshot::unpriced(size, None);
+    }
+    TradeValuationSnapshot::priced(size, None, price)
 }
 
 /// Check if the portfolio circuit breaker should block this trade.
@@ -302,8 +414,7 @@ async fn check_circuit_breaker(
 async fn update_portfolio_after_trade(
     portfolio: &RwLock<PortfolioState>,
     req: &ExecuteRequest,
-    entry_price: Decimal,
-    size: Decimal,
+    valuation: &TradeValuationSnapshot,
 ) {
     let action_str = req.intent.action.to_lowercase();
     let is_close = matches!(
@@ -315,12 +426,13 @@ async fn update_portfolio_after_trade(
 
     if is_close {
         // Try to close an existing position.
-        if let Some(pnl) = state.close_position(&req.intent.token_out, &req.intent.target_protocol)
+        if let Some(result) =
+            state.close_position(&req.intent.token_out, &req.intent.target_protocol)
         {
             tracing::info!(
                 token = %req.intent.token_out,
                 protocol = %req.intent.target_protocol,
-                realized_pnl = %pnl,
+                realized_pnl = ?result.realized_pnl,
                 "Position closed in portfolio"
             );
         }
@@ -337,19 +449,21 @@ async fn update_portfolio_after_trade(
 
         state.add_position(Position {
             token: req.intent.token_out.clone(),
-            amount: size,
-            entry_price,
-            current_price: entry_price,
-            unrealized_pnl: Decimal::ZERO,
+            amount: valuation.position_size,
+            entry_price: valuation.entry_price_usd,
+            current_price: valuation.entry_price_usd,
+            unrealized_pnl: valuation.entry_price_usd.map(|_| Decimal::ZERO),
             protocol: req.intent.target_protocol.clone(),
             position_type,
+            valuation_status: valuation.position_valuation_status(),
         });
 
         tracing::info!(
             token = %req.intent.token_out,
             protocol = %req.intent.target_protocol,
-            size = %size,
-            entry_price = %entry_price,
+            size = %valuation.position_size,
+            entry_price = ?valuation.entry_price_usd,
+            valuation_status = ?valuation.valuation_status,
             "Position added to portfolio"
         );
     }
@@ -360,6 +474,7 @@ async fn execute_paper_trade(
     bot_id: &str,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let mock_tx_hash = format!("0xpaper_{}", uuid::Uuid::new_v4());
     let trade_id = uuid::Uuid::new_v4().to_string();
@@ -387,6 +502,10 @@ async fn execute_paper_trade(
         block_number: Some(0),
         gas_used: Some("0".to_string()),
         paper_trade: true,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     trade_store::record_trade(record).await.map_err(|e| {
@@ -416,6 +535,7 @@ async fn execute_real_trade(
     intent: &TradeIntent,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let validation = build_validation_result(&req.validation);
 
@@ -439,6 +559,10 @@ async fn execute_real_trade(
         block_number: outcome.block_number,
         gas_used: outcome.gas_used.map(|g| g.to_string()),
         paper_trade: false,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     // On-chain tx already succeeded — persistence failure must NOT return 500
@@ -476,6 +600,7 @@ async fn execute_clob_trade(
     clob: &ClobClient,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     // Extract CLOB-specific params from intent metadata.
     let clob_params = polymarket_clob::extract_clob_params(
@@ -509,6 +634,10 @@ async fn execute_clob_trade(
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        valuation_status: valuation.valuation_status,
         validation: stored_validation,
     };
     // CLOB order already submitted — persistence failure must NOT return 500
@@ -559,10 +688,13 @@ async fn execute(
     let max_drawdown = Decimal::new(10, 0);
     check_circuit_breaker(&state.portfolio, max_drawdown).await?;
 
+    let valuation =
+        resolve_market_valuation(&state.market_client, state.chain_id, &request.intent).await?;
+
     if state.paper_trade {
-        let result = execute_paper_trade(&state.bot_id, &request, stored_validation).await?;
-        let (price, size) = estimate_trade_price_size(&request.intent)?;
-        update_portfolio_after_trade(&state.portfolio, &request, price, size).await;
+        let result =
+            execute_paper_trade(&state.bot_id, &request, stored_validation, &valuation).await?;
+        update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
         return Ok(result);
     }
 
@@ -580,14 +712,16 @@ async fn execute(
             &request.intent.metadata,
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
-        let result = execute_clob_trade(&state.bot_id, clob, &request, stored_validation).await?;
-        update_portfolio_after_trade(
-            &state.portfolio,
+        let clob_valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        let result = execute_clob_trade(
+            &state.bot_id,
+            clob,
             &request,
-            clob_params.price,
-            clob_params.size,
+            stored_validation,
+            &clob_valuation,
         )
-        .await;
+        .await?;
+        update_portfolio_after_trade(&state.portfolio, &request, &clob_valuation).await;
         return Ok(result);
     }
 
@@ -597,43 +731,12 @@ async fn execute(
         &intent,
         &request,
         stored_validation,
+        &valuation,
     )
     .await?;
 
-    let (price, size) = estimate_trade_price_size(&request.intent)?;
-    update_portfolio_after_trade(&state.portfolio, &request, price, size).await;
+    update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
     Ok(result)
-}
-
-/// Derive entry price and size from intent amounts.
-///
-/// For swaps: price = amount_in / min_amount_out (exchange rate estimate).
-/// For other actions: price defaults to 1:1 if min_amount_out is zero.
-///
-/// Returns error instead of silently defaulting to zero on parse failure.
-fn estimate_trade_price_size(
-    intent: &IntentPayload,
-) -> Result<(Decimal, Decimal), (StatusCode, String)> {
-    let size: Decimal = intent.amount_in.parse().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid amount_in '{}': {e}", intent.amount_in),
-        )
-    })?;
-
-    let min_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
-
-    let price = if min_out > Decimal::ZERO && size > Decimal::ZERO {
-        // Exchange rate: how many output tokens per input token.
-        min_out / size
-    } else {
-        // No output estimate available — use 1:1 as placeholder.
-        // This is acceptable for non-swap actions (supply, borrow, etc.)
-        // where the "price" concept doesn't map cleanly.
-        Decimal::ONE
-    };
-
-    Ok((price, size))
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -673,9 +776,12 @@ async fn execute_multi_bot(
 
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
+    let market_client = MarketDataClient::new(state.market_data_base_url.clone());
+    let valuation =
+        resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
 
     if bot.paper_trade {
-        return execute_paper_trade(&bot.bot_id, &req, stored_validation).await;
+        return execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await;
     }
 
     // CLOB trades bypass the vault executor entirely.
@@ -686,12 +792,27 @@ async fn execute_multi_bot(
                 "Polymarket CLOB client not configured".into(),
             )
         })?;
-        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation).await;
+        let clob_params = polymarket_clob::extract_clob_params(
+            &req.intent.action,
+            &req.intent.amount_in,
+            &req.intent.metadata,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
+        let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await;
     }
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions
     // from concurrent requests). Falls back to creating a fresh one if not configured.
-    let executor = if let Some(shared_client) = &state.chain_client {
+    let can_use_shared_chain_client = state.chain_client.is_some()
+        && state.chain_client_chain_id == Some(bot.chain_id)
+        && state.chain_client_rpc_url.as_deref() == Some(bot.rpc_url.as_str());
+
+    let executor = if can_use_shared_chain_client {
+        let shared_client = state
+            .chain_client
+            .as_ref()
+            .expect("shared chain client checked above");
         TradeExecutor::with_shared_chain_client(
             &bot.vault_address,
             &bot.rpc_url,
@@ -713,5 +834,95 @@ async fn execute_multi_bot(
         })?
     };
 
-    execute_real_trade(&bot.bot_id, &executor, &intent, &req, stored_validation).await
+    execute_real_trade(
+        &bot.bot_id,
+        &executor,
+        &intent,
+        &req,
+        stored_validation,
+        &valuation,
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_intent(
+        token_in: &str,
+        token_out: &str,
+        amount_in: &str,
+        min_amount_out: &str,
+    ) -> IntentPayload {
+        IntentPayload {
+            strategy_id: "test".to_string(),
+            action: "swap".to_string(),
+            token_in: token_in.to_string(),
+            token_out: token_out.to_string(),
+            amount_in: amount_in.to_string(),
+            min_amount_out: min_amount_out.to_string(),
+            target_protocol: "uniswap_v3".to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn resolve_position_size_prefers_output_amount_when_available() {
+        let intent = make_intent("WETH", "USDC", "1.25", "3200");
+
+        let (size, amount_out) = resolve_position_size(&intent).expect("size");
+        assert_eq!(size, Decimal::new(3200, 0));
+        assert_eq!(amount_out, Some(Decimal::new(3200, 0)));
+    }
+
+    #[test]
+    fn resolve_position_size_falls_back_to_input_amount() {
+        let intent = make_intent("WETH", "WBTC", "2", "0");
+
+        let (size, amount_out) = resolve_position_size(&intent).expect("size");
+        assert_eq!(size, Decimal::new(2, 0));
+        assert_eq!(amount_out, None);
+    }
+
+    fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {
+        ExecuteRequest {
+            intent: IntentPayload {
+                strategy_id: "deadline-test".to_string(),
+                action: "swap".to_string(),
+                token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
+                token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
+                amount_in: "10000000000000000".to_string(),
+                min_amount_out: "1000000".to_string(),
+                target_protocol: "uniswap_v3".to_string(),
+                metadata: serde_json::Value::Null,
+            },
+            validation: ValidationPayload {
+                approved: true,
+                aggregate_score: 100,
+                intent_hash: "0xdeadbeef".to_string(),
+                deadline,
+                validator_responses: vec![],
+                simulation: None,
+            },
+        }
+    }
+
+    #[test]
+    fn parse_execute_request_uses_validation_deadline_when_present() {
+        let req = make_execute_request(Some(1_777_777_777));
+        let intent = parse_execute_request(&req).expect("intent");
+        assert_eq!(intent.deadline.timestamp(), 1_777_777_777);
+    }
+
+    #[test]
+    fn parse_execute_request_uses_default_deadline_when_missing() {
+        let req = make_execute_request(None);
+        let before = chrono::Utc::now().timestamp();
+        let intent = parse_execute_request(&req).expect("intent");
+        let after = chrono::Utc::now().timestamp();
+        let ts = intent.deadline.timestamp();
+        assert!(ts >= before + 290);
+        assert!(ts <= after + 310);
+    }
 }

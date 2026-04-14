@@ -26,6 +26,13 @@ pub struct EncodedTransaction {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Approval {
+    pub token: String,
+    pub spender: String,
+    pub amount: String,
+}
+
 impl VaultClient {
     pub fn new(vault_address: String, rpc_url: String, chain_id: u64) -> Self {
         Self {
@@ -151,6 +158,61 @@ impl VaultClient {
 
         let call = ITradingVault::executeCall {
             params,
+            signatures: sig_bytes,
+            scores,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: value.into(),
+        })
+    }
+
+    /// Encode an execute call with atomic vault approvals.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_execute_with_approvals(
+        &self,
+        target: &str,
+        calldata: &[u8],
+        value: &str,
+        min_output: &str,
+        output_token: &str,
+        intent_hash: [u8; 32],
+        approvals: &[Approval],
+        signatures: Vec<Vec<u8>>,
+        scores: Vec<U256>,
+        deadline: U256,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let target_addr = Self::parse_address(target)?;
+        let tx_value = Self::parse_u256(value)?;
+        let min_output_amount = Self::parse_u256(min_output)?;
+        let output_token_addr = Self::parse_address(output_token)?;
+        let sig_bytes: Vec<Bytes> = signatures.into_iter().map(Bytes::from).collect();
+        let encoded_approvals = approvals
+            .iter()
+            .map(|approval| {
+                Ok(ITradingVault::ApprovalCall {
+                    token: Self::parse_address(&approval.token)?,
+                    spender: Self::parse_address(&approval.spender)?,
+                    amount: Self::parse_u256(&approval.amount)?,
+                })
+            })
+            .collect::<Result<Vec<_>, TradingError>>()?;
+
+        let params = ITradingVault::ExecuteParams {
+            target: target_addr,
+            data: Bytes::from(calldata.to_vec()),
+            value: tx_value,
+            minOutput: min_output_amount,
+            outputToken: output_token_addr,
+            intentHash: FixedBytes::from(intent_hash),
+            deadline,
+        };
+
+        let call = ITradingVault::executeWithApprovalsCall {
+            params,
+            approvals: encoded_approvals,
             signatures: sig_bytes,
             scores,
         };
@@ -291,6 +353,7 @@ mod tests {
     const TEST_VAULT: &str = "0x0000000000000000000000000000000000000001";
     const TEST_TOKEN: &str = "0x0000000000000000000000000000000000000002";
     const TEST_RECEIVER: &str = "0x0000000000000000000000000000000000000003";
+    const TEST_TARGET: &str = "0x0000000000000000000000000000000000000004";
 
     #[test]
     fn test_encode_deposit() {
@@ -355,6 +418,32 @@ mod tests {
                 U256::from(9999999),
                 vec![vec![0u8; 65], vec![0u8; 65]],
                 vec![U256::from(80), U256::from(75)],
+            )
+            .unwrap();
+        assert_eq!(tx.to, TEST_VAULT);
+        assert!(tx.data.len() >= 4);
+        assert_eq!(tx.value, "0");
+    }
+
+    #[test]
+    fn test_encode_execute_with_approvals() {
+        let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
+        let tx = client
+            .encode_execute_with_approvals(
+                TEST_TARGET,
+                &[1, 2, 3],
+                "0",
+                "100",
+                TEST_TOKEN,
+                [0x11; 32],
+                &[Approval {
+                    token: TEST_TOKEN.into(),
+                    spender: TEST_TARGET.into(),
+                    amount: "42".into(),
+                }],
+                vec![vec![0xaa; 65]],
+                vec![U256::from(80u64)],
+                U256::from(123u64),
             )
             .unwrap();
         assert_eq!(tx.to, TEST_VAULT);

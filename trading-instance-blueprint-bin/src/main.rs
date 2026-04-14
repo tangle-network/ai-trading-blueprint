@@ -20,6 +20,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     dotenvy::dotenv().ok();
     setup_log();
 
+    if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
+        return Err(blueprint_sdk::Error::Other(msg));
+    }
+
     // ── 1. Load blueprint environment + connect to Tangle ────────────────
     let env = BlueprintEnvironment::load()?;
 
@@ -77,6 +81,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     let strategy_registry_address = std::env::var("STRATEGY_REGISTRY_ADDRESS").unwrap_or_default();
     let fee_distributor_address = std::env::var("FEE_DISTRIBUTOR_ADDRESS").unwrap_or_default();
 
+    let private_key_for_api = private_key.clone();
+    let market_data_base_url_for_api = market_data_base_url.clone();
+
     let ctx = TradingOperatorContext {
         operator_address,
         private_key,
@@ -92,13 +99,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         tracing::error!("Failed to init operator context: {e}");
     }
 
-    // ── 3. Bootstrap workflows from on-chain state ───────────────────────
-    if let Err(err) =
-        ai_agent_sandbox_blueprint_lib::bootstrap_workflows_from_chain(&tangle_client, service_id)
-            .await
-    {
-        tracing::error!("Failed to load workflows from chain: {err}");
-    }
+    // Trading workflows are created during bot activation and restored from the
+    // local workflow store, not from the service manager contract.
+    tracing::info!("Skipping on-chain workflow bootstrap for trading instance blueprint");
 
     // ── 4. Reconcile sandbox state with Docker ───────────────────────────
     sandbox_runtime::reaper::reconcile_on_startup().await;
@@ -175,6 +178,67 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, router).await {
                 tracing::error!("Operator API server error: {e}");
+            }
+        });
+    }
+
+    // ── 6b. Spawn instance trading HTTP API server ─────────────────────────
+    {
+        let port: u16 = std::env::var("TRADING_API_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9101);
+
+        let validator_eps: Vec<String> = trading_blueprint_lib::discovery::endpoints_from_env();
+        let clob_client = trading_runtime::polymarket_clob::ClobClient::new(&private_key_for_api)
+            .map(std::sync::Arc::new)
+            .map_err(|e| tracing::warn!("Polymarket CLOB client not available: {e}"))
+            .ok();
+
+        let rpc_url_for_chain =
+            std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
+        let chain_id_for_chain: u64 = std::env::var("CHAIN_ID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(31337);
+        let chain_client = trading_runtime::chain::ChainClient::new(
+            &rpc_url_for_chain,
+            &private_key_for_api,
+            chain_id_for_chain,
+        )
+        .map_err(|e| tracing::warn!("Shared ChainClient not available: {e}"))
+        .ok();
+
+        let trading_state = std::sync::Arc::new(trading_http_api::MultiBotTradingState {
+            operator_private_key: private_key_for_api,
+            market_data_base_url: market_data_base_url_for_api,
+            validation_deadline_secs,
+            min_validator_score,
+            resolve_bot: Box::new(move |token: &str| {
+                let bot = trading_blueprint_lib::state::find_bot_by_token(token).ok()?;
+                Some(trading_http_api::BotContext {
+                    bot_id: bot.id,
+                    vault_address: bot.vault_address,
+                    paper_trade: bot.paper_trade,
+                    chain_id: bot.chain_id,
+                    rpc_url: bot.rpc_url,
+                    validator_endpoints: validator_eps.clone(),
+                })
+            }),
+            clob_client,
+            chain_client,
+            chain_client_rpc_url: Some(rpc_url_for_chain),
+            chain_client_chain_id: Some(chain_id_for_chain),
+        });
+
+        let router = trading_http_api::build_multi_bot_router(trading_state);
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+            .await
+            .map_err(|e| blueprint_sdk::Error::Other(format!("Trading API bind failed: {e}")))?;
+        tracing::info!("Instance trading HTTP API listening on 0.0.0.0:{port}");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router).await {
+                tracing::error!("Instance trading API server error: {e}");
             }
         });
     }

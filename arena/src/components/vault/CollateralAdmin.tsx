@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, isAddress } from 'viem';
 import type { Address } from 'viem';
-import { Button, Input } from '@tangle/blueprint-ui/components';
+import { Button, Input } from '@tangle-network/blueprint-ui/components';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
 
 interface CollateralAdminProps {

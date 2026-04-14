@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import type { MutableRefObject } from 'react';
-import { Button, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Button, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import { SecretsProviderFields, type SecretsEnvVar } from '~/components/secrets/SecretsProviderFields';
 import { zeroAddress } from 'viem';
 import type { TrackedProvision } from '~/lib/stores/provisions';

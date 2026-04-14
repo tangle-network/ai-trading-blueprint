@@ -3,7 +3,7 @@ import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
 import { useAccount, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
-import { AnimatedPage, Button } from '@tangle/blueprint-ui/components';
+import { AnimatedPage, Button } from '@tangle-network/blueprint-ui/components';
 import { VaultStats } from '~/components/vault/VaultStats';
 import { CollateralStats } from '~/components/vault/CollateralStats';
 import { CollateralAdmin } from '~/components/vault/CollateralAdmin';
@@ -11,7 +11,7 @@ import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
 import { networks } from '~/lib/contracts/chains';
-import { selectedChainIdStore } from '@tangle/blueprint-ui';
+import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
 
 export const meta: MetaFunction = () => [
   { title: 'Vault — AI Trading Arena' },

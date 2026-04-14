@@ -55,6 +55,93 @@ pub struct TradingBotRecord {
     pub service_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BotLifecycleStatus {
+    Unknown,
+    AwaitingSecrets,
+    Active,
+    Stopped,
+    WindingDown,
+    Archived,
+}
+
+impl BotLifecycleStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::AwaitingSecrets => "awaiting_secrets",
+            Self::Active => "active",
+            Self::Stopped => "stopped",
+            Self::WindingDown => "winding_down",
+            Self::Archived => "archived",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotRuntimeStatus {
+    pub lifecycle_status: BotLifecycleStatus,
+    pub sandbox_state: Option<String>,
+    pub sandbox_exists: bool,
+    pub sandbox_is_running: bool,
+    pub secrets_configured: bool,
+    pub archived: bool,
+    pub control_available: bool,
+}
+
+pub fn bot_runtime_status(bot: &TradingBotRecord) -> BotRuntimeStatus {
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
+    let sandbox_state = sandbox.as_ref().map(|record| format!("{:?}", record.state));
+    let sandbox_exists = sandbox.is_some();
+    let sandbox_is_running = sandbox
+        .as_ref()
+        .map(|record| {
+            matches!(
+                record.state,
+                sandbox_runtime::runtime::SandboxState::Running
+            )
+        })
+        .unwrap_or(false);
+    let secrets_configured = sandbox
+        .as_ref()
+        .map(|record| record.has_user_secrets())
+        .unwrap_or(false);
+    let archived = !sandbox_exists;
+
+    let lifecycle_status = if archived {
+        BotLifecycleStatus::Archived
+    } else if bot.wind_down_started_at.is_some() {
+        BotLifecycleStatus::WindingDown
+    } else if !secrets_configured {
+        BotLifecycleStatus::AwaitingSecrets
+    } else if sandbox_is_running && bot.trading_active {
+        BotLifecycleStatus::Active
+    } else if sandbox_exists {
+        BotLifecycleStatus::Stopped
+    } else {
+        BotLifecycleStatus::Unknown
+    };
+
+    let control_available = sandbox_exists
+        && !matches!(
+            lifecycle_status,
+            BotLifecycleStatus::Archived
+                | BotLifecycleStatus::AwaitingSecrets
+                | BotLifecycleStatus::WindingDown
+        );
+
+    BotRuntimeStatus {
+        lifecycle_status,
+        sandbox_state,
+        sandbox_exists,
+        sandbox_is_running,
+        secrets_configured,
+        archived,
+        control_available,
+    }
+}
+
 /// A recorded paper trade (simulated execution).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PaperTrade {
@@ -64,6 +151,28 @@ pub struct PaperTrade {
     pub validation: serde_json::Value,
     pub mock_tx_hash: String,
     pub timestamp: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotLookupCandidates {
+    pub live: Vec<TradingBotRecord>,
+    pub stale: Vec<TradingBotRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DuplicateBotGroup {
+    pub service_id: u64,
+    pub call_id: u64,
+    pub live_bot_ids: Vec<String>,
+    pub stale_bot_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BotStateHealth {
+    pub total_bots: usize,
+    pub live_bots: usize,
+    pub stale_bots: usize,
+    pub duplicate_groups: Vec<DuplicateBotGroup>,
 }
 
 // ── Activation progress (two-phase provisioning: secrets config) ─────────
@@ -255,9 +364,102 @@ pub fn find_bot_by_call_id(
     service_id: u64,
     call_id: u64,
 ) -> Result<Option<TradingBotRecord>, String> {
-    bots()?
-        .find(|b| b.service_id == service_id && b.call_id == call_id)
-        .map_err(|e| e.to_string())
+    Ok(bot_lookup_candidates_by_call_id(service_id, call_id)?
+        .live
+        .into_iter()
+        .next())
+}
+
+pub fn bot_lookup_candidates_by_call_id(
+    service_id: u64,
+    call_id: u64,
+) -> Result<BotLookupCandidates, String> {
+    let mut live: Vec<TradingBotRecord> = Vec::new();
+    let mut stale: Vec<TradingBotRecord> = Vec::new();
+
+    for bot in bots()?.values().map_err(|e| e.to_string())?.into_iter() {
+        if bot.service_id != service_id || bot.call_id != call_id {
+            continue;
+        }
+
+        if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+            live.push(bot);
+        } else {
+            stale.push(bot);
+        }
+    }
+
+    let sort_desc = |a: &TradingBotRecord, b: &TradingBotRecord| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    };
+    live.sort_by(sort_desc);
+    stale.sort_by(sort_desc);
+
+    if live.len() + stale.len() > 1 {
+        let summaries: Vec<String> = live
+            .iter()
+            .map(|b| format!("live:{}:{}@{}", b.id, b.sandbox_id, b.created_at))
+            .chain(
+                stale
+                    .iter()
+                    .map(|b| format!("stale:{}:{}@{}", b.id, b.sandbox_id, b.created_at)),
+            )
+            .collect();
+        tracing::warn!(
+            service_id,
+            call_id,
+            matches = %summaries.join(", "),
+            "Multiple bot records found for service_id/call_id"
+        );
+    }
+
+    Ok(BotLookupCandidates { live, stale })
+}
+
+pub fn bot_state_health() -> Result<BotStateHealth, String> {
+    let all: Vec<TradingBotRecord> = bots()?.values().map_err(|e| e.to_string())?;
+    let mut live_bots = 0usize;
+    let mut stale_bots = 0usize;
+    let mut grouped: std::collections::BTreeMap<(u64, u64), DuplicateBotGroup> =
+        std::collections::BTreeMap::new();
+
+    for bot in &all {
+        let is_live = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok();
+        if is_live {
+            live_bots += 1;
+        } else {
+            stale_bots += 1;
+        }
+
+        let entry = grouped
+            .entry((bot.service_id, bot.call_id))
+            .or_insert_with(|| DuplicateBotGroup {
+                service_id: bot.service_id,
+                call_id: bot.call_id,
+                live_bot_ids: Vec::new(),
+                stale_bot_ids: Vec::new(),
+            });
+
+        if is_live {
+            entry.live_bot_ids.push(bot.id.clone());
+        } else {
+            entry.stale_bot_ids.push(bot.id.clone());
+        }
+    }
+
+    let duplicate_groups = grouped
+        .into_values()
+        .filter(|group| group.live_bot_ids.len() + group.stale_bot_ids.len() > 1)
+        .collect();
+
+    Ok(BotStateHealth {
+        total_bots: all.len(),
+        live_bots,
+        stale_bots,
+        duplicate_groups,
+    })
 }
 
 /// Get a bot by either its trading ID or vault address.

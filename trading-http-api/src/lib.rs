@@ -107,6 +107,10 @@ pub struct MultiBotTradingState {
     /// on-chain nonce, resulting in one transaction reverting. Sharing a single
     /// `ChainClient` (cloned, which shares internal nonce state) prevents this.
     pub chain_client: Option<ChainClient>,
+    /// RPC URL that the shared chain client is bound to.
+    pub chain_client_rpc_url: Option<String>,
+    /// Chain ID that the shared chain client is bound to.
+    pub chain_client_chain_id: Option<u64>,
 }
 
 /// Build a multi-bot trading HTTP API router.
@@ -121,8 +125,14 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
             "/health",
             get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
         )
+        .merge(routes::market_data::multi_bot_router())
+        .merge(routes::portfolio::multi_bot_router())
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
+        .merge(routes::collateral::multi_bot_router())
+        .merge(routes::circuit::multi_bot_router())
+        .merge(routes::adapters::multi_bot_router())
+        .merge(routes::metrics::multi_bot_router())
         .merge(routes::trades::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

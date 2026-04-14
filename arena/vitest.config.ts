@@ -8,11 +8,9 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   resolve: {
     alias: {
-      // Linked packages have broken transitive deps in their node_modules.
-      // Alias to lightweight stubs that provide the same exports.
-      '@tangle/blueprint-ui/components': path.join(stubs, 'blueprint-ui-components.tsx'),
-      '@tangle/blueprint-ui': path.join(stubs, 'blueprint-ui.ts'),
-      '@tangle/agent-ui': path.join(stubs, 'empty.ts'),
+      // Stub browser-heavy packages we don't need to exercise in unit tests.
+      '@tangle-network/sandbox-ui': path.join(stubs, 'empty.ts'),
+      '@tangle-network/sandbox-ui/hooks': path.join(stubs, 'empty.ts'),
       'framer-motion': path.join(stubs, 'framer-motion.tsx'),
     },
   },

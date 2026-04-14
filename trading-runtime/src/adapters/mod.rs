@@ -8,8 +8,6 @@ pub mod uniswap_v3;
 pub mod vertex;
 
 use alloy::primitives::{Address, Bytes, U256};
-use alloy::sol;
-use alloy::sol_types::SolCall;
 
 /// Common trait for protocol adapters
 pub trait ProtocolAdapter {
@@ -44,12 +42,12 @@ pub struct ActionParams {
     pub vault_address: Address,
 }
 
-/// A pre-call to execute before the main vault action (e.g., ERC20 approve).
+/// An atomic approval update to apply inside the vault execution transaction.
 #[derive(Debug, Clone)]
-pub struct PreCall {
-    pub target: Address,
-    pub calldata: Bytes,
-    pub value: U256,
+pub struct Approval {
+    pub token: Address,
+    pub spender: Address,
+    pub amount: U256,
 }
 
 /// Encoded action ready for vault execution
@@ -60,20 +58,15 @@ pub struct EncodedAction {
     pub value: U256,
     pub min_output: U256,
     pub output_token: Address,
-    pub pre_calls: Vec<PreCall>,
+    pub approvals: Vec<Approval>,
 }
 
-sol! {
-    function approve(address spender, uint256 amount) external returns (bool);
-}
-
-/// Encode an ERC20 approve pre-call.
-pub fn encode_erc20_approve(token: Address, spender: Address, amount: U256) -> PreCall {
-    let calldata = approveCall { spender, amount }.abi_encode();
-    PreCall {
-        target: token,
-        calldata: Bytes::from(calldata),
-        value: U256::ZERO,
+/// Describe an atomic vault-held token approval to apply during execution.
+pub fn approval(token: Address, spender: Address, amount: U256) -> Approval {
+    Approval {
+        token,
+        spender,
+        amount,
     }
 }
 

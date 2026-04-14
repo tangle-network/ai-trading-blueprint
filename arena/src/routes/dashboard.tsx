@@ -3,31 +3,41 @@ import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import {
   provisionsForOwner,
+  getProvisionStructuralFingerprint,
   updateProvision,
   removeProvision,
   type TrackedProvision,
 } from '~/lib/stores/provisions';
-import { publicClient } from '@tangle/blueprint-ui';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { addresses } from '~/lib/contracts/addresses';
-import { useStore } from '@nanostores/react';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useUserServices } from '~/lib/hooks/useUserServices';
-import { dismissedBotsStore, dismissBot, undismissBot } from '~/lib/stores/dismissedBots';
-import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { ServiceCard } from '~/components/home/ServiceCard';
 import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
+import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import {
+  doesProvisionMatchBot,
+  doesProvisionLikelyReferToBot,
+  partitionProvisionsForBots,
+} from '~/lib/utils/botProvisionReconciliation';
+import {
+  ALL_TRADING_OPERATOR_API_URLS,
+  getOperatorApiUrlForBlueprint,
+  HAS_TRADING_OPERATOR_API,
+} from '~/lib/operator/meta';
+import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
- * (phase, serviceId, vaultAddress, callId, id count). Ignores progressDetail/progressPhase
- * updates that the watcher emits every few seconds.
+ * (phase, serviceId, vaultAddress, callId, bot/sandbox identity, id count).
+ * Ignores progressDetail/progressPhase updates that the watcher emits every few seconds.
  */
 function useStableProvisions(userAddress: string | undefined): TrackedProvision[] {
   const storeRef = useRef(provisionsForOwner(userAddress as any));
@@ -43,8 +53,7 @@ function useStableProvisions(userAddress: string | undefined): TrackedProvision[
     (cb) => storeRef.current.subscribe(cb),
     (): TrackedProvision[] => {
       const next = storeRef.current.get() as TrackedProvision[];
-      // Fingerprint: only fields that affect dashboard layout
-      const fp = next.map((p: TrackedProvision) => `${p.id}|${p.phase}|${p.serviceId}|${p.vaultAddress}|${p.callId}|${p.progressPhase}`).join(';');
+      const fp = getProvisionStructuralFingerprint(next);
       if (fp !== fingerprintRef.current) {
         fingerprintRef.current = fp;
         snapshotRef.current = next;
@@ -61,100 +70,101 @@ export const meta: MetaFunction = () => [
 export default function HomePage() {
   const { address: userAddress, isConnected } = useAccount();
 
+  useTradingRouteAutoAuth({
+    enabled: isConnected && HAS_TRADING_OPERATOR_API,
+    routeKey: 'dashboard',
+  });
+
   // Data sources
   const { services, isLoading: servicesLoading } = useUserServices(userAddress);
-  const { bots: rawBots, isLoading: botsLoading } = useBots();
+  const { bots: rawBots, isLoading: botsLoading, operatorDataState } = useBots();
   const bots = useBotEnrichment(rawBots);
 
   const myProvisions = useStableProvisions(userAddress);
+  const authoritativeBots = useMemo(
+    () => bots.filter((bot) => bot.source === 'operator'),
+    [bots],
+  );
+  const { unresolved: unmatchedProvisions } = useMemo(
+    () => partitionProvisionsForBots(myProvisions, authoritativeBots),
+    [authoritativeBots, myProvisions],
+  );
+  const lockedOperatorProvisions = useMemo(
+    () => unmatchedProvisions.filter((provision) => provision.phase !== 'failed' && !!provision.botId),
+    [unmatchedProvisions],
+  );
+  const unresolvedProvisions = useMemo(
+    () => unmatchedProvisions.filter((provision) => provision.phase === 'failed' || !provision.botId),
+    [unmatchedProvisions],
+  );
+  const operatorDataIncomplete = operatorDataState !== 'ready' && lockedOperatorProvisions.length > 0;
+  const lockedBotsByService = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const provision of lockedOperatorProvisions) {
+      if (provision.serviceId == null) continue;
+      map.set(provision.serviceId, (map.get(provision.serviceId) ?? 0) + 1);
+    }
+    return map;
+  }, [lockedOperatorProvisions]);
 
   // State
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
   // Derived data
-  const myServiceIds = useMemo(() => {
-    const ids = new Set(services.map((s) => s.serviceId));
-    // Also include service IDs from provisions (catches newly created services)
-    for (const p of myProvisions) {
-      if (p.serviceId != null) ids.add(p.serviceId);
-    }
-    return ids;
-  }, [services, myProvisions]);
-
-  // Bots the user has actually provisioned or that are confirmed active.
-  // Excludes on-chain-only bots that were never provisioned by anyone.
-  const myBots = useMemo(() => {
-    const provVaults = new Set(
-      myProvisions
-        .filter((p) => p.vaultAddress)
-        .map((p) => p.vaultAddress!.toLowerCase()),
-    );
-    const provIds = new Set(myProvisions.map((p) => p.id));
-
-    return bots.filter((b) => {
-      // Provision-derived bots (directly from provisions store)
-      if (b.id.startsWith('provision:') && provIds.has(b.id.slice('provision:'.length))) return true;
-      // Bot vault matches a user provision
-      if (provVaults.has(b.vaultAddress.toLowerCase())) return true;
-      // Bot belongs to one of the user's services
-      if (myServiceIds.has(b.serviceId)) return true;
-      return false;
-    });
-  }, [bots, myServiceIds, myProvisions]);
-
-  // Filter out dismissed bots from user's view (auto-undismiss if they become active)
-  const dismissedBots = useStore(dismissedBotsStore);
-  const dismissedSet = useMemo(() => new Set(dismissedBots), [dismissedBots]);
-  const visibleMyBots = useMemo(
-    () => myBots.filter((b) => {
-      if (!dismissedSet.has(b.id)) return true;
-      // Auto-undismiss bots that have become active or paused
-      if (b.status === 'active' || b.status === 'paused') {
-        undismissBot(b.id);
-        return true;
-      }
-      return false;
-    }),
-    [myBots, dismissedSet],
+  const confirmedServiceIds = useMemo(
+    () => new Set(services.map((service) => service.serviceId)),
+    [services],
   );
+  const confirmedServiceVaults = useMemo(() => new Set(
+    services.flatMap((service) => service.vaultAddresses).map((address) => address.toLowerCase()),
+  ), [services]);
+
+  // Main dashboard bots are strict-authoritative only.
+  const myBots = useMemo(() => {
+    return authoritativeBots.filter((b) => {
+      if (b.status === 'archived') return false;
+      if (confirmedServiceIds.has(b.serviceId)) return true;
+      if (confirmedServiceVaults.has(b.vaultAddress.toLowerCase())) return true;
+      return myProvisions.some((provision) =>
+        provision.phase !== 'failed' && doesProvisionMatchBot(provision, b),
+      );
+    });
+  }, [authoritativeBots, confirmedServiceIds, confirmedServiceVaults, myProvisions]);
+  const visibleMyBots = myBots;
 
   // Bots grouped by service
   const botsByService = useMemo(() => {
     const map = new Map<number, typeof bots>();
-    for (const bot of bots) {
+    for (const bot of authoritativeBots) {
+      if (bot.status === 'archived') continue;
       const list = map.get(bot.serviceId) ?? [];
       list.push(bot);
       map.set(bot.serviceId, list);
     }
     return map;
-  }, [bots]);
+  }, [authoritativeBots]);
 
   // Provision groups
-  const inProgressProvisions = myProvisions.filter((p) =>
+  const inProgressProvisions = unresolvedProvisions.filter((p) =>
     ['pending_confirmation', 'job_submitted', 'job_processing', 'awaiting_secrets'].includes(p.phase),
   );
-  const failedProvisions = myProvisions.filter((p) => p.phase === 'failed');
-
-  // Match awaiting-secrets provisions to bots for the configure button
-  const awaitingSecretsForBot = useMemo(() => {
-    const map = new Map<string, TrackedProvision>();
-    for (const prov of myProvisions) {
-      if (prov.phase !== 'awaiting_secrets') continue;
-      if (prov.vaultAddress) {
-        map.set(prov.vaultAddress.toLowerCase(), prov);
-      }
-    }
-    return map;
-  }, [myProvisions]);
+  const currentConcreteBots = bots;
+  const failedProvisions = useMemo(
+    () => unresolvedProvisions.filter(
+      (provision) =>
+        provision.phase === 'failed'
+        && !currentConcreteBots.some((bot) => doesProvisionLikelyReferToBot(provision, bot)),
+    ),
+    [currentConcreteBots, unresolvedProvisions],
+  );
 
   // Aggregate stats (use visible bots for display)
   const activeBots = visibleMyBots.filter((b) => b.status === 'active');
-  const pendingBots = visibleMyBots.filter((b) => b.status === 'needs_config');
   const totalTvl = visibleMyBots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalPnl = visibleMyBots.reduce((sum, b) => sum + b.pnlAbsolute, 0);
   const totalPnlPct = visibleMyBots.reduce((sum, b) => sum + b.pnlPercent, 0);
   const totalTrades = visibleMyBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const knownBotCount = visibleMyBots.length;
 
   // Handlers
   const dismissProvision = useCallback((id: string) => {
@@ -237,11 +247,17 @@ export default function HomePage() {
     );
   }
 
-  const hasContent = services.length > 0 || visibleMyBots.length > 0 || inProgressProvisions.length > 0;
+  const hasLockedBots = lockedOperatorProvisions.length > 0 && operatorDataState !== 'ready';
+  const hasBotSection = visibleMyBots.length > 0 || hasLockedBots;
+  const hasContent = services.length > 0
+    || hasBotSection
+    || inProgressProvisions.length > 0
+    || failedProvisions.length > 0;
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+      <OperatorSessionBanner />
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
         <div>
@@ -262,24 +278,28 @@ export default function HomePage() {
       {hasContent && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-8">
           <StatTile label="Services" value={services.length} />
-          <StatTile label="Active Bots" value={activeBots.length} />
+          <StatTile label="Active Bots" value={operatorDataIncomplete ? '—' : activeBots.length} />
           <StatTile
             label="Total TVL"
-            value={totalTvl}
+            value={operatorDataIncomplete ? '—' : totalTvl}
             prefix="$"
             format={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toFixed(0)}
           />
           <StatTile
             label="Total PnL"
-            value={totalPnlPct}
+            value={operatorDataIncomplete ? '—' : totalPnlPct}
             suffix="%"
             format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`}
             valueColor={totalPnlPct >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}
           />
-          <StatTile label="Trades" value={totalTrades} className="hidden lg:block" />
+          <StatTile label="Trades" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
           <StatTile
             label="Avg Score"
-            value={visibleMyBots.length > 0 ? Math.round(visibleMyBots.reduce((s, b) => s + b.avgValidatorScore, 0) / visibleMyBots.length) : 0}
+            value={operatorDataIncomplete
+              ? '—'
+              : visibleMyBots.length > 0
+                ? Math.round(visibleMyBots.reduce((s, b) => s + b.avgValidatorScore, 0) / visibleMyBots.length)
+                : 0}
             className="hidden lg:block"
           />
         </div>
@@ -291,6 +311,7 @@ export default function HomePage() {
           provisions={inProgressProvisions}
           failedProvisions={failedProvisions}
           onConfigure={(prov) => setSecretsTarget({
+            apiUrl: getOperatorApiUrlForBlueprint(prov.blueprintType),
             sandboxId: prov.sandboxId,
             callId: prov.callId,
             serviceId: prov.serviceId,
@@ -319,6 +340,7 @@ export default function HomePage() {
                   <ServiceCard
                     service={svc}
                     bots={botsByService.get(svc.serviceId) ?? []}
+                    lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
                   />
                 </StaggerItem>
               ))}
@@ -328,50 +350,47 @@ export default function HomePage() {
       )}
 
       {/* ── My Bots ─────────────────────────────────────────────────────── */}
-      {visibleMyBots.length > 0 ? (
+      {hasBotSection ? (
         <section>
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
               My Bots
             </h2>
-            <Badge variant="secondary" className="text-[10px]">{visibleMyBots.length}</Badge>
-            {pendingBots.length > 0 && (
-              <button
-                onClick={() => { pendingBots.forEach((b) => dismissBot(b.id)); toast.info(`Cleared ${pendingBots.length} pending`); }}
-                className="ml-auto text-xs font-data text-arena-elements-textTertiary hover:text-crimson-400 transition-colors"
-              >
-                Clear pending ({pendingBots.length})
-              </button>
+            <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
+            {hasLockedBots && (
+              <span className="text-xs font-data text-arena-elements-textTertiary ml-1">
+                {lockedOperatorProvisions.length} require operator auth
+              </span>
             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {visibleMyBots.map((bot) => {
-              const matchingProv = awaitingSecretsForBot.get(bot.vaultAddress.toLowerCase());
-              // Configure button: prefer provision-backed target, fall back to bot identifiers
-              const configureHandler = matchingProv
-                ? () => setSecretsTarget({
-                    sandboxId: matchingProv.sandboxId,
-                    callId: matchingProv.callId ?? bot.callId,
-                    serviceId: matchingProv.serviceId ?? bot.serviceId,
-                    provisionId: matchingProv.id,
-                  })
-                : bot.status === 'needs_config'
+          {visibleMyBots.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {visibleMyBots.map((bot) => {
+                const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
                   ? () => setSecretsTarget({
+                      apiUrl: bot.operatorApiUrl ?? undefined,
+                      botId: bot.id,
                       sandboxId: bot.sandboxId,
                       callId: bot.callId,
                       serviceId: bot.serviceId,
                     })
                   : undefined;
-              return (
-                <HomeBotCard
-                  key={bot.id}
-                  bot={bot}
-                  onConfigure={configureHandler}
-                  onDismiss={() => { dismissBot(bot.id); toast.info('Dismissed'); }}
-                />
-              );
-            })}
-          </div>
+                return (
+                  <HomeBotCard
+                    key={bot.id}
+                    bot={bot}
+                    onConfigure={configureHandler}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <OperatorAccessCard
+              apiUrls={ALL_TRADING_OPERATOR_API_URLS}
+              title="Operator authentication required"
+              description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed bot${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
+            />
+          )}
         </section>
       ) : !hasContent ? (
         <Card>
@@ -411,14 +430,16 @@ function StatTile({
   className,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   prefix?: string;
   suffix?: string;
   format?: (v: number) => string;
   valueColor?: string;
   className?: string;
 }) {
-  const display = format ? format(value) : String(value);
+  const display = typeof value === 'number'
+    ? (format ? format(value) : String(value))
+    : value;
 
   return (
     <div className={`glass-card rounded-lg px-4 py-3 ${className ?? ''}`}>

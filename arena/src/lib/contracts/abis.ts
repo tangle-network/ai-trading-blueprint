@@ -1,5 +1,150 @@
 // Core Tangle ABIs from shared package
-export { tangleJobsAbi, tangleServicesAbi } from '@tangle/blueprint-ui';
+import { tangleJobsAbi as sharedTangleJobsAbi } from '@tangle-network/blueprint-ui';
+
+export const tangleJobsAbi = sharedTangleJobsAbi;
+
+// Keep the service ABI local until the published shared package catches up with
+// the current pricing-engine quote tuple.
+export const tangleServicesAbi = [
+  {
+    type: 'function',
+    name: 'requestService',
+    inputs: [
+      { name: 'blueprintId', type: 'uint64' },
+      { name: 'operators', type: 'address[]' },
+      { name: 'config', type: 'bytes' },
+      { name: 'permittedCallers', type: 'address[]' },
+      { name: 'ttl', type: 'uint64' },
+      { name: 'paymentToken', type: 'address' },
+      { name: 'paymentAmount', type: 'uint256' },
+    ],
+    outputs: [{ name: 'requestId', type: 'uint64' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    name: 'createServiceFromQuotes',
+    inputs: [
+      { name: 'blueprintId', type: 'uint64' },
+      {
+        name: 'quotes',
+        type: 'tuple[]',
+        components: [
+          {
+            name: 'details',
+            type: 'tuple',
+            components: [
+              { name: 'blueprintId', type: 'uint64' },
+              { name: 'ttlBlocks', type: 'uint64' },
+              { name: 'totalCost', type: 'uint256' },
+              { name: 'timestamp', type: 'uint64' },
+              { name: 'expiry', type: 'uint64' },
+              { name: 'confidentiality', type: 'uint8' },
+              {
+                name: 'securityCommitments',
+                type: 'tuple[]',
+                components: [
+                  {
+                    name: 'asset',
+                    type: 'tuple',
+                    components: [
+                      { name: 'kind', type: 'uint8' },
+                      { name: 'token', type: 'address' },
+                    ],
+                  },
+                  { name: 'exposureBps', type: 'uint16' },
+                ],
+              },
+              {
+                name: 'resourceCommitments',
+                type: 'tuple[]',
+                components: [
+                  { name: 'kind', type: 'uint8' },
+                  { name: 'count', type: 'uint64' },
+                ],
+              },
+            ],
+          },
+          { name: 'signature', type: 'bytes' },
+          { name: 'operator', type: 'address' },
+        ],
+      },
+      { name: 'config', type: 'bytes' },
+      { name: 'permittedCallers', type: 'address[]' },
+      { name: 'ttl', type: 'uint64' },
+    ],
+    outputs: [{ name: 'serviceId', type: 'uint64' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    name: 'getService',
+    inputs: [{ name: 'serviceId', type: 'uint64' }],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'blueprintId', type: 'uint64' },
+          { name: 'owner', type: 'address' },
+          { name: 'createdAt', type: 'uint64' },
+          { name: 'ttl', type: 'uint64' },
+          { name: 'terminatedAt', type: 'uint64' },
+          { name: 'lastPaymentAt', type: 'uint64' },
+          { name: 'operatorCount', type: 'uint32' },
+          { name: 'minOperators', type: 'uint32' },
+          { name: 'maxOperators', type: 'uint32' },
+          { name: 'membership', type: 'uint8' },
+          { name: 'pricing', type: 'uint8' },
+          { name: 'status', type: 'uint8' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'isServiceActive',
+    inputs: [{ name: 'serviceId', type: 'uint64' }],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getServiceOperators',
+    inputs: [{ name: 'serviceId', type: 'uint64' }],
+    outputs: [{ name: '', type: 'address[]' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'isPermittedCaller',
+    inputs: [
+      { name: 'serviceId', type: 'uint64' },
+      { name: 'caller', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    name: 'ServiceRequested',
+    inputs: [
+      { name: 'requestId', type: 'uint64', indexed: true },
+      { name: 'blueprintId', type: 'uint64', indexed: true },
+      { name: 'requester', type: 'address', indexed: true },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'ServiceActivated',
+    inputs: [
+      { name: 'serviceId', type: 'uint64', indexed: true },
+      { name: 'requestId', type: 'uint64', indexed: true },
+      { name: 'blueprintId', type: 'uint64', indexed: true },
+    ],
+  },
+] as const;
 
 // Arena-specific ABIs (stay local)
 export const tradingVaultAbi = [

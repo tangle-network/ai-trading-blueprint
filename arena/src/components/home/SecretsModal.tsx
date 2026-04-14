@@ -1,12 +1,16 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { SecretsProviderFields, type SecretsEnvVar } from '~/components/secrets/SecretsProviderFields';
-import { updateProvision } from '~/lib/stores/provisions';
+import { removeProvision, updateProvision } from '~/lib/stores/provisions';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { buildBotScopedPath, useOperatorMeta } from '~/lib/operator/meta';
+import { isStaleStateError, readOperatorError } from '~/lib/operator/errors';
+import { dispatchBotsRefresh } from '~/lib/events/bots';
+import { normalizeWorkflowId } from '~/lib/utils/workflowId';
 import {
   buildEnvForProvider,
   ACTIVATION_LABELS,
@@ -16,9 +20,11 @@ import {
 } from '~/lib/config/aiProviders';
 
 const OPERATOR_API_URL = import.meta.env.VITE_OPERATOR_API_URL ?? '';
+const WALLET_AUTH_REQUIRED_MESSAGE = 'Wallet authentication required to load bot data.';
 
 /** Generic target for secrets configuration — works from provisions or bot detail. */
 export type SecretsTarget = {
+  apiUrl?: string;
   sandboxId?: string;
   callId?: number;
   serviceId?: number;
@@ -33,6 +39,7 @@ export function SecretsModal({
   target: SecretsTarget | null;
   onClose: () => void;
 }) {
+  const apiUrl = target?.apiUrl ?? OPERATOR_API_URL;
   const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
   const [provider, setProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
@@ -40,37 +47,185 @@ export function SecretsModal({
   const envIdRef = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
-  const operatorAuth = useOperatorAuth(OPERATOR_API_URL);
+  const operatorAuth = useOperatorAuth(apiUrl);
+  const { data: operatorMeta } = useOperatorMeta(apiUrl);
 
   const [lookupError, setLookupError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const clearPolling = useCallback((): void => {
+    if (!pollRef.current) return;
+    clearInterval(pollRef.current);
+    pollRef.current = null;
+  }, []);
+
+  const getOperatorToken = useCallback(async (refresh = false): Promise<string | null> => {
+    if (refresh) {
+      operatorAuth.clearCachedToken();
+    } else if (operatorAuth.token) {
+      return operatorAuth.token;
+    }
+
+    const authToken = await operatorAuth.authenticate();
+    if (!authToken) {
+      setLookupError(WALLET_AUTH_REQUIRED_MESSAGE);
+      return null;
+    }
+
+    return authToken;
+  }, [operatorAuth]);
+
   // Clean up poll interval when dialog closes or component unmounts
   useEffect(() => {
     if (!target) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      clearPolling();
       setIsSubmitting(false);
       setActivationPhase(null);
     }
-  }, [target]);
+  }, [clearPolling, target]);
 
   const resolveBotId = useCallback(async (t: SecretsTarget): Promise<string | null> => {
-    const result = await resolveBot(OPERATOR_API_URL, {
+    let authToken = await getOperatorToken();
+    if (!authToken) return null;
+
+    let result = await resolveBot(apiUrl, {
       botId: t.botId,
       callId: t.callId,
       serviceId: t.serviceId,
       sandboxId: t.sandboxId,
+      token: authToken,
     });
+    if (!('botId' in result) && result.code === 'auth_required') {
+      authToken = await getOperatorToken(true);
+      if (!authToken) return null;
+      result = await resolveBot(apiUrl, {
+        botId: t.botId,
+        callId: t.callId,
+        serviceId: t.serviceId,
+        sandboxId: t.sandboxId,
+        token: authToken,
+      });
+    }
+
     if ('botId' in result) {
+      if (t.provisionId && t.botId !== result.botId) {
+        updateProvision(t.provisionId, { botId: result.botId });
+      }
       setLookupError(null);
       return result.botId;
     }
+    if (t.provisionId && (result.code === 'stale_state' || result.code === 'conflict')) {
+      removeProvision(t.provisionId);
+    }
     setLookupError(result.error);
     return null;
-  }, []);
+  }, [apiUrl, getOperatorToken]);
+
+  const startActivationPolling = useCallback((botId: string): void => {
+    clearPolling();
+
+    const pollStart = Date.now();
+    const pollTimeoutMs = 5 * 60 * 1000;
+    let pollFailures = 0;
+
+    pollRef.current = setInterval(async () => {
+      if (Date.now() - pollStart > pollTimeoutMs) {
+        clearPolling();
+        return;
+      }
+
+      try {
+        if (!operatorMeta) return;
+
+        const headers: Record<string, string> = {};
+        if (operatorAuth.token) {
+          headers.Authorization = `Bearer ${operatorAuth.token}`;
+        }
+
+        const res = await fetch(
+          `${apiUrl}${buildBotScopedPath(operatorMeta, botId, '/activation-progress')}`,
+          { headers },
+        );
+
+        if (!res.ok) {
+          pollFailures += 1;
+        } else {
+          const data = await res.json();
+          setActivationPhase(data.phase ?? null);
+          pollFailures = 0;
+        }
+      } catch {
+        pollFailures += 1;
+      }
+
+      if (pollFailures >= 10) {
+        clearPolling();
+      }
+    }, 1000);
+  }, [apiUrl, clearPolling, operatorAuth.token, operatorMeta]);
+
+  const buildSecretsEnv = useCallback((): Record<string, string> => {
+    const envJson = buildEnvForProvider(provider, apiKey.trim());
+
+    for (const envVar of extraEnvs) {
+      const key = envVar.key.trim();
+      const value = envVar.value.trim();
+      if (!key || !value) continue;
+      envJson[key] = value;
+    }
+
+    return envJson;
+  }, [apiKey, extraEnvs, provider]);
+
+  const submitSecrets = useCallback(async (
+    botId: string,
+    envJson: Record<string, string>,
+  ): Promise<{ workflow_id?: string; sandbox_id?: string }> => {
+    if (!operatorMeta) {
+      throw new Error('Operator metadata not loaded');
+    }
+
+    const secretsPath = `${apiUrl}${buildBotScopedPath(operatorMeta, botId, '/secrets')}`;
+
+    const postSecrets = async (authToken: string): Promise<Response> => {
+      return fetch(secretsPath, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ env_json: envJson }),
+      });
+    };
+
+    let authToken = await getOperatorToken();
+    if (!authToken) {
+      throw new Error('Wallet authentication failed');
+    }
+
+    let res = await postSecrets(authToken);
+    if (res.status === 401) {
+      authToken = await getOperatorToken(true);
+      if (!authToken) {
+        throw new Error('Re-authentication failed');
+      }
+      res = await postSecrets(authToken);
+    }
+
+    if (!res.ok) {
+      throw await readOperatorError(res);
+    }
+
+    const result = await res.json() as {
+      workflow_id?: string | number | null;
+      sandbox_id?: string | null;
+    };
+
+    return {
+      workflow_id: normalizeWorkflowId(result.workflow_id),
+      sandbox_id: typeof result.sandbox_id === 'string' ? result.sandbox_id : undefined,
+    };
+  }, [apiUrl, getOperatorToken, operatorMeta]);
 
   const handleSubmit = async () => {
     if (!target || !apiKey.trim()) return;
@@ -85,101 +240,34 @@ export function SecretsModal({
       return;
     }
 
-    if (pollRef.current) clearInterval(pollRef.current);
-    let pollFailures = 0;
-    const pollStart = Date.now();
-    const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes hard cap
-    pollRef.current = setInterval(async () => {
-      if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-        return;
-      }
-      try {
-        const res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/activation-progress`);
-        if (res.ok) {
-          const data = await res.json();
-          setActivationPhase(data.phase ?? null);
-          pollFailures = 0;
-        } else {
-          pollFailures++;
-        }
-      } catch {
-        pollFailures++;
-      }
-      if (pollFailures >= 10 && pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    }, 1000);
+    startActivationPolling(botId);
 
     try {
-      const envJson: Record<string, string> = buildEnvForProvider(provider, apiKey.trim());
-      for (const e of extraEnvs) {
-        if (e.key.trim() && e.value.trim()) {
-          envJson[e.key.trim()] = e.value.trim();
-        }
-      }
-
-      let authToken = operatorAuth.token;
-      if (!authToken) {
-        authToken = await operatorAuth.authenticate();
-        if (!authToken) throw new Error('Wallet authentication failed');
-      }
-
-      let res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ env_json: envJson }),
-      });
-
-      // Retry once with fresh token on 401 (stale PASETO)
-      if (res.status === 401) {
-        authToken = await operatorAuth.authenticate();
-        if (!authToken) throw new Error('Re-authentication failed');
-        res = await fetch(`${OPERATOR_API_URL}/api/bots/${botId}/secrets`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ env_json: envJson }),
-        });
-      }
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || `HTTP ${res.status}`);
-      }
-
-      const result = await res.json();
+      const result = await submitSecrets(botId, buildSecretsEnv());
 
       if (target.provisionId) {
         updateProvision(target.provisionId, {
           phase: 'active',
+          botId,
           workflowId: result.workflow_id,
           sandboxId: result.sandbox_id ?? target.sandboxId,
         });
       }
 
       toast.success('API keys configured — agent is now active!');
+      dispatchBotsRefresh();
       setApiKey('');
       setExtraEnvs([]);
       onClose();
     } catch (err) {
+      if (isStaleStateError(err)) {
+        setLookupError(err.message);
+      }
       toast.error(
         `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`,
       );
     } finally {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      clearPolling();
       setIsSubmitting(false);
       setActivationPhase(null);
     }

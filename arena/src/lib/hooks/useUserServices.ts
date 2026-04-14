@@ -1,12 +1,16 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
+import { useBlockNumber } from 'wagmi';
 import { tangleServicesAbi, vaultFactoryAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { publicClient } from '@tangle/blueprint-ui';
-import { provisionsStore } from '~/lib/stores/provisions';
+import { publicClient } from '@tangle-network/blueprint-ui';
+import {
+  provisionsStore,
+  getProvisionStructuralFingerprint,
+} from '~/lib/stores/provisions';
 import { ALL_BLUEPRINT_IDS } from '~/lib/blueprints';
-const BLOCK_TIME_SECONDS = 12;
+import { computeServiceRemainingSeconds } from '~/lib/serviceTtl';
 
 export interface UserService {
   serviceId: number;
@@ -27,6 +31,7 @@ export interface UserService {
  * Queries on-chain events + multicall for service metadata.
  */
 export function useUserServices(userAddress: Address | undefined) {
+  const { data: currentBlock } = useBlockNumber({ watch: true });
   const [services, setServices] = useState<UserService[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -74,13 +79,6 @@ export function useUserServices(userAddress: Address | undefined) {
         }
       }
 
-      // Also include service IDs from tracked provisions (catches newly created services)
-      for (const prov of provisionsStore.get()) {
-        if (prov.serviceId != null && !serviceIds.includes(prov.serviceId)) {
-          serviceIds.push(prov.serviceId);
-        }
-      }
-
       if (serviceIds.length === 0) {
         setServices([]);
         setIsLoading(false);
@@ -114,19 +112,9 @@ export function useUserServices(userAddress: Address | undefined) {
         }
       }
 
-      // Get current block for TTL computation
-      const currentBlock = Number(await publicClient.getBlockNumber());
-
       // Build service objects
       const built: UserService[] = [];
       const userLower = userAddress.toLowerCase();
-
-      // Service IDs from user's provisions (user should always see services they provisioned)
-      const provisionServiceIds = new Set(
-        provisionsStore.get()
-          .filter((p: { owner: string; serviceId?: number }) => p.owner.toLowerCase() === userLower && p.serviceId != null)
-          .map((p: { serviceId?: number }) => p.serviceId!),
-      );
 
       for (let i = 0; i < serviceIds.length; i++) {
         const serviceData = serviceResults[i * 3]?.result as any;
@@ -141,11 +129,11 @@ export function useUserServices(userAddress: Address | undefined) {
         const terminatedAt = Number(serviceData.terminatedAt);
         const status = Number(serviceData.status);
 
-        // Filter: show services user owns, operates, or provisioned
+        // Filter: show services user owns or operates. Local provision drafts
+        // can trigger a refresh, but they should not grant visibility.
         const isOwner = owner.toLowerCase() === userLower;
         const isOperator = operators.some((op) => op.toLowerCase() === userLower);
-        const hasProvision = provisionServiceIds.has(serviceIds[i]);
-        if (!isOwner && !isOperator && !hasProvision) continue;
+        if (!isOwner && !isOperator) continue;
 
         // Vault addresses
         const vaultAddresses: Address[] = [];
@@ -157,21 +145,7 @@ export function useUserServices(userAddress: Address | undefined) {
             }
           }
         }
-        // Also pull vault addresses from provisions
-        for (const prov of provisionsStore.get()) {
-          if (prov.serviceId === serviceIds[i] && prov.vaultAddress) {
-            const va = prov.vaultAddress as Address;
-            if (va !== zeroAddress && !vaultAddresses.some((a) => a.toLowerCase() === va.toLowerCase())) {
-              vaultAddresses.push(va);
-            }
-          }
-        }
-
         // TTL
-        const expiryBlock = createdAt + ttl;
-        const remainingBlocks = Math.max(0, expiryBlock - currentBlock);
-        const remainingSeconds = ttl > 0 ? remainingBlocks * BLOCK_TIME_SECONDS : null;
-
         built.push({
           serviceId: serviceIds[i],
           blueprintId: Number(serviceData.blueprintId),
@@ -183,7 +157,7 @@ export function useUserServices(userAddress: Address | undefined) {
           operators,
           vaultAddresses,
           isActive,
-          remainingSeconds,
+          remainingSeconds: computeServiceRemainingSeconds(createdAt, ttl),
         });
       }
 
@@ -198,7 +172,30 @@ export function useUserServices(userAddress: Address | undefined) {
 
   useEffect(() => {
     discover();
+    let provisionFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+    const unsubscribe = provisionsStore.subscribe(() => {
+      const nextFingerprint = getProvisionStructuralFingerprint(provisionsStore.get());
+      if (nextFingerprint === provisionFingerprint) return;
+      provisionFingerprint = nextFingerprint;
+      void discover();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [discover]);
 
-  return { services, isLoading, refetch: discover };
+  const liveServices = useMemo(() => {
+    void currentBlock;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    return services.map((service) => {
+      return {
+        ...service,
+        remainingSeconds: computeServiceRemainingSeconds(service.createdAt, service.ttl, nowSeconds),
+      };
+    });
+  }, [currentBlock, services]);
+
+  return { services: liveServices, isLoading, refetch: discover };
 }

@@ -1,8 +1,8 @@
+import { bpThemeTokens } from '@tangle-network/blueprint-ui/preset';
 import { icons as phIcons } from '@iconify-json/ph';
 import { defineConfig, presetIcons, transformerDirectives } from 'unocss';
 import { presetAnimations } from 'unocss-preset-animations';
 import { presetWind4 } from 'unocss/preset-wind4';
-import { bpThemeTokens } from '@tangle/blueprint-ui/preset';
 
 /*
  * OBSIDIAN TERMINAL — Design System
@@ -150,6 +150,20 @@ const SHADCN_COLORS = {
 } as const;
 
 export default defineConfig({
+  content: {
+    pipeline: {
+      include: [
+        'src/**/*.{jsx,tsx}',
+      ],
+      exclude: [
+        '**/*.test.{jsx,tsx}',
+        '**/*.spec.{jsx,tsx}',
+        '**/test/**',
+        '**/tests/**',
+      ],
+    },
+  },
+  blocklist: ['--', '?', '??'],
   preflights: [
     {
       getCSS: () => `
@@ -287,14 +301,6 @@ export default defineConfig({
       },
     }),
   ],
-  content: {
-    pipeline: {
-      include: [
-        /\.(tsx?|jsx?)$/,
-        '../../blueprint-ui/src/**/*.{ts,tsx}',
-      ],
-    },
-  },
   safelist: [
     // Arena icons
     'i-ph:trophy',
@@ -331,7 +337,7 @@ export default defineConfig({
     // Blueprint selector icons (dynamic via bp.icon)
     'i-ph:cloud',
     'i-ph:shield-check',
-    // @tangle/agent-ui icons
+    // @tangle-network/sandbox-ui icons
     'i-ph:check-circle',
     'i-ph:terminal-window',
     'i-ph:copy',

@@ -2,15 +2,20 @@ import { useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import type { Address } from 'viem';
+import { useAccount } from 'wagmi';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
-import { Badge, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
+import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
+import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -35,9 +40,14 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
             </div>
           </div>
         </div>
-        <Badge variant={bot.status === 'active' ? 'success' : (bot.status === 'paused' || bot.status === 'needs_config') ? 'amber' : 'secondary'} className="text-xs shrink-0">
-          {bot.status === 'needs_config' ? 'needs config' : bot.status}
+        <Badge variant={botStatusBadgeVariant(bot.status)} className="text-xs shrink-0">
+          {botStatusLabel(bot.status)}
         </Badge>
+        {bot.verificationState === 'unverified' && (
+          <Badge variant="outline" className="text-xs shrink-0">
+            Unverified
+          </Badge>
+        )}
       </div>
 
       <div className="flex items-end justify-between gap-3">
@@ -83,22 +93,29 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
 }
 
 export default function IndexPage() {
+  const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
   const [timePeriod, setTimePeriod] = useState('30d');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
-  const { bots: rawBots, isLoading, isOnChain } = useBots();
+  useTradingRouteAutoAuth({
+    enabled: isConnected && HAS_TRADING_OPERATOR_API,
+    routeKey: 'leaderboard',
+  });
+  const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
   const bots = useBotEnrichment(rawBots);
 
   // Leaderboard: only bots that are active or were previously active
   const leaderboardBots = bots.filter((b) => {
+    if (b.verificationState === 'unverified') return false;
     if (b.id.startsWith('provision:')) return false;
+    if (b.status === 'archived' || b.status === 'unknown' || b.status === 'needs_config') return false;
     if (b.status === 'active') return true;
-    if (b.status === 'paused') return true; // paused implies was-active
+    if (b.status === 'paused' || b.status === 'winding_down') return true;
     if (b.status === 'stopped') {
       // Only show stopped bots with evidence of prior activity
       return (b.secretsConfigured === true || b.totalTrades > 0 || b.tvl > 0);
     }
-    return false; // needs_config → hidden from leaderboard
+    return false;
   });
 
   const filteredBots = leaderboardBots.filter(
@@ -173,6 +190,8 @@ export default function IndexPage() {
         onTimePeriodChange={setTimePeriod}
       />
 
+      <OperatorSessionBanner />
+
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -180,6 +199,13 @@ export default function IndexPage() {
           ))}
         </div>
       ) : sorted.length === 0 ? (
+        operatorDataState !== 'ready' && isConnected ? (
+          <OperatorAccessCard
+            apiUrls={ALL_TRADING_OPERATOR_API_URLS}
+            title="Operator authentication required"
+            description="Authenticate to load operator-managed agents and live leaderboard metrics."
+          />
+        ) : (
         <div className="glass-card rounded-xl p-16 text-center">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <p className="text-base text-arena-elements-textSecondary mb-2">No agents deployed yet</p>
@@ -187,6 +213,7 @@ export default function IndexPage() {
             <Link to="/provision" className="text-violet-700 dark:text-violet-400 hover:underline">Deploy an agent</Link> to get started.
           </p>
         </div>
+        )
       ) : viewMode === 'table' ? (
         <LeaderboardTable bots={sorted} />
       ) : (

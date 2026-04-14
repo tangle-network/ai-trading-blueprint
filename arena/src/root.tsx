@@ -1,11 +1,14 @@
 import 'virtual:uno.css';
+import '@tangle-network/blueprint-ui/styles.css';
+import '@tangle-network/sandbox-ui/styles';
 import './styles/global.scss';
 
 import { Outlet } from 'react-router';
-import { AppDocument, AppToaster } from '@tangle/blueprint-ui/components';
+import { AppDocument, AppToaster } from '@tangle-network/blueprint-ui/components';
 import { Header } from '~/components/layout/Header';
 import { Footer } from '~/components/layout/Footer';
 import { MotionProvider } from '~/providers/MotionProvider';
+import { TradingSyncProvider } from '~/providers/TradingSyncProvider';
 import { useState, useEffect, type ReactNode } from 'react';
 
 // Client-only wrapper for Web3Provider — connectkit's family package starts
@@ -39,19 +42,21 @@ export default function App() {
       <AppToaster tone="arena" />
       <MotionProvider>
         <ClientWeb3Provider>
-          <div className="flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
-            <a
-              href="#main-content"
-              className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
-            >
-              Skip to content
-            </a>
-            <Header />
-            <main id="main-content" className="flex-1 pt-[var(--header-height)] relative z-1">
-              <Outlet />
-            </main>
-            <Footer />
-          </div>
+          <TradingSyncProvider>
+            <div className="bp-tone-arena flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+              <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
+              >
+                Skip to content
+              </a>
+              <Header />
+              <main id="main-content" className="flex-1 pt-[var(--header-height)] relative z-1">
+                <Outlet />
+              </main>
+              <Footer />
+            </div>
+          </TradingSyncProvider>
         </ClientWeb3Provider>
       </MotionProvider>
     </>

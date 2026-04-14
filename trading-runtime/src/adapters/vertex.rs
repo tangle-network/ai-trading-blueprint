@@ -2,9 +2,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, validate_vault_address,
-};
+use super::{ActionParams, EncodedAction, ProtocolAdapter, approval, validate_vault_address};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -123,11 +121,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
-                        params.token_in,
-                        self.endpoint,
-                        params.amount,
-                    )],
+                    approvals: vec![approval(params.token_in, self.endpoint, params.amount)],
                 })
             }
             Action::OpenShort => {
@@ -138,11 +132,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![encode_erc20_approve(
-                        params.token_in,
-                        self.endpoint,
-                        params.amount,
-                    )],
+                    approvals: vec![approval(params.token_in, self.endpoint, params.amount)],
                 })
             }
             Action::CloseLong => {
@@ -154,7 +144,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![],
+                    approvals: vec![],
                 })
             }
             Action::CloseShort => {
@@ -166,7 +156,7 @@ impl ProtocolAdapter for VertexAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_out,
-                    pre_calls: vec![],
+                    approvals: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -214,7 +204,7 @@ mod tests {
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, VERTEX_ENDPOINT.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
-        assert_eq!(result.pre_calls.len(), 1);
+        assert_eq!(result.approvals.len(), 1);
     }
 
     #[test]

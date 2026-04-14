@@ -1,4 +1,4 @@
-use crate::TradingApiState;
+use crate::{MultiBotTradingState, TradingApiState};
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
@@ -9,6 +9,10 @@ pub struct AdaptersResponse {
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
+    Router::new().route("/adapters", get(list_adapters))
+}
+
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new().route("/adapters", get(list_adapters))
 }
 

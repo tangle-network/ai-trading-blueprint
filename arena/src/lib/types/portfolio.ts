@@ -2,16 +2,26 @@ export interface Position {
   token: string;
   symbol: string;
   amount: number;
-  valueUsd: number;
-  entryPrice: number;
-  currentPrice: number;
-  pnlPercent: number;
-  weight: number;
+  valueUsd: number | null;
+  entryPrice: number | null;
+  currentPrice: number | null;
+  pnlPercent: number | null;
+  weight: number | null;
+  displayValueUsd: number | null;
+  displayPnlPercent: number | null;
+  displayWeight: number | null;
+  warnings: string[];
+  valuationStatus: 'priced' | 'value_only' | 'unpriced';
 }
 
 export interface Portfolio {
   botId: string;
-  totalValueUsd: number;
-  cashBalance: number;
+  totalValueUsd: number | null;
+  cashBalance: number | null;
+  displayTotalValueUsd: number | null;
+  displayCashBalance: number | null;
+  warnings: string[];
+  hasUnpricedPositions: boolean;
+  hasValueOnlyPositions: boolean;
   positions: Position[];
 }

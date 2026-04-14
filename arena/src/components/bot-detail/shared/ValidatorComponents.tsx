@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
-import { Badge } from '@tangle/blueprint-ui/components';
-import { useThemeValue } from '@tangle/blueprint-ui';
+import { Badge } from '@tangle-network/blueprint-ui/components';
+import { useThemeValue } from '@tangle-network/blueprint-ui';
 import type { TradeSimulation, ValidatorResponseDetail } from '~/lib/types/trade';
 
 // ── Utilities ───────────────────────────────────────────────────────────

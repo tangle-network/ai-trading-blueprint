@@ -1,8 +1,26 @@
-import { persistedAtom } from '@tangle/blueprint-ui';
+import { persistedAtom } from '@tangle-network/blueprint-ui';
+import {
+  buildArenaDeploymentFingerprint,
+  buildScopedStorageKey,
+  migrateLegacyScopedKey,
+  pruneScopedStorageKeys,
+} from '~/lib/config/deploymentFingerprint';
 
 /** Bot IDs that the user has dismissed from their dashboard view. */
+const DISMISSED_BOTS_STORE_KEY_PREFIX = 'arena_dismissed_bots';
+const dismissedBotsDeploymentFingerprint = buildArenaDeploymentFingerprint();
+const dismissedBotsStoreKey = buildScopedStorageKey(
+  DISMISSED_BOTS_STORE_KEY_PREFIX,
+  dismissedBotsDeploymentFingerprint,
+);
+
+if (typeof window !== 'undefined' && window.localStorage) {
+  migrateLegacyScopedKey(window.localStorage, DISMISSED_BOTS_STORE_KEY_PREFIX, dismissedBotsStoreKey);
+  pruneScopedStorageKeys(window.localStorage, DISMISSED_BOTS_STORE_KEY_PREFIX, dismissedBotsStoreKey);
+}
+
 export const dismissedBotsStore = persistedAtom<string[]>({
-  key: 'arena_dismissed_bots',
+  key: dismissedBotsStoreKey,
   initial: [],
 });
 

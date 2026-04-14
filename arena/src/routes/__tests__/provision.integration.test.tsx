@@ -3,10 +3,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 let latestInfrastructureProps: any;
+const setSearchParams = vi.fn();
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
-  useSearchParams: () => [new URLSearchParams()],
+  useSearchParams: () => [new URLSearchParams(), setSearchParams],
 }));
 
 vi.mock('wagmi', () => ({
@@ -50,7 +51,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   },
 }));
 
-vi.mock('@tangle/blueprint-ui/components', () => ({
+vi.mock('@tangle-network/blueprint-ui/components', () => ({
   Card: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
@@ -66,7 +67,7 @@ vi.mock('@tangle/blueprint-ui/components', () => ({
   TabsContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 }));
 
-vi.mock('@tangle/blueprint-ui', () => ({
+vi.mock('@tangle-network/blueprint-ui', () => ({
   publicClient: {},
   selectedChainIdStore: {},
   useOperators: () => ({ operators: [], operatorCount: 0 }),
@@ -86,7 +87,12 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
 vi.mock('~/lib/stores/provisions', () => ({
   provisionsForOwner: () => ({ subscribe: vi.fn(), get: vi.fn(() => []) }),
   addProvision: vi.fn(),
+  upsertInstanceProvision: vi.fn(),
+  removeProvision: vi.fn(),
+  removeMatchingInstanceProvision: vi.fn(),
+  removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
+  findMatchingInstanceProvision: vi.fn(),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
@@ -95,6 +101,15 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
     authenticate: vi.fn(),
     clearCachedToken: vi.fn(),
   }),
+}));
+
+vi.mock('~/lib/operator/meta', () => ({
+  useOperatorMeta: () => ({ data: { deployment_kind: 'fleet', features: { chat: false, terminal: false } } }),
+  buildBotScopedPath: vi.fn(),
+  getOperatorApiUrlForBlueprint: vi.fn(() => '/operator-api'),
+  getExpectedDeploymentKindForBlueprint: vi.fn(() => 'fleet'),
+  getOperatorKindForBlueprint: vi.fn(() => 'cloud'),
+  OPERATOR_API_URL: '/operator-api',
 }));
 
 vi.mock('~/lib/config/aiProviders', () => ({

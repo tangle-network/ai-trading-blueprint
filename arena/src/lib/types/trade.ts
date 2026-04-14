@@ -1,5 +1,5 @@
 export type TradeAction = 'buy' | 'sell';
-export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper';
+export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 
 export interface ValidatorResponseDetail {
   validator: string;
@@ -37,9 +37,11 @@ export interface Trade {
   action: TradeAction;
   tokenIn: string;
   tokenOut: string;
+  rawTokenIn?: string;
+  rawTokenOut?: string;
   amountIn: number;
   amountOut: number;
-  priceUsd: number;
+  priceUsd: number | null;
   timestamp: number;
   status: TradeStatus;
   txHash?: string;
@@ -50,6 +52,10 @@ export interface Trade {
   venue: TradeVenue;
   /** Chain ID for explorer links. */
   chainId?: number;
+  /** On-chain block number for executed trades (when available). */
+  blockNumber?: number;
+  /** On-chain gas used for executed trades (when available). */
+  gasUsed?: string;
   /** Aggregate score across all validators */
   validatorScore?: number;
   /** First validator's reasoning (convenience accessor) */

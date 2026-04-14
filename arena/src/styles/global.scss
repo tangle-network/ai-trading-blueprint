@@ -199,3 +199,80 @@
   background: rgba(0, 255, 136, 0.2);
   color: #F0F0F5;
 }
+
+/* ═══ Arena Chat Integration ═══ */
+.arena-chat-shell[data-sandbox-ui='true'] {
+  --chat-input-py: 0.75rem;
+  --chat-label-size: 11px;
+  --chat-label-weight: 700;
+  --chat-label-tracking: 0.18em;
+  --chat-input-bg: color-mix(in srgb, white 84%, transparent);
+  --chat-input-border: color-mix(in srgb, var(--arena-elements-dividerColor) 90%, transparent);
+  --chat-input-focus-border: color-mix(in srgb, #8b5cf6 40%, white);
+  --chat-input-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 28px rgba(139, 92, 246, 0.08);
+  --chat-input-focus-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 16px 36px rgba(139, 92, 246, 0.12);
+  --chat-send-border: rgba(139, 92, 246, 0.22);
+  --chat-send-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(91, 63, 214, 0.2));
+  --chat-send-hover-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(91, 63, 214, 0.28));
+  --chat-send-color: #6d28d9;
+  --chat-send-ring: rgba(139, 92, 246, 0.28);
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .text-\[var\(--chat-label-size\,11px\)\] {
+  font-size: var(--chat-label-size, 11px);
+  line-height: 1rem;
+  color: var(--text-muted);
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input'] {
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  color: #2f354b;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input']::placeholder {
+  color: #8f96ab;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] kbd {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(148, 163, 184, 0.32);
+  box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.06);
+}
+
+/*
+ * sandbox-ui 0.8.4 ships ChatContainer styles, but it misses several
+ * arbitrary-value utilities used by the user-message bubble. Recreate the
+ * missing rules locally until the upstream package rebuilds its CSS bundle.
+ */
+.arena-chat-shell[data-sandbox-ui='true'] .max-w-\[82\%\] {
+  max-width: 82%;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .max-w-\[72\%\] {
+  max-width: 72%;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .bg-muted\/50 {
+  background-color: color-mix(in srgb, hsl(var(--muted)) 50%, transparent);
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .text-\[15px\] {
+  font-size: 15px;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .tracking-\[0\.14em\] {
+  letter-spacing: 0.14em;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .mb-1\.5 {
+  margin-bottom: 0.375rem;
+}
+
+.arena-chat-shell[data-sandbox-ui='true'] .py-3\.5 {
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+}

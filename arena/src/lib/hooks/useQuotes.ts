@@ -1,18 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@connectrpc/connect';
 import { createGrpcWebTransport } from '@connectrpc/connect-web';
-import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
 import { type Address, sha256 as viemSha256, toHex } from 'viem';
-import { resolveOperatorRpc, type DiscoveredOperator } from '@tangle/blueprint-ui';
+import { resolveOperatorRpc, type DiscoveredOperator } from '@tangle-network/blueprint-ui';
 import {
   PricingEngine,
-  GetPriceRequestSchema,
   type GetPriceResponse,
   type QuoteDetails,
   PricingModelHint,
 } from '~/lib/gen/pricing_pb';
 
 // ── Types ─────────────────────────────────────────────────────────────────
+
+type SecurityCommitment = {
+  asset: { kind: number; token: Address };
+  exposureBps: number;
+};
+
+type ResourceCommitment = {
+  kind: number;
+  count: bigint;
+};
 
 export interface OperatorQuote {
   operator: Address;
@@ -27,13 +35,14 @@ export interface OperatorQuote {
     totalCost: bigint;
     timestamp: bigint;
     expiry: bigint;
-    securityCommitments: readonly {
-      asset: { kind: number; token: Address };
-      exposureBps: number;
-    }[];
+    confidentiality: number;
+    securityCommitments: readonly SecurityCommitment[];
+    resourceCommitments: readonly ResourceCommitment[];
   };
   /** Human-readable cost rate (USD) */
   costRate: number;
+  teeAttested?: boolean;
+  teeProvider?: string;
 }
 
 export interface UseQuotesResult {
@@ -47,6 +56,20 @@ export interface UseQuotesResult {
 // ── PoW helpers (mirrors pricing-engine/src/pow.rs) ───────────────────────
 
 const POW_DIFFICULTY = 20;
+const RESOURCE_KIND_TO_ID = {
+  CPU: 0,
+  MemoryMB: 1,
+  StorageMB: 2,
+  NetworkEgressMB: 3,
+  NetworkIngressMB: 4,
+  GPU: 5,
+} as const;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+const DEFAULT_RESOURCE_REQUIREMENTS = [
+  { kind: 'CPU', count: 1n },
+  { kind: 'MemoryMB', count: 1024n },
+  { kind: 'StorageMB', count: 10240n },
+] as const;
 
 /** SHA-256 via viem (pure JS, works in insecure contexts) */
 function sha256(data: Uint8Array): Uint8Array {
@@ -111,8 +134,8 @@ async function solvePoW(blueprintId: bigint, timestamp: bigint): Promise<Uint8Ar
 /**
  * Convert a USD cost rate to the on-chain totalCost value.
  * Must match the pricing engine's `decimal_to_scaled_amount()`:
- *   totalCost = costRate * 10^PRICING_SCALE_PLACES
- * where PRICING_SCALE_PLACES = 9.
+ *   totalCost = costRate * 10^9
+ * matching the pricing engine's EIP-712 quote signer.
  */
 const PRICING_SCALE = 1_000_000_000; // 10^9
 
@@ -120,22 +143,67 @@ function costRateToScaledAmount(costRate: number): bigint {
   return BigInt(Math.floor(costRate * PRICING_SCALE));
 }
 
+function quoteConfidentiality(requireTee: boolean): number {
+  return requireTee ? 1 : 0;
+}
+
+function resourceKindToId(kind: string): number {
+  const mapped = RESOURCE_KIND_TO_ID[kind as keyof typeof RESOURCE_KIND_TO_ID];
+  if (mapped === undefined) {
+    throw new Error(`Unsupported resource kind in quote: ${kind}`);
+  }
+  return mapped;
+}
+
+function mapProtoAssetToken(details: QuoteDetails['securityCommitments'][number]): Address {
+  if (details.asset?.assetType.case !== 'erc20') {
+    return ZERO_ADDRESS;
+  }
+
+  return `0x${Array.from(details.asset.assetType.value)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')}` as Address;
+}
+
+function mapSecurityCommitment(
+  commitment: QuoteDetails['securityCommitments'][number],
+): SecurityCommitment {
+  return {
+    asset: {
+      kind: commitment.asset?.assetType.case === 'erc20' ? 1 : 0,
+      token: mapProtoAssetToken(commitment),
+    },
+    exposureBps: commitment.exposurePercent * 100,
+  };
+}
+
+function mapResourceCommitment(
+  resource: QuoteDetails['resources'][number],
+): ResourceCommitment {
+  return {
+    kind: resourceKindToId(resource.kind),
+    count: resource.count,
+  };
+}
+
+function operatorIdToAddress(operatorId: Uint8Array): Address | null {
+  if (operatorId.length !== 20) return null;
+  const hex = Array.from(operatorId)
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  return `0x${hex}` as Address;
+}
+
 function mapQuoteDetails(
+  response: GetPriceResponse,
   details: QuoteDetails,
   operator: Address,
   signature: Uint8Array,
+  requireTee: boolean,
 ): OperatorQuote {
   const totalCost = costRateToScaledAmount(details.totalCostRate);
-
-  const securityCommitments = details.securityCommitments.map((sc) => ({
-    asset: {
-      kind: sc.asset?.assetType.case === 'erc20' ? 1 : 0,
-      token: (sc.asset?.assetType.case === 'erc20'
-        ? `0x${Array.from(sc.asset.assetType.value).map((b) => b.toString(16).padStart(2, '0')).join('')}`
-        : '0x0000000000000000000000000000000000000000') as Address,
-    },
-    exposureBps: sc.exposurePercent * 100, // percent → bps
-  }));
+  const securityCommitments = details.securityCommitments.map(mapSecurityCommitment);
+  const resourceCommitments = details.resources.map(mapResourceCommitment);
 
   // The pricing engine returns 65-byte signatures (r || s || v)
   const sigHex = toHex(signature) as `0x${string}`;
@@ -145,13 +213,17 @@ function mapQuoteDetails(
     totalCost,
     signature: sigHex,
     costRate: details.totalCostRate,
+    teeAttested: response.teeAttested,
+    teeProvider: response.teeProvider || undefined,
     details: {
       blueprintId: details.blueprintId,
       ttlBlocks: details.ttlBlocks,
       totalCost,
       timestamp: details.timestamp,
       expiry: details.expiry,
+      confidentiality: quoteConfidentiality(requireTee),
       securityCommitments,
+      resourceCommitments,
     },
   };
 }
@@ -164,6 +236,7 @@ export function useQuotes(
   ttlBlocks: bigint,
   enabled: boolean,
   pricingModel: PricingModelHint,
+  requireTee = false,
 ): UseQuotesResult {
   const [quotes, setQuotes] = useState<OperatorQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -206,11 +279,8 @@ export function useQuotes(
             proofOfWork,
             challengeTimestamp: timestamp,
             pricingModel,
-            resourceRequirements: [
-              { kind: 'CPU', count: 1n },
-              { kind: 'MemoryMB', count: 1024n },
-              { kind: 'StorageMB', count: 10240n },
-            ],
+            requireTee,
+            resourceRequirements: [...DEFAULT_RESOURCE_REQUIREMENTS],
             securityRequirements: {
               // Must be ERC20 — Custom assets rejected by Tangle EVM signer.
               // Use a zero address as placeholder (operator doesn't validate the token).
@@ -223,9 +293,11 @@ export function useQuotes(
           if (!response.quoteDetails) throw new Error('No quote details in response');
 
           const quote = mapQuoteDetails(
+            response,
             response.quoteDetails,
-            op.address,
+            operatorIdToAddress(response.operatorId) ?? op.address,
             response.signature,
+            requireTee,
           );
           if (!cancelled) results.push(quote);
         } catch (err) {
@@ -246,7 +318,7 @@ export function useQuotes(
 
     fetchQuotes();
     return () => { cancelled = true; };
-  }, [operators, blueprintId, ttlBlocks, enabled, pricingModel, fetchKey]);
+  }, [operators, blueprintId, ttlBlocks, enabled, pricingModel, fetchKey, requireTee]);
 
   const totalCost = quotes.reduce((sum, q) => sum + q.totalCost, 0n);
 

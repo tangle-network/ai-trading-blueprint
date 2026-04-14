@@ -9,6 +9,8 @@ import "../src/VaultFactory.sol";
 import "../src/PolicyEngine.sol";
 import "../src/TradeValidator.sol";
 import "../src/FeeDistributor.sol";
+import "../src/VaultShare.sol";
+import "../src/TradingVault.sol";
 import "../test/helpers/Setup.sol";
 
 /// @notice Minimal interface for Tangle contract blueprint registration
@@ -25,6 +27,8 @@ interface ITangle {
 ///      Anvil impersonation steps (setVaultFactory, onOperatorJoined) and service
 ///      lifecycle (requestService, approveService) are handled by the bash wrapper.
 contract RegisterBlueprint is Script {
+    event log_string(string value);
+
     // Anvil well-known keys
     uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
@@ -33,6 +37,8 @@ contract RegisterBlueprint is Script {
 
     // Test accounts
     address constant USER_ACCOUNT = 0x68FF20459d48917748CA13afCbDA3B265a449D48;
+    address constant OPERATOR1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+    address constant OPERATOR2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
 
     function run() external {
         address deployer = vm.addr(DEPLOYER_KEY);
@@ -48,21 +54,32 @@ contract RegisterBlueprint is Script {
             // Multicall3 deployment separately if needed. Skip here.
         }
 
-        // ── Deploy Mock Tokens ────────────────────────────────────────
-        MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6);
-        MockERC20 weth = new MockERC20("Wrapped Ether", "WETH", 18);
+        // ── Resolve Trading Assets ────────────────────────────────────
+        address existingUsdc = vm.envOr("EXISTING_USDC_ADDRESS", address(0));
+        address existingWeth = vm.envOr("EXISTING_WETH_ADDRESS", address(0));
+        bool usingExistingAssets = existingUsdc != address(0) || existingWeth != address(0);
+
+        if (usingExistingAssets && (existingUsdc == address(0) || existingWeth == address(0))) {
+            revert("Both EXISTING_USDC_ADDRESS and EXISTING_WETH_ADDRESS are required");
+        }
+
+        address usdcAddress;
+        address wethAddress;
+        if (usingExistingAssets) {
+            usdcAddress = existingUsdc;
+            wethAddress = existingWeth;
+        } else {
+            MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6);
+            MockERC20 weth = new MockERC20("Wrapped Ether", "WETH", 18);
+            usdcAddress = address(usdc);
+            wethAddress = address(weth);
+        }
 
         // ── Deploy Core Contracts ─────────────────────────────────────
         PolicyEngine policyEngine = new PolicyEngine();
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-
-        // Transfer ownership of PolicyEngine + TradeValidator + FeeDistributor to VaultFactory
-        policyEngine.transferOwnership(address(vaultFactory));
-        tradeValidator.transferOwnership(address(vaultFactory));
-        feeDistributor.transferOwnership(address(vaultFactory));
-        vaultFactory.acceptDependencyOwnership();
 
         // ── Deploy BSMs ───────────────────────────────────────────────
         // Each variant needs its own BSM instance because onBlueprintCreated
@@ -74,16 +91,49 @@ contract RegisterBlueprint is Script {
 
         // ── Fund Test Accounts ────────────────────────────────────────
         payable(USER_ACCOUNT).transfer(100 ether);
-        usdc.mint(USER_ACCOUNT, 1_000_000 * 1e6);
-        weth.mint(USER_ACCOUNT, 100 ether);
-        usdc.mint(deployer, 1_000_000 * 1e6);
-        weth.mint(deployer, 100 ether);
+        if (!usingExistingAssets) {
+            MockERC20(usdcAddress).mint(USER_ACCOUNT, 1_000_000 * 1e6);
+            MockERC20(wethAddress).mint(USER_ACCOUNT, 100 ether);
+            MockERC20(usdcAddress).mint(deployer, 1_000_000 * 1e6);
+            MockERC20(wethAddress).mint(deployer, 100 ether);
+        }
 
         // Fund extra accounts if provided via EXTRA_ACCOUNTS env var
         string memory extraStr = vm.envOr("EXTRA_ACCOUNTS", string(""));
         if (bytes(extraStr).length > 0) {
             // Extra accounts handled by bash wrapper (complex parsing)
         }
+
+        bool precreateSingletonVaults = vm.envOr("PRECREATE_SINGLETON_VAULTS", false);
+        address instanceSingletonVault = address(0);
+        address teeSingletonVault = address(0);
+        if (precreateSingletonVaults) {
+            address singletonAsset = vm.envOr("ASSET_TOKEN_ADDRESS", usdcAddress);
+            instanceSingletonVault = _createPrecreatedSingletonVault(
+                singletonAsset,
+                deployer,
+                "Instance Vault",
+                "iVAULT",
+                policyEngine,
+                tradeValidator,
+                feeDistributor
+            );
+            teeSingletonVault = _createPrecreatedSingletonVault(
+                singletonAsset,
+                deployer,
+                "TEE Vault",
+                "tVAULT",
+                policyEngine,
+                tradeValidator,
+                feeDistributor
+            );
+        }
+
+        // Transfer ownership of PolicyEngine + TradeValidator + FeeDistributor to VaultFactory
+        policyEngine.transferOwnership(address(vaultFactory));
+        tradeValidator.transferOwnership(address(vaultFactory));
+        feeDistributor.transferOwnership(address(vaultFactory));
+        vaultFactory.acceptDependencyOwnership();
 
         // ── Register Blueprints on Tangle ─────────────────────────────
         // All three variants share the same BSM logic. Cloud exposes lifecycle
@@ -131,20 +181,98 @@ contract RegisterBlueprint is Script {
         vm.stopBroadcast();
 
         // ── Output Addresses (parsed by bash wrapper) ─────────────────
-        console.log("DEPLOY_BSM=%s", vm.toString(address(bsm)));
-        console.log("DEPLOY_INSTANCE_BSM=%s", vm.toString(address(instanceBsm)));
-        console.log("DEPLOY_TEE_BSM=%s", vm.toString(address(teeBsm)));
-        console.log("DEPLOY_VAULT_FACTORY=%s", vm.toString(address(vaultFactory)));
-        console.log("DEPLOY_USDC=%s", vm.toString(address(usdc)));
-        console.log("DEPLOY_WETH=%s", vm.toString(address(weth)));
-        console.log("DEPLOY_POLICY_ENGINE=%s", vm.toString(address(policyEngine)));
-        console.log("DEPLOY_TRADE_VALIDATOR=%s", vm.toString(address(tradeValidator)));
-        console.log("DEPLOY_FEE_DISTRIBUTOR=%s", vm.toString(address(feeDistributor)));
-        console.log("DEPLOY_VALIDATOR_BSM=%s", vm.toString(address(validatorBsm)));
-        console.log("DEPLOY_BLUEPRINT_ID=%s", vm.toString(cloudId));
-        console.log("DEPLOY_INSTANCE_BLUEPRINT_ID=%s", vm.toString(instanceId));
-        console.log("DEPLOY_TEE_BLUEPRINT_ID=%s", vm.toString(teeId));
-        console.log("DEPLOY_VALIDATOR_BLUEPRINT_ID=%s", vm.toString(validatorId));
+        emit log_string(string.concat("DEPLOY_BSM=", vm.toString(address(bsm))));
+        emit log_string(string.concat("DEPLOY_INSTANCE_BSM=", vm.toString(address(instanceBsm))));
+        emit log_string(string.concat("DEPLOY_TEE_BSM=", vm.toString(address(teeBsm))));
+        emit log_string(string.concat("DEPLOY_VAULT_FACTORY=", vm.toString(address(vaultFactory))));
+        emit log_string(string.concat("DEPLOY_USDC=", vm.toString(usdcAddress)));
+        emit log_string(string.concat("DEPLOY_WETH=", vm.toString(wethAddress)));
+        emit log_string(string.concat("DEPLOY_POLICY_ENGINE=", vm.toString(address(policyEngine))));
+        emit log_string(
+            string.concat("DEPLOY_TRADE_VALIDATOR=", vm.toString(address(tradeValidator)))
+        );
+        emit log_string(
+            string.concat("DEPLOY_FEE_DISTRIBUTOR=", vm.toString(address(feeDistributor)))
+        );
+        emit log_string(
+            string.concat("DEPLOY_VALIDATOR_BSM=", vm.toString(address(validatorBsm)))
+        );
+        emit log_string(string.concat("DEPLOY_BLUEPRINT_ID=", vm.toString(cloudId)));
+        emit log_string(
+            string.concat("DEPLOY_INSTANCE_BLUEPRINT_ID=", vm.toString(instanceId))
+        );
+        emit log_string(string.concat("DEPLOY_TEE_BLUEPRINT_ID=", vm.toString(teeId)));
+        emit log_string(
+            string.concat("DEPLOY_VALIDATOR_BLUEPRINT_ID=", vm.toString(validatorId))
+        );
+        if (instanceSingletonVault != address(0)) {
+            emit log_string(
+                string.concat(
+                    "DEPLOY_INSTANCE_SINGLETON_VAULT=", vm.toString(instanceSingletonVault)
+                )
+            );
+        }
+        if (teeSingletonVault != address(0)) {
+            emit log_string(
+                string.concat("DEPLOY_TEE_SINGLETON_VAULT=", vm.toString(teeSingletonVault))
+            );
+        }
+    }
+
+    function _createPrecreatedSingletonVault(
+        address assetToken,
+        address admin,
+        string memory vaultName,
+        string memory vaultSymbol,
+        PolicyEngine policyEngine,
+        TradeValidator tradeValidator,
+        FeeDistributor feeDistributor
+    ) internal returns (address vaultAddress) {
+        address[] memory signers = new address[](2);
+        signers[0] = OPERATOR1;
+        signers[1] = OPERATOR2;
+
+        VaultShare share = new VaultShare(vaultName, vaultSymbol, admin);
+        TradingVault vault = new TradingVault(
+            assetToken,
+            share,
+            policyEngine,
+            tradeValidator,
+            feeDistributor,
+            admin,
+            address(0)
+        );
+
+        share.grantRole(share.MINTER_ROLE(), address(vault));
+        share.linkVault(address(vault));
+
+        tradeValidator.configureVault(address(vault), signers, 1);
+        policyEngine.initializeVault(
+            address(vault),
+            admin,
+            PolicyEngine.PolicyConfig({
+                leverageCap: 50000,
+                maxTradesPerHour: 100,
+                maxSlippageBps: 500
+            })
+        );
+        policyEngine.setAuthorizedCaller(address(vault), true);
+        policyEngine.whitelistToken(address(vault), assetToken, true);
+        feeDistributor.initializeVaultFees(
+            address(vault),
+            admin,
+            FeeDistributor.FeeConfig({
+                performanceFeeBps: 2000,
+                managementFeeBps: 200,
+                validatorFeeShareBps: 3000
+            })
+        );
+
+        vault.grantRole(keccak256("OPERATOR_ROLE"), OPERATOR1);
+        vault.grantRole(keccak256("OPERATOR_ROLE"), OPERATOR2);
+        vault.grantRole(keccak256("CREATOR_ROLE"), admin);
+
+        return address(vault);
     }
 
     /// @notice Construct a BlueprintDefinition for a specific variant.

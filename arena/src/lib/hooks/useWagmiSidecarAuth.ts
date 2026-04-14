@@ -1,1 +1,1 @@
-export { useWagmiSidecarAuth } from '@tangle/agent-ui';
+export { useWagmiSidecarAuth } from '@tangle-network/blueprint-ui';

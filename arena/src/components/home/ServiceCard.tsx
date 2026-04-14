@@ -1,25 +1,29 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { m, AnimatePresence } from 'framer-motion';
-import { Badge, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import type { UserService } from '~/lib/hooks/useUserServices';
 import type { Bot } from '~/lib/types/bot';
-import { formatDuration, truncateAddress } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, formatDuration, truncateAddress } from '~/lib/format';
+import { computeServiceLifetimeSeconds } from '~/lib/serviceTtl';
 
 export function ServiceCard({
   service,
   bots,
+  lockedBotCount = 0,
 }: {
   service: UserService;
   bots: Bot[];
+  lockedBotCount?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const statusVariant = service.isActive ? 'success' : service.terminatedAt > 0 ? 'destructive' : 'amber';
   const statusLabel = service.isActive ? 'Active' : service.terminatedAt > 0 ? 'Terminated' : 'Pending';
 
-  const ttlFraction = service.remainingSeconds != null && service.ttl > 0
-    ? Math.min(1, Math.max(0, service.remainingSeconds / (service.ttl * 12)))
+  const totalLifetimeSeconds = computeServiceLifetimeSeconds(service.ttl);
+  const ttlFraction = service.remainingSeconds != null && totalLifetimeSeconds != null
+    ? Math.min(1, Math.max(0, service.remainingSeconds / totalLifetimeSeconds))
     : null;
 
   const totalTvl = bots.reduce((sum, b) => sum + b.tvl, 0);
@@ -53,6 +57,12 @@ export function ServiceCard({
             <span className="flex items-center gap-1 shrink-0">
               <div className="i-ph:robot text-[10px]" />
               {bots.length}
+            </span>
+          )}
+          {lockedBotCount > 0 && (
+            <span className="flex items-center gap-1 shrink-0 text-amber-500">
+              <div className="i-ph:lock-key text-[10px]" />
+              {lockedBotCount} locked
             </span>
           )}
           {totalTvl > 0 && (
@@ -167,19 +177,13 @@ export function ServiceCard({
                   <div className="space-y-1">
                     {bots.map((bot) => {
                       const isProvisioning = bot.id.startsWith('provision:');
-                      const statusVariant = bot.status === 'active' ? 'success' as const
-                        : bot.status === 'needs_config' ? 'amber' as const
-                        : bot.status === 'paused' ? 'amber' as const
-                        : 'secondary' as const;
-                      const statusText = isProvisioning ? 'provisioning'
-                        : bot.status === 'needs_config' ? 'needs config'
-                        : bot.status;
+                      const statusText = isProvisioning ? 'provisioning' : botStatusLabel(bot.status);
 
                       const inner = (
                         <>
                           <div className={`text-xs shrink-0 ${isProvisioning ? 'i-ph:gear animate-spin text-amber-400' : 'i-ph:robot text-arena-elements-textTertiary'}`} />
                           <span className="text-xs font-display font-medium truncate">{bot.name}</span>
-                          <Badge variant={isProvisioning ? 'amber' : statusVariant} className="text-[9px] ml-auto">
+                          <Badge variant={isProvisioning ? 'amber' : botStatusBadgeVariant(bot.status)} className="text-[9px] ml-auto">
                             {statusText}
                           </Badge>
                         </>
@@ -203,6 +207,14 @@ export function ServiceCard({
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {lockedBotCount > 0 && (
+                <div className="rounded border border-amber-500/15 bg-amber-500/5 px-2.5 py-2">
+                  <p className="text-[11px] font-data text-arena-elements-textSecondary">
+                    {lockedBotCount} operator-managed bot{lockedBotCount === 1 ? '' : 's'} hidden until wallet authentication completes.
+                  </p>
                 </div>
               )}
 

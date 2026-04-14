@@ -1,9 +1,21 @@
 import {
   Button, Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogDescription, Input, Tabs, TabsList, TabsTrigger, TabsContent,
-} from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui/components';
 import type { StrategyPackDef } from '~/lib/blueprints';
 import { cronToHuman } from '~/routes/provision/types';
+
+interface ExecutionTargetOption {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  chainId?: number;
+  rpcUrl?: string;
+  vaultAddress?: string;
+  assetToken?: string;
+  paperTrade?: boolean;
+}
 
 interface AdvancedSettingsDialogProps {
   open: boolean;
@@ -24,6 +36,10 @@ interface AdvancedSettingsDialogProps {
   setRuntimeBackend: (v: 'docker' | 'firecracker' | 'tee') => void;
   firecrackerSupported: boolean;
   isTeeBlueprint: boolean;
+  executionTargets: ExecutionTargetOption[];
+  executionTargetId: string;
+  setExecutionTargetId: (v: string) => void;
+  selectedExecutionTarget?: ExecutionTargetOption;
   onOpenInfrastructure: () => void;
 }
 
@@ -46,6 +62,10 @@ export function AdvancedSettingsDialog({
   setRuntimeBackend,
   firecrackerSupported,
   isTeeBlueprint,
+  executionTargets,
+  executionTargetId,
+  setExecutionTargetId,
+  selectedExecutionTarget,
   onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
@@ -54,7 +74,7 @@ export function AdvancedSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col overflow-hidden border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 dark:bg-arena-elements-background-depth-4 shadow-2xl">
         <DialogHeader>
           <DialogTitle className="font-display text-lg">
             Advanced Configuration: {selectedPack.name}
@@ -64,7 +84,7 @@ export function AdvancedSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="settings" className="flex-1 flex flex-col min-h-0">
+        <Tabs defaultValue="settings" className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <TabsList>
             <TabsTrigger value="full">Full Instructions</TabsTrigger>
             <TabsTrigger value="expert">Expert Knowledge</TabsTrigger>
@@ -72,7 +92,7 @@ export function AdvancedSettingsDialog({
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="full" className="flex-1 mt-3">
+          <TabsContent value="full" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-3">
               <p className="text-xs text-arena-elements-textSecondary">
                 Read-only. Edit the "Expert Knowledge" tab to modify the strategy section. Values
@@ -84,7 +104,7 @@ export function AdvancedSettingsDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="expert" className="flex-1 mt-3">
+          <TabsContent value="expert" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-3 p-px">
               <p className="text-xs text-arena-elements-textSecondary">
                 Injected under "Expert Strategy Knowledge". Edit protocol APIs, contracts, or
@@ -109,7 +129,7 @@ export function AdvancedSettingsDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="extra" className="flex-1 mt-3">
+          <TabsContent value="extra" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-3 p-px">
               <p className="text-xs text-arena-elements-textSecondary">
                 Additional instructions appended to the agent profile.
@@ -123,7 +143,7 @@ export function AdvancedSettingsDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="settings" className="flex-1 mt-3">
+          <TabsContent value="settings" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-5 p-px">
               <div>
                 <label htmlFor="runtime-backend" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
@@ -151,6 +171,65 @@ export function AdvancedSettingsDialog({
                   <p className="text-xs text-arena-elements-textTertiary mt-1.5">
                     Firecracker runtime is not enabled for this deployment.
                   </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="execution-chain" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  Execution Chain
+                </label>
+                <select
+                  id="execution-chain"
+                  value={executionTargetId}
+                  onChange={(e) => setExecutionTargetId(e.target.value)}
+                  className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary"
+                >
+                  {executionTargets.map((target) => (
+                    <option key={target.id} value={target.id} disabled={!target.enabled}>
+                      {target.label}{target.enabled ? '' : ' — unavailable'}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                  Choose the execution target for this DEX bot. Right now this uses the local Ethereum fork for QA, not Ethereum mainnet.
+                </p>
+                {selectedExecutionTarget && (
+                  <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
+                    <div className="flex justify-between gap-3">
+                      <span>Mode</span>
+                      <span className="text-arena-elements-textPrimary">Local execution fork</span>
+                    </div>
+                    {selectedExecutionTarget.chainId != null && (
+                      <div className="flex justify-between gap-3">
+                        <span>Chain ID</span>
+                        <span className="text-arena-elements-textPrimary">{selectedExecutionTarget.chainId}</span>
+                      </div>
+                    )}
+                    {selectedExecutionTarget.rpcUrl && (
+                      <div className="flex justify-between gap-3">
+                        <span>RPC URL</span>
+                        <span className="text-arena-elements-textPrimary truncate">{selectedExecutionTarget.rpcUrl}</span>
+                      </div>
+                    )}
+                    {selectedExecutionTarget.vaultAddress && (
+                      <div className="flex justify-between gap-3">
+                        <span>Vault</span>
+                        <span className="text-arena-elements-textPrimary truncate">{selectedExecutionTarget.vaultAddress}</span>
+                      </div>
+                    )}
+                    {selectedExecutionTarget.assetToken && (
+                      <div className="flex justify-between gap-3">
+                        <span>Asset</span>
+                        <span className="text-arena-elements-textPrimary truncate">{selectedExecutionTarget.assetToken}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between gap-3">
+                      <span>Paper Trading</span>
+                      <span className="text-arena-elements-textPrimary">
+                        {selectedExecutionTarget.paperTrade ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                    <div>{selectedExecutionTarget.description}</div>
+                  </div>
                 )}
               </div>
               <div>

@@ -56,11 +56,13 @@ pub struct PortfolioState {
 pub struct Position {
     pub token: String,
     pub amount: Decimal,
-    pub entry_price: Decimal,
-    pub current_price: Decimal,
-    pub unrealized_pnl: Decimal,
+    pub entry_price: Option<Decimal>,
+    pub current_price: Option<Decimal>,
+    pub unrealized_pnl: Option<Decimal>,
     pub protocol: String,
     pub position_type: PositionType,
+    #[serde(default)]
+    pub valuation_status: ValuationStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +74,15 @@ pub enum PositionType {
     LongPerp,
     ShortPerp,
     ConditionalToken,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ValuationStatus {
+    #[default]
+    Unpriced,
+    ValueOnly,
+    Priced,
 }
 
 /// Strategy definition — supports NL, config, or code

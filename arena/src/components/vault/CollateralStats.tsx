@@ -2,8 +2,8 @@ import { m } from 'framer-motion';
 import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
-import { Skeleton } from '@tangle/blueprint-ui/components';
-import { publicClient } from '@tangle/blueprint-ui';
+import { Skeleton } from '@tangle-network/blueprint-ui/components';
+import { publicClient } from '@tangle-network/blueprint-ui';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
 import { useEffect, useState } from 'react';
 

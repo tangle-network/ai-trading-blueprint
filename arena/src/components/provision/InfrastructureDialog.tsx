@@ -1,7 +1,7 @@
 import {
   Badge, Button, Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogDescription, Identicon, Input,
-} from '@tangle/blueprint-ui/components';
+} from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import type { DiscoveredService, ServiceInfo } from '~/routes/provision/types';
 import { formatCost } from '~/routes/provision/types';

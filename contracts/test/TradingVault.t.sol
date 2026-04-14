@@ -86,6 +86,15 @@ contract TradingVaultTest is Setup {
         signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
     }
 
+    function _buildApprovalCalls(address token, address spender, uint256 amount)
+        internal
+        pure
+        returns (TradingVault.ApprovalCall[] memory approvals)
+    {
+        approvals = new TradingVault.ApprovalCall[](1);
+        approvals[0] = TradingVault.ApprovalCall({token: token, spender: spender, amount: amount});
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // DEPOSIT TESTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -127,6 +136,23 @@ contract TradingVaultTest is Setup {
         assertEq(assets, 500 ether);
         assertEq(tokenA.balanceOf(user) - balBefore, 500 ether);
         assertEq(shareToken.balanceOf(user), 500 ether);
+    }
+
+    function test_operator_can_approve_spender_for_vault_assets() public {
+        address spender = makeAddr("spender");
+
+        vm.prank(operator);
+        vault.approveSpender(address(tokenA), spender, 123 ether);
+
+        assertEq(tokenA.allowance(address(vault), spender), 123 ether);
+    }
+
+    function test_non_operator_cannot_approve_spender() public {
+        address spender = makeAddr("spender");
+
+        vm.expectRevert();
+        vm.prank(user);
+        vault.approveSpender(address(tokenA), spender, 123 ether);
     }
 
     function test_multipleDepositors() public {
@@ -180,6 +206,29 @@ contract TradingVaultTest is Setup {
         assertEq(vault.getBalance(address(tokenB)), expectedOutput);
     }
 
+    function test_executeWithApprovals() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+
+        _configurePolicyForTrade();
+
+        uint256 expectedOutput = 500 ether;
+        bytes32 intentHash = keccak256("test trade approvals");
+        uint256 deadline = block.timestamp + 1 hours;
+
+        TradingVault.ExecuteParams memory params =
+            _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+
+        vm.prank(operator);
+        vault.executeWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(vault.getBalance(address(tokenB)), expectedOutput);
+        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 123 ether);
+    }
+
     function test_executeRevertsWithoutPolicy() public {
         vm.prank(user);
         vault.deposit(10000 ether, user);
@@ -194,6 +243,25 @@ contract TradingVaultTest is Setup {
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
         vault.execute(params, sigs, scores);
+    }
+
+    function test_executeWithApprovalsRevertsWithoutPolicyAndLeavesNoAllowance() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+
+        bytes32 intentHash = keccak256("test trade approvals without policy");
+        uint256 deadline = block.timestamp + 1 hours;
+
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
+        vault.executeWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 0);
     }
 
     function test_executeRevertsWithoutValidatorSigs() public {
@@ -217,6 +285,30 @@ contract TradingVaultTest is Setup {
         vault.execute(params, sigs, scores);
     }
 
+    function test_executeWithApprovalsRevertsWithoutValidatorSigsAndLeavesNoAllowance() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        bytes32 intentHash = keccak256("test trade approvals without sigs");
+        uint256 deadline = block.timestamp + 1 hours;
+
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
+
+        bytes[] memory sigs = new bytes[](1);
+        uint256[] memory scores = new uint256[](1);
+        scores[0] = 80;
+        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
+        vault.executeWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 0);
+    }
+
     function test_executeMinOutputCheck() public {
         vm.prank(user);
         vault.deposit(10000 ether, user);
@@ -233,6 +325,28 @@ contract TradingVaultTest is Setup {
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput));
         vault.execute(params, sigs, scores);
+    }
+
+    function test_executeWithApprovalsMinOutputCheckLeavesNoAllowance() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        uint256 actualOutput = 100 ether;
+        uint256 minOutput = 500 ether;
+        bytes32 intentHash = keccak256("test trade approvals min output");
+        uint256 deadline = block.timestamp + 1 hours;
+
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(actualOutput, minOutput, intentHash, deadline);
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput));
+        vault.executeWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 0);
     }
 
     function test_emergencyWithdraw() public {
@@ -283,9 +397,9 @@ contract TradingVaultTest is Setup {
         // Non-operator (user) tries to execute
         bytes32 operatorRole = vault.OPERATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, operatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, operatorRole)
+        );
         vault.execute(params, sigs, scores);
     }
 
@@ -295,9 +409,9 @@ contract TradingVaultTest is Setup {
 
         bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         vault.emergencyWithdraw(address(tokenA), user);
     }
 
@@ -524,9 +638,9 @@ contract TradingVaultTest is Setup {
     function test_depositLockup_onlyAdminCanSet() public {
         bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         vault.setDepositLockup(1 days);
     }
 
@@ -639,9 +753,9 @@ contract TradingVaultTest is Setup {
 
         // Spender tries to withdraw 500 (needs 500 shares) — should revert with ERC20InsufficientAllowance
         vm.prank(spender);
-        vm.expectRevert(abi.encodeWithSelector(
-            IERC20Errors.ERC20InsufficientAllowance.selector, spender, 100 ether, 500 ether
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, spender, 100 ether, 500 ether)
+        );
         vault.withdraw(500 ether, spender, user);
     }
 
@@ -659,8 +773,7 @@ contract TradingVaultTest is Setup {
 
         bytes32 intentHash = keccak256("paused trade");
         uint256 deadline = block.timestamp + 1 hours;
-        TradingVault.ExecuteParams memory params =
-            _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         vm.prank(operator);
@@ -727,8 +840,7 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("event trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params =
-            _buildExecuteParams(outputAmount, outputAmount, intentHash, deadline);
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(outputAmount, outputAmount, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
 
         vm.prank(operator);
@@ -771,7 +883,9 @@ contract TradingVaultTest is Setup {
 
         // The shares burned should be >= what convertToShares would give (rounded UP)
         // This protects the vault from rounding exploits
-        assertTrue(sharesBurned >= vault.convertToShares(withdrawAmount), "withdraw must burn >= convertToShares (round UP)");
+        assertTrue(
+            sharesBurned >= vault.convertToShares(withdrawAmount), "withdraw must burn >= convertToShares (round UP)"
+        );
     }
 }
 

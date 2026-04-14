@@ -1,4 +1,7 @@
-export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config';
+export type BotLifecycleStatus = 'unknown' | 'awaiting_secrets' | 'active' | 'stopped' | 'winding_down' | 'archived';
+export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config' | 'winding_down' | 'archived' | 'unknown';
+export type BotVerificationState = 'authoritative' | 'unverified';
+export type BotOperatorKind = 'cloud' | 'instance' | 'tee' | null;
 export type StrategyType =
   | 'prediction' | 'prediction_politics' | 'prediction_crypto'
   | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
@@ -31,8 +34,12 @@ export interface Bot {
 
   // Control panel fields (populated from operator API)
   sandboxId?: string;
+  sandboxState?: string | null;
+  lifecycleStatus?: BotLifecycleStatus;
+  archived?: boolean;
+  controlAvailable?: boolean;
   tradingActive?: boolean;
-  workflowId?: number;
+  workflowId?: string;
   maxLifetimeDays?: number;
   windDownStartedAt?: number;
   secretsConfigured?: boolean;
@@ -43,4 +50,12 @@ export interface Bot {
 
   // On-chain provision tracking
   callId?: number;
+
+  // Internal UI source tracking
+  source?: 'on_chain' | 'operator' | 'provision';
+  verificationState?: BotVerificationState;
+  operatorKind?: BotOperatorKind;
+  operatorApiUrl?: string | null;
+  lastVerifiedAt?: number | null;
+  isUnverified?: boolean;
 }

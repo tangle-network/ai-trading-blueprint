@@ -112,8 +112,11 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        service_id: None,
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
     }
 }
@@ -212,6 +215,34 @@ async fn test_provision_rejects_invalid_runtime_backend() {
             .contains("runtime_backend must be one of"),
         "unexpected failed phase message: {:?}",
         status.message
+    );
+}
+
+#[tokio::test]
+async fn test_provision_respects_non_paper_flag_from_strategy_config() {
+    let _dir = common::init_test_env();
+
+    let request = make_provision_request_with_strategy_config(
+        "test-live-bot",
+        "dex",
+        r#"{"paper_trade":false}"#,
+    );
+
+    let output = provision_core(
+        request,
+        Some(mock_sandbox("sb-live-bot")),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&output.sandbox_id).unwrap();
+    assert!(
+        !bot.paper_trade,
+        "paper_trade should be initialized from strategy_config_json"
     );
 }
 
@@ -809,7 +840,7 @@ async fn test_pack_profile_has_rich_content() {
     assert_eq!(profile["memory"]["enabled"], true);
 
     // Loop prompt references the pack name
-    let loop_prompt = build_pack_loop_prompt(&pack);
+    let loop_prompt = build_pack_loop_prompt(&pack, &config);
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
 }
 

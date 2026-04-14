@@ -1,6 +1,7 @@
 import { useReadContract, useBlockNumber } from 'wagmi';
 import { tangleServicesAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
+import { computeServiceRemainingSeconds } from '~/lib/serviceTtl';
 
 export interface ServiceInfo {
   blueprintId: number;
@@ -10,8 +11,6 @@ export interface ServiceInfo {
   terminatedAt: number;
   status: number;
 }
-
-const BLOCK_TIME_SECONDS = 12;
 
 export function useServiceInfo(serviceId: number | undefined) {
   const { data: blockNumber } = useBlockNumber({ watch: true });
@@ -37,10 +36,9 @@ export function useServiceInfo(serviceId: number | undefined) {
     status: serviceData.status,
   };
 
-  const currentBlock = blockNumber ? Number(blockNumber) : 0;
-  const expiryBlock = service.createdAt + service.ttl;
-  const remainingBlocks = Math.max(0, expiryBlock - currentBlock);
-  const remainingSeconds = remainingBlocks * BLOCK_TIME_SECONDS;
+  void blockNumber;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const remainingSeconds = computeServiceRemainingSeconds(service.createdAt, service.ttl, nowSeconds);
 
   return { service, isLoading, remainingSeconds };
 }

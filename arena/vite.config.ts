@@ -4,7 +4,7 @@ import UnoCSS from 'unocss/vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 
-// SSR browser globals shim — web3 libraries (mipd, sonner, @tangle/agent-ui)
+// SSR browser globals shim — browser-oriented dependencies (mipd, sonner, sandbox UI)
 // access document/window at module scope. Vite's SSR module runner evaluates
 // code in an isolated context, so Node-level globals don't help. This plugin
 // prepends a shim to every JS module that references browser APIs during SSR.
@@ -127,59 +127,68 @@ export default defineConfig(({ mode }) => {
   // process.env.VITE_* is NOT populated when vite.config.ts runs — must use loadEnv().
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const rpcTarget = env.VITE_RPC_URL || 'http://127.0.0.1:8545';
+  const operatorProxyTarget = env.VITE_OPERATOR_PROXY_TARGET || 'http://localhost:9200';
+  const instanceOperatorProxyTarget =
+    env.VITE_INSTANCE_OPERATOR_PROXY_TARGET || 'http://localhost:9201';
 
   return {
-  plugins: [
-    ssrBrowserShim(),
-    UnoCSS(),
-    reactRouter(),
-    tsconfigPaths(),
-    clientChunks(),
-  ],
-  define: {
-    global: 'globalThis',
-  },
-  resolve: {
-    alias: {
-      events: 'events',
-    },
-    dedupe: [
-      '@nanostores/react',
-      '@radix-ui/react-dialog',
-      '@radix-ui/react-select',
-      '@radix-ui/react-separator',
-      '@radix-ui/react-slot',
-      '@radix-ui/react-tabs',
-      '@tangle/agent-ui',
-      'blo',
-      'class-variance-authority',
-      'clsx',
-      'framer-motion',
-      'nanostores',
-      'react',
-      'react-dom',
-      'tailwind-merge',
-      'viem',
-      'wagmi',
+    plugins: [
+      ssrBrowserShim(),
+      UnoCSS(),
+      reactRouter(),
+      tsconfigPaths(),
+      clientChunks(),
     ],
-  },
-  server: {
-    port: 1337,
-    host: '0.0.0.0',
-    proxy: {
-      // Proxy operator API calls to avoid CORS issues in development
-      '/operator-api': {
-        target: 'http://localhost:9200',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/operator-api/, ''),
+    define: {
+      global: 'globalThis',
+    },
+    resolve: {
+      alias: {
+        events: 'events',
       },
-      // Proxy RPC calls so browsers on non-localhost (Tailscale, LAN) can reach Anvil
-      '/rpc-proxy': {
-        target: rpcTarget,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/rpc-proxy/, ''),
+      dedupe: [
+        '@nanostores/react',
+        '@radix-ui/react-dialog',
+        '@radix-ui/react-select',
+        '@radix-ui/react-separator',
+        '@radix-ui/react-slot',
+        '@radix-ui/react-tabs',
+        '@tangle-network/sandbox-ui',
+        'blo',
+        'class-variance-authority',
+        'clsx',
+        'framer-motion',
+        'nanostores',
+        'react',
+        'react-dom',
+        'react-router',
+        'tailwind-merge',
+        'viem',
+        'wagmi',
+      ],
+    },
+    server: {
+      port: 1337,
+      host: '0.0.0.0',
+      proxy: {
+        // Proxy operator API calls to avoid CORS issues in development
+        '/operator-api': {
+          target: operatorProxyTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/operator-api/, ''),
+        },
+        '/instance-operator-api': {
+          target: instanceOperatorProxyTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/instance-operator-api/, ''),
+        },
+        // Proxy RPC calls so browsers on non-localhost (Tailscale, LAN) can reach Anvil
+        '/rpc-proxy': {
+          target: rpcTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/rpc-proxy/, ''),
+        },
       },
     },
-  },
-};
+  };
 });

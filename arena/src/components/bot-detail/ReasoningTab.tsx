@@ -1,13 +1,20 @@
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
-import { Badge, Card, CardContent } from '@tangle/blueprint-ui/components';
+import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
 import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { SkeletonCard } from '~/components/ui/Skeleton';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 
 interface ReasoningTabProps {
   botId: string;
   botName?: string;
+  isLive?: boolean;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
 // ── Pending Validation Card (live, animated) ────────────────────────────
@@ -240,14 +247,31 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
 
 // ── Main Tab ────────────────────────────────────────────────────────────
 
-export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
-  const { data: allTrades, isLoading } = useBotTrades(botId, botName);
-  const { data: recentTrades } = useBotRecentValidations(botId, botName);
+export function ReasoningTab({
+  botId,
+  botName = '',
+  isLive = true,
+  operatorApiUrl,
+  operatorKind,
+  verificationState,
+}: ReasoningTabProps) {
+  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
+  const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+    operatorApiUrl,
+    operatorKind,
+    refetchInterval: isLive ? 15_000 : false,
+  });
+  const { data: recentTrades } = useBotRecentValidations(botId, botName, {
+    operatorApiUrl,
+    operatorKind,
+    enabled: isLive,
+    refetchInterval: isLive ? 5_000 : false,
+  });
 
   // Separate pending (live) from completed (history)
-  const pendingTrades = (recentTrades ?? []).filter(
+  const pendingTrades = isLive ? (recentTrades ?? []).filter(
     (t) => t.status === 'pending' || (Date.now() - t.timestamp < 30_000 && t.validation)
-  );
+  ) : [];
 
   const historicalTrades = (allTrades ?? []).filter(
     (t) => t.validatorReasoning || (t.validation?.responses?.length ?? 0) > 0
@@ -265,6 +289,20 @@ export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
         ))}
       </div>
     );
+  }
+
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Validator reasoning unavailable"
+        description="Reasoning is hidden until this bot has been verified against the operator and live trade data is fresh."
+        apiUrl={operatorApiUrl ?? ''}
+      />
+    );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
   if (pendingTrades.length === 0 && filteredHistory.length === 0) {
@@ -306,7 +344,18 @@ export function ReasoningTab({ botId, botName = '' }: ReasoningTabProps) {
  * Returns the count of pending validations for a bot.
  * Used by the parent page to show a badge on the Reasoning tab.
  */
-export function usePendingValidationCount(botId: string, botName: string = ''): number {
-  const { data } = useBotRecentValidations(botId, botName);
+export function usePendingValidationCount(
+  botId: string,
+  botName: string = '',
+  enabled: boolean = true,
+  operatorApiUrl?: string | null,
+  operatorKind?: BotOperatorKind,
+): number {
+  const { data } = useBotRecentValidations(botId, botName, {
+    operatorApiUrl,
+    operatorKind,
+    enabled,
+    refetchInterval: enabled ? 5_000 : false,
+  });
   return (data ?? []).filter((t) => t.status === 'pending').length;
 }

@@ -14,22 +14,64 @@ pub fn build_pack_agent_profile(
 ///
 /// Designed to be completable in 3-5 turns: scan → decide → act → update.
 /// All heavy lifting is in the pre-built tools — the agent just makes decisions.
-pub fn build_pack_loop_prompt(pack: &packs::StrategyPack) -> String {
-    format!(
-        "Trading tick ({name}). Run these steps:\n\n\
-         1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
-         2. `node /home/agent/tools/get-portfolio.js` — shows your current positions and recent trades\n\
-         3. `node /home/agent/tools/manage-collateral.js --action status` — check CLOB collateral (outstanding, available)\n\
-            If no collateral released yet and CLOB trades needed: `--action release --amount <amount>`\n\
-         4. `node /home/agent/tools/check-orders.js --cancel-stale 4` — check fills on open orders, flag stale orders older than 4h\n\
-         5. For each opportunity with edge: estimate your probability, calculate edge = your_prob - market_price. If |edge| > 5%, trade:\n\
-            `node /home/agent/tools/submit-trade.js --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
-            (price is optional — auto-fetched from CLOB midpoint if omitted)\n\
-         6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
-         If no edge found, skip step 5. Be decisive — you have {max_turns} turns.",
-        name = pack.name,
-        max_turns = pack.max_turns,
-    )
+pub fn build_pack_loop_prompt(
+    pack: &packs::StrategyPack,
+    config: &crate::state::TradingBotRecord,
+) -> String {
+    match pack.strategy_type.as_str() {
+        "dex" => {
+            if let Some(qa) = packs::dex_stochastic_qa_config(config) {
+                format!(
+                    "Trading tick ({name}). Run these steps:\n\n\
+                     1. `node /home/agent/tools/qa-stochastic-dex.js` — sample one QA outcome for {pair} and, when selected, run the live swap pipeline (`/validate` → `/execute`) with a no-trade / small / big outcome.\n\
+                     2. If the tool reports `no_trade`, summarize the skip reason and stop.\n\
+                     3. If the tool reports `traded`, summarize the executed trade, validator score, and updated portfolio.\n\
+                     4. If the tool reports `rejected` or `error`, summarize the failure and stop.\n\
+                     5. Do not place any additional discretionary trades in this tick outside the QA tool.\n\n\
+                     QA weights: no-trade {no_trade:.0}%, small trade {small_trade:.0}%, big trade {big_trade:.0}%. Allowed directions: {directions}. Be decisive — you have {max_turns} turns.",
+                    name = pack.name,
+                    pair = qa.pair,
+                    no_trade = qa.no_trade_weight * 100.0,
+                    small_trade = qa.small_trade_weight * 100.0,
+                    big_trade = qa.big_trade_weight * 100.0,
+                    directions = qa.allowed_directions.join(", "),
+                    max_turns = pack.max_turns,
+                )
+            } else {
+                format!(
+                    "Trading tick ({name}). Run these steps:\n\n\
+                     1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
+                     2. Fetch current WETH/USDC pricing and market context using the Trading API client:\n\
+                        `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                        Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
+                     3. Check the circuit breaker before any trade:\n\
+                        `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                     4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, validate it, then execute it using `api-client.js`.\n\
+                        Use token addresses, decimal amounts, and a conservative `min_amount_out` that respects slippage.\n\
+                     5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
+                     6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+                     Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
+                    name = pack.name,
+                    max_turns = pack.max_turns,
+                )
+            }
+        }
+        _ => format!(
+            "Trading tick ({name}). Run these steps:\n\n\
+             1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
+             2. `node /home/agent/tools/get-portfolio.js` — shows your current positions and recent trades\n\
+             3. `node /home/agent/tools/manage-collateral.js --action status` — check CLOB collateral (outstanding, available)\n\
+                If no collateral released yet and CLOB trades needed: `--action release --amount <amount>`\n\
+             4. `node /home/agent/tools/check-orders.js --cancel-stale 4` — check fills on open orders, flag stale orders older than 4h\n\
+             5. For each opportunity with edge: estimate your probability, calculate edge = your_prob - market_price. If |edge| > 5%, trade:\n\
+                `node /home/agent/tools/submit-trade.js --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                (price is optional — auto-fetched from CLOB midpoint if omitted)\n\
+             6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+             If no edge found, skip step 5. Be decisive — you have {max_turns} turns.",
+            name = pack.name,
+            max_turns = pack.max_turns,
+        ),
+    }
 }
 
 /// Build the complete system prompt for a trading bot sidecar.
@@ -213,9 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn test_loop_prompt_references_smart_tools() {
+    fn test_prediction_loop_prompt_references_smart_tools() {
         let pack = packs::get_pack("prediction").unwrap();
-        let prompt = build_pack_loop_prompt(&pack);
+        let prompt = build_pack_loop_prompt(&pack, &test_config());
 
         assert!(
             prompt.contains("analyze-opportunities.js"),
@@ -244,6 +286,66 @@ mod tests {
         assert!(
             prompt.contains("30 turns"),
             "loop prompt must include max_turns"
+        );
+    }
+
+    #[test]
+    fn test_dex_loop_prompt_uses_swap_workflow_not_prediction_tools() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config());
+
+        assert!(
+            prompt.contains("api-client"),
+            "dex loop prompt must use the Trading API client"
+        );
+        assert!(
+            prompt.contains("swap"),
+            "dex loop prompt must mention swap intents"
+        );
+        assert!(
+            prompt.contains("uniswap_v3"),
+            "dex loop prompt must target uniswap_v3"
+        );
+        assert!(
+            !prompt.contains("condition-id"),
+            "dex loop prompt must not reference prediction market condition ids"
+        );
+        assert!(
+            !prompt.contains("manage-collateral.js --action status"),
+            "dex loop prompt must not require CLOB collateral checks"
+        );
+        assert!(
+            !prompt.contains("submit-trade.js --condition-id"),
+            "dex loop prompt must not instruct the prediction trade helper"
+        );
+    }
+
+    #[test]
+    fn test_dex_loop_prompt_uses_stochastic_qa_tool_when_enabled() {
+        let pack = packs::get_pack("dex").unwrap();
+        let mut config = test_config();
+        config.strategy_config = serde_json::json!({
+            "qa_mode": "stochastic",
+            "qa_trade_weights": {
+                "no_trade": 0.5,
+                "small_trade": 0.3,
+                "big_trade": 0.2
+            },
+            "qa_allowed_directions": ["buy", "sell"]
+        });
+        let prompt = build_pack_loop_prompt(&pack, &config);
+
+        assert!(
+            prompt.contains("qa-stochastic-dex.js"),
+            "qa-enabled dex loop must use the stochastic QA tool"
+        );
+        assert!(
+            prompt.contains("Do not place any additional discretionary trades"),
+            "qa-enabled dex loop must prevent extra discretionary trades"
+        );
+        assert!(
+            prompt.contains("no-trade 50%"),
+            "qa-enabled dex loop must surface configured weights"
         );
     }
 

@@ -1,19 +1,38 @@
-use crate::types::{PortfolioState, Position, PositionType, PriceData};
+use crate::types::{PortfolioState, Position, PositionType, PriceData, ValuationStatus};
 use chrono::Utc;
 use rust_decimal::Decimal;
+
+pub struct ClosePositionResult {
+    pub realized_pnl: Option<Decimal>,
+}
 
 impl PortfolioState {
     /// Update portfolio with new price data
     pub fn update_prices(&mut self, prices: &[PriceData]) {
         for position in &mut self.positions {
             if let Some(price_data) = prices.iter().find(|p| p.token == position.token) {
-                position.current_price = price_data.price_usd;
-                position.unrealized_pnl = match position.position_type {
-                    PositionType::ShortPerp => {
-                        (position.entry_price - position.current_price) * position.amount
+                position.current_price = Some(price_data.price_usd);
+                match position.valuation_status {
+                    ValuationStatus::Priced => {
+                        if let Some(entry_price) = position.entry_price {
+                            let current_price = price_data.price_usd;
+                            position.unrealized_pnl = Some(match position.position_type {
+                                PositionType::ShortPerp => {
+                                    (entry_price - current_price) * position.amount
+                                }
+                                _ => (current_price - entry_price) * position.amount,
+                            });
+                        } else {
+                            position.unrealized_pnl = None;
+                            position.valuation_status = ValuationStatus::ValueOnly;
+                        }
                     }
-                    _ => (position.current_price - position.entry_price) * position.amount,
-                };
+                    ValuationStatus::Unpriced | ValuationStatus::ValueOnly => {
+                        position.entry_price = None;
+                        position.unrealized_pnl = None;
+                        position.valuation_status = ValuationStatus::ValueOnly;
+                    }
+                }
             }
         }
         self.recalculate();
@@ -26,16 +45,20 @@ impl PortfolioState {
     }
 
     /// Remove a position by token and protocol, realizing P&L
-    pub fn close_position(&mut self, token: &str, protocol: &str) -> Option<Decimal> {
+    pub fn close_position(&mut self, token: &str, protocol: &str) -> Option<ClosePositionResult> {
         if let Some(idx) = self
             .positions
             .iter()
             .position(|p| p.token == token && p.protocol == protocol)
         {
             let position = self.positions.remove(idx);
-            self.realized_pnl += position.unrealized_pnl;
+            if let Some(pnl) = position.unrealized_pnl {
+                self.realized_pnl += pnl;
+            }
             self.recalculate();
-            Some(position.unrealized_pnl)
+            Some(ClosePositionResult {
+                realized_pnl: position.unrealized_pnl,
+            })
         } else {
             None
         }
@@ -46,10 +69,18 @@ impl PortfolioState {
         self.total_value_usd = self
             .positions
             .iter()
-            .map(|p| p.current_price * p.amount)
+            .filter_map(|p| {
+                p.current_price
+                    .map(|current_price| current_price * p.amount)
+            })
             .sum();
 
-        self.unrealized_pnl = self.positions.iter().map(|p| p.unrealized_pnl).sum();
+        self.unrealized_pnl = self
+            .positions
+            .iter()
+            .filter(|p| p.valuation_status == ValuationStatus::Priced)
+            .filter_map(|p| p.unrealized_pnl)
+            .sum();
 
         // Update high water mark
         let total_with_realized = self.total_value_usd + self.realized_pnl;
@@ -86,11 +117,38 @@ mod tests {
         Position {
             token: token.into(),
             amount,
-            entry_price,
-            current_price,
-            unrealized_pnl: (current_price - entry_price) * amount,
+            entry_price: Some(entry_price),
+            current_price: Some(current_price),
+            unrealized_pnl: Some((current_price - entry_price) * amount),
             protocol: "test".into(),
             position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Priced,
+        }
+    }
+
+    fn make_unpriced_position(token: &str, amount: i64) -> Position {
+        Position {
+            token: token.into(),
+            amount: Decimal::new(amount, 0),
+            entry_price: None,
+            current_price: None,
+            unrealized_pnl: None,
+            protocol: "test".into(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Unpriced,
+        }
+    }
+
+    fn make_value_only_position(token: &str, amount: i64, current: i64) -> Position {
+        Position {
+            token: token.into(),
+            amount: Decimal::new(amount, 0),
+            entry_price: None,
+            current_price: Some(Decimal::new(current, 0)),
+            unrealized_pnl: None,
+            protocol: "test".into(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::ValueOnly,
         }
     }
 
@@ -109,7 +167,10 @@ mod tests {
         portfolio.add_position(make_position("ETH", 10, 2000, 2100));
 
         let pnl = portfolio.close_position("ETH", "test");
-        assert_eq!(pnl, Some(Decimal::new(1000, 0)));
+        assert_eq!(
+            pnl.and_then(|result| result.realized_pnl),
+            Some(Decimal::new(1000, 0))
+        );
         assert_eq!(portfolio.realized_pnl, Decimal::new(1000, 0));
         assert!(portfolio.positions.is_empty());
     }
@@ -146,5 +207,128 @@ mod tests {
             timestamp: Utc::now(),
         }]);
         assert_eq!(portfolio.high_water_mark, hwm);
+    }
+
+    #[test]
+    fn test_unpriced_position_recovers_to_value_only() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(Position {
+            token: "WETH".into(),
+            amount: Decimal::new(15, 1),
+            entry_price: None,
+            current_price: None,
+            unrealized_pnl: None,
+            protocol: "test".into(),
+            position_type: PositionType::Spot,
+            valuation_status: ValuationStatus::Unpriced,
+        });
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2500, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        let position = &portfolio.positions[0];
+        assert_eq!(position.valuation_status, ValuationStatus::ValueOnly);
+        assert_eq!(position.current_price, Some(Decimal::new(2500, 0)));
+        assert_eq!(position.entry_price, None);
+        assert_eq!(position.unrealized_pnl, None);
+        assert_eq!(portfolio.total_value_usd, Decimal::new(3750, 0));
+        assert_eq!(portfolio.unrealized_pnl, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_value_only_position_refreshes_without_inventing_pnl() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_value_only_position("WETH", 2, 2000));
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2100, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        let position = &portfolio.positions[0];
+        assert_eq!(position.valuation_status, ValuationStatus::ValueOnly);
+        assert_eq!(position.current_price, Some(Decimal::new(2100, 0)));
+        assert_eq!(position.entry_price, None);
+        assert_eq!(position.unrealized_pnl, None);
+        assert_eq!(portfolio.total_value_usd, Decimal::new(4200, 0));
+        assert_eq!(portfolio.unrealized_pnl, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_closing_value_only_position_does_not_realize_unknown_pnl() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.realized_pnl = Decimal::new(25, 0);
+        portfolio.add_position(make_value_only_position("WETH", 2, 2100));
+
+        let result = portfolio.close_position("WETH", "test").unwrap();
+
+        assert_eq!(result.realized_pnl, None);
+        assert_eq!(portfolio.realized_pnl, Decimal::new(25, 0));
+    }
+
+    #[test]
+    fn test_drawdown_updates_with_mixed_priced_and_unpriced_positions() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2500, 2500));
+        portfolio.add_position(make_unpriced_position("UNKNOWN", 1));
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(1600, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(portfolio.total_value_usd, Decimal::new(16000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(25000, 0));
+        assert_eq!(portfolio.max_drawdown_pct, Decimal::new(36, 0));
+        assert!(portfolio.should_circuit_break(Decimal::new(20, 0)));
+    }
+
+    #[test]
+    fn test_drawdown_updates_with_value_only_positions() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2500, 2500));
+        portfolio.add_position(make_value_only_position("USDC", 1000, 1));
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2000, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(portfolio.total_value_usd, Decimal::new(21000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(26000, 0));
+        assert_eq!(
+            portfolio.max_drawdown_pct.round_dp(2),
+            Decimal::new(1923, 2)
+        );
+        assert_eq!(portfolio.unrealized_pnl, Decimal::new(-5000, 0));
+    }
+
+    #[test]
+    fn test_high_water_mark_can_increase_with_partially_priced_portfolio() {
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(make_position("WETH", 10, 2000, 2000));
+        portfolio.add_position(make_value_only_position("USDC", 1000, 1));
+        let starting_hwm = portfolio.high_water_mark;
+
+        portfolio.update_prices(&[PriceData {
+            token: "WETH".into(),
+            price_usd: Decimal::new(2200, 0),
+            source: "test".into(),
+            timestamp: Utc::now(),
+        }]);
+
+        assert_eq!(starting_hwm, Decimal::new(21000, 0));
+        assert_eq!(portfolio.high_water_mark, Decimal::new(23000, 0));
+        assert_eq!(portfolio.max_drawdown_pct, Decimal::ZERO);
     }
 }

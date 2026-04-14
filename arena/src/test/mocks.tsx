@@ -46,11 +46,11 @@ export function createWrapper() {
   };
 }
 
-// ── Mock @tangle/blueprint-ui ───────────────────────────────────────────
+// ── Mock @tangle-network/blueprint-ui ───────────────────────────────────────────
 
 // Provides minimal passthrough for UI components used in tests
 export function mockBlueprintUi() {
-  vi.mock('@tangle/blueprint-ui/components', () => ({
+  vi.mock('@tangle-network/blueprint-ui/components', () => ({
     Badge: ({ children, ...props }: any) => <span data-testid="badge" {...props}>{children}</span>,
     Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
     Card: ({ children, ...props }: any) => <div data-testid="card" {...props}>{children}</div>,
@@ -74,7 +74,7 @@ export function mockBlueprintUi() {
     Identicon: ({ address }: any) => <span data-testid="identicon">{address?.slice(0, 6)}</span>,
   }));
 
-  vi.mock('@tangle/blueprint-ui', () => ({
+  vi.mock('@tangle-network/blueprint-ui', () => ({
     useThemeValue: () => 'dark',
     Identicon: ({ address }: any) => <span data-testid="identicon">{address?.slice(0, 6)}</span>,
   }));

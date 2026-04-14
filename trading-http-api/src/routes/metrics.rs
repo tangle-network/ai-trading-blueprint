@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::TradingApiState;
 use crate::metrics_store::{self, MetricSnapshot};
+use crate::{MultiBotTradingState, TradingApiState};
 
 #[derive(Serialize)]
 pub struct BotMetrics {
@@ -21,6 +21,13 @@ pub fn router() -> Router<Arc<TradingApiState>> {
         .route("/metrics", get(get_metrics))
         .route("/metrics/history", get(get_metrics_history))
         .route("/metrics/snapshot", post(post_snapshot))
+}
+
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
+    Router::new()
+        .route("/metrics", get(get_metrics_multi_bot))
+        .route("/metrics/history", get(get_metrics_history_multi_bot))
+        .route("/metrics/snapshot", post(post_snapshot_multi_bot))
 }
 
 async fn get_metrics(State(state): State<Arc<TradingApiState>>) -> Json<BotMetrics> {
@@ -86,11 +93,50 @@ async fn post_snapshot(
     State(state): State<Arc<TradingApiState>>,
     Json(req): Json<SnapshotRequest>,
 ) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
+    record_snapshot_for_bot(&state.bot_id, req)
+}
+
+async fn get_metrics_multi_bot(
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+) -> Json<BotMetrics> {
+    Json(BotMetrics {
+        bot_id: bot.bot_id,
+        paper_trade: bot.paper_trade,
+        trading_active: true,
+    })
+}
+
+async fn get_metrics_history_multi_bot(
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Query(query): Query<MetricsHistoryQuery>,
+) -> Result<Json<MetricsHistoryResponse>, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(100).min(1000);
+
+    let result = metrics_store::snapshots_for_bot(&bot.bot_id, query.from, query.to, limit)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(MetricsHistoryResponse {
+        snapshots: result.snapshots,
+        total: result.total,
+    }))
+}
+
+async fn post_snapshot_multi_bot(
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Json(req): Json<SnapshotRequest>,
+) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
+    record_snapshot_for_bot(&bot.bot_id, req)
+}
+
+fn record_snapshot_for_bot(
+    bot_id: &str,
+    req: SnapshotRequest,
+) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
     let now = Utc::now();
 
     let snapshot = MetricSnapshot {
         timestamp: now,
-        bot_id: state.bot_id.clone(),
+        bot_id: bot_id.to_string(),
         account_value_usd: req.account_value_usd,
         unrealized_pnl: req.unrealized_pnl,
         realized_pnl: req.realized_pnl,

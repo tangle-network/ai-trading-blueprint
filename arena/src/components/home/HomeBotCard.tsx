@@ -1,15 +1,19 @@
 import { Link } from 'react-router';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Badge, Button, Card, CardContent, Identicon } from '@tangle/blueprint-ui/components';
+import { Badge, Button, Card, CardContent, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import type { Bot } from '~/lib/types/bot';
 import { STRATEGY_SHORT } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 
-const STATUS_BADGE: Record<string, { variant: 'success' | 'amber' | 'secondary' | 'destructive'; label: string }> = {
+const STATUS_BADGE: Record<string, { variant: 'success' | 'amber' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
   active: { variant: 'success', label: 'Active' },
   paused: { variant: 'amber', label: 'Paused' },
   needs_config: { variant: 'amber', label: 'Needs Config' },
+  winding_down: { variant: 'amber', label: 'Winding Down' },
+  archived: { variant: 'secondary', label: 'Archived' },
+  unknown: { variant: 'outline', label: 'Unknown' },
   stopped: { variant: 'secondary', label: 'Stopped' },
 };
 
@@ -47,7 +51,10 @@ export function HomeBotCard({
 
   const badge = isProvisioning
     ? { variant: 'amber' as const, label: 'Provisioning' }
-    : STATUS_BADGE[bot.status] ?? STATUS_BADGE.stopped;
+    : STATUS_BADGE[bot.status] ?? {
+        variant: botStatusBadgeVariant(bot.status),
+        label: botStatusLabel(bot.status),
+      };
 
   return (
     <Card className={`${borderColor} transition-all duration-200`}>
@@ -69,6 +76,11 @@ export function HomeBotCard({
               <Badge variant={badge.variant} className="text-[10px]">
                 {badge.label}
               </Badge>
+              {bot.verificationState === 'unverified' && (
+                <Badge variant="outline" className="text-[10px]">
+                  Unverified
+                </Badge>
+              )}
               {isPaper && (
                 <Badge variant="outline" className="text-[10px]">Paper</Badge>
               )}

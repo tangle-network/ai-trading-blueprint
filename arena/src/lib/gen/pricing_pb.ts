@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file pricing.proto.
  */
 export const file_pricing: GenFile = /*@__PURE__*/
-  fileDesc("Cg1wcmljaW5nLnByb3RvEg5wcmljaW5nX2VuZ2luZSI4CgVBc3NldBIQCgZjdXN0b20YASABKAxIABIPCgVlcmMyMBgCIAEoDEgAQgwKCmFzc2V0X3R5cGUihQEKGUFzc2V0U2VjdXJpdHlSZXF1aXJlbWVudHMSJAoFYXNzZXQYASABKAsyFS5wcmljaW5nX2VuZ2luZS5Bc3NldBIgChhtaW5pbXVtX2V4cG9zdXJlX3BlcmNlbnQYAiABKA0SIAoYbWF4aW11bV9leHBvc3VyZV9wZXJjZW50GAMgASgNIlkKF0Fzc2V0U2VjdXJpdHlDb21taXRtZW50EiQKBWFzc2V0GAEgASgLMhUucHJpY2luZ19lbmdpbmUuQXNzZXQSGAoQZXhwb3N1cmVfcGVyY2VudBgCIAEoDSK2AgoPR2V0UHJpY2VSZXF1ZXN0EhQKDGJsdWVwcmludF9pZBgBIAEoBBISCgp0dGxfYmxvY2tzGAIgASgEEhUKDXByb29mX29mX3dvcmsYAyABKAwSQgoVcmVzb3VyY2VfcmVxdWlyZW1lbnRzGAQgAygLMiMucHJpY2luZ19lbmdpbmUuUmVzb3VyY2VSZXF1aXJlbWVudBJIChVzZWN1cml0eV9yZXF1aXJlbWVudHMYBSABKAsyKS5wcmljaW5nX2VuZ2luZS5Bc3NldFNlY3VyaXR5UmVxdWlyZW1lbnRzEhsKE2NoYWxsZW5nZV90aW1lc3RhbXAYBiABKAQSNwoNcHJpY2luZ19tb2RlbBgHIAEoDjIgLnByaWNpbmdfZW5naW5lLlByaWNpbmdNb2RlbEhpbnQiMgoTUmVzb3VyY2VSZXF1aXJlbWVudBIMCgRraW5kGAEgASgJEg0KBWNvdW50GAIgASgEIoYBChBHZXRQcmljZVJlc3BvbnNlEjMKDXF1b3RlX2RldGFpbHMYASABKAsyHC5wcmljaW5nX2VuZ2luZS5RdW90ZURldGFpbHMSEQoJc2lnbmF0dXJlGAIgASgMEhMKC29wZXJhdG9yX2lkGAMgASgMEhUKDXByb29mX29mX3dvcmsYBCABKAwi7wEKDFF1b3RlRGV0YWlscxIUCgxibHVlcHJpbnRfaWQYASABKAQSEgoKdHRsX2Jsb2NrcxgCIAEoBBIXCg90b3RhbF9jb3N0X3JhdGUYAyABKAESEQoJdGltZXN0YW1wGAQgASgEEg4KBmV4cGlyeRgFIAEoBBIyCglyZXNvdXJjZXMYBiADKAsyHy5wcmljaW5nX2VuZ2luZS5SZXNvdXJjZVByaWNpbmcSRQoUc2VjdXJpdHlfY29tbWl0bWVudHMYByADKAsyJy5wcmljaW5nX2VuZ2luZS5Bc3NldFNlY3VyaXR5Q29tbWl0bWVudCJLCg9SZXNvdXJjZVByaWNpbmcSDAoEa2luZBgBIAEoCRINCgVjb3VudBgCIAEoBBIbChNwcmljZV9wZXJfdW5pdF9yYXRlGAMgASgBIm8KEkdldEpvYlByaWNlUmVxdWVzdBISCgpzZXJ2aWNlX2lkGAEgASgEEhEKCWpvYl9pbmRleBgCIAEoDRIVCg1wcm9vZl9vZl93b3JrGAMgASgMEhsKE2NoYWxsZW5nZV90aW1lc3RhbXAYBCABKAQi4QEKE0dldEpvYlByaWNlUmVzcG9uc2USNgoNcXVvdGVfZGV0YWlscxgBIAEoCzIfLnByaWNpbmdfZW5naW5lLkpvYlF1b3RlRGV0YWlscxIRCglzaWduYXR1cmUYAiABKAwSEwoLb3BlcmF0b3JfaWQYAyABKAwSFQoNcHJvb2Zfb2Zfd29yaxgEIAEoDBI8ChJzZXR0bGVtZW50X29wdGlvbnMYBSADKAsyIC5wcmljaW5nX2VuZ2luZS5TZXR0bGVtZW50T3B0aW9uEhUKDXg0MDJfZW5kcG9pbnQYBiABKAkicgoQU2V0dGxlbWVudE9wdGlvbhIPCgduZXR3b3JrGAEgASgJEg0KBWFzc2V0GAIgASgJEg4KBnN5bWJvbBgDIAEoCRIOCgZhbW91bnQYBCABKAkSDgoGcGF5X3RvGAUgASgJEg4KBnNjaGVtZRgGIAEoCSJqCg9Kb2JRdW90ZURldGFpbHMSEgoKc2VydmljZV9pZBgBIAEoBBIRCglqb2JfaW5kZXgYAiABKA0SDQoFcHJpY2UYAyABKAwSEQoJdGltZXN0YW1wGAQgASgEEg4KBmV4cGlyeRgFIAEoBCpEChBQcmljaW5nTW9kZWxIaW50EgwKCFBBWV9PTkNFEAASEAoMU1VCU0NSSVBUSU9OEAESEAoMRVZFTlRfRFJJVkVOEAIqIgoJQXNzZXRUeXBlEgoKBkNVU1RPTRAAEgkKBUVSQzIwEAEytgEKDVByaWNpbmdFbmdpbmUSTQoIR2V0UHJpY2USHy5wcmljaW5nX2VuZ2luZS5HZXRQcmljZVJlcXVlc3QaIC5wcmljaW5nX2VuZ2luZS5HZXRQcmljZVJlc3BvbnNlElYKC0dldEpvYlByaWNlEiIucHJpY2luZ19lbmdpbmUuR2V0Sm9iUHJpY2VSZXF1ZXN0GiMucHJpY2luZ19lbmdpbmUuR2V0Sm9iUHJpY2VSZXNwb25zZWIGcHJvdG8z");
+  fileDesc("Cg1wcmljaW5nLnByb3RvEg5wcmljaW5nX2VuZ2luZSI4CgVBc3NldBIQCgZjdXN0b20YASABKAxIABIPCgVlcmMyMBgCIAEoDEgAQgwKCmFzc2V0X3R5cGUihQEKGUFzc2V0U2VjdXJpdHlSZXF1aXJlbWVudHMSJAoFYXNzZXQYASABKAsyFS5wcmljaW5nX2VuZ2luZS5Bc3NldBIgChhtaW5pbXVtX2V4cG9zdXJlX3BlcmNlbnQYAiABKA0SIAoYbWF4aW11bV9leHBvc3VyZV9wZXJjZW50GAMgASgNIlkKF0Fzc2V0U2VjdXJpdHlDb21taXRtZW50EiQKBWFzc2V0GAEgASgLMhUucHJpY2luZ19lbmdpbmUuQXNzZXQSGAoQZXhwb3N1cmVfcGVyY2VudBgCIAEoDSLLAgoPR2V0UHJpY2VSZXF1ZXN0EhQKDGJsdWVwcmludF9pZBgBIAEoBBISCgp0dGxfYmxvY2tzGAIgASgEEhUKDXByb29mX29mX3dvcmsYAyABKAwSQgoVcmVzb3VyY2VfcmVxdWlyZW1lbnRzGAQgAygLMiMucHJpY2luZ19lbmdpbmUuUmVzb3VyY2VSZXF1aXJlbWVudBJIChVzZWN1cml0eV9yZXF1aXJlbWVudHMYBSABKAsyKS5wcmljaW5nX2VuZ2luZS5Bc3NldFNlY3VyaXR5UmVxdWlyZW1lbnRzEhsKE2NoYWxsZW5nZV90aW1lc3RhbXAYBiABKAQSNwoNcHJpY2luZ19tb2RlbBgHIAEoDjIgLnByaWNpbmdfZW5naW5lLlByaWNpbmdNb2RlbEhpbnQSEwoLcmVxdWlyZV90ZWUYCCABKAgiMgoTUmVzb3VyY2VSZXF1aXJlbWVudBIMCgRraW5kGAEgASgJEg0KBWNvdW50GAIgASgEIrIBChBHZXRQcmljZVJlc3BvbnNlEjMKDXF1b3RlX2RldGFpbHMYASABKAsyHC5wcmljaW5nX2VuZ2luZS5RdW90ZURldGFpbHMSEQoJc2lnbmF0dXJlGAIgASgMEhMKC29wZXJhdG9yX2lkGAMgASgMEhUKDXByb29mX29mX3dvcmsYBCABKAwSFAoMdGVlX2F0dGVzdGVkGAUgASgIEhQKDHRlZV9wcm92aWRlchgGIAEoCSLvAQoMUXVvdGVEZXRhaWxzEhQKDGJsdWVwcmludF9pZBgBIAEoBBISCgp0dGxfYmxvY2tzGAIgASgEEhcKD3RvdGFsX2Nvc3RfcmF0ZRgDIAEoARIRCgl0aW1lc3RhbXAYBCABKAQSDgoGZXhwaXJ5GAUgASgEEjIKCXJlc291cmNlcxgGIAMoCzIfLnByaWNpbmdfZW5naW5lLlJlc291cmNlUHJpY2luZxJFChRzZWN1cml0eV9jb21taXRtZW50cxgHIAMoCzInLnByaWNpbmdfZW5naW5lLkFzc2V0U2VjdXJpdHlDb21taXRtZW50IksKD1Jlc291cmNlUHJpY2luZxIMCgRraW5kGAEgASgJEg0KBWNvdW50GAIgASgEEhsKE3ByaWNlX3Blcl91bml0X3JhdGUYAyABKAEihAEKEkdldEpvYlByaWNlUmVxdWVzdBISCgpzZXJ2aWNlX2lkGAEgASgEEhEKCWpvYl9pbmRleBgCIAEoDRIVCg1wcm9vZl9vZl93b3JrGAMgASgMEhsKE2NoYWxsZW5nZV90aW1lc3RhbXAYBCABKAQSEwoLcmVxdWlyZV90ZWUYBSABKAgijQIKE0dldEpvYlByaWNlUmVzcG9uc2USNgoNcXVvdGVfZGV0YWlscxgBIAEoCzIfLnByaWNpbmdfZW5naW5lLkpvYlF1b3RlRGV0YWlscxIRCglzaWduYXR1cmUYAiABKAwSEwoLb3BlcmF0b3JfaWQYAyABKAwSFQoNcHJvb2Zfb2Zfd29yaxgEIAEoDBI8ChJzZXR0bGVtZW50X29wdGlvbnMYBSADKAsyIC5wcmljaW5nX2VuZ2luZS5TZXR0bGVtZW50T3B0aW9uEhUKDXg0MDJfZW5kcG9pbnQYBiABKAkSFAoMdGVlX2F0dGVzdGVkGAcgASgIEhQKDHRlZV9wcm92aWRlchgIIAEoCSJyChBTZXR0bGVtZW50T3B0aW9uEg8KB25ldHdvcmsYASABKAkSDQoFYXNzZXQYAiABKAkSDgoGc3ltYm9sGAMgASgJEg4KBmFtb3VudBgEIAEoCRIOCgZwYXlfdG8YBSABKAkSDgoGc2NoZW1lGAYgASgJIoMBCg9Kb2JRdW90ZURldGFpbHMSEgoKc2VydmljZV9pZBgBIAEoBBIRCglqb2JfaW5kZXgYAiABKA0SDQoFcHJpY2UYAyABKAwSEQoJdGltZXN0YW1wGAQgASgEEg4KBmV4cGlyeRgFIAEoBBIXCg9jb25maWRlbnRpYWxpdHkYBiABKA0qRAoQUHJpY2luZ01vZGVsSGludBIMCghQQVlfT05DRRAAEhAKDFNVQlNDUklQVElPThABEhAKDEVWRU5UX0RSSVZFThACKiIKCUFzc2V0VHlwZRIKCgZDVVNUT00QABIJCgVFUkMyMBABMrYBCg1QcmljaW5nRW5naW5lEk0KCEdldFByaWNlEh8ucHJpY2luZ19lbmdpbmUuR2V0UHJpY2VSZXF1ZXN0GiAucHJpY2luZ19lbmdpbmUuR2V0UHJpY2VSZXNwb25zZRJWCgtHZXRKb2JQcmljZRIiLnByaWNpbmdfZW5naW5lLkdldEpvYlByaWNlUmVxdWVzdBojLnByaWNpbmdfZW5naW5lLkdldEpvYlByaWNlUmVzcG9uc2ViBnByb3RvMw");
 
 /**
  * Asset type definition
@@ -168,6 +168,13 @@ export type GetPriceRequest = Message<"pricing_engine.GetPriceRequest"> & {
    * @generated from field: pricing_engine.PricingModelHint pricing_model = 7;
    */
   pricingModel: PricingModelHint;
+
+  /**
+   * Whether the customer requires TEE-attested service execution.
+   *
+   * @generated from field: bool require_tee = 8;
+   */
+  requireTee: boolean;
 };
 
 /**
@@ -238,6 +245,20 @@ export type GetPriceResponse = Message<"pricing_engine.GetPriceResponse"> & {
    * @generated from field: bytes proof_of_work = 4;
    */
   proofOfWork: Uint8Array;
+
+  /**
+   * Whether this quote is backed by TEE attestation.
+   *
+   * @generated from field: bool tee_attested = 5;
+   */
+  teeAttested: boolean;
+
+  /**
+   * TEE provider name (e.g. "aws_nitro", "intel_tdx"). Empty if not attested.
+   *
+   * @generated from field: string tee_provider = 6;
+   */
+  teeProvider: string;
 };
 
 /**
@@ -378,6 +399,13 @@ export type GetJobPriceRequest = Message<"pricing_engine.GetJobPriceRequest"> & 
    * @generated from field: uint64 challenge_timestamp = 4;
    */
   challengeTimestamp: bigint;
+
+  /**
+   * Whether the customer requires TEE-attested service execution.
+   *
+   * @generated from field: bool require_tee = 5;
+   */
+  requireTee: boolean;
 };
 
 /**
@@ -436,6 +464,20 @@ export type GetJobPriceResponse = Message<"pricing_engine.GetJobPriceResponse"> 
    * @generated from field: string x402_endpoint = 6;
    */
   x402Endpoint: string;
+
+  /**
+   * Whether this quote is backed by TEE attestation.
+   *
+   * @generated from field: bool tee_attested = 7;
+   */
+  teeAttested: boolean;
+
+  /**
+   * TEE provider name (e.g. "aws_nitro", "intel_tdx"). Empty if not attested.
+   *
+   * @generated from field: string tee_provider = 8;
+   */
+  teeProvider: string;
 };
 
 /**
@@ -542,6 +584,15 @@ export type JobQuoteDetails = Message<"pricing_engine.JobQuoteDetails"> & {
    * @generated from field: uint64 expiry = 5;
    */
   expiry: bigint;
+
+  /**
+   * Confidentiality level (0=Any, 1=Required, 2=Preferred).
+   * Bound into the EIP-712 signature to prevent replay of
+   * a non-TEE quote for a TEE-required service.
+   *
+   * @generated from field: uint32 confidentiality = 6;
+   */
+  confidentiality: number;
 };
 
 /**

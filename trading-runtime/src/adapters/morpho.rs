@@ -3,7 +3,7 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 
 use super::{
-    ActionParams, EncodedAction, ProtocolAdapter, encode_erc20_approve, parse_address_or,
+    ActionParams, EncodedAction, ProtocolAdapter, approval, parse_address_or,
     validate_vault_address,
 };
 use crate::error::TradingError;
@@ -97,11 +97,7 @@ impl ProtocolAdapter for MorphoAdapter {
                     value: U256::ZERO,
                     min_output: params.amount,
                     output_token: params.token_in,
-                    pre_calls: vec![encode_erc20_approve(
-                        params.token_in,
-                        morpho_vault,
-                        params.amount,
-                    )],
+                    approvals: vec![approval(params.token_in, morpho_vault, params.amount)],
                 })
             }
             Action::Withdraw => {
@@ -112,7 +108,7 @@ impl ProtocolAdapter for MorphoAdapter {
                     value: U256::ZERO,
                     min_output: params.min_output,
                     output_token: params.token_in,
-                    pre_calls: vec![],
+                    approvals: vec![],
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -152,7 +148,7 @@ mod tests {
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, MORPHO_VAULT.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
-        assert_eq!(result.pre_calls.len(), 1);
+        assert_eq!(result.approvals.len(), 1);
     }
 
     #[test]

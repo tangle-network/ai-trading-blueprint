@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { TrackedProvision } from '~/lib/stores/provisions';
+
+const setSearchParams = vi.fn();
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
-  useSearchParams: () => [new URLSearchParams()],
+  useSearchParams: () => [new URLSearchParams(), setSearchParams],
 }));
 
 vi.mock('wagmi', () => ({
@@ -43,7 +46,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   },
 }));
 
-vi.mock('@tangle/blueprint-ui', () => ({
+vi.mock('@tangle-network/blueprint-ui', () => ({
   publicClient: {},
   selectedChainIdStore: {},
   useOperators: () => ({ operators: [], operatorCount: 0 }),
@@ -63,7 +66,12 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
 vi.mock('~/lib/stores/provisions', () => ({
   provisionsForOwner: () => ({ subscribe: vi.fn(), get: vi.fn(() => []) }),
   addProvision: vi.fn(),
+  upsertInstanceProvision: vi.fn(),
+  removeProvision: vi.fn(),
+  removeMatchingInstanceProvision: vi.fn(),
+  removeInstanceProvisions: vi.fn(),
   updateProvision: vi.fn(),
+  findMatchingInstanceProvision: vi.fn(),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
@@ -138,6 +146,11 @@ describe('provision runtime backend helpers', () => {
     expect(resolveRuntimeBackendForProvision('firecracker', false, true)).toBe('firecracker');
   });
 
+  it('falls back to the first configured network when the selected chain is unsupported', async () => {
+    const { resolveSelectedProvisionNetwork } = await import('../provision');
+    expect(resolveSelectedProvisionNetwork(31339)?.chain.id).toBe(0);
+  });
+
   it('propagates normalized runtime and overrides into strategy config payload', async () => {
     const { buildStrategyConfigForProvision } = await import('../provision');
     expect(
@@ -146,11 +159,194 @@ describe('provision runtime backend helpers', () => {
         isTeeBlueprint: false,
         customExpertKnowledge: 'expert notes',
         customInstructions: 'custom prompt',
+        paperTrade: false,
       }),
     ).toEqual({
       runtime_backend: 'docker',
+      paper_trade: false,
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
+  });
+
+  it('resolves a complete execution target into provision-safe values', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    expect(
+      resolveExecutionTargetProvisionConfig({
+        id: 'ethereum',
+        label: 'Ethereum Fork (Local QA)',
+        description: 'Local fork',
+        enabled: true,
+        chainId: 31339,
+        rpcUrl: 'http://127.0.0.1:42545',
+        vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+        assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+        paperTrade: false,
+      }),
+    ).toEqual({
+      chainId: 31339n,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+      assetAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      paperTrade: false,
+    });
+  });
+
+  it('rejects incomplete execution targets', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    expect(
+      resolveExecutionTargetProvisionConfig({
+        id: 'ethereum',
+        label: 'Ethereum Fork (Local QA)',
+        description: 'Local fork',
+        enabled: true,
+        chainId: 31339,
+      }),
+    ).toBeNull();
+  });
+
+  it('prefers the current service when selecting the latest instance provision', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Older',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+          {
+            id: 'instance-12',
+            owner,
+            name: 'Newest',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 12,
+            phase: 'awaiting_secrets',
+            createdAt: 20,
+            updatedAt: 20,
+            chainId: 31337,
+          },
+        ],
+        '11',
+      )?.id,
+    ).toBe('instance-11');
+  });
+
+  it('resumes the explicitly targeted instance draft by bot or sandbox identity', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+    const provisions: TrackedProvision[] = [
+      {
+        id: 'instance-11',
+        owner,
+        name: 'Older',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        serviceId: 11,
+        botId: 'bot-11',
+        sandboxId: 'sandbox-11',
+        phase: 'awaiting_secrets',
+        createdAt: 10,
+        updatedAt: 10,
+        chainId: 31337,
+      },
+      {
+        id: 'instance-12',
+        owner,
+        name: 'Newest',
+        strategyType: 'dex',
+        operators: [],
+        blueprintId: '1',
+        serviceId: 12,
+        botId: 'bot-12',
+        sandboxId: 'sandbox-12',
+        phase: 'awaiting_secrets',
+        createdAt: 20,
+        updatedAt: 20,
+        chainId: 31337,
+      },
+    ];
+
+    expect(
+      selectLatestInstanceProvision(provisions, undefined, { botId: 'bot-11' })?.id,
+    ).toBe('instance-11');
+    expect(
+      selectLatestInstanceProvision(provisions, undefined, { sandboxId: 'sandbox-12' })?.id,
+    ).toBe('instance-12');
+  });
+
+  it('does not guess when multiple instance drafts exist without a route target', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Older',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+          {
+            id: 'instance-12',
+            owner,
+            name: 'Newest',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 12,
+            phase: 'awaiting_secrets',
+            createdAt: 20,
+            updatedAt: 20,
+            chainId: 31337,
+          },
+        ],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('still auto-resumes when there is exactly one instance draft', async () => {
+    const { selectLatestInstanceProvision } = await import('../provision');
+    const owner = '0x0000000000000000000000000000000000000001' as const;
+
+    expect(
+      selectLatestInstanceProvision(
+        [
+          {
+            id: 'instance-11',
+            owner,
+            name: 'Only Draft',
+            strategyType: 'dex',
+            operators: [],
+            blueprintId: '1',
+            serviceId: 11,
+            phase: 'awaiting_secrets',
+            createdAt: 10,
+            updatedAt: 10,
+            chainId: 31337,
+          },
+        ],
+      )?.id,
+    ).toBe('instance-11');
   });
 });

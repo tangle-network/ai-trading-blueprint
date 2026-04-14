@@ -1,15 +1,23 @@
 import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
-import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle/blueprint-ui/components';
+import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
+import type { Trade, TradeStatus } from '~/lib/types/trade';
+import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 
 interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
+  isLive?: boolean;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+  verificationState?: BotVerificationState;
 }
 
 function VenueBadge({ venue }: { venue: TradeVenue }) {
@@ -45,7 +53,7 @@ function TradeTableHead() {
         <TableHead>Action</TableHead>
         <TableHead className="hidden sm:table-cell">Venue</TableHead>
         <TableHead>Pair</TableHead>
-        <TableHead className="text-right">Amount</TableHead>
+        <TableHead className="text-right">Input</TableHead>
         <TableHead className="text-right">Price</TableHead>
         <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
         <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
@@ -60,8 +68,43 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
 }
 
-export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
-  const { data: trades, isLoading } = useBotTrades(botId, botName);
+function formatTradeAmount(amount: number): string {
+  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+function renderTradePrice(trade: Trade): string {
+  if (trade.priceUsd != null && trade.priceUsd > 0) {
+    return `$${trade.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  }
+  if (trade.paperTrade) return 'No USD leg';
+  return '—';
+}
+
+function getStatusLabel(status: TradeStatus): string {
+  return status === 'failed' ? 'sim failed' : status;
+}
+
+function getStatusVariant(status: TradeStatus): 'success' | 'destructive' | 'secondary' | 'outline' {
+  if (status === 'executed') return 'success';
+  if (status === 'rejected' || status === 'failed') return 'destructive';
+  if (status === 'paper') return 'secondary';
+  return 'outline';
+}
+
+export function TradeHistoryTab({
+  botId,
+  botName = '',
+  isLive = false,
+  operatorApiUrl,
+  operatorKind,
+  verificationState,
+}: TradeHistoryTabProps) {
+  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
+  const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+    operatorApiUrl,
+    operatorKind,
+    refetchInterval: isLive ? 15_000 : false,
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (isLoading) {
@@ -75,6 +118,20 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
         </TableBody>
       </Table>
     );
+  }
+
+  if (verificationState === 'unverified') {
+    return (
+      <OperatorAccessCard
+        title="Trade history unavailable"
+        description="Trade history only appears for bots that have been freshly verified against their operator."
+        apiUrl={operatorApiUrl ?? ''}
+      />
+    );
+  }
+
+  if (!operatorAuth.isAuthenticated) {
+    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
   }
 
   if (!trades || trades.length === 0) {
@@ -219,10 +276,10 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                     {trade.tokenIn}/{trade.tokenOut}
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
-                    {trade.amountOut.toLocaleString()} {trade.tokenOut}
+                    {formatTradeAmount(trade.amountIn)} {trade.tokenIn}
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
-                    {trade.priceUsd > 0 ? `$${trade.priceUsd.toLocaleString()}` : '—'}
+                    {renderTradePrice(trade)}
                   </TableCell>
                   <TableCell className="text-right hidden sm:table-cell">
                     <div className="flex items-center justify-end gap-1.5">
@@ -264,11 +321,7 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <Badge
-                        variant={
-                          trade.status === 'executed' ? 'success' :
-                          trade.status === 'rejected' ? 'destructive' :
-                          trade.status === 'paper' ? 'secondary' : 'outline'
-                        }
+                        variant={getStatusVariant(trade.status)}
                       >
                         {trade.status === 'pending' ? (
                           <span className="inline-flex items-center gap-1">
@@ -276,7 +329,7 @@ export function TradeHistoryTab({ botId, botName = '' }: TradeHistoryTabProps) {
                             pending
                           </span>
                         ) : (
-                          trade.status
+                          getStatusLabel(trade.status)
                         )}
                       </Badge>
                       {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (() => {

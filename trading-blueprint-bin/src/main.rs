@@ -58,6 +58,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     setup_log();
 
+    if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
+        return Err(blueprint_sdk::Error::Other(msg));
+    }
+
     // ── 1. QoS service (heartbeat + metrics) ─────────────────────────────────
     #[cfg(feature = "qos")]
     {
@@ -228,13 +232,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         tracing::error!("Failed to init operator context: {e}");
     }
 
-    // ── 4. Bootstrap workflows from on-chain state ───────────────────────────
-    if let Err(err) =
-        ai_agent_sandbox_blueprint_lib::bootstrap_workflows_from_chain(&tangle_client, service_id)
-            .await
-    {
-        tracing::error!("Failed to load workflows from chain: {err}");
-    }
+    // Trading workflows are created during bot activation and restored from the
+    // local workflow store, not from the service manager contract.
+    tracing::info!("Skipping on-chain workflow bootstrap for trading blueprint");
 
     // ── 5. Reconcile sandbox state with Docker ───────────────────────────────
     sandbox_runtime::reaper::reconcile_on_startup().await;
@@ -364,6 +364,8 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             }),
             clob_client,
             chain_client,
+            chain_client_rpc_url: Some(rpc_url_for_chain),
+            chain_client_chain_id: Some(chain_id_for_chain),
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

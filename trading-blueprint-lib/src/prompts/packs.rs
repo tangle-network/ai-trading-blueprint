@@ -110,6 +110,101 @@ fn compose_required_env_vars(provider_ids: &[&str]) -> Vec<String> {
     vars
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DexQaConfigSummary {
+    pub no_trade_weight: f64,
+    pub small_trade_weight: f64,
+    pub big_trade_weight: f64,
+    pub small_pct: f64,
+    pub big_pct: f64,
+    pub allowed_directions: Vec<String>,
+    pub pair: String,
+}
+
+fn qa_numeric_field(value: Option<&Value>, default: f64, min: f64, max: f64) -> f64 {
+    let parsed = match value {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+    .unwrap_or(default);
+
+    parsed.clamp(min, max)
+}
+
+pub(crate) fn dex_stochastic_qa_config(
+    config: &crate::state::TradingBotRecord,
+) -> Option<DexQaConfigSummary> {
+    let qa_mode = config
+        .strategy_config
+        .get("qa_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("off");
+    if qa_mode != "stochastic" {
+        return None;
+    }
+
+    let weights = config
+        .strategy_config
+        .get("qa_trade_weights")
+        .and_then(Value::as_object);
+    let no_trade_weight = qa_numeric_field(weights.and_then(|w| w.get("no_trade")), 0.4, 0.0, 1.0);
+    let small_trade_weight =
+        qa_numeric_field(weights.and_then(|w| w.get("small_trade")), 0.4, 0.0, 1.0);
+    let big_trade_weight =
+        qa_numeric_field(weights.and_then(|w| w.get("big_trade")), 0.2, 0.0, 1.0);
+    let total_weight = no_trade_weight + small_trade_weight + big_trade_weight;
+    let (no_trade_weight, small_trade_weight, big_trade_weight) = if total_weight <= f64::EPSILON {
+        (0.4, 0.4, 0.2)
+    } else {
+        (
+            no_trade_weight / total_weight,
+            small_trade_weight / total_weight,
+            big_trade_weight / total_weight,
+        )
+    };
+
+    let sizes = config
+        .strategy_config
+        .get("qa_trade_sizes")
+        .and_then(Value::as_object);
+    let small_pct = qa_numeric_field(sizes.and_then(|s| s.get("small_pct")), 0.05, 0.0, 1.0);
+    let big_pct = qa_numeric_field(sizes.and_then(|s| s.get("big_pct")), 0.25, small_pct, 1.0);
+
+    let allowed_directions = config
+        .strategy_config
+        .get("qa_allowed_directions")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| value == "buy" || value == "sell")
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| vec!["buy".to_string(), "sell".to_string()]);
+
+    let pair = config
+        .strategy_config
+        .get("qa_pair")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("WETH/USDC")
+        .to_string();
+
+    Some(DexQaConfigSummary {
+        no_trade_weight,
+        small_trade_weight,
+        big_trade_weight,
+        small_pct,
+        big_pct,
+        allowed_directions,
+        pair,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // StrategyPack convenience methods
 // ---------------------------------------------------------------------------
@@ -1188,6 +1283,92 @@ After any circuit breaker triggers, wait at least 1 full iteration (skip trading
 // Profile building
 // ---------------------------------------------------------------------------
 
+fn strategy_iteration_protocol(strategy_type: &str) -> String {
+    match strategy_type {
+        "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+
+- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `swap` intent for `uniswap_v3`, validate it through the Trading HTTP API, then execute it if approved. Log the outcome immediately. Then proceed to reflect.
+- **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
+
+After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
+
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
+            .to_string(),
+        _ => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+
+- **research**: Run pre-built tools to fetch data: `node tools/scan-markets.js` then `node tools/check-prices.js`. Analyze results. Generate signals. If actionable signals found, proceed to trading within this same iteration.
+- **trading**: Check circuit breaker (`node -e "require('./tools/api-client').checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Validate trade intents via the Trading HTTP API. Execute approved trades. Log results. Then proceed to reflect.
+- **reflect**: Calculate P&L from recent trades. Compare signal predictions vs outcomes. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
+
+After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
+
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
+            .to_string(),
+    }
+}
+
+fn strategy_core_workflow_tools(strategy_type: &str) -> String {
+    match strategy_type {
+        "dex" => r#"| Tool | Usage | What It Does |
+|------|-------|--------------|
+| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, and iteration state. |
+| `api-client.js` | `node -e "const api=require('./tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))"` | Trading API wrapper for prices, circuit breaker, validate, execute, adapters, and metrics. |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"trade-or-skip","reason":"..."}'` | Append your trade thesis or skip reason to the decision log. |
+| `write-metrics.js` | `node tools/write-metrics.js '{"portfolio_value_usd":10000}'` | Write iteration metrics. |"#
+            .to_string(),
+        _ => r#"| Tool | Usage | What It Does |
+|------|-------|--------------|
+| `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
+| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, iteration state. |
+| `submit-trade.js` | `node tools/submit-trade.js --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. One command. |
+| `manage-collateral.js` | `node tools/manage-collateral.js --action status` | CLOB collateral: release vault funds, return funds, check status. Actions: status, release, return, return-all. |
+| `write-metrics.js` | `node tools/write-metrics.js '{{"portfolio_value_usd":10000}}'` | Write iteration metrics. |"#
+            .to_string(),
+    }
+}
+
+fn strategy_typical_iteration(strategy_type: &str) -> String {
+    match strategy_type {
+        "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
+2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
+3. Run the circuit breaker check before any trade
+4. If the setup is actionable, build a `swap` intent with `target_protocol: "uniswap_v3"`, validate it, then execute it if approved
+5. Run `log-decision.js` with the thesis or skip reason
+6. Run `write-metrics.js` to update state
+
+Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for DEX swaps — those are prediction-market tools."#
+            .to_string(),
+        _ => r#"1. Run `analyze-opportunities.js` — read the opportunities list
+2. Run `get-portfolio.js` — check current positions
+3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
+4. For markets with edge > 5%: run `submit-trade.js` with your reasoning
+5. Run `write-metrics.js` to update state"#
+            .to_string(),
+    }
+}
+
+fn strategy_utility_tools(strategy_type: &str) -> String {
+    match strategy_type {
+        "dex" => r#"| Tool | Usage | Purpose |
+|------|-------|---------|
+| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
+| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (prices, circuit breaker, validate, execute) |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"skip","reason":"no clean setup"}'` | Log decisions |
+| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Optional broad market scan if you need extra context |
+| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Optional raw price helper for additional context |"#
+            .to_string(),
+        _ => r#"| Tool | Usage | Purpose |
+|------|-------|---------|
+| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (used by other tools) |
+| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
+| `log-decision.js` | `node tools/log-decision.js '{{"action":"skip","reason":"no edge"}}'` | Log decisions |
+| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Raw Gamma API scan (use analyze-opportunities instead) |
+| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Raw CLOB prices (use analyze-opportunities instead) |"#
+            .to_string(),
+    }
+}
+
 /// Build instructions markdown that combines identity, workspace, API config,
 /// iteration protocol, tool building, data APIs, expert strategy knowledge,
 /// and operational mandates.
@@ -1240,6 +1421,33 @@ fn build_profile_instructions(
         format!("\n\n{}", prompt_blocks.join("\n\n"))
     };
 
+    let iteration_protocol = strategy_iteration_protocol(strategy_type);
+    let core_workflow_tools = strategy_core_workflow_tools(strategy_type);
+    let typical_iteration = strategy_typical_iteration(strategy_type);
+    let utility_tools = strategy_utility_tools(strategy_type);
+    let qa_section = dex_stochastic_qa_config(config)
+        .map(|qa| {
+            format!(
+                "\n\n## QA Stochastic Mode\n\n\
+This bot is running with temporary QA stochastic trading enabled.\n\
+- Pair: {}\n\
+- Outcome weights: no-trade {:.0}%, small trade {:.0}%, big trade {:.0}%\n\
+- Size policy: small {:.1}% of available inventory, big {:.1}%\n\
+- Allowed directions: {}\n\
+\n\
+At the start of every tick, run `node /home/agent/tools/qa-stochastic-dex.js`.\n\
+Treat its output as authoritative for this iteration. If it executes or skips a trade, do not place additional discretionary trades in the same tick.",
+                qa.pair,
+                qa.no_trade_weight * 100.0,
+                qa.small_trade_weight * 100.0,
+                qa.big_trade_weight * 100.0,
+                qa.small_pct * 100.0,
+                qa.big_pct * 100.0,
+                qa.allowed_directions.join(", "),
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         r#"# Trading Agent Instructions
 
@@ -1267,15 +1475,7 @@ Workspace layout:
 
 ## Iteration Protocol
 
-Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
-
-- **research**: Run pre-built tools to fetch data: `node tools/scan-markets.js` then `node tools/check-prices.js`. Analyze results. Generate signals. If actionable signals found, proceed to trading within this same iteration.
-- **trading**: Check circuit breaker (`node -e "require('./tools/api-client').checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Validate trade intents via the Trading HTTP API. Execute approved trades. Log results. Then proceed to reflect.
-- **reflect**: Calculate P&L from recent trades. Compare signal predictions vs outcomes. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
-
-After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
-
-**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions.
+{iteration_protocol}
 
 ## Pre-Built Tools
 
@@ -1283,31 +1483,15 @@ Smart tools are pre-installed in `/home/agent/tools/`. They do the heavy lifting
 
 ### Core Workflow Tools (use these every tick)
 
-| Tool | Usage | What It Does |
-|------|-------|--------------|
-| `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
-| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, iteration state. |
-| `submit-trade.js` | `node tools/submit-trade.js --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. One command. |
-| `manage-collateral.js` | `node tools/manage-collateral.js --action status` | CLOB collateral: release vault funds, return funds, check status. Actions: status, release, return, return-all. |
-| `write-metrics.js` | `node tools/write-metrics.js '{{"portfolio_value_usd":10000}}'` | Write iteration metrics. |
+{core_workflow_tools}
 
 ### Typical Iteration (3-5 turns)
 
-1. Run `analyze-opportunities.js` — read the opportunities list
-2. Run `get-portfolio.js` — check current positions
-3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
-4. For markets with edge > 5%: run `submit-trade.js` with your reasoning
-5. Run `write-metrics.js` to update state
+{typical_iteration}
 
 ### Utility Tools
 
-| Tool | Usage | Purpose |
-|------|-------|---------|
-| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (used by other tools) |
-| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
-| `log-decision.js` | `node tools/log-decision.js '{{"action":"skip","reason":"no edge"}}'` | Log decisions |
-| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Raw Gamma API scan (use analyze-opportunities instead) |
-| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Raw CLOB prices (use analyze-opportunities instead) |
+{utility_tools}
 
 ## Common Data APIs
 
@@ -1365,11 +1549,17 @@ Endpoints:
 
 4. **Mode**: {paper_mode_note}
 
-5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition.{custom_section}"#,
+5. **Learning**: After every trade outcome (win or loss), write an insight to the memory table. Track which signal types are most accurate. Adjust your approach based on data, not intuition.{qa_section}{custom_section}"#,
         api_url = config.trading_api_url,
         token = config.trading_api_token,
         vault = config.vault_address,
         chain_id = config.chain_id,
+        iteration_protocol = iteration_protocol,
+        core_workflow_tools = core_workflow_tools,
+        typical_iteration = typical_iteration,
+        utility_tools = utility_tools,
+        qa_section = qa_section,
+        custom_section = custom_section,
     )
 }
 
@@ -1751,6 +1941,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_dex_profile_instructions_use_swap_workflow() {
+        let pack = get_pack("dex").unwrap();
+        let profile = pack.build_agent_profile(&test_config());
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
+
+        assert!(
+            content.contains("uniswap_v3"),
+            "dex instructions must target uniswap_v3"
+        );
+        assert!(
+            content.contains("api-client.js"),
+            "dex instructions must reference the Trading API client"
+        );
+        assert!(
+            content.contains("Do not use `analyze-opportunities.js`"),
+            "dex instructions must explicitly fence off prediction-market tools"
+        );
+        assert!(
+            !content.contains("--condition-id"),
+            "dex instructions must not reference prediction market condition ids"
+        );
+        assert!(
+            !content.contains("manage-collateral.js --action status"),
+            "dex instructions must not require CLOB collateral checks"
+        );
+    }
+
     // ── New tests for provider composition ──────────────────────────────
 
     // ── Prediction sub-pack tests ──────────────────────────────────────
@@ -2032,6 +2252,42 @@ mod tests {
         assert!(
             content.contains("Custom Instructions"),
             "custom instructions section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_dex_qa_stochastic_section_appears_in_profile() {
+        let pack = get_pack("dex").unwrap();
+        let mut config = test_config();
+        config.strategy_config = serde_json::json!({
+            "qa_mode": "stochastic",
+            "qa_trade_weights": {
+                "no_trade": 0.5,
+                "small_trade": 0.3,
+                "big_trade": 0.2
+            },
+            "qa_trade_sizes": {
+                "small_pct": 0.04,
+                "big_pct": 0.2
+            },
+            "qa_allowed_directions": ["buy", "sell"]
+        });
+        let profile = pack.build_agent_profile(&config);
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
+
+        assert!(
+            content.contains("QA Stochastic Mode"),
+            "qa stochastic section must appear in instructions"
+        );
+        assert!(
+            content.contains("qa-stochastic-dex.js"),
+            "qa stochastic tool must be referenced in instructions"
+        );
+        assert!(
+            content.contains("no-trade 50%"),
+            "qa stochastic section must include configured weights"
         );
     }
 

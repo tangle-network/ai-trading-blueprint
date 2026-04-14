@@ -16,6 +16,19 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotTrades: () => ({ data: mockTrades, isLoading: false }),
 }));
 
+vi.mock('~/lib/hooks/useOperatorAuth', () => ({
+  useOperatorAuth: () => ({
+    token: 'test-token',
+    isAuthenticated: true,
+    isAuthenticating: false,
+    authenticate: vi.fn(),
+    clearCachedToken: vi.fn(),
+    error: null,
+    getCachedToken: vi.fn(() => 'test-token'),
+    getToken: vi.fn(async () => 'test-token'),
+  }),
+}));
+
 function setTrades(trades: Trade[]) {
   mockTrades.length = 0;
   mockTrades.push(...trades);
@@ -65,6 +78,8 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('BUY')).toBeInTheDocument();
     expect(screen.getByText('USDC/WETH')).toBeInTheDocument();
     expect(screen.getByText('executed')).toBeInTheDocument();
+    expect(screen.getByText('1,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('$2,000')).toBeInTheDocument();
   });
 
   it('shows simulation badge when simulation data present', () => {
@@ -175,5 +190,80 @@ describe('TradeHistoryTab', () => {
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
     expect(screen.getByText('BUY')).toBeInTheDocument();
     expect(screen.getByText('SELL')).toBeInTheDocument();
+  });
+
+  it('shows the input-side amount and derived paper-trade price in the compact row', () => {
+    setTrades([
+      makeTrade({
+        action: 'buy',
+        tokenIn: 'WETH',
+        tokenOut: 'USDC',
+        amountIn: 1.25,
+        amountOut: 3200,
+        priceUsd: 2560,
+        paperTrade: true,
+        status: 'paper',
+        venue: 'paper',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('1.25 WETH')).toBeInTheDocument();
+    expect(screen.getByText('$2,560')).toBeInTheDocument();
+    expect(screen.queryByText('3,200 USDC')).not.toBeInTheDocument();
+  });
+
+  it('surfaces failed paper simulations in the compact status column', () => {
+    setTrades([
+      makeTrade({
+        action: 'buy',
+        tokenIn: 'DAI',
+        tokenOut: 'WETH',
+        amountIn: 2500,
+        amountOut: 0.8,
+        priceUsd: 3125,
+        paperTrade: true,
+        status: 'failed',
+        venue: 'paper',
+        validation: {
+          approved: true,
+          aggregateScore: 64,
+          intentHash: '0xabc',
+          responses: [],
+          simulation: {
+            success: false,
+            gasUsed: 99000,
+            riskScore: 55,
+            warnings: ['slippage estimate high'],
+            outputAmount: '0.8',
+          },
+        },
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('sim failed')).toBeInTheDocument();
+    expect(screen.getByText('$3,125')).toBeInTheDocument();
+  });
+
+  it('marks paper-trade price as unavailable when there is no USD leg', () => {
+    setTrades([
+      makeTrade({
+        tokenIn: 'WETH',
+        tokenOut: 'WBTC',
+        amountIn: 2,
+        amountOut: 0.05,
+        priceUsd: null,
+        paperTrade: true,
+        status: 'paper',
+        venue: 'paper',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('No USD leg')).toBeInTheDocument();
   });
 });

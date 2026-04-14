@@ -34,8 +34,11 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         disk_gb: 0,
         stack: String::new(),
         owner: String::new(),
+        service_id: None,
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
     }
 }
@@ -107,6 +110,9 @@ pub fn seed_workflow(
         trigger_type: "cron".to_string(),
         trigger_config: cron.to_string(),
         sandbox_config_json: String::new(),
+        target_kind: 0,
+        target_sandbox_id: String::new(),
+        target_service_id: 0,
         active: true,
         next_run_at: next_run,
         last_run_at: None,
