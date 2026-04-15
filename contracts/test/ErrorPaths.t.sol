@@ -271,7 +271,7 @@ contract ErrorPathsTest is Setup {
         sigs[0] = _signValidation(validator1Key, intent, unconfigured, 80, block.timestamp + 1 hours);
 
         vm.expectRevert(abi.encodeWithSelector(TradeValidator.VaultNotConfigured.selector, unconfigured));
-        tv.validateWithSignatures(intent, unconfigured, sigs, scores, block.timestamp + 1 hours);
+        tv.validateWithSignatures(intent, unconfigured, sigs, scores, block.timestamp + 1 hours, 0);
     }
 
     function test_tv_configureVault_zeroAddress() public {

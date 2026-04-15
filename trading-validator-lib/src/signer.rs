@@ -6,9 +6,11 @@ use alloy::signers::local::PrivateKeySigner;
 const DOMAIN_NAME: &str = "TradeValidator";
 const DOMAIN_VERSION: &str = "1";
 
-/// Must match Solidity: keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)")
+/// Must match Solidity: keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")
 fn validation_typehash() -> B256 {
-    keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)")
+    keccak256(
+        "TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)",
+    )
 }
 
 /// EIP-712 signer for the TradeValidator contract.
@@ -57,6 +59,10 @@ impl ValidatorSigner {
 
     /// Sign a trade validation using EIP-712 typed data.
     ///
+    /// `action_kind` discriminates execute (0) vs collateral release (1),
+    /// matching `ACTION_KIND_EXECUTE` / `ACTION_KIND_RELEASE_COLLATERAL` in
+    /// `TradingVault.sol`.
+    ///
     /// Returns the 65-byte signature (r, s, v) and the signer's address.
     pub fn sign_validation(
         &self,
@@ -64,8 +70,9 @@ impl ValidatorSigner {
         vault: Address,
         score: u64,
         deadline: u64,
+        action_kind: u64,
     ) -> Result<([u8; 65], Address), Box<dyn std::error::Error + Send + Sync>> {
-        // Build struct hash: keccak256(abi.encode(TYPEHASH, intentHash, vault, score, deadline))
+        // Build struct hash: keccak256(abi.encode(TYPEHASH, intentHash, vault, score, deadline, actionKind))
         // Solidity abi.encode pads each value to 32 bytes
         let struct_hash = keccak256(
             [
@@ -74,6 +81,7 @@ impl ValidatorSigner {
                 &B256::left_padding_from(vault.as_slice()).0,
                 &U256::from(score).to_be_bytes::<32>(),
                 &U256::from(deadline).to_be_bytes::<32>(),
+                &U256::from(action_kind).to_be_bytes::<32>(),
             ]
             .concat(),
         );
@@ -162,7 +170,7 @@ mod tests {
             .unwrap();
 
         let (sig_bytes, addr) = signer
-            .sign_validation(intent_hash, vault, 85, 9999999999)
+            .sign_validation(intent_hash, vault, 85, 9999999999, 0)
             .unwrap();
         assert_eq!(sig_bytes.len(), 65);
         assert_eq!(addr, signer.address());
@@ -184,10 +192,10 @@ mod tests {
             .unwrap();
 
         let (sig1, _) = signer
-            .sign_validation(intent_hash, vault, 85, 1000000)
+            .sign_validation(intent_hash, vault, 85, 1000000, 0)
             .unwrap();
         let (sig2, _) = signer
-            .sign_validation(intent_hash, vault, 85, 1000000)
+            .sign_validation(intent_hash, vault, 85, 1000000, 0)
             .unwrap();
         assert_eq!(
             sig1, sig2,
@@ -207,10 +215,10 @@ mod tests {
             .unwrap();
 
         let (sig1, _) = signer
-            .sign_validation(keccak256("intent-a"), vault, 85, 1000000)
+            .sign_validation(keccak256("intent-a"), vault, 85, 1000000, 0)
             .unwrap();
         let (sig2, _) = signer
-            .sign_validation(keccak256("intent-b"), vault, 85, 1000000)
+            .sign_validation(keccak256("intent-b"), vault, 85, 1000000, 0)
             .unwrap();
         assert_ne!(
             sig1, sig2,

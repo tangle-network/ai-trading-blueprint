@@ -35,11 +35,11 @@ contract ValidatorFuzzTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         // Sign with signedScore
-        bytes32 digest1 = tv.computeDigest(intentHash, testVault, signedScore, deadline);
+        bytes32 digest1 = tv.computeDigest(intentHash, testVault, signedScore, deadline, 0);
         (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest1);
         bytes memory sig1 = abi.encodePacked(r1, s1, v1);
 
-        bytes32 digest2 = tv.computeDigest(intentHash, testVault, signedScore, deadline);
+        bytes32 digest2 = tv.computeDigest(intentHash, testVault, signedScore, deadline, 0);
         (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest2);
         bytes memory sig2 = abi.encodePacked(r2, s2, v2);
 
@@ -52,7 +52,7 @@ contract ValidatorFuzzTest is Setup {
         scores[0] = submittedScore;
         scores[1] = submittedScore;
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // Should always be rejected because the recovered signers won't match
         assertFalse(approved, "Manipulated score should never pass");
@@ -76,15 +76,15 @@ contract ValidatorFuzzTest is Setup {
         scores[1] = 75;
 
         // Sign with the expired deadline (signatures are technically valid, but deadline has passed)
-        bytes32 digest1 = tv.computeDigest(intentHash, testVault, scores[0], deadline);
+        bytes32 digest1 = tv.computeDigest(intentHash, testVault, scores[0], deadline, 0);
         (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest1);
         sigs[0] = abi.encodePacked(r1, s1, v1);
 
-        bytes32 digest2 = tv.computeDigest(intentHash, testVault, scores[1], deadline);
+        bytes32 digest2 = tv.computeDigest(intentHash, testVault, scores[1], deadline, 0);
         (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest2);
         sigs[1] = abi.encodePacked(r2, s2, v2);
 
         vm.expectRevert(TradeValidator.DeadlineExpired.selector);
-        tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
     }
 }

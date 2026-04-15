@@ -201,12 +201,25 @@ abstract contract Setup is Test {
     // HELPER: EIP-712 signature for TradeValidator
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /// Sign with default actionKind = 0 (execute).
     function _signValidation(uint256 privateKey, bytes32 intentHash, address vault, uint256 score, uint256 deadline)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 digest = tradeValidator.computeDigest(intentHash, vault, score, deadline);
+        return _signValidation(privateKey, intentHash, vault, score, deadline, 0);
+    }
+
+    /// Sign with explicit actionKind.
+    function _signValidation(
+        uint256 privateKey,
+        bytes32 intentHash,
+        address vault,
+        uint256 score,
+        uint256 deadline,
+        uint256 actionKind
+    ) internal view returns (bytes memory) {
+        bytes32 digest = tradeValidator.computeDigest(intentHash, vault, score, deadline, actionKind);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
     }

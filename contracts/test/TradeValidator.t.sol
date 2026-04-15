@@ -34,7 +34,7 @@ contract TradeValidatorTest is Setup {
         view
         returns (bytes memory)
     {
-        bytes32 digest = tv.computeDigest(intentHash, testVault, score, deadline);
+        bytes32 digest = tv.computeDigest(intentHash, testVault, score, deadline, 0);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -86,7 +86,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         assertTrue(approved);
         assertEq(validCount, 2);
@@ -104,7 +104,7 @@ contract TradeValidatorTest is Setup {
         scores[0] = 80;
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         assertFalse(approved);
         assertEq(validCount, 1);
@@ -129,11 +129,11 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
 
         // Sign with wrong key
-        bytes32 digest = tv.computeDigest(intentHash, testVault, scores[1], deadline);
+        bytes32 digest = tv.computeDigest(intentHash, testVault, scores[1], deadline, 0);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, digest);
         sigs[1] = abi.encodePacked(r, s, v);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // Only 1 valid signature (validator1), need 2
         assertFalse(approved);
@@ -160,7 +160,7 @@ contract TradeValidatorTest is Setup {
         manipulatedScores[1] = 50;
 
         (bool approved, uint256 validCount) =
-            tv.validateWithSignatures(intentHash, testVault, sigs, manipulatedScores, deadline);
+            tv.validateWithSignatures(intentHash, testVault, sigs, manipulatedScores, deadline, 0);
 
         // Recovered signers won't match any authorized signer because the
         // digest was computed with score=80 but validation uses score=50
@@ -182,7 +182,7 @@ contract TradeValidatorTest is Setup {
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
         vm.expectRevert(TradeValidator.DeadlineExpired.selector);
-        tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
     }
 
     function test_duplicateSignerPrevented() public {
@@ -202,7 +202,7 @@ contract TradeValidatorTest is Setup {
         scores[0] = 80;
         scores[1] = 80;
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // Only counts as 1 valid (duplicate is ignored), need 2
         assertFalse(approved);
@@ -241,7 +241,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
         assertFalse(approved);
 
         // But 3-of-3 should pass
@@ -254,7 +254,7 @@ contract TradeValidatorTest is Setup {
         sigs3[1] = _sign(validator2Key, intentHash, scores3[1], deadline);
         sigs3[2] = _sign(validator3Key, intentHash, scores3[2], deadline);
 
-        (bool approved3,) = tv.validateWithSignatures(intentHash, testVault, sigs3, scores3, deadline);
+        (bool approved3,) = tv.validateWithSignatures(intentHash, testVault, sigs3, scores3, deadline, 0);
         assertTrue(approved3);
     }
 
@@ -263,15 +263,15 @@ contract TradeValidatorTest is Setup {
         uint256 score = 80;
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes32 digest = tv.computeDigest(intentHash, testVault, score, deadline);
+        bytes32 digest = tv.computeDigest(intentHash, testVault, score, deadline, 0);
         assertTrue(digest != bytes32(0));
 
         // Same inputs should produce same digest
-        bytes32 digest2 = tv.computeDigest(intentHash, testVault, score, deadline);
+        bytes32 digest2 = tv.computeDigest(intentHash, testVault, score, deadline, 0);
         assertEq(digest, digest2);
 
         // Different inputs should produce different digest
-        bytes32 digest3 = tv.computeDigest(intentHash, testVault, score + 1, deadline);
+        bytes32 digest3 = tv.computeDigest(intentHash, testVault, score + 1, deadline, 0);
         assertTrue(digest != digest3);
     }
 
@@ -359,7 +359,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // Has enough signatures (2 of 3) but avg score (60) < threshold (80)
         assertFalse(approved, "Should be rejected: avg score below threshold");
@@ -381,7 +381,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // avg score (77.5 → 77 integer division) >= threshold (70)
         assertTrue(approved, "Should be approved: avg score above threshold");
@@ -404,7 +404,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         assertTrue(approved, "Score check should be disabled when threshold=0");
     }
@@ -424,7 +424,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (bool approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         assertFalse(approved, "avg score 99 < threshold 100");
 
@@ -434,7 +434,7 @@ contract TradeValidatorTest is Setup {
         sigs[0] = _sign(validator1Key, intentHash, scores[0], deadline);
         sigs[1] = _sign(validator2Key, intentHash, scores[1], deadline);
 
-        (approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline);
+        (approved,) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
         assertTrue(approved, "Perfect 100 avg should pass threshold 100");
     }
 
