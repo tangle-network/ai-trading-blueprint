@@ -75,15 +75,31 @@ impl GmxV2Adapter {
     }
 
     /// Encode a createOrder call for opening or closing a position.
+    ///
+    /// `acceptable_price` is the GMX price bound (1e30-scaled). It MUST be
+    /// explicitly provided and cannot be zero or U256::MAX — those values
+    /// disable slippage protection entirely, allowing keepers to fill at
+    /// any price.
     fn encode_create_order(
         &self,
         market: Address,
         initial_collateral_token: Address,
         size_delta_usd: U256,
+        acceptable_price: U256,
         is_long: bool,
         is_increase: bool,
         vault: Address,
-    ) -> Bytes {
+    ) -> Result<Bytes, TradingError> {
+        if acceptable_price.is_zero() || acceptable_price == U256::MAX {
+            return Err(TradingError::AdapterError {
+                protocol: "gmx_v2".into(),
+                message: format!(
+                    "acceptable_price must be an explicit bound (got {}), zero/MAX disables slippage protection",
+                    acceptable_price
+                ),
+            });
+        }
+
         let order_type = if is_increase {
             ORDER_TYPE_MARKET_INCREASE
         } else {
@@ -102,7 +118,7 @@ impl GmxV2Adapter {
                 sizeDeltaUsd: size_delta_usd,
                 initialCollateralDeltaAmount: U256::ZERO,
                 triggerPrice: U256::ZERO,
-                acceptablePrice: if is_long { U256::MAX } else { U256::ZERO },
+                acceptablePrice: acceptable_price,
                 executionFee: U256::ZERO,
                 callbackGasLimit: U256::ZERO,
                 minOutputAmount: U256::ZERO,
@@ -114,7 +130,7 @@ impl GmxV2Adapter {
                 referralCode: Default::default(),
             },
         };
-        Bytes::from(call.abi_encode())
+        Ok(Bytes::from(call.abi_encode()))
     }
 }
 
@@ -145,16 +161,26 @@ impl ProtocolAdapter for GmxV2Adapter {
             "0x0000000000000000000000000000000000000000",
         )?;
 
+        // Parse acceptable_price (1e30-scaled) from extras. Missing/invalid → zero,
+        // which encode_create_order rejects.
+        let acceptable_price: U256 = params
+            .extra
+            .get("acceptable_price")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<U256>().ok())
+            .unwrap_or(U256::ZERO);
+
         match params.action {
             Action::OpenLong => {
                 let calldata = self.encode_create_order(
                     market,
                     params.token_in,
                     params.amount,
+                    acceptable_price,
                     true,
                     true,
                     params.vault_address,
-                );
+                )?;
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -173,10 +199,11 @@ impl ProtocolAdapter for GmxV2Adapter {
                     market,
                     params.token_in,
                     params.amount,
+                    acceptable_price,
                     false,
                     true,
                     params.vault_address,
-                );
+                )?;
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -195,10 +222,11 @@ impl ProtocolAdapter for GmxV2Adapter {
                     market,
                     params.token_in,
                     params.amount,
+                    acceptable_price,
                     true,
                     false,
                     params.vault_address,
-                );
+                )?;
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -213,10 +241,11 @@ impl ProtocolAdapter for GmxV2Adapter {
                     market,
                     params.token_in,
                     params.amount,
+                    acceptable_price,
                     false,
                     false,
                     params.vault_address,
-                );
+                )?;
                 Ok(EncodedAction {
                     target: self.exchange_router,
                     calldata,
@@ -255,6 +284,9 @@ mod tests {
         assert!(adapter.supported_chains().contains(&42161));
     }
 
+    /// A realistic 1e30-scaled acceptable price for ETH (~$2500)
+    const ACCEPTABLE_PRICE: &str = "2500000000000000000000000000000000";
+
     #[test]
     fn test_encode_open_long() {
         let adapter = GmxV2Adapter::new();
@@ -264,7 +296,10 @@ mod tests {
             token_out: TOKEN_WETH.parse().unwrap(),
             amount: U256::from(50_000_000_000u64),
             min_output: U256::ZERO,
-            extra: serde_json::json!({"market": ETH_USD_MARKET}),
+            extra: serde_json::json!({
+                "market": ETH_USD_MARKET,
+                "acceptable_price": ACCEPTABLE_PRICE
+            }),
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
@@ -285,7 +320,10 @@ mod tests {
             token_out: TOKEN_USDC.parse().unwrap(),
             amount: U256::from(25_000_000_000u64),
             min_output: U256::ZERO,
-            extra: serde_json::json!({"market": ETH_USD_MARKET}),
+            extra: serde_json::json!({
+                "market": ETH_USD_MARKET,
+                "acceptable_price": ACCEPTABLE_PRICE
+            }),
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
@@ -308,5 +346,52 @@ mod tests {
             vault_address: VAULT.parse().unwrap(),
         };
         assert!(adapter.encode_action(&params).is_err());
+    }
+
+    /// C-5: Missing acceptable_price must be rejected
+    #[test]
+    fn test_reject_missing_acceptable_price() {
+        let adapter = GmxV2Adapter::new();
+        let params = ActionParams {
+            action: Action::OpenLong,
+            token_in: TOKEN_WETH.parse().unwrap(),
+            token_out: TOKEN_WETH.parse().unwrap(),
+            amount: U256::from(50_000_000_000u64),
+            min_output: U256::ZERO,
+            extra: serde_json::json!({"market": ETH_USD_MARKET}),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let err = adapter.encode_action(&params).unwrap_err();
+        match err {
+            TradingError::AdapterError { message, .. } => {
+                assert!(message.contains("slippage"), "got: {message}");
+            }
+            other => panic!("expected AdapterError, got: {other:?}"),
+        }
+    }
+
+    /// C-5: U256::MAX acceptable_price must be rejected (unbounded long)
+    #[test]
+    fn test_reject_max_acceptable_price() {
+        let adapter = GmxV2Adapter::new();
+        let params = ActionParams {
+            action: Action::OpenLong,
+            token_in: TOKEN_WETH.parse().unwrap(),
+            token_out: TOKEN_WETH.parse().unwrap(),
+            amount: U256::from(50_000_000_000u64),
+            min_output: U256::ZERO,
+            extra: serde_json::json!({
+                "market": ETH_USD_MARKET,
+                "acceptable_price": format!("{}", U256::MAX)
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let err = adapter.encode_action(&params).unwrap_err();
+        match err {
+            TradingError::AdapterError { message, .. } => {
+                assert!(message.contains("slippage"), "got: {message}");
+            }
+            other => panic!("expected AdapterError, got: {other:?}"),
+        }
     }
 }
