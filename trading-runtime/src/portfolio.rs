@@ -71,7 +71,7 @@ impl PortfolioState {
             .iter()
             .filter_map(|p| {
                 p.current_price
-                    .map(|current_price| current_price * p.amount)
+                    .and_then(|current_price| current_price.checked_mul(p.amount))
             })
             .sum();
 

@@ -114,20 +114,35 @@ impl PolymarketAdapter {
     }
 
     /// Parse a condition_id from a hex string in the extra params.
-    fn parse_condition_id(extra: &serde_json::Value) -> FixedBytes<32> {
-        extra
+    ///
+    /// Returns an error if `condition_id` is missing or not a valid 32-byte
+    /// hex string. A zero condition_id would interact with the wrong market,
+    /// so silent fallback is not safe.
+    fn parse_condition_id(
+        extra: &serde_json::Value,
+    ) -> Result<FixedBytes<32>, crate::error::TradingError> {
+        let hex_str = extra
             .get("condition_id")
             .and_then(|v| v.as_str())
-            .and_then(|s| {
-                let s = s.strip_prefix("0x").unwrap_or(s);
-                let bytes = hex::decode(s).ok()?;
-                if bytes.len() == 32 {
-                    Some(FixedBytes::from_slice(&bytes))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(FixedBytes::ZERO)
+            .ok_or_else(|| crate::error::TradingError::AdapterError {
+                protocol: "polymarket".into(),
+                message: "missing required field: condition_id".into(),
+            })?;
+
+        let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+        let bytes = hex::decode(s).map_err(|e| crate::error::TradingError::AdapterError {
+            protocol: "polymarket".into(),
+            message: format!("invalid condition_id hex: {e}"),
+        })?;
+
+        if bytes.len() != 32 {
+            return Err(crate::error::TradingError::AdapterError {
+                protocol: "polymarket".into(),
+                message: format!("condition_id must be 32 bytes, got {}", bytes.len()),
+            });
+        }
+
+        Ok(FixedBytes::from_slice(&bytes))
     }
 }
 
@@ -153,7 +168,7 @@ impl ProtocolAdapter for PolymarketAdapter {
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
         validate_vault_address(params, "polymarket")?;
 
-        let condition_id = Self::parse_condition_id(&params.extra);
+        let condition_id = Self::parse_condition_id(&params.extra)?;
 
         match params.action {
             Action::Buy => {
@@ -256,5 +271,43 @@ mod tests {
         };
         let result = adapter.encode_action(&params).unwrap();
         assert_eq!(result.target, CTF_CONTRACT.parse::<Address>().unwrap());
+    }
+
+    /// RUST-H7: Missing condition_id must error, not silently use zero
+    #[test]
+    fn test_reject_missing_condition_id() {
+        let adapter = PolymarketAdapter::new();
+        let params = ActionParams {
+            action: Action::Buy,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_CTF.parse().unwrap(),
+            amount: U256::from(100_000_000u64),
+            min_output: U256::from(90_000_000u64),
+            extra: serde_json::json!({}),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let err = adapter.encode_action(&params).unwrap_err();
+        match err {
+            TradingError::AdapterError { message, .. } => {
+                assert!(message.contains("condition_id"), "got: {message}");
+            }
+            other => panic!("expected AdapterError, got: {other:?}"),
+        }
+    }
+
+    /// RUST-H7: Invalid hex condition_id must error
+    #[test]
+    fn test_reject_invalid_condition_id() {
+        let adapter = PolymarketAdapter::new();
+        let params = ActionParams {
+            action: Action::Buy,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_CTF.parse().unwrap(),
+            amount: U256::from(100_000_000u64),
+            min_output: U256::from(90_000_000u64),
+            extra: serde_json::json!({ "condition_id": "not-hex" }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        assert!(adapter.encode_action(&params).is_err());
     }
 }

@@ -11,7 +11,9 @@ pub fn calculate_performance_fee(
         return Decimal::ZERO;
     }
     let gains = current_value - high_water_mark;
-    gains * Decimal::new(fee_bps as i64, 4)
+    gains
+        .checked_mul(Decimal::new(fee_bps as i64, 4))
+        .unwrap_or(Decimal::ZERO)
 }
 
 /// Calculate annualized management fee pro-rata
@@ -23,7 +25,9 @@ pub fn calculate_management_fee(
     let seconds_per_year: u64 = 365 * 24 * 3600;
     let fraction =
         Decimal::new(seconds_elapsed as i64, 0) / Decimal::new(seconds_per_year as i64, 0);
-    aum * Decimal::new(annual_fee_bps as i64, 4) * fraction
+    aum.checked_mul(Decimal::new(annual_fee_bps as i64, 4))
+        .and_then(|v| v.checked_mul(fraction))
+        .unwrap_or(Decimal::ZERO)
 }
 
 /// Calculate full fee breakdown
@@ -38,7 +42,9 @@ pub fn calculate_fees(
 ) -> FeeBreakdown {
     let performance_fee = calculate_performance_fee(current_value, high_water_mark, perf_fee_bps);
     let management_fee = calculate_management_fee(aum, mgmt_fee_bps, seconds_elapsed);
-    let validator_share = performance_fee * Decimal::new(validator_share_bps as i64, 4);
+    let validator_share = performance_fee
+        .checked_mul(Decimal::new(validator_share_bps as i64, 4))
+        .unwrap_or(Decimal::ZERO);
     let total = performance_fee + management_fee;
 
     FeeBreakdown {
