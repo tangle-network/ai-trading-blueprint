@@ -1,11 +1,11 @@
 {
-  "mode": "evolve",
+  "mode": "converged",
   "generation": 3,
   "activePursuit": null,
   "critical": 0,
-  "high": 1,
+  "high": 0,
   "forge_tests": "403/403",
-  "rust_tests": "308 (56 validator + 182 runtime + 70 HTTP API)",
-  "total_tests": 711,
-  "note": "Gen 3 complete. All 9 round-2 CRITICALs closed. 4 HIGHs closed. 1 HIGH remains (LIFE-5 provision dedup). C-2 mitigated by C-1 off-chain verifier."
+  "rust_tests": "407 (56 validator + 182 runtime + 70 HTTP API + 99 blueprint-lib)",
+  "total_tests": 810,
+  "note": "All CRITICALs and HIGHs from both harden rounds closed. LIFE-5 provision dedup shipped. 3 LOW deferred (design trade-offs)."
 }

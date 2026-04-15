@@ -50,8 +50,17 @@
 - **Rust tests: 308** (56 validator + 182 runtime + 70 HTTP API)
 - **Total: 711 tests passing**
 
+### 2026-04-15: /evolve Round 5 — LIFE-5 provision dedup
+- Added `find_bot_by_call(service_id, call_id)` to state.rs
+- `provision_core` checks for existing bot before creating — returns existing on match
+- Prevents duplicate bot records from operator restarts replaying on-chain events
+
 ## Converged
-All CRITICALs and actionable HIGHs from both /harden rounds are resolved.
-LIFE-5 (provision dedup) is the sole remaining HIGH — it's a lifecycle
-correctness issue, not a fund-loss vulnerability. Remaining 3 LOW are
-design trade-offs.
+All CRITICALs and HIGHs from both /harden rounds are resolved.
+- **CRITICAL: 0** (9 fixed across Gen 1-3)
+- **HIGH: 0** (all fixed including LIFE-5)
+- **MEDIUM: 0** (10 fixed)
+- **LOW: 3 deferred** (design trade-offs: emergency timelock, rate limit restructure, registry permissionless — all resolved or by-design)
+- **Forge: 403/403**
+- **Rust: 407** (56 validator + 182 runtime + 70 HTTP API + 99 blueprint-lib)
+- **Total: 810 tests passing**
