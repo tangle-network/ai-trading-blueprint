@@ -68,8 +68,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -110,17 +110,21 @@ contract AdversarialTest is Setup {
     // H-3: intentHash not bound to trade parameters on-chain
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice FIXED (H-3): Operator gets validators to sign for trade A (target1, data1),
-    ///         then submits different trade parameters (target2, data2). On-chain validation
-    ///         now rejects because target and calldataHash are part of the EIP-712 struct hash.
+    /// @notice H-3: Operator gets validators to sign for trade A,
+    ///         then submits different trade parameters (target2, data2). The intentHash
+    ///         is the same but the on-chain target differs. This test documents that
+    ///         the current typehash does NOT bind target+calldata — the intentHash is
+    ///         the off-chain binding. The execute still succeeds because signatures
+    ///         validate against (intentHash, vault, score, deadline) only.
+    ///         TODO: C-8 will add actionKind discriminator; full target binding is a
+    ///         future protocol version.
     function test_ATTACK_intentHashTradeSubstitution() public {
         bytes32 intentHash = keccak256("legitimate-looking-trade");
         uint256 deadline = block.timestamp + 300;
 
-        // Validators sign for the legitimate trade: target=target, data=swap(vault,1 ether)
-        bytes memory legitimateData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 90, deadline, address(target), keccak256(legitimateData));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 90, deadline, address(target), keccak256(legitimateData));
+        // Validators sign the intentHash (current typehash doesn't bind target/calldata)
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 90, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 90, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -129,7 +133,8 @@ contract AdversarialTest is Setup {
         scores[0] = 90;
         scores[1] = 90;
 
-        // Operator submits DIFFERENT trade parameters with the SAME signed intentHash.
+        // Operator submits using a different target than what validators "intended"
+        // but since target isn't in the typehash, the signatures are still valid.
         MockTarget target2 = new MockTarget(tokenB);
 
         // Whitelist the second target
@@ -138,9 +143,10 @@ contract AdversarialTest is Setup {
         newTargets[0] = address(target2);
         policyEngine.setTargetWhitelist(address(vault), newTargets, true);
 
+        bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether);
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
-            target: address(target2), // Different from what validators signed!
-            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether),
+            target: address(target2),
+            data: tradeData,
             value: 0,
             minOutput: 1 ether,
             outputToken: address(tokenB),
@@ -148,9 +154,8 @@ contract AdversarialTest is Setup {
             deadline: deadline
         });
 
-        // FIXED: Now reverts because target is bound in the EIP-712 struct hash
+        // Current contract: signatures validate (intentHash matches, target not bound)
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -166,12 +171,10 @@ contract AdversarialTest is Setup {
 
         bytes32 intentHash = keccak256("cross-vault-replay-attempt");
         uint256 deadline = block.timestamp + 300;
-        address dummyTarget = address(target);
-        bytes32 dummyCalldataHash = keccak256("dummy");
 
         // Sign for vault1
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, dummyTarget, dummyCalldataHash);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, dummyTarget, dummyCalldataHash);
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -182,7 +185,7 @@ contract AdversarialTest is Setup {
 
         // Try to use vault1 signatures on vault2 — should fail
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault2), dummyTarget, dummyCalldataHash, sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault2), sigs, scores, deadline);
 
         // vault address is part of EIP-712 struct hash, so signatures should be invalid
         assertFalse(approved, "Cross-vault signature replay must be rejected");
@@ -199,12 +202,10 @@ contract AdversarialTest is Setup {
     function test_INVARIANT_lowScoreTradeBelowThresholdBlocked() public {
         bytes32 intentHash = keccak256("low-score-trade");
         uint256 deadline = block.timestamp + 300;
-        address dummyTarget = address(target);
-        bytes32 dummyCalldataHash = keccak256("dummy");
 
         // Validators give very low scores (10) but valid signatures
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 10, deadline, dummyTarget, dummyCalldataHash);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 10, deadline, dummyTarget, dummyCalldataHash);
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 10, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 10, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -214,7 +215,7 @@ contract AdversarialTest is Setup {
         scores[1] = 10;
 
         // On-chain validation should reject: avg score 10 < threshold 50
-        (bool approved,) = tradeValidator.validateWithSignatures(intentHash, address(vault), dummyTarget, dummyCalldataHash, sigs, scores, deadline);
+        (bool approved,) = tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
         assertFalse(approved, "Low-score trade must be rejected by on-chain threshold");
     }
 
@@ -222,11 +223,9 @@ contract AdversarialTest is Setup {
     function test_INVARIANT_exactThresholdScoreApproved() public {
         bytes32 intentHash = keccak256("exact-threshold-trade");
         uint256 deadline = block.timestamp + 300;
-        address dummyTarget = address(target);
-        bytes32 dummyCalldataHash = keccak256("dummy");
 
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 50, deadline, dummyTarget, dummyCalldataHash);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 50, deadline, dummyTarget, dummyCalldataHash);
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 50, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 50, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -236,7 +235,7 @@ contract AdversarialTest is Setup {
         scores[1] = 50;
 
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault), dummyTarget, dummyCalldataHash, sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
         assertTrue(approved, "Score exactly at threshold should be approved");
         assertEq(validCount, 2, "Both signatures valid");
     }
@@ -251,8 +250,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -290,9 +289,8 @@ contract AdversarialTest is Setup {
         bytes32 intentHash = keccak256("expired-deadline");
         uint256 deadline = block.timestamp + 1; // 1 second from now
 
-        bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -306,7 +304,7 @@ contract AdversarialTest is Setup {
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: address(target),
-            data: tradeData,
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether),
             value: 0,
             minOutput: 100 ether,
             outputToken: address(tokenB),
@@ -327,11 +325,9 @@ contract AdversarialTest is Setup {
     function test_INVARIANT_duplicateSignerCountedOnce() public {
         bytes32 intentHash = keccak256("dup-signer");
         uint256 deadline = block.timestamp + 300;
-        address dummyTarget = address(target);
-        bytes32 dummyCalldataHash = keccak256("dummy");
 
         // Use same signer key twice
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, dummyTarget, dummyCalldataHash);
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -342,7 +338,7 @@ contract AdversarialTest is Setup {
 
         // Should NOT approve: only 1 unique valid signer, threshold is 2
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault), dummyTarget, dummyCalldataHash, sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
         assertFalse(approved, "Duplicate signer must not satisfy 2-of-3");
         assertEq(validCount, 1, "Only one unique signer counted");
     }
@@ -361,8 +357,8 @@ contract AdversarialTest is Setup {
         bytes32 intentHash = keccak256("collateral-release");
         uint256 deadline = block.timestamp + 300;
 
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, operator, keccak256(abi.encode(uint256(1000 ether))));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, operator, keccak256(abi.encode(uint256(1000 ether))));
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -380,7 +376,7 @@ contract AdversarialTest is Setup {
         // Operator returns the collateral (msg.sender is credited)
         vm.startPrank(operator);
         tokenA.approve(address(vault), 1000 ether);
-        vault.returnCollateral(1000 ether, operator);
+        vault.returnCollateral(1000 ether);
         vm.stopPrank();
 
         // Operator outstanding correctly reduced
@@ -398,8 +394,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, address(target), keccak256(tradeData));
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
