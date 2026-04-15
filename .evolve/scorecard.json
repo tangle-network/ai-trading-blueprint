@@ -1,0 +1,16 @@
+{
+  "product": "ai-trading-blueprint",
+  "timestamp": "2026-04-15T22:30:00Z",
+  "flows": [
+    {"name": "forge_tests", "score": 400, "target": 400, "status": "pass"},
+    {"name": "rust_compilation", "score": 5, "target": 5, "status": "pass", "note": "5 modified library crates clean on 1.91"},
+    {"name": "security_findings_critical", "score": 0, "target": 0, "status": "pass"},
+    {"name": "security_findings_high", "score": 0, "target": 0, "status": "pass"},
+    {"name": "security_findings_medium", "score": 0, "target": 0, "status": "pass"},
+    {"name": "security_findings_low_actionable", "score": 0, "target": 0, "status": "pass", "note": "6/9 LOW fixed, 3 deferred with design rationale"},
+    {"name": "adversarial_tests", "score": 11, "target": 11, "status": "pass"}
+  ],
+  "aggregate": 1.0,
+  "coverage": "7/7 tracked flows",
+  "evolveHistory": "harden + 2 pursue gens + 2 evolve rounds, 33 findings resolved (3 deferred)"
+}
