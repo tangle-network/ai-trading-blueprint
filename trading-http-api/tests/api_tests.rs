@@ -2014,12 +2014,7 @@ async fn test_multi_bot_clob_execute() {
             "approved": true,
             "aggregate_score": 75,
             "intent_hash": format!("0x{}", "ab".repeat(32)),
-            "validator_responses": [{
-                "validator": "0xValidator1",
-                "score": 75,
-                "reasoning": "Market has clear trend",
-                "signature": format!("0x{}", "cc".repeat(65))
-            }]
+            "validator_responses": []
         }
     });
 
@@ -2107,12 +2102,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
             "approved": true,
             "aggregate_score": 75,
             "intent_hash": format!("0x{}", "de".repeat(32)),
-            "validator_responses": [{
-                "validator": "0xV1",
-                "score": 75,
-                "reasoning": "ok",
-                "signature": format!("0x{}", "ee".repeat(65))
-            }]
+            "validator_responses": []
         }
     });
 
@@ -2195,12 +2185,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
             "approved": true,
             "aggregate_score": 75,
             "intent_hash": format!("0x{}", "ff".repeat(32)),
-            "validator_responses": [{
-                "validator": "0xV1",
-                "score": 75,
-                "reasoning": "ok",
-                "signature": format!("0x{}", "aa".repeat(65))
-            }]
+            "validator_responses": []
         }
     });
 

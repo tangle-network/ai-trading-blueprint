@@ -238,6 +238,67 @@ fn build_validation_result(v: &ValidationPayload) -> ValidationResult {
     }
 }
 
+/// Verify all validator signatures off-chain before executing a trade.
+///
+/// This is the **critical security gate** that prevents a compromised sidecar from
+/// submitting fabricated validator signatures. On-chain verification only happens
+/// for vault trades — paper trades and CLOB trades have no on-chain check, so this
+/// off-chain verification is their only defense.
+///
+/// Skipped when there are no validator responses (e.g. the validation was a dry-run
+/// or the intent was pre-approved without validators).
+fn verify_signatures_offchain(
+    validation: &ValidationPayload,
+    vault_address: &str,
+) -> Result<(), (StatusCode, String)> {
+    if validation.validator_responses.is_empty() {
+        return Ok(());
+    }
+
+    let deadline = validation.deadline.unwrap_or(0);
+    if deadline == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Validation deadline is required for signature verification".into(),
+        ));
+    }
+
+    // Convert to runtime types for the verifier
+    let responses: Vec<ValidatorResponse> = validation
+        .validator_responses
+        .iter()
+        .map(|r| ValidatorResponse {
+            validator: r.validator.clone(),
+            score: r.score,
+            reasoning: r.reasoning.clone(),
+            signature: r.signature.clone(),
+            chain_id: r.chain_id,
+            verifying_contract: r.verifying_contract.clone(),
+            validated_at: r.validated_at.clone(),
+        })
+        .collect();
+
+    trading_runtime::signature_verify::verify_all_signatures(
+        &responses,
+        &validation.intent_hash,
+        vault_address,
+        deadline,
+    )
+    .map_err(|e| {
+        tracing::warn!(
+            intent_hash = %validation.intent_hash,
+            error = %e,
+            "Off-chain signature verification FAILED — rejecting trade"
+        );
+        (
+            StatusCode::UNAUTHORIZED,
+            format!("Signature verification failed: {e}"),
+        )
+    })?;
+
+    Ok(())
+}
+
 /// Parse and validate the common fields of an `ExecuteRequest`.
 ///
 /// Returns the built `TradeIntent` or an HTTP error.
@@ -683,6 +744,12 @@ async fn execute(
     let intent = parse_execute_request(&request)?;
     let stored_validation = build_stored_validation(&request.validation);
 
+    // Off-chain signature verification — prevents fabricated validator signatures
+    // from reaching any execution path. Paper trades are exempt (no real money).
+    if !state.paper_trade {
+        verify_signatures_offchain(&request.validation, &state.vault_address)?;
+    }
+
     // Circuit breaker check before any execution.
     // Use max_drawdown_pct from risk_params if available, default 10%.
     let max_drawdown = Decimal::new(10, 0);
@@ -776,6 +843,13 @@ async fn execute_multi_bot(
 
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
+
+    // Off-chain signature verification — prevents fabricated validator signatures
+    // from reaching any execution path. Paper trades are exempt.
+    if !bot.paper_trade {
+        verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+    }
+
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());
     let valuation =
         resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
