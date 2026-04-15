@@ -47,25 +47,41 @@ impl VertexAdapter {
     }
 
     /// Encode a perp order submission via submitSlowModeTransaction.
+    ///
+    /// `price_x18` is the limit price in Vertex's X18 format (18 decimals).
+    /// It MUST be non-zero — a zero priceX18 produces a market order with no
+    /// slippage protection, allowing the sequencer to fill at any price.
     fn encode_place_order(
         &self,
         product_id: u32,
         amount: U256,
-        _price: &str,
+        price_x18: u128,
         is_long: bool,
-    ) -> Bytes {
-        // Build the inner transaction bytes containing the order params.
-        // Vertex encodes product_id, amount, and direction in the tx bytes.
-        let signed_amount: i128 = if is_long {
-            amount.try_into().unwrap_or(i128::MAX)
-        } else {
-            -(amount.try_into().unwrap_or(i128::MAX))
-        };
+    ) -> Result<Bytes, TradingError> {
+        // Reject amounts that exceed i128::MAX instead of silently clamping.
+        // A U256::MAX silently becoming ~1.7e38 would open a real position.
+        let abs_amount: i128 = amount.try_into().map_err(|_| TradingError::AdapterError {
+            protocol: "vertex".into(),
+            message: format!(
+                "Amount {} exceeds i128::MAX — cannot encode Vertex order",
+                amount
+            ),
+        })?;
+
+        let signed_amount = if is_long { abs_amount } else { -abs_amount };
+
+        if price_x18 == 0 {
+            return Err(TradingError::AdapterError {
+                protocol: "vertex".into(),
+                message: "priceX18 must be non-zero — zero produces an unprotected market order"
+                    .into(),
+            });
+        }
 
         let order = PlaceOrderParams {
             productId: product_id,
             amount: signed_amount,
-            priceX18: 0u128, // Market order, price set by engine
+            priceX18: price_x18,
             isLong: is_long,
         };
 
@@ -74,7 +90,7 @@ impl VertexAdapter {
         let call = IEndpoint::submitSlowModeTransactionCall {
             transaction: Bytes::from(inner_bytes),
         };
-        Bytes::from(call.abi_encode())
+        Ok(Bytes::from(call.abi_encode()))
     }
 }
 
@@ -106,15 +122,19 @@ impl ProtocolAdapter for VertexAdapter {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 
-        let price = params
+        // Parse price_x18 from extras. A missing or zero value is rejected
+        // by encode_place_order to prevent unprotected market orders.
+        let price_x18: u128 = params
             .extra
             .get("price")
             .and_then(|v| v.as_str())
-            .unwrap_or("0");
+            .and_then(|s| s.parse::<u128>().ok())
+            .unwrap_or(0);
 
         match params.action {
             Action::OpenLong => {
-                let calldata = self.encode_place_order(product_id, params.amount, price, true);
+                let calldata =
+                    self.encode_place_order(product_id, params.amount, price_x18, true)?;
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -125,7 +145,8 @@ impl ProtocolAdapter for VertexAdapter {
                 })
             }
             Action::OpenShort => {
-                let calldata = self.encode_place_order(product_id, params.amount, price, false);
+                let calldata =
+                    self.encode_place_order(product_id, params.amount, price_x18, false)?;
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -137,7 +158,8 @@ impl ProtocolAdapter for VertexAdapter {
             }
             Action::CloseLong => {
                 // Close long = open short to flatten
-                let calldata = self.encode_place_order(product_id, params.amount, price, false);
+                let calldata =
+                    self.encode_place_order(product_id, params.amount, price_x18, false)?;
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -149,7 +171,8 @@ impl ProtocolAdapter for VertexAdapter {
             }
             Action::CloseShort => {
                 // Close short = open long to flatten
-                let calldata = self.encode_place_order(product_id, params.amount, price, true);
+                let calldata =
+                    self.encode_place_order(product_id, params.amount, price_x18, true)?;
                 Ok(EncodedAction {
                     target: self.endpoint,
                     calldata,
@@ -217,6 +240,72 @@ mod tests {
             amount: U256::from(100u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
+        };
+        assert!(adapter.encode_action(&params).is_err());
+    }
+
+    /// C-3: U256::MAX must not silently clamp to i128::MAX
+    #[test]
+    fn test_reject_oversized_amount() {
+        let adapter = VertexAdapter::new();
+        let params = ActionParams {
+            action: Action::OpenLong,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_USDC.parse().unwrap(),
+            amount: U256::MAX,
+            min_output: U256::ZERO,
+            extra: serde_json::json!({
+                "product_id": 2,
+                "price": "2500000000000000000000"
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let err = adapter.encode_action(&params).unwrap_err();
+        match err {
+            TradingError::AdapterError { message, .. } => {
+                assert!(message.contains("exceeds i128::MAX"), "got: {message}");
+            }
+            other => panic!("expected AdapterError, got: {other:?}"),
+        }
+    }
+
+    /// C-4: Zero price must be rejected (no unprotected market orders)
+    #[test]
+    fn test_reject_zero_price() {
+        let adapter = VertexAdapter::new();
+        let params = ActionParams {
+            action: Action::OpenLong,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_USDC.parse().unwrap(),
+            amount: U256::from(10_000_000_000u64),
+            min_output: U256::ZERO,
+            extra: serde_json::json!({
+                "product_id": 2,
+                "price": "0"
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+        let err = adapter.encode_action(&params).unwrap_err();
+        match err {
+            TradingError::AdapterError { message, .. } => {
+                assert!(message.contains("non-zero"), "got: {message}");
+            }
+            other => panic!("expected AdapterError, got: {other:?}"),
+        }
+    }
+
+    /// C-4: Missing price field defaults to 0 and is rejected
+    #[test]
+    fn test_reject_missing_price() {
+        let adapter = VertexAdapter::new();
+        let params = ActionParams {
+            action: Action::OpenShort,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_USDC.parse().unwrap(),
+            amount: U256::from(10_000_000_000u64),
+            min_output: U256::ZERO,
+            extra: serde_json::json!({ "product_id": 2 }),
             vault_address: VAULT.parse().unwrap(),
         };
         assert!(adapter.encode_action(&params).is_err());
