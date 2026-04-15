@@ -1,11 +1,11 @@
 {
-  "mode": "harden",
-  "status": "session_loss_recovery_needed",
-  "activeHarden": "2026-04-15b-report.md",
-  "postmortem": "2026-04-15c-postmortem.md",
-  "critical": 9,
-  "high": 19,
-  "forge_tests": "388/400",
-  "rust_check": "unknown",
-  "note": "Round-3 pursue session lost Wave 1/2 fixes due to uncommitted-changes + subagent-contention reverts. Working tree at HEAD. Round-2-harden findings remain open. See postmortem for recovery plan."
+  "mode": "evolve",
+  "generation": 3,
+  "activePursuit": null,
+  "critical": 0,
+  "high": 1,
+  "forge_tests": "403/403",
+  "rust_tests": "308 (56 validator + 182 runtime + 70 HTTP API)",
+  "total_tests": 711,
+  "note": "Gen 3 complete. All 9 round-2 CRITICALs closed. 4 HIGHs closed. 1 HIGH remains (LIFE-5 provision dedup). C-2 mitigated by C-1 off-chain verifier."
 }
