@@ -5,23 +5,29 @@ import "./helpers/Setup.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract StrategyRegistryTest is Setup {
+    TradingVault public vault;
+
     function setUp() public override {
         super.setUp();
+        // Create a vault so we can test linked-vault registration
+        (address v,) = _createTestVault();
+        vault = TradingVault(payable(v));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // REGISTRATION TESTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_registerStrategy() public {
+    function test_registerStrategy_unlinked() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "My Yield Strategy", "defi-yield", "QmHash123");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "My Yield Strategy", "defi-yield", "QmHash123");
 
         assertEq(strategyId, 1);
 
         StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
         assertEq(info.serviceId, 1);
         assertEq(info.owner, owner);
+        assertEq(info.linkedVault, address(0));
         assertEq(info.name, "My Yield Strategy");
         assertEq(info.strategyType, "defi-yield");
         assertEq(info.ipfsHash, "QmHash123");
@@ -31,11 +37,28 @@ contract StrategyRegistryTest is Setup {
         assertEq(info.createdAt, block.timestamp);
     }
 
+    function test_registerStrategy_linked_vaultAdmin() public {
+        // owner has DEFAULT_ADMIN_ROLE on the vault
+        vm.prank(owner);
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(vault), "Linked Strategy", "defi-yield", "QmHash");
+
+        StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
+        assertEq(info.linkedVault, address(vault));
+        assertEq(info.owner, owner);
+    }
+
+    function test_registerStrategy_linked_revertsForNonAdmin() public {
+        // user does NOT have DEFAULT_ADMIN_ROLE on the vault
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.NotVaultAdmin.selector, address(vault), user));
+        strategyRegistry.registerStrategy(1, address(vault), "Spoof", "defi-yield", "QmHash");
+    }
+
     function test_registerStrategy_incrementsId() public {
         vm.startPrank(owner);
-        uint256 id1 = strategyRegistry.registerStrategy(1, "Strategy 1", "type1", "hash1");
-        uint256 id2 = strategyRegistry.registerStrategy(2, "Strategy 2", "type2", "hash2");
-        uint256 id3 = strategyRegistry.registerStrategy(3, "Strategy 3", "type1", "hash3");
+        uint256 id1 = strategyRegistry.registerStrategy(1, address(0), "Strategy 1", "type1", "hash1");
+        uint256 id2 = strategyRegistry.registerStrategy(2, address(0), "Strategy 2", "type2", "hash2");
+        uint256 id3 = strategyRegistry.registerStrategy(3, address(0), "Strategy 3", "type1", "hash3");
         vm.stopPrank();
 
         assertEq(id1, 1);
@@ -46,19 +69,19 @@ contract StrategyRegistryTest is Setup {
     function test_registerStrategy_revertsWithEmptyName() public {
         vm.prank(owner);
         vm.expectRevert(StrategyRegistry.EmptyName.selector);
-        strategyRegistry.registerStrategy(1, "", "defi-yield", "hash");
+        strategyRegistry.registerStrategy(1, address(0), "", "defi-yield", "hash");
     }
 
     function test_registerStrategy_emitsEvent() public {
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit StrategyRegistry.StrategyRegistered(1, 1, owner, "Test");
-        strategyRegistry.registerStrategy(1, "Test", "defi-yield", "hash");
+        emit StrategyRegistry.StrategyRegistered(1, 1, owner, address(0), "Test");
+        strategyRegistry.registerStrategy(1, address(0), "Test", "defi-yield", "hash");
     }
 
-    function test_registerStrategy_anyoneCanRegister() public {
+    function test_registerStrategy_anyoneCanRegisterUnlinked() public {
         vm.prank(user);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "User Strategy", "dex-trading", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "User Strategy", "dex-trading", "hash");
 
         StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
         assertEq(info.owner, user);
@@ -70,7 +93,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateStrategy() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "oldHash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "oldHash");
         strategyRegistry.updateStrategy(strategyId, "newHash");
         vm.stopPrank();
 
@@ -80,7 +103,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateStrategy_revertsForNonOwner() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
 
         vm.prank(user);
         vm.expectRevert(StrategyRegistry.OnlyStrategyOwner.selector);
@@ -89,7 +112,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateStrategy_revertsForDeactivated() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
         strategyRegistry.deactivateStrategy(strategyId);
 
         vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId));
@@ -109,7 +132,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_deactivateStrategy() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
         strategyRegistry.deactivateStrategy(strategyId);
         vm.stopPrank();
 
@@ -119,7 +142,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_deactivateStrategy_revertsForNonOwner() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
 
         vm.prank(user);
         vm.expectRevert(StrategyRegistry.OnlyStrategyOwner.selector);
@@ -128,7 +151,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_deactivateStrategy_revertsIfAlreadyInactive() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
         strategyRegistry.deactivateStrategy(strategyId);
 
         vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotActive.selector, strategyId));
@@ -138,7 +161,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_deactivateStrategy_emitsEvent() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
 
         vm.expectEmit(true, false, false, true);
         emit StrategyRegistry.StrategyDeactivated(strategyId);
@@ -152,7 +175,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateMetrics() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
         strategyRegistry.updateMetrics(strategyId, 5000 ether, 100 ether);
         vm.stopPrank();
 
@@ -163,7 +186,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateMetrics_negativePnl() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
         strategyRegistry.updateMetrics(strategyId, 5000 ether, -200 ether);
         vm.stopPrank();
 
@@ -173,7 +196,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateMetrics_revertsForNonOwner() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
 
         vm.prank(user);
         vm.expectRevert(StrategyRegistry.OnlyStrategyOwner.selector);
@@ -182,7 +205,7 @@ contract StrategyRegistryTest is Setup {
 
     function test_updateMetrics_emitsEvent() public {
         vm.startPrank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, "Test", "type", "hash");
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Test", "type", "hash");
 
         vm.expectEmit(true, false, false, true);
         emit StrategyRegistry.MetricsUpdated(strategyId, 5000, 100);
@@ -191,14 +214,43 @@ contract StrategyRegistryTest is Setup {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // RECORD METRICS (vault-linked) TESTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_recordMetrics_revertsForUnlinked() public {
+        vm.startPrank(owner);
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "Unlinked", "type", "hash");
+        vm.expectRevert(abi.encodeWithSelector(StrategyRegistry.StrategyNotLinked.selector, strategyId));
+        strategyRegistry.recordMetrics(strategyId, 100 ether);
+        vm.stopPrank();
+    }
+
+    function test_recordMetrics_readsFromVault() public {
+        // Fund vault so totalAssets > 0
+        vm.startPrank(user);
+        tokenA.approve(address(vault), 5000 ether);
+        vault.deposit(5000 ether, user);
+        vm.stopPrank();
+
+        vm.startPrank(owner);
+        uint256 strategyId = strategyRegistry.registerStrategy(1, address(vault), "Linked", "type", "hash");
+        strategyRegistry.recordMetrics(strategyId, 200 ether);
+        vm.stopPrank();
+
+        StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
+        assertEq(info.aum, vault.totalAssets());
+        assertEq(info.totalPnl, 200 ether);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // VIEW TESTS
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_getStrategiesByType() public {
         vm.startPrank(owner);
-        strategyRegistry.registerStrategy(1, "A", "defi-yield", "h1");
-        strategyRegistry.registerStrategy(2, "B", "dex-trading", "h2");
-        strategyRegistry.registerStrategy(3, "C", "defi-yield", "h3");
+        strategyRegistry.registerStrategy(1, address(0), "A", "defi-yield", "h1");
+        strategyRegistry.registerStrategy(2, address(0), "B", "dex-trading", "h2");
+        strategyRegistry.registerStrategy(3, address(0), "C", "defi-yield", "h3");
         vm.stopPrank();
 
         uint256[] memory defiYieldIds = strategyRegistry.getStrategiesByType("defi-yield");

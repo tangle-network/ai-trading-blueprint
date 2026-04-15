@@ -134,6 +134,7 @@ sol! {
         struct StrategyInfo {
             uint64 serviceId;
             address owner;
+            address linkedVault;
             string name;
             string strategyType;
             string ipfsHash;
@@ -143,7 +144,7 @@ sol! {
             uint256 createdAt;
         }
 
-        function registerStrategy(uint64 serviceId, string calldata name, string calldata strategyType, string calldata ipfsHash) external returns (uint256 strategyId);
+        function registerStrategy(uint64 serviceId, address linkedVault, string calldata name, string calldata strategyType, string calldata ipfsHash) external returns (uint256 strategyId);
         function updateStrategy(uint256 strategyId, string calldata ipfsHash) external;
         function deactivateStrategy(uint256 strategyId) external;
         function updateMetrics(uint256 strategyId, uint256 aum, int256 pnl) external;

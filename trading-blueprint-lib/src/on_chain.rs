@@ -126,12 +126,14 @@ pub async fn register_strategy(
     chain: &ChainClient,
     registry_address: Address,
     service_id: u64,
+    linked_vault: Address,
     name: String,
     strategy_type: String,
     ipfs_hash: String,
 ) -> Result<u64, String> {
     let call = IStrategyRegistry::registerStrategyCall {
         serviceId: service_id,
+        linkedVault: linked_vault,
         name,
         strategyType: strategy_type,
         ipfsHash: ipfs_hash,
