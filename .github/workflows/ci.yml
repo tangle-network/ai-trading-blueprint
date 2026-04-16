@@ -48,12 +48,10 @@ jobs:
         with:
           submodules: recursive
 
-      # sandbox-runtime is a sibling path dep (../../ai-agent-sandbox-blueprint/)
+      # sandbox-runtime is a sibling path dep (../../ai-agent-sandbox-blueprint/).
+      # actions/checkout can't clone outside the workspace, so use git clone.
       - name: Clone sandbox-runtime sibling
-        uses: actions/checkout@v4
-        with:
-          repository: tangle-network/ai-agent-sandbox-blueprint
-          path: ../ai-agent-sandbox-blueprint
+        run: git clone --depth 1 https://github.com/tangle-network/ai-agent-sandbox-blueprint.git ../ai-agent-sandbox-blueprint
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -112,6 +110,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clone sandbox-runtime sibling
+        run: git clone --depth 1 https://github.com/tangle-network/ai-agent-sandbox-blueprint.git ../ai-agent-sandbox-blueprint
 
       - uses: dtolnay/rust-toolchain@master
         with:

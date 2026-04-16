@@ -1,11 +1,11 @@
 {
-  "mode": "converged",
-  "generation": 3,
+  "mode": "evolve",
+  "generation": 4,
   "activePursuit": null,
   "critical": 0,
   "high": 0,
   "forge_tests": "403/403",
-  "rust_tests": "407 (56 validator + 182 runtime + 70 HTTP API + 99 blueprint-lib)",
-  "total_tests": 810,
-  "note": "All CRITICALs and HIGHs from both harden rounds closed. LIFE-5 provision dedup shipped. 3 LOW deferred (design trade-offs)."
+  "rust_tests": "324 (56 validator + 198 runtime + 70 HTTP API)",
+  "total_tests": 727,
+  "note": "Gen 4: Hyperliquid adapter (8 tests), leaderboard computation (8 tests), aggregation API endpoint. All perp adapters complete (GMX, Vertex, Hyperliquid)."
 }

@@ -144,6 +144,7 @@ pub async fn verify_on_chain_signatures(
             sigs,
             scores,
             U256::from(signed_deadline),
+            U256::from(0), // actionKind=0 (execute)
         )
         .call()
         .await

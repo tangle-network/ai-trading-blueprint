@@ -1452,6 +1452,7 @@ async fn test_adversarial_contract_paths() -> Result<()> {
                     one_sig,
                     one_score,
                     U256::from(deadline),
+                    U256::from(0), // actionKind=0 (execute)
                 )
                 .call()
                 .await

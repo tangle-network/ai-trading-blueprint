@@ -188,12 +188,10 @@ async fn handle_validate(
     // with target+calldata but no simulation result, run our own eth_call.
     if let (Some(rpc_url), Some(ctx)) =
         (server.rpc_url.as_ref(), request.execution_context.as_mut())
+        && ctx.simulation_result.is_none()
+        && let Some(sim) = run_independent_simulation(rpc_url, ctx).await
     {
-        if ctx.simulation_result.is_none() {
-            if let Some(sim) = run_independent_simulation(rpc_url, ctx).await {
-                ctx.simulation_result = Some(sim);
-            }
-        }
+        ctx.simulation_result = Some(sim);
     }
 
     // Look up strategy context for protocol-aware scoring

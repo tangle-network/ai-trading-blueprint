@@ -19,10 +19,10 @@ sol! {
         function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external;
         function validateWithSignatures(
             bytes32 intentHash, address vault, bytes[] calldata signatures,
-            uint256[] calldata scores, uint256 deadline
+            uint256[] calldata scores, uint256 deadline, uint256 actionKind
         ) external view returns (bool approved, uint256 validCount);
         function getRequiredSignatures(address vault) external view returns (uint256);
-        function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline) external view returns (bytes32);
+        function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
     }
 }
 

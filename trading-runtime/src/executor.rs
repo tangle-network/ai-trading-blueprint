@@ -8,7 +8,8 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 
 use crate::adapters::{
-    ActionParams, EncodedAction, ProtocolAdapter, aave_v3::AaveV3Adapter, gmx_v2::GmxV2Adapter,
+    ActionParams, EncodedAction, ProtocolAdapter, aave_v3::AaveV3Adapter,
+    aerodrome::AerodromeAdapter, gmx_v2::GmxV2Adapter, hyperliquid::HyperliquidAdapter,
     morpho::MorphoAdapter, polymarket::PolymarketAdapter, twap::TwapAdapter,
     uniswap_v3::UniswapV3Adapter, vertex::VertexAdapter,
 };
@@ -342,6 +343,8 @@ pub fn get_adapter(protocol: &str) -> Result<Box<dyn ProtocolAdapter + Send>, Tr
         "gmx_v2" => Ok(Box::new(GmxV2Adapter::new())),
         "morpho" => Ok(Box::new(MorphoAdapter::new())),
         "vertex" => Ok(Box::new(VertexAdapter::new())),
+        "hyperliquid" => Ok(Box::new(HyperliquidAdapter::new())),
+        "aerodrome" => Ok(Box::new(AerodromeAdapter::new())),
         "polymarket" => Ok(Box::new(PolymarketAdapter::new())),
         "twap_uniswap_v3" => {
             let inner = Box::new(UniswapV3Adapter::new());

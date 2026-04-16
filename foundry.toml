@@ -11,6 +11,14 @@ via_ir = true
 optimizer = true
 optimizer_runs = 200
 
+# Fork testing RPC endpoints. Set via env vars or .env file.
+# Tests gated by `--fork-url` flag — unit tests never hit these.
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+polygon = "${POLYGON_RPC_URL}"
+mainnet = "${ETH_RPC_URL}"
+
 [soldeer]
 recursive_deps = true
 remappings_location = "txt"
