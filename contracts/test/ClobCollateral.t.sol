@@ -49,8 +49,9 @@ contract ClobCollateralTest is Setup {
         scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        // actionKind=1 (ACTION_KIND_RELEASE_COLLATERAL) so signatures bind to releaseCollateral
+        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline, 1);
+        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline, 1);
     }
 
     function _releaseCollateral(uint256 amount, bytes32 intentHash)
@@ -117,7 +118,7 @@ contract ClobCollateralTest is Setup {
         bytes[] memory sigs = new bytes[](1);
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline, 1);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);

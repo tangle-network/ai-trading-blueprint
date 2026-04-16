@@ -34,6 +34,16 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant CREATOR_ROLE = keccak256("CREATOR_ROLE");
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // EIP-712 ACTION KIND DISCRIMINATORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Action kind for regular trade executions (execute / executeWithApprovals).
+    uint256 public constant ACTION_KIND_EXECUTE = 0;
+
+    /// @notice Action kind for CLOB collateral releases (releaseCollateral).
+    uint256 public constant ACTION_KIND_RELEASE_COLLATERAL = 1;
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -396,8 +406,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // 1. Policy engine check
         _checkPolicy(params.outputToken, params.minOutput, params.target);
 
-        // 2. Validator signature check (m-of-n EIP-712)
-        _checkValidators(params.intentHash, signatures, scores, params.deadline);
+        // 2. Validator signature check (m-of-n EIP-712) — bind to execute action kind
+        _checkValidators(params.intentHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
     function _applyApprovals(ApprovalCall[] calldata approvals) internal {
@@ -419,9 +429,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         bytes32 intentHash,
         bytes[] calldata signatures,
         uint256[] calldata scores,
-        uint256 deadline
+        uint256 deadline,
+        uint256 actionKind
     ) internal view {
-        (bool ok,) = tradeValidator.validateWithSignatures(intentHash, address(this), signatures, scores, deadline);
+        (bool ok,) =
+            tradeValidator.validateWithSignatures(intentHash, address(this), signatures, scores, deadline, actionKind);
         if (!ok) revert ValidatorCheckFailed();
     }
 
@@ -494,8 +506,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             revert ExceedsCollateralLimit(amount, maxAllowed - totalOutstandingCollateral);
         }
 
-        // Validator signature check (same m-of-n as trades)
-        _checkValidators(intentHash, signatures, scores, deadline);
+        // Validator signature check — bind to release-collateral action kind
+        _checkValidators(intentHash, signatures, scores, deadline, ACTION_KIND_RELEASE_COLLATERAL);
 
         // CEI: update state before transfer
         totalOutstandingCollateral += amount;

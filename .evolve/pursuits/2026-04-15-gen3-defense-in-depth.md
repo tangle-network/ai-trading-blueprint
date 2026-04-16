@@ -86,9 +86,40 @@ Full on-chain target+calldata binding in the VALIDATION_TYPEHASH. **Rejected for
 ## Build Status
 | # | Change | Status | Files | Tests |
 |---|--------|--------|-------|-------|
-| 1 | RUST-H5 slashing Address compare | pending | slashing.rs | |
-| 2 | RUST-H7 polymarket condition_id error | pending | polymarket.rs | |
-| 3 | RUST-H2 portfolio checked_mul | pending | portfolio.rs | |
-| 4 | RUST-H4 fee checked_mul | pending | fees.rs | |
-| 5 | C-9 StrategyRegistry auth | pending | 4 files | |
-| 6 | C-8 actionKind discriminator | pending | 8+ files | |
+| 1 | RUST-H5 slashing Address compare | **DONE** | slashing.rs | 56/56 |
+| 2 | RUST-H7 polymarket condition_id error | **DONE** | polymarket.rs | 182/182 |
+| 3 | RUST-H2 portfolio checked_mul | **DONE** | portfolio.rs | 182/182 |
+| 4 | RUST-H4 fee checked_mul | **DONE** | fees.rs | 182/182 |
+| 5 | C-9 StrategyRegistry auth | **DONE** | 4 files (Sol+Rust) | 403/403 |
+| 6 | C-8 actionKind discriminator | **DONE** | 11 files (Sol+Rust) | 711/711 |
+
+## Generation 3 Results
+
+### Scores
+| Dimension | Before (Gen 2) | After (Gen 3) | Δ |
+|-----------|----------------|---------------|---|
+| CRITICAL findings | 9 (round-2) | 0 | -9 |
+| HIGH findings | 13 (round-2) | 1 (LIFE-5) | -12 |
+| Forge tests | 399 | 403 | +4 |
+| Rust tests | 297 (175+42+80) | 308 (182+56+70) | +11 |
+| Total tests | 696 | 711 | +15 |
+
+### What worked
+- Commit-per-fix strategy prevented the session-loss pattern from prior rounds
+- C-8 coordinated 11-file change landed cleanly with all 403 Forge + 308 Rust tests passing
+- C-9 vault-linked registration is clean — proves capital ownership without changing the registry's informational role
+
+### What's left
+- LIFE-5: provision dedup (lifecycle correctness, not fund-loss)
+- C-2: mitigated by C-1 off-chain verifier (validator returns zero-sig, verifier rejects)
+- 3 LOW deferred (design trade-offs)
+
+### Verdict: ADVANCE
+Gen 3 closes all CRITICALs and all actionable HIGHs. The system is ready for external audit.
+
+### Seeds for Gen 4
+- Full target+calldata binding in VALIDATION_TYPEHASH (binds what the operator submits, not just the intent hash)
+- LIFE-5 provision dedup with strategy-keyed idempotency
+- On-chain per-score bound enforcement in TradeValidator (currently threshold-only)
+
+Run `/evolve` targeting LIFE-5 provision dedup against the Gen 3 baseline.

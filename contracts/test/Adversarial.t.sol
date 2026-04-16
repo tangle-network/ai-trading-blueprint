@@ -185,7 +185,7 @@ contract AdversarialTest is Setup {
 
         // Try to use vault1 signatures on vault2 — should fail
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault2), sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault2), sigs, scores, deadline, 0);
 
         // vault address is part of EIP-712 struct hash, so signatures should be invalid
         assertFalse(approved, "Cross-vault signature replay must be rejected");
@@ -215,7 +215,7 @@ contract AdversarialTest is Setup {
         scores[1] = 10;
 
         // On-chain validation should reject: avg score 10 < threshold 50
-        (bool approved,) = tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
+        (bool approved,) = tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline, 0);
         assertFalse(approved, "Low-score trade must be rejected by on-chain threshold");
     }
 
@@ -235,7 +235,7 @@ contract AdversarialTest is Setup {
         scores[1] = 50;
 
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline, 0);
         assertTrue(approved, "Score exactly at threshold should be approved");
         assertEq(validCount, 2, "Both signatures valid");
     }
@@ -338,7 +338,7 @@ contract AdversarialTest is Setup {
 
         // Should NOT approve: only 1 unique valid signer, threshold is 2
         (bool approved, uint256 validCount) =
-            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline);
+            tradeValidator.validateWithSignatures(intentHash, address(vault), sigs, scores, deadline, 0);
         assertFalse(approved, "Duplicate signer must not satisfy 2-of-3");
         assertEq(validCount, 1, "Only one unique signer counted");
     }
@@ -357,8 +357,9 @@ contract AdversarialTest is Setup {
         bytes32 intentHash = keccak256("collateral-release");
         uint256 deadline = block.timestamp + 300;
 
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
+        // actionKind=1 (release collateral) so signatures bind to this code path
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, 1);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, 1);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;

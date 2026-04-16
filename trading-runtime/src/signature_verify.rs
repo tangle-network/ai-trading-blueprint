@@ -15,9 +15,9 @@ const DOMAIN_NAME: &str = "TradeValidator";
 const DOMAIN_VERSION: &str = "1";
 
 /// Must match Solidity:
-/// `keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)")`
+/// `keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")`
 fn validation_typehash() -> B256 {
-    keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline)")
+    keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")
 }
 
 /// Compute the EIP-712 domain separator.
@@ -51,7 +51,15 @@ fn compute_domain_separator(chain_id: u64, verifying_contract: Address) -> B256 
 }
 
 /// Compute the EIP-712 struct hash for a trade validation.
-fn compute_struct_hash(intent_hash: B256, vault: Address, score: u64, deadline: u64) -> B256 {
+///
+/// `action_kind`: 0 = execute, 1 = release collateral.
+fn compute_struct_hash(
+    intent_hash: B256,
+    vault: Address,
+    score: u64,
+    deadline: u64,
+    action_kind: u64,
+) -> B256 {
     keccak256(
         [
             validation_typehash().as_slice(),
@@ -59,6 +67,7 @@ fn compute_struct_hash(intent_hash: B256, vault: Address, score: u64, deadline: 
             &B256::left_padding_from(vault.as_slice()).0,
             &U256::from(score).to_be_bytes::<32>(),
             &U256::from(deadline).to_be_bytes::<32>(),
+            &U256::from(action_kind).to_be_bytes::<32>(),
         ]
         .concat(),
     )
@@ -170,7 +179,9 @@ pub fn verify_validator_signature(
 
     // Compute the EIP-712 digest
     let domain_separator = compute_domain_separator(chain_id, verifying_contract);
-    let struct_hash = compute_struct_hash(intent_hash, vault, response.score as u64, deadline);
+    // Default to actionKind=0 (execute). The off-chain verifier is only called from
+    // the execute HTTP handler, which always uses the execute action kind.
+    let struct_hash = compute_struct_hash(intent_hash, vault, response.score as u64, deadline, 0);
     let digest = compute_eip712_digest(domain_separator, struct_hash);
 
     // Recover signer from signature.
@@ -262,8 +273,8 @@ mod tests {
             .parse()
             .unwrap();
         let intent_hash = B256::ZERO;
-        let sh1 = compute_struct_hash(intent_hash, vault, 85, 9999999999);
-        let sh2 = compute_struct_hash(intent_hash, vault, 85, 9999999999);
+        let sh1 = compute_struct_hash(intent_hash, vault, 85, 9999999999, 0);
+        let sh2 = compute_struct_hash(intent_hash, vault, 85, 9999999999, 0);
         assert_eq!(sh1, sh2);
     }
 
@@ -293,7 +304,7 @@ mod tests {
         let deadline = 9999999999u64;
 
         let (sig_bytes, addr) = signer
-            .sign_validation(intent_hash, vault, score, deadline)
+            .sign_validation(intent_hash, vault, score, deadline, 0)
             .unwrap();
 
         // Build a ValidatorResponse as the execute endpoint would receive it

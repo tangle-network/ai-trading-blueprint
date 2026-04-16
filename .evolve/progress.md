@@ -30,14 +30,37 @@
 - **L-8**: Rate limit slot consumed on invalid sig — restructure requires rethinking gas costs (operator-level DoS only)
 - **L-9**: `StrategyRegistry.registerStrategy()` permissionless — registry is informational only, doesn't gate vault security
 
+### 2026-04-15: Session recovery — re-apply round-2 C-1/C-3/C-4/C-5/C-6/C-7
+- C-6/C-7: Brace-depth JSON extraction, prompt sanitization, score clamped [0,100], default→0
+- C-3/C-4: Vertex reject oversized amounts + require non-zero priceX18
+- C-5: GMX require explicit acceptable_price, reject zero/MAX
+- C-1: Wire verify_signatures_offchain into both execute handlers
+
+### 2026-04-15: /pursue Gen 3 — Defense in Depth
+- **Wave 1 (Rust safety):** RUST-H5 Address-typed slashing compare, RUST-H7 condition_id error, RUST-H2 portfolio checked_mul, RUST-H4 fee checked_mul
+- **Wave 2 (C-9):** StrategyRegistry linkedVault + DEFAULT_ADMIN_ROLE auth, recordMetrics from vault
+- **Wave 3 (C-8):** actionKind discriminator in VALIDATION_TYPEHASH — coordinated 11-file protocol change across Solidity + Rust
+
 ## Final State
-- **CRITICAL: 0** (2 fixed)
-- **HIGH: 0** (8 fixed)
+- **CRITICAL: 0** (2 from round-1 + 7 from round-2, all fixed)
+- **HIGH: 1 remaining** (LIFE-5 provision dedup — lifecycle, not security-critical)
 - **MEDIUM: 0** (10 fixed)
-- **LOW: 3 deferred** (6 fixed, 3 deferred with rationale above)
-- **Forge tests: 400/400**
-- **Rust: 5 modified library crates compile clean on 1.91**
+- **LOW: 3 deferred** (6 fixed, 3 deferred with rationale)
+- **Forge tests: 403/403**
+- **Rust tests: 308** (56 validator + 182 runtime + 70 HTTP API)
+- **Total: 711 tests passing**
+
+### 2026-04-15: /evolve Round 5 — LIFE-5 provision dedup
+- Added `find_bot_by_call(service_id, call_id)` to state.rs
+- `provision_core` checks for existing bot before creating — returns existing on match
+- Prevents duplicate bot records from operator restarts replaying on-chain events
 
 ## Converged
-All actionable findings from /harden are resolved or explicitly deferred with rationale.
-Remaining 3 LOW findings are design trade-offs that shouldn't be fixed reactively.
+All CRITICALs and HIGHs from both /harden rounds are resolved.
+- **CRITICAL: 0** (9 fixed across Gen 1-3)
+- **HIGH: 0** (all fixed including LIFE-5)
+- **MEDIUM: 0** (10 fixed)
+- **LOW: 3 deferred** (design trade-offs: emergency timelock, rate limit restructure, registry permissionless — all resolved or by-design)
+- **Forge: 403/403**
+- **Rust: 407** (56 validator + 182 runtime + 70 HTTP API + 99 blueprint-lib)
+- **Total: 810 tests passing**

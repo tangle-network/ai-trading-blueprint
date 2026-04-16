@@ -98,6 +98,32 @@ pub async fn provision_core(
     caller: String,
     tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
 ) -> Result<TradingProvisionOutput, String> {
+    // 0. Dedup check — if a bot already exists for this (service_id, call_id),
+    // return it instead of creating a duplicate. This handles operator restarts
+    // that replay past on-chain events.
+    if call_id > 0 {
+        if let Ok(Some(existing)) = crate::state::find_bot_by_call(service_id, call_id) {
+            tracing::info!(
+                bot_id = %existing.id,
+                service_id,
+                call_id,
+                "Provision dedup: returning existing bot for (service_id={service_id}, call_id={call_id})"
+            );
+            return Ok(TradingProvisionOutput {
+                vault_address: existing
+                    .vault_address
+                    .parse()
+                    .unwrap_or(alloy::primitives::Address::ZERO),
+                share_token: existing
+                    .share_token
+                    .parse()
+                    .unwrap_or(alloy::primitives::Address::ZERO),
+                sandbox_id: existing.sandbox_id,
+                workflow_id: existing.workflow_id.unwrap_or(0),
+            });
+        }
+    }
+
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
     let api_token = sandbox_runtime::auth::generate_token();

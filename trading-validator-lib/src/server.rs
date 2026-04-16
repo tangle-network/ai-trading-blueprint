@@ -265,7 +265,9 @@ async fn handle_validate(
             }
         };
 
-        match signer.sign_validation(intent_hash, vault, score as u64, request.deadline) {
+        // action_kind=0 (execute) — the validate endpoint only signs for trade executions.
+        // Collateral releases use a separate signing flow.
+        match signer.sign_validation(intent_hash, vault, score as u64, request.deadline, 0) {
             Ok((sig_bytes, addr)) => {
                 return Json(ValidateResponse {
                     score,
