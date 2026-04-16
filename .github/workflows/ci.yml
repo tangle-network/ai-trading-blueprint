@@ -65,8 +65,14 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Check (all crates)
-        run: cargo check --workspace
+      # Check our crates (not --workspace: bin crates depend on sibling
+      # repo APIs that may drift on the default branch).
+      - name: Check
+        run: |
+          cargo check -p trading-runtime
+          cargo check -p trading-http-api
+          cargo check -p trading-validator-lib
+          cargo check -p trading-blueprint-lib
 
       - name: Test (trading-validator-lib)
         run: cargo test -p trading-validator-lib --lib
@@ -105,7 +111,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: |
+          cargo clippy -p trading-runtime -- -D warnings
+          cargo clippy -p trading-http-api -- -D warnings
+          cargo clippy -p trading-validator-lib -- -D warnings
+          cargo clippy -p trading-blueprint-lib -- -D warnings
 
   fmt:
     name: Rustfmt

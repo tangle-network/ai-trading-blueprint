@@ -1,0 +1,29 @@
+# Known advisories in transitive dependencies from the blueprint SDK.
+# These are not direct deps of ai-trading-blueprint — they come through
+# blueprint-sdk → tangle-subxt → substrate → libp2p/ring/aws-lc-sys.
+# Track upstream fixes in tangle-network/blueprint.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2021-0141", # ansi_term unmaintained (via substrate)
+    "RUSTSEC-2024-0384", # instant unmaintained (via substrate)
+    "RUSTSEC-2024-0388", # elf unmaintained (via substrate)
+    "RUSTSEC-2024-0436", # paste unmaintained (via substrate)
+    "RUSTSEC-2025-0009", # ring < 0.17.12 (via substrate)
+    "RUSTSEC-2025-0010", # ring < 0.17.12 (via substrate)
+    "RUSTSEC-2025-0012", # ring < 0.17.12 (via substrate)
+    "RUSTSEC-2025-0055", # libp2p (via substrate)
+    "RUSTSEC-2025-0111", # libp2p (via substrate)
+    "RUSTSEC-2025-0134", # libp2p (via substrate)
+    "RUSTSEC-2025-0141", # libp2p (via substrate)
+    "RUSTSEC-2025-0161", # libp2p (via substrate)
+    "RUSTSEC-2026-0002", # substrate transitive
+    "RUSTSEC-2026-0044", # aws-lc-sys < 0.39.0 (via substrate)
+    "RUSTSEC-2026-0048", # aws-lc-sys < 0.39.0 (via substrate)
+    "RUSTSEC-2026-0049", # substrate transitive
+    "RUSTSEC-2026-0067", # substrate transitive
+    "RUSTSEC-2026-0068", # substrate transitive
+    "RUSTSEC-2026-0097", # substrate transitive
+    "RUSTSEC-2026-0098", # substrate transitive
+    "RUSTSEC-2026-0099", # substrate transitive
+]
