@@ -23,6 +23,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Use cmake builder for aws-lc-sys to bypass GCC memcmp bug in cross containers
+  AWS_LC_SYS_CMAKE_BUILDER: 1
   # The binary name from [[bin]] in operator/Cargo.toml.
   # Override per repo if different.
   BINARY_NAME: ${{ vars.BINARY_NAME || 'trading-blueprint' }}
@@ -66,23 +68,6 @@ jobs:
       - name: Install cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
-
-      # Strip CI-incompatible patches (local paths that only exist on dev machines).
-      # The committed Cargo.lock already pins transitive deps (like yanked core2).
-      - name: Prepare for CI build
-        run: |
-          # Remove [patch.crates-io] and [patch."https://..."] sections that
-          # reference local paths (e.g. /Users/drew/.cargo/...).
-          if grep -q 'patch.crates-io' Cargo.toml; then
-            python3 -c "
-          import re
-          with open('Cargo.toml') as f: text = f.read()
-          # Remove [patch.*] sections with local path = entries
-          text = re.sub(r'\[patch[^\]]*\]\n(?:(?!^\[)[^\n]*\n)*', '', text, flags=re.MULTILINE)
-          with open('Cargo.toml', 'w') as f: f.write(text)
-          "
-            echo 'Stripped local-path patches from Cargo.toml for CI'
-          fi
 
       - name: Build release binary
         run: |
