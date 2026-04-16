@@ -1,5 +1,6 @@
 pub mod aave_v3;
 pub mod gmx_v2;
+pub mod hyperliquid;
 pub mod morpho;
 pub mod polymarket;
 pub mod stat_arb;

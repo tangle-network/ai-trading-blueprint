@@ -7,6 +7,7 @@ pub mod error;
 pub mod executor;
 pub mod fees;
 pub mod intent;
+pub mod leaderboard;
 pub mod market_data;
 pub mod polymarket_clob;
 pub mod portfolio;

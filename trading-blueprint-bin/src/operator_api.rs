@@ -552,6 +552,8 @@ pub fn build_operator_router() -> Router {
         .route("/pricing/job-quote", post(pricing_job_quote))
         .route("/api/pricing/config", get(get_pricing_config))
         .route("/api/pricing/billing/{service_id}", get(get_billing_status))
+        // Leaderboard
+        .route("/api/leaderboard", get(get_leaderboard))
         // Debug endpoints (auth required)
         .route("/api/debug/sandboxes", get(debug_sandboxes))
         .route("/api/debug/state-health", get(debug_state_health))
@@ -2141,6 +2143,99 @@ async fn get_activation_progress(
         })?;
 
     Ok(Json(ActivationProgressResponse::from(progress)))
+}
+
+// ── Leaderboard ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LeaderboardQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    sort_by: Option<String>,
+}
+
+async fn get_leaderboard(
+    Query(q): Query<LeaderboardQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0);
+    let sort_by = q.sort_by.as_deref().unwrap_or("total_return_pct");
+
+    let paginated = state::list_bots(500, 0).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to list bots: {e}"),
+        )
+    })?;
+
+    let mut entries: Vec<trading_runtime::leaderboard::LeaderboardStats> = paginated
+        .bots
+        .iter()
+        .filter_map(|bot| {
+            // Get metric snapshots for equity curve
+            let snapshots = trading_http_api::metrics_store::snapshots_for_bot(
+                &bot.id,
+                None,
+                None,
+                Some(10000),
+            )
+            .ok()?;
+
+            let equity_points: Vec<trading_runtime::leaderboard::EquityPoint> = snapshots
+                .iter()
+                .filter_map(|s| {
+                    let val = s.account_value_usd.parse::<rust_decimal::Decimal>().ok()?;
+                    Some(trading_runtime::leaderboard::EquityPoint {
+                        timestamp_secs: s.timestamp.timestamp(),
+                        account_value: val,
+                    })
+                })
+                .collect();
+
+            // Get trade records for win rate
+            let trades = trading_http_api::trade_store::trades_for_bot(&bot.id, 10000, 0).ok()?;
+            // Approximate per-trade PnL from notional values where available
+            let trade_pnls: Vec<rust_decimal::Decimal> = trades
+                .iter()
+                .filter_map(|t| {
+                    let amount_in: rust_decimal::Decimal = t.amount_in.parse().ok()?;
+                    let amount_out: rust_decimal::Decimal = t.amount_out.as_ref()?.parse().ok()?;
+                    Some(amount_out - amount_in)
+                })
+                .collect();
+
+            Some(trading_runtime::leaderboard::compute_stats(
+                &bot.id,
+                &equity_points,
+                &trade_pnls,
+            ))
+        })
+        .collect();
+
+    // Sort by requested field (descending)
+    entries.sort_by(|a, b| {
+        let cmp = match sort_by {
+            "sharpe_ratio" => a.sharpe_ratio.partial_cmp(&b.sharpe_ratio),
+            "sortino_ratio" => a.sortino_ratio.partial_cmp(&b.sortino_ratio),
+            "max_drawdown_pct" => b.max_drawdown_pct.partial_cmp(&a.max_drawdown_pct), // lower is better
+            "win_rate" => a.win_rate.partial_cmp(&b.win_rate),
+            "calmar_ratio" => a.calmar_ratio.partial_cmp(&b.calmar_ratio),
+            "total_trades" => a.total_trades.partial_cmp(&b.total_trades),
+            _ => a.total_return_pct.partial_cmp(&b.total_return_pct),
+        };
+        cmp.unwrap_or(std::cmp::Ordering::Equal).reverse()
+    });
+
+    let total = entries.len();
+    let page: Vec<_> = entries.into_iter().skip(offset).take(limit).collect();
+
+    Ok(Json(serde_json::json!({
+        "entries": page,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "sort_by": sort_by,
+    })))
 }
 
 // ── Debug handlers ───────────────────────────────────────────────────────
