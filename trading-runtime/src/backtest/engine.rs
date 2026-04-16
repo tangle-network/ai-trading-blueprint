@@ -42,13 +42,16 @@ impl BacktestEngine {
             return Ok(empty_result());
         }
 
-        // Partition candles by token
+        // Partition candles by token and sort each series chronologically
         let mut token_candles: BTreeMap<String, Vec<Candle>> = BTreeMap::new();
         for c in candles {
             token_candles
                 .entry(c.token.clone())
                 .or_default()
                 .push(c.clone());
+        }
+        for tc in token_candles.values_mut() {
+            tc.sort_by_key(|c| c.timestamp);
         }
 
         // Build per-token indicator caches
@@ -531,8 +534,7 @@ impl BacktestEngine {
                         }
                     }
                     if pos.trailing_active {
-                        let trail_frac =
-                            Decimal::try_from(*trail_pct / 100.0).unwrap_or(Decimal::ZERO);
+                        let trail_frac = f64_to_decimal(*trail_pct / 100.0);
                         match pos.direction {
                             Direction::Long => {
                                 let trail_stop = pos.high_water * (Decimal::ONE - trail_frac);
@@ -686,7 +688,7 @@ impl BacktestEngine {
 /// Positive pct = favorable direction (TP for long, SL for short).
 /// Negative pct = adverse direction (SL for long, TP for short).
 fn level_price(entry: Decimal, direction: Direction, pct: f64) -> Decimal {
-    let frac = Decimal::try_from(pct.abs() / 100.0).unwrap_or(Decimal::ZERO);
+    let frac = f64_to_decimal(pct.abs() / 100.0);
     let favorable = pct > 0.0;
     match (direction, favorable) {
         (Direction::Long, true) | (Direction::Short, false) => entry * (Decimal::ONE + frac),
@@ -859,10 +861,11 @@ fn evaluate_signal(
     }
 }
 
-/// Convert f64 to Decimal safely, rounding to 8 decimal places to avoid
-/// Decimal's 28-digit precision limit panicking on high-precision floats.
+/// Convert f64 to Decimal safely, handling NaN, Inf, and high-precision floats.
 fn f64_to_decimal(v: f64) -> Decimal {
-    // Round to 8dp to stay well within Decimal's 28-digit scale limit
+    if v.is_nan() || v.is_infinite() || v.abs() > 1e20 {
+        return Decimal::new(1, 1); // 0.1 fallback
+    }
     let rounded = (v * 1e8).round() / 1e8;
     Decimal::try_from(rounded).unwrap_or(Decimal::new(1, 1))
 }
@@ -1963,7 +1966,7 @@ mod tests {
             ..HarnessConfig::default()
         };
         let errors = config.validate().unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("negative weight")));
+        assert!(errors.iter().any(|e| e.contains("invalid weight")));
     }
 
     #[test]
@@ -2029,5 +2032,180 @@ mod tests {
         };
         let errors = config.validate().unwrap_err();
         assert!(errors.iter().any(|e| e.contains("RSI period is 0")));
+    }
+
+    // === Adversarial / harden tests ===
+
+    #[test]
+    fn out_of_order_candles_still_processed() {
+        // Candles arrive in random order — engine must sort per-token
+        let mut candles = vec![
+            Candle {
+                timestamp: 5 * 3600,
+                token: "ETH".into(),
+                open: Decimal::new(105, 0),
+                high: Decimal::new(106, 0),
+                low: Decimal::new(104, 0),
+                close: Decimal::new(105, 0),
+                volume: Decimal::new(1_000_000, 0),
+            },
+            Candle {
+                timestamp: 1 * 3600,
+                token: "ETH".into(),
+                open: Decimal::new(100, 0),
+                high: Decimal::new(101, 0),
+                low: Decimal::new(99, 0),
+                close: Decimal::new(100, 0),
+                volume: Decimal::new(1_000_000, 0),
+            },
+            Candle {
+                timestamp: 3 * 3600,
+                token: "ETH".into(),
+                open: Decimal::new(103, 0),
+                high: Decimal::new(104, 0),
+                low: Decimal::new(102, 0),
+                close: Decimal::new(103, 0),
+                volume: Decimal::new(1_000_000, 0),
+            },
+        ];
+        // Extend with enough data for warmup
+        for i in 6..20 {
+            candles.push(Candle {
+                timestamp: i * 3600,
+                token: "ETH".into(),
+                open: Decimal::new(100 + i, 0),
+                high: Decimal::new(101 + i, 0),
+                low: Decimal::new(99 + i, 0),
+                close: Decimal::new(100 + i, 0),
+                volume: Decimal::new(1_000_000, 0),
+            });
+        }
+
+        let config = BacktestConfig {
+            harness: HarnessConfig {
+                entry_rules: vec![EntryRule {
+                    signal: SignalType::Rsi { period: 5 },
+                    condition: EntryCondition::Below { threshold: 60.0 },
+                    weight: 1.0,
+                    tokens: vec![],
+                }],
+                exit_rules: vec![ExitRule::TakeProfit { pct: 5.0 }],
+                ..HarnessConfig::default()
+            },
+            slippage: SlippageModel::FixedBps { bps: 0 },
+            gas_cost_usd: Decimal::ZERO,
+            taker_fee_bps: 0,
+            ..BacktestConfig::default()
+        };
+
+        let result = BacktestEngine::new(config).run(&candles, &[]).unwrap();
+        // All candles should be processed (none dropped)
+        assert_eq!(
+            result.equity_curve.len(),
+            candles.len(),
+            "Out-of-order candles should all be processed after sorting"
+        );
+    }
+
+    #[test]
+    fn zero_price_candle_does_not_panic() {
+        let candles: Vec<Candle> = (0..10)
+            .map(|i| Candle {
+                timestamp: i * 3600,
+                token: "ETH".into(),
+                open: Decimal::ZERO,
+                high: Decimal::ZERO,
+                low: Decimal::ZERO,
+                close: Decimal::ZERO,
+                volume: Decimal::new(1_000_000, 0),
+            })
+            .collect();
+
+        let engine = BacktestEngine::new(BacktestConfig::default());
+        // Must not panic — zero prices are handled gracefully
+        let result = engine.run(&candles, &[]).unwrap();
+        assert_eq!(result.candles_processed, 10);
+    }
+
+    #[test]
+    fn f64_to_decimal_handles_nan_and_inf() {
+        assert_eq!(f64_to_decimal(f64::NAN), Decimal::new(1, 1));
+        assert_eq!(f64_to_decimal(f64::INFINITY), Decimal::new(1, 1));
+        assert_eq!(f64_to_decimal(f64::NEG_INFINITY), Decimal::new(1, 1));
+        assert_eq!(f64_to_decimal(1e30), Decimal::new(1, 1)); // too large
+        // Normal value should work
+        let result = f64_to_decimal(0.5);
+        assert!((result - Decimal::new(5, 1)).abs() < Decimal::new(1, 8));
+    }
+
+    #[test]
+    fn validation_rejects_too_many_rules() {
+        let config = HarnessConfig {
+            entry_rules: (0..101)
+                .map(|_| EntryRule {
+                    signal: SignalType::Rsi { period: 14 },
+                    condition: EntryCondition::Below { threshold: 30.0 },
+                    weight: 0.01,
+                    tokens: vec![],
+                })
+                .collect(),
+            ..HarnessConfig::default()
+        };
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("exceeds 100 limit")));
+    }
+
+    #[test]
+    fn validation_rejects_nan_weight() {
+        let config = HarnessConfig {
+            entry_rules: vec![EntryRule {
+                signal: SignalType::Rsi { period: 14 },
+                condition: EntryCondition::Below { threshold: 30.0 },
+                weight: f64::NAN,
+                tokens: vec![],
+            }],
+            ..HarnessConfig::default()
+        };
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("invalid weight")));
+    }
+
+    #[test]
+    fn validation_rejects_negative_fraction() {
+        let config = HarnessConfig {
+            position_sizing: PositionSizing::FixedFraction { fraction: -0.5 },
+            ..HarnessConfig::default()
+        };
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("fixed_fraction")));
+    }
+
+    #[test]
+    fn validation_rejects_min_atr_greater_than_max() {
+        let config = HarnessConfig {
+            filters: vec![Filter::VolatilityGate {
+                min_atr_pct: 10.0,
+                max_atr_pct: 5.0, // inverted
+                period: 14,
+            }],
+            ..HarnessConfig::default()
+        };
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("min_atr_pct")));
+    }
+
+    #[test]
+    fn kelly_handles_extreme_edge_case() {
+        let mut stats = RunningTradeStats::default();
+        // All wins, no losses — should not NaN
+        for _ in 0..10 {
+            stats.record(100.0);
+        }
+        let kelly = stats.kelly_fraction();
+        assert!(!kelly.is_nan(), "Kelly should not be NaN with all wins");
+        assert!(
+            !kelly.is_infinite(),
+            "Kelly should not be Inf with all wins"
+        );
     }
 }

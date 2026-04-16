@@ -328,6 +328,18 @@ pub(crate) async fn write_prebuilt_tools(
     )
     .await?;
 
+    // Write default harness config for meta-harness evolution
+    let default_harness = trading_runtime::backtest::HarnessConfig::default();
+    let harness_json =
+        serde_json::to_string_pretty(&default_harness).unwrap_or_else(|_| "{}".to_string());
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/harness.json",
+        &harness_json,
+    )
+    .await?;
+
     // Common tools (all strategies)
     write_file_to_sidecar(
         sidecar_url,
@@ -419,6 +431,22 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/qa-stochastic-dex.js",
         include_str!("../prompts/tools/qa_stochastic_dex.js"),
+    )
+    .await?;
+
+    // Meta-harness evolution tools
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/evolve-strategy.js",
+        include_str!("../prompts/tools/evolve_strategy.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/record-candle.js",
+        include_str!("../prompts/tools/record_candle.js"),
     )
     .await?;
 

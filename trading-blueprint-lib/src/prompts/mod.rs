@@ -145,16 +145,70 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
          - Read /home/agent/memory/insights.jsonl (last 20 lines)\n\n\
          Then follow your system instructions:\n\
          1. Fetch current market prices\n\
-         2. Check portfolio state\n\
-         3. Check circuit breaker\n\
-         4. Analyze market conditions (weight signals by past accuracy)\n\
-         5. Generate and validate trade intents if conditions warrant\n\
-         6. Execute approved trades\n\
-         7. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
-         8. Write metrics to /home/agent/metrics/latest.json\n\
-         9. Report results as JSON"
+         2. Record candle data: `node /home/agent/tools/record-candle.js '<ohlcv json>'`\n\
+         3. Check portfolio state\n\
+         4. Check circuit breaker\n\
+         5. Analyze market conditions (weight signals by past accuracy)\n\
+         6. Generate and validate trade intents if conditions warrant\n\
+         7. Execute approved trades\n\
+         8. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
+         9. Write metrics to /home/agent/metrics/latest.json\n\
+         10. Report results as JSON\n\n\
+         {EVOLUTION_BLOCK}"
     )
 }
+
+const EVOLUTION_BLOCK: &str = r#"## Harness-Driven Trading
+
+Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines:
+- **entry_rules**: signals (RSI, EMA cross, momentum, funding) + conditions + weights → when to enter
+- **exit_rules**: stop loss, take profit, trailing stop, time limit → when to exit
+- **filters**: volatility gate, time filter, min volume → when NOT to trade
+- **position_sizing**: how much capital per trade
+- **max_positions**: maximum concurrent positions across tokens
+
+Use the harness rules as your primary decision framework. Your AI judgment supplements them (market context, news, anomalies) but doesn't override them.
+
+## Candle Recording
+
+After fetching prices, record the data as candles for backtesting:
+```
+node /home/agent/tools/record-candle.js '{"token":"ETH","open":2500,"high":2520,"low":2490,"close":2510,"volume":50000}'
+```
+
+## Meta-Harness Evolution (Reflect Phase)
+
+During reflect, check if strategy evolution is due:
+```
+node /home/agent/tools/evolve-strategy.js diagnose
+```
+
+If `can_evolve` is true and `candles_available` >= 50:
+
+1. **Diagnose**: Read the `per_token` breakdown. Identify:
+   - Tokens with negative PnL (systematic losers)
+   - Low win/loss ratio (wrong sizing or exits)
+   - Missing signals (patterns you see but the harness doesn't capture)
+
+2. **Propose**: Design a modified HarnessConfig. Not parameter tuning — structural:
+   - Add/remove entry signals or change signal types
+   - Add token-specific rules via the `tokens` field on entry rules
+   - Change exit rule types (trailing stop instead of fixed TP)
+   - Add filters (volatility gate, time filter)
+   - Switch position sizing method
+   Increment `version` in the new config.
+
+3. **Backtest**: Compare current vs candidate:
+   ```
+   node /home/agent/tools/evolve-strategy.js compare '{"current": <current_harness>, "candidate": <your_variant>}'
+   ```
+
+4. **Promote or Discard**:
+   - If `should_promote` is true:
+     `node /home/agent/tools/evolve-strategy.js promote '{"harness": <variant>, "reason": "...", "sharpe_delta": N, "drawdown_delta": N}'`
+   - If not:
+     `node /home/agent/tools/evolve-strategy.js discard '{"harness": <variant>, "reason": "...", "comparison": <comparison_result>}'`
+     The discard log preserves the full variant + results — use failures to inform next hypothesis."#;
 
 /// Build the wind-down prompt that instructs the agent to close all positions.
 ///
@@ -251,6 +305,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::Value::default(),
         }
     }
 

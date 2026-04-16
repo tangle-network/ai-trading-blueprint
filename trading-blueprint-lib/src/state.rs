@@ -53,6 +53,10 @@ pub struct TradingBotRecord {
     /// Tangle service ID this bot belongs to.
     #[serde(default)]
     pub service_id: u64,
+    /// Meta-harness strategy config (HarnessConfig JSON).
+    /// Persisted across container restarts. Updated via operator API or evolution.
+    #[serde(default)]
+    pub harness_json: serde_json::Value,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -480,6 +484,25 @@ pub fn resolve_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
     find_bot_by_vault_address(id)
 }
 
+/// Update the harness config for a bot. Validates the JSON before persisting.
+pub fn update_harness(bot_id: &str, harness: serde_json::Value) -> Result<(), String> {
+    // Validate it deserializes as a HarnessConfig
+    let parsed: trading_runtime::backtest::HarnessConfig = serde_json::from_value(harness.clone())
+        .map_err(|e| format!("Invalid harness JSON: {e}"))?;
+    parsed
+        .validate()
+        .map_err(|errors| format!("Harness validation failed: {}", errors.join("; ")))?;
+
+    let key = bot_key(bot_id);
+    bots()?
+        .update(&key, |bot| {
+            bot.harness_json = harness;
+        })
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// Load per-bot trade data from `{state_dir}/bot-trades/{bot_id}.json`.
 pub fn load_bot_trades(bot_id: &str) -> Vec<serde_json::Value> {
     let path = sandbox_runtime::store::state_dir()
@@ -549,6 +572,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::Value::default(),
         }
     }
 

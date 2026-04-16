@@ -353,6 +353,8 @@ pub async fn provision_core(
         trading_loop_cron: request.trading_loop_cron.clone(),
         call_id,
         service_id,
+        harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
+            .unwrap_or_default(),
     };
 
     // 8. Store bot record

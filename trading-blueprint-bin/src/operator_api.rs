@@ -266,6 +266,7 @@ struct RunNowResponse {
 struct UpdateConfigRequest {
     strategy_config_json: Option<String>,
     risk_params_json: Option<String>,
+    harness_json: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -895,6 +896,18 @@ async fn update_config(
     )
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Persist harness config if provided
+    if let Some(harness_str) = &body.harness_json {
+        let harness: serde_json::Value = serde_json::from_str(harness_str).map_err(|e| {
+            ApiError::message(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid harness JSON: {e}"),
+            )
+        })?;
+        trading_blueprint_lib::state::update_harness(&bot.id, harness)
+            .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e))?;
+    }
 
     Ok(Json(ConfigResponse {
         status: "configured".to_string(),

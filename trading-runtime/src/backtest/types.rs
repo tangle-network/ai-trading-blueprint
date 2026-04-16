@@ -155,14 +155,34 @@ impl HarnessConfig {
             errors.push("exit_rules is empty".into());
         }
 
+        // Resource limits
+        if self.entry_rules.len() > 100 {
+            errors.push(format!(
+                "entry_rules count {} exceeds 100 limit",
+                self.entry_rules.len()
+            ));
+        }
+        if self.exit_rules.len() > 50 {
+            errors.push(format!(
+                "exit_rules count {} exceeds 50 limit",
+                self.exit_rules.len()
+            ));
+        }
+        if self.filters.len() > 20 {
+            errors.push(format!(
+                "filters count {} exceeds 20 limit",
+                self.filters.len()
+            ));
+        }
+
         let total_weight: f64 = self.entry_rules.iter().map(|r| r.weight).sum();
-        if total_weight <= 0.0 {
-            errors.push("entry rule weights sum to zero or negative".into());
+        if total_weight <= 0.0 || total_weight.is_nan() || total_weight.is_infinite() {
+            errors.push("entry rule weights sum is zero, negative, NaN, or infinite".into());
         }
 
         for (i, rule) in self.entry_rules.iter().enumerate() {
-            if rule.weight < 0.0 {
-                errors.push(format!("entry_rules[{i}]: negative weight"));
+            if rule.weight < 0.0 || rule.weight.is_nan() || rule.weight.is_infinite() {
+                errors.push(format!("entry_rules[{i}]: invalid weight"));
             }
             match &rule.signal {
                 SignalType::Rsi { period } if *period == 0 => {
@@ -180,15 +200,67 @@ impl HarnessConfig {
             }
         }
 
-        if self.entry_threshold < 0.0 || self.entry_threshold > 1.0 {
+        if self.entry_threshold < 0.0 || self.entry_threshold > 1.0 || self.entry_threshold.is_nan()
+        {
             errors.push(format!(
-                "entry_threshold {} out of [0, 1] range",
+                "entry_threshold {} out of [0, 1] range or NaN",
                 self.entry_threshold
             ));
         }
 
         if self.max_positions == 0 {
             errors.push("max_positions is 0".into());
+        }
+
+        // Validate position sizing f64 fields
+        match &self.position_sizing {
+            PositionSizing::FixedFraction { fraction } => {
+                if *fraction <= 0.0 || *fraction > 1.0 || fraction.is_nan() {
+                    errors.push(format!("fixed_fraction {fraction} must be in (0, 1]"));
+                }
+            }
+            PositionSizing::KellyFraction {
+                kelly_multiplier,
+                max_position_pct,
+            } => {
+                if *kelly_multiplier <= 0.0 || kelly_multiplier.is_nan() {
+                    errors.push(format!(
+                        "kelly_multiplier {kelly_multiplier} must be positive"
+                    ));
+                }
+                if *max_position_pct <= 0.0
+                    || *max_position_pct > 100.0
+                    || max_position_pct.is_nan()
+                {
+                    errors.push(format!(
+                        "max_position_pct {max_position_pct} must be in (0, 100]"
+                    ));
+                }
+            }
+            PositionSizing::FixedAmount { amount_usd } => {
+                if *amount_usd <= Decimal::ZERO {
+                    errors.push("fixed_amount must be positive".into());
+                }
+            }
+        }
+
+        // Validate filter f64 fields
+        for (i, filter) in self.filters.iter().enumerate() {
+            if let Filter::VolatilityGate {
+                min_atr_pct,
+                max_atr_pct,
+                period,
+            } = filter
+            {
+                if min_atr_pct > max_atr_pct {
+                    errors.push(format!(
+                        "filters[{i}]: min_atr_pct ({min_atr_pct}) > max_atr_pct ({max_atr_pct})"
+                    ));
+                }
+                if *period == 0 {
+                    errors.push(format!("filters[{i}]: volatility gate period is 0"));
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -427,11 +499,19 @@ impl RunningTradeStats {
         let q = 1.0 - p;
         let avg_win = self.total_win_pnl / self.wins.max(1) as f64;
         let avg_loss = self.total_loss_pnl / self.losses.max(1) as f64;
-        if avg_loss < 1e-12 {
+        if avg_loss < 1e-10 {
             return 0.0;
         }
         let b = avg_win / avg_loss;
+        if b < 1e-10 || b.is_nan() || b.is_infinite() {
+            return 0.0;
+        }
         let kelly = (p * b - q) / b;
-        kelly.max(0.0)
+        let result = kelly.max(0.0);
+        if result.is_nan() || result.is_infinite() {
+            0.0
+        } else {
+            result
+        }
     }
 }
