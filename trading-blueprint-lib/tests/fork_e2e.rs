@@ -15,8 +15,8 @@ mod common;
 use alloy::network::EthereumWallet;
 use alloy::node_bindings::Anvil;
 use alloy::primitives::{Address, U256};
-use alloy::providers::{Provider, ProviderBuilder};
 use alloy::providers::ext::AnvilApi;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -37,8 +37,14 @@ const USDC: &str = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
 const WETH: &str = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
 const USDC_WHALE: &str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
 
-fn validator_key_bytes(anvil: &alloy::node_bindings::AnvilInstance, indices: &[usize]) -> Vec<Vec<u8>> {
-    indices.iter().map(|&i| anvil.keys()[i].to_bytes().to_vec()).collect()
+fn validator_key_bytes(
+    anvil: &alloy::node_bindings::AnvilInstance,
+    indices: &[usize],
+) -> Vec<Vec<u8>> {
+    indices
+        .iter()
+        .map(|&i| anvil.keys()[i].to_bytes().to_vec())
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -60,7 +66,8 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         eprintln!("\n[1/7] Forking Arbitrum mainnet...");
         let anvil = Anvil::new()
             .fork(&fork_url)
-            .arg("--code-size-limit").arg("50000")
+            .arg("--code-size-limit")
+            .arg("50000")
             .try_spawn()
             .context("Anvil fork")?;
         let rpc_url = anvil.endpoint();
@@ -71,10 +78,12 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
             .wallet(EthereumWallet::from(deployer_key.clone()))
             .connect_http(rpc_url.parse().unwrap());
 
-        let val_addrs: Vec<Address> = (3..6).map(|i| {
-            let k: PrivateKeySigner = anvil.keys()[i].clone().into();
-            k.address()
-        }).collect();
+        let val_addrs: Vec<Address> = (3..6)
+            .map(|i| {
+                let k: PrivateKeySigner = anvil.keys()[i].clone().into();
+                k.address()
+            })
+            .collect();
 
         let operator_key: PrivateKeySigner = anvil.keys()[1].clone().into();
         let operator_addr = operator_key.address();
@@ -82,9 +91,9 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
 
         // ── 2. Deploy contracts + fund vault ────────────────────────────
         eprintln!("[2/7] Deploying vault stack...");
-        let (tv_addr, vault_addr) = common::contract_deployer::deploy_trade_validator(
-            &provider, val_addrs.clone(), 2,
-        ).await;
+        let (tv_addr, vault_addr) =
+            common::contract_deployer::deploy_trade_validator(&provider, val_addrs.clone(), 2)
+                .await;
         eprintln!("        TradeValidator: {tv_addr}  Vault: {vault_addr}");
 
         // Fund vault with USDC from whale via Anvil impersonation.
@@ -95,7 +104,9 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
 
         let raw_provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
         // Give whale ETH for gas (it may only have USDC)
-        raw_provider.anvil_set_balance(whale, U256::from(10u64).pow(U256::from(18u64))).await?;
+        raw_provider
+            .anvil_set_balance(whale, U256::from(10u64).pow(U256::from(18u64)))
+            .await?;
         raw_provider.anvil_impersonate_account(whale).await?;
         let usdc_iface = IERC20::new(usdc, &raw_provider);
         let fund_tx = usdc_iface.transfer(vault_addr, U256::from(10_000_000_000u64));
@@ -114,12 +125,21 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                         .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".into()),
                 })
             }
-            _ => { eprintln!("[3/7] Starting 3 policy-only validators..."); None }
+            _ => {
+                eprintln!("[3/7] Starting 3 policy-only validators...");
+                None
+            }
         };
 
         let val_keys = validator_key_bytes(&anvil, &[3, 4, 5]);
-        let cluster = validators::start_validator_cluster(&val_keys, tv_addr, vault_addr, ai_provider).await;
-        for (i, (ep, addr)) in cluster.endpoints.iter().zip(cluster.validator_addresses.iter()).enumerate() {
+        let cluster =
+            validators::start_validator_cluster(&val_keys, tv_addr, vault_addr, ai_provider).await;
+        for (i, (ep, addr)) in cluster
+            .endpoints
+            .iter()
+            .zip(cluster.validator_addresses.iter())
+            .enumerate()
+        {
             eprintln!("        Validator {} @ {} ({})", i + 1, ep, addr);
         }
 
@@ -128,11 +148,17 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         let api_token = "fork-e2e-token";
 
         let api_state = Arc::new(trading_http_api::TradingApiState {
-            market_client: trading_runtime::market_data::MarketDataClient::new("http://localhost:0".into()),
+            market_client: trading_runtime::market_data::MarketDataClient::new(
+                "http://localhost:0".into(),
+            ),
             validator_client: cluster.client.clone(),
             executor: trading_runtime::executor::TradeExecutor::new(
-                &format!("{vault_addr}"), &rpc_url, &operator_key_hex, 42161,
-            ).expect("executor"),
+                &format!("{vault_addr}"),
+                &rpc_url,
+                &operator_key_hex,
+                42161,
+            )
+            .expect("executor"),
             portfolio: tokio::sync::RwLock::new(trading_runtime::PortfolioState::default()),
             api_token: api_token.to_string(),
             vault_address: format!("{vault_addr}"),
@@ -154,14 +180,19 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         let port = listener.local_addr()?.port();
         let api_url = format!("http://127.0.0.1:{port}");
         eprintln!("        API @ {api_url}");
-        tokio::spawn(async move { axum::serve(listener, router).await.ok(); });
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.ok();
+        });
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()?;
 
         // ── 5. POST /validate ───────────────────────────────────────────
         eprintln!("[5/7] POST /validate — AI evaluates 500 USDC → WETH...");
-        let val_resp = http.post(format!("{api_url}/validate"))
+        let val_resp = http
+            .post(format!("{api_url}/validate"))
             .header("Authorization", format!("Bearer {api_token}"))
             .json(&serde_json::json!({
                 "strategy_id": "fork-e2e",
@@ -174,8 +205,14 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                 "deadline_secs": 3600,
                 "metadata": { "fee_tier": 500 }
             }))
-            .send().await.context("validate")?;
-        assert!(val_resp.status().is_success(), "Validate failed: {}", val_resp.status());
+            .send()
+            .await
+            .context("validate")?;
+        assert!(
+            val_resp.status().is_success(),
+            "Validate failed: {}",
+            val_resp.status()
+        );
         let val_body: serde_json::Value = val_resp.json().await?;
         let approved = val_body["approved"].as_bool().unwrap_or(false);
         let score = val_body["aggregate_score"].as_u64().unwrap_or(0);
@@ -184,7 +221,12 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         if let Some(resps) = val_body["validator_responses"].as_array() {
             for (i, vr) in resps.iter().enumerate() {
                 let r = vr["reasoning"].as_str().unwrap_or("?");
-                eprintln!("        V{}: score={} — {}", i+1, vr["score"], &r[..r.len().min(80)]);
+                eprintln!(
+                    "        V{}: score={} — {}",
+                    i + 1,
+                    vr["score"],
+                    &r[..r.len().min(80)]
+                );
             }
         }
 
@@ -193,7 +235,8 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         // If AI rejected (score < 50), skip execution — that's a valid outcome.
         let exec_succeeded = if approved {
             eprintln!("[6/7] POST /execute — vault swaps on real Uniswap V3...");
-            let exec_resp = http.post(format!("{api_url}/execute"))
+            let exec_resp = http
+                .post(format!("{api_url}/execute"))
                 .header("Authorization", format!("Bearer {api_token}"))
                 .json(&serde_json::json!({
                     "intent": {
@@ -208,7 +251,9 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                     },
                     "validation": val_body
                 }))
-                .send().await.context("execute")?;
+                .send()
+                .await
+                .context("execute")?;
 
             let exec_status = exec_resp.status();
             let exec_body: serde_json::Value = exec_resp.json().await?;
@@ -235,10 +280,16 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         // Check WETH balance
         let weth_iface = IERC20::new(weth, &raw_provider);
         let weth_balance = weth_iface.balanceOf(vault_addr).call().await?;
-        eprintln!("        Vault WETH balance: {weth_balance} (≈{:.6} ETH)", weth_balance.to::<u128>() as f64 / 1e18);
+        eprintln!(
+            "        Vault WETH balance: {weth_balance} (≈{:.6} ETH)",
+            weth_balance.to::<u128>() as f64 / 1e18
+        );
 
         if exec_succeeded {
-            assert!(weth_balance > U256::ZERO, "Vault should have WETH after successful trade");
+            assert!(
+                weth_balance > U256::ZERO,
+                "Vault should have WETH after successful trade"
+            );
         } else {
             eprintln!("        (No WETH expected — trade was rejected or failed)");
         }
@@ -246,11 +297,17 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         // ── Paper trade test ────────────────────────────────────────────
         eprintln!("\n[bonus] Paper trade test...");
         let paper_state = Arc::new(trading_http_api::TradingApiState {
-            market_client: trading_runtime::market_data::MarketDataClient::new("http://localhost:0".into()),
+            market_client: trading_runtime::market_data::MarketDataClient::new(
+                "http://localhost:0".into(),
+            ),
             validator_client: cluster.client.clone(),
             executor: trading_runtime::executor::TradeExecutor::new(
-                &format!("{vault_addr}"), &rpc_url, &operator_key_hex, 42161,
-            ).expect("executor"),
+                &format!("{vault_addr}"),
+                &rpc_url,
+                &operator_key_hex,
+                42161,
+            )
+            .expect("executor"),
             portfolio: tokio::sync::RwLock::new(trading_runtime::PortfolioState::default()),
             api_token: "paper".into(),
             vault_address: format!("{vault_addr}"),
@@ -269,10 +326,13 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
         let paper_router = trading_http_api::build_router(paper_state);
         let paper_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let paper_url = format!("http://127.0.0.1:{}", paper_listener.local_addr()?.port());
-        tokio::spawn(async move { axum::serve(paper_listener, paper_router).await.ok(); });
+        tokio::spawn(async move {
+            axum::serve(paper_listener, paper_router).await.ok();
+        });
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let pv = http.post(format!("{paper_url}/validate"))
+        let pv = http
+            .post(format!("{paper_url}/validate"))
             .header("Authorization", "Bearer paper")
             .json(&serde_json::json!({
                 "strategy_id": "paper", "action": "swap",
@@ -280,15 +340,20 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                 "amount_in": "100000000", "min_amount_out": "0",
                 "target_protocol": "uniswap_v3", "deadline_secs": 3600
             }))
-            .send().await?;
+            .send()
+            .await?;
 
         let pv_status = pv.status();
         if pv_status.is_success() {
             let pv_body: serde_json::Value = pv.json().await?;
             let paper_approved = pv_body["approved"].as_bool().unwrap_or(false);
-            eprintln!("        Paper validate: approved={paper_approved}, score={}", pv_body["aggregate_score"]);
+            eprintln!(
+                "        Paper validate: approved={paper_approved}, score={}",
+                pv_body["aggregate_score"]
+            );
 
-            let pe = http.post(format!("{paper_url}/execute"))
+            let pe = http
+                .post(format!("{paper_url}/execute"))
                 .header("Authorization", "Bearer paper")
                 .json(&serde_json::json!({
                     "intent": { "strategy_id": "paper", "action": "swap",
@@ -297,30 +362,41 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                         "target_protocol": "uniswap_v3" },
                     "validation": pv_body
                 }))
-                .send().await?;
+                .send()
+                .await?;
             let pe_status = pe.status();
             let pe_text = pe.text().await?;
             eprintln!("        Paper execute: status={pe_status}");
             if pe_status.is_success() {
                 let pe_body: serde_json::Value = serde_json::from_str(&pe_text)?;
-                eprintln!("        paper_trade={}, tx={}", pe_body["paper_trade"], pe_body["tx_hash"]);
+                eprintln!(
+                    "        paper_trade={}, tx={}",
+                    pe_body["paper_trade"], pe_body["tx_hash"]
+                );
                 assert_eq!(pe_body["paper_trade"], true);
             } else {
-                eprintln!("        Paper execute returned {pe_status}: {}", &pe_text[..pe_text.len().min(200)]);
+                eprintln!(
+                    "        Paper execute returned {pe_status}: {}",
+                    &pe_text[..pe_text.len().min(200)]
+                );
                 if !paper_approved {
                     eprintln!("        (Expected — AI rejected paper trade too)");
                 }
             }
         } else {
             let pv_text = pv.text().await.unwrap_or_default();
-            eprintln!("        Paper validate returned {pv_status}: {}", &pv_text[..pv_text.len().min(200)]);
+            eprintln!(
+                "        Paper validate returned {pv_status}: {}",
+                &pv_text[..pv_text.len().min(200)]
+            );
         }
 
         eprintln!("\n══════════════════════════════════════════════════════");
         eprintln!("  FORK E2E PASSED — real AI scoring + real execution  ");
         eprintln!("══════════════════════════════════════════════════════");
         Ok(())
-    }).await;
+    })
+    .await;
 
     drop(guard);
     result.context("fork_e2e timed out")?

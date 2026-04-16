@@ -80,6 +80,7 @@ impl GmxV2Adapter {
     /// explicitly provided and cannot be zero or U256::MAX — those values
     /// disable slippage protection entirely, allowing keepers to fill at
     /// any price.
+    #[allow(clippy::too_many_arguments)]
     fn encode_create_order(
         &self,
         market: Address,

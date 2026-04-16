@@ -36,7 +36,9 @@ pub struct HyperliquidAdapter {
 impl HyperliquidAdapter {
     pub fn new() -> Self {
         Self {
-            bridge: HYPERLIQUID_BRIDGE.parse().expect("valid hyperliquid bridge"),
+            bridge: HYPERLIQUID_BRIDGE
+                .parse()
+                .expect("valid hyperliquid bridge"),
         }
     }
 
@@ -220,7 +222,10 @@ mod tests {
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
-        assert_eq!(result.target, HYPERLIQUID_BRIDGE.parse::<Address>().unwrap());
+        assert_eq!(
+            result.target,
+            HYPERLIQUID_BRIDGE.parse::<Address>().unwrap()
+        );
         assert!(result.calldata.len() > 4);
         assert_eq!(result.approvals.len(), 1);
     }

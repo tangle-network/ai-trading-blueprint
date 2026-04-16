@@ -90,7 +90,8 @@ impl AerodromeAdapter {
             params: ISlipstreamRouter::ExactInputSingleParams {
                 tokenIn: token_in,
                 tokenOut: token_out,
-                tickSpacing: Int24::try_from(tick_spacing as i64).unwrap_or(Int24::try_from(DEFAULT_TICK_SPACING as i64).unwrap()),
+                tickSpacing: Int24::try_from(tick_spacing as i64)
+                    .unwrap_or(Int24::try_from(DEFAULT_TICK_SPACING as i64).unwrap()),
                 recipient,
                 deadline: U256::from(default_deadline()),
                 amountIn: amount_in,
@@ -114,7 +115,8 @@ impl AerodromeAdapter {
             params: ISlipstreamRouter::ExactOutputSingleParams {
                 tokenIn: token_in,
                 tokenOut: token_out,
-                tickSpacing: Int24::try_from(tick_spacing as i64).unwrap_or(Int24::try_from(DEFAULT_TICK_SPACING as i64).unwrap()),
+                tickSpacing: Int24::try_from(tick_spacing as i64)
+                    .unwrap_or(Int24::try_from(DEFAULT_TICK_SPACING as i64).unwrap()),
                 recipient,
                 deadline: U256::from(default_deadline()),
                 amountOut: amount_out,
@@ -242,10 +244,7 @@ mod tests {
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
-        assert_eq!(
-            result.target,
-            SLIPSTREAM_ROUTER.parse::<Address>().unwrap()
-        );
+        assert_eq!(result.target, SLIPSTREAM_ROUTER.parse::<Address>().unwrap());
         assert!(result.calldata.len() > 4);
         assert_eq!(result.output_token, WETH.parse::<Address>().unwrap());
         assert_eq!(result.approvals.len(), 1);

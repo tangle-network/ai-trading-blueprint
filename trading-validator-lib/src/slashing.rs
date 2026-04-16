@@ -181,18 +181,17 @@ pub fn check_liveness_violations(
 
     // Get our own address to skip self-checking. Compare as Address type
     // (case-insensitive) to avoid checksummed vs lowercase mismatches.
-    let my_address: Option<Address> = crate::context::operator_context()
-        .map(|ctx| ctx.operator_address);
+    let my_address: Option<Address> =
+        crate::context::operator_context().map(|ctx| ctx.operator_address);
 
     for (addr, state) in &validators {
         // Don't propose slashes against ourselves. Parse both sides to Address
         // so "0xABC..." and "0xabc..." compare equal.
-        if let Some(ref my_addr) = my_address {
-            if let Ok(peer_addr) = addr.parse::<Address>() {
-                if peer_addr == *my_addr {
-                    continue;
-                }
-            }
+        if let Some(ref my_addr) = my_address
+            && let Ok(peer_addr) = addr.parse::<Address>()
+            && peer_addr == *my_addr
+        {
+            continue;
         }
 
         if !state.active {

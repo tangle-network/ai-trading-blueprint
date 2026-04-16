@@ -281,7 +281,10 @@ mod tests {
             (432000, 1050.0),
         ]);
         let stats = compute_stats("uptrend", &eq, &[]);
-        assert!(stats.sharpe_ratio > 0.0, "Sharpe should be positive for uptrend");
+        assert!(
+            stats.sharpe_ratio > 0.0,
+            "Sharpe should be positive for uptrend"
+        );
     }
 
     #[test]

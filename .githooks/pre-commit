@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-commit hook: blocks commits that fail fmt or clippy.
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+TOOLCHAIN="${RUST_TOOLCHAIN:-1.91}"
+
+echo "pre-commit: checking rustfmt..."
+RUSTUP_TOOLCHAIN="$TOOLCHAIN" cargo fmt --all -- --check 2>&1
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ rustfmt failed. Run: cargo fmt --all"
+    exit 1
+fi
+
+echo "pre-commit: checking clippy (trading-runtime, trading-validator-lib)..."
+RUSTUP_TOOLCHAIN="$TOOLCHAIN" cargo clippy -p trading-runtime -p trading-validator-lib -- -D warnings 2>&1
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ clippy failed. Fix warnings above."
+    exit 1
+fi
+
+echo "pre-commit: ✓ fmt + clippy clean"

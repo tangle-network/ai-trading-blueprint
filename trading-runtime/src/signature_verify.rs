@@ -17,7 +17,9 @@ const DOMAIN_VERSION: &str = "1";
 /// Must match Solidity:
 /// `keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")`
 fn validation_typehash() -> B256 {
-    keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")
+    keccak256(
+        "TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)",
+    )
 }
 
 /// Compute the EIP-712 domain separator.
