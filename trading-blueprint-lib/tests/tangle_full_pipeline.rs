@@ -287,6 +287,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
                 sigs,
                 scores,
                 U256::from(signed_deadline),
+                U256::from(0), // actionKind=0 (execute)
             )
             .call()
             .await?;

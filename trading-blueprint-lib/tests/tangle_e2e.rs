@@ -440,6 +440,7 @@ async fn test_validator_cluster_scores_and_signs() -> Result<()> {
             sigs,
             scores,
             U256::from(deadline),
+            U256::from(0), // actionKind=0 (execute)
         )
         .call()
         .await
