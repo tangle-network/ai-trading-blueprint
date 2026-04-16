@@ -133,12 +133,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Use pre-built binary — avoids MSRV mismatch when cargo-audit
-      # requires a newer Rust than the project toolchain.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
       - name: Install cargo-audit
-        run: |
-          curl -fsSL https://github.com/rustsec/rustsec/releases/latest/download/cargo-audit-x86_64-unknown-linux-musl.tgz \
-            | tar xz -C /usr/local/bin cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run audit
         run: cargo audit
