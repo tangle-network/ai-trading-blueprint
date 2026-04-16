@@ -1,4 +1,5 @@
 pub mod aave_v3;
+pub mod aerodrome;
 pub mod gmx_v2;
 pub mod hyperliquid;
 pub mod morpho;
