@@ -1,7 +1,10 @@
 pub mod adapters;
+pub mod backtest;
+pub mod candles;
 pub mod circuit;
 pub mod clob;
 pub mod collateral;
+pub mod evolution;
 pub mod execute;
 pub mod health;
 pub mod market_data;

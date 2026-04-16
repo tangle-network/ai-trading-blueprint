@@ -69,6 +69,36 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
     })
 }
 
+async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiState> {
+    ensure_state_dir();
+
+    Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(mock_uri.to_string()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:8545",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: bot_id.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id: bot_id.to_string(),
+        paper_trade: true,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: None,
+        clob_client: None,
+    })
+}
+
 fn auth_header() -> String {
     format!("Bearer {TEST_TOKEN}")
 }
@@ -2598,4 +2628,557 @@ async fn test_collateral_return_requires_auth() {
         .unwrap();
 
     assert_eq!(response.status(), 401);
+}
+
+// ── Backtest API integration tests ──────────────────────────────────────────
+
+fn backtest_candles() -> serde_json::Value {
+    // 30 candles: downtrend (RSI drops) then uptrend (recovery)
+    let mut candles = Vec::new();
+    for i in 0..15 {
+        let base = 100.0 - i as f64 * 2.0;
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": base,
+            "high": base + 1.5,
+            "low": base - 1.0,
+            "close": base - 0.5,
+            "volume": 1000000
+        }));
+    }
+    for i in 0..15 {
+        let base = 72.0 + i as f64 * 2.0;
+        candles.push(serde_json::json!({
+            "timestamp": (15 + i) * 3600,
+            "token": "ETH",
+            "open": base,
+            "high": base + 1.5,
+            "low": base - 0.5,
+            "close": base + 1.0,
+            "volume": 1000000
+        }));
+    }
+    serde_json::Value::Array(candles)
+}
+
+fn backtest_config() -> serde_json::Value {
+    serde_json::json!({
+        "initial_capital": "10000",
+        "harness": {
+            "version": 1,
+            "entry_rules": [{
+                "signal": {"type": "rsi", "period": 5},
+                "condition": {"type": "below", "threshold": 40.0},
+                "weight": 1.0,
+                "tokens": []
+            }],
+            "exit_rules": [
+                {"type": "take_profit", "pct": 10.0},
+                {"type": "stop_loss", "pct": 8.0}
+            ],
+            "filters": [],
+            "position_sizing": {"method": "fixed_fraction", "fraction": 0.3},
+            "entry_threshold": 0.3,
+            "max_positions": 3
+        },
+        "slippage": {"model": "fixed_bps", "bps": 5},
+        "gas_cost_usd": "1",
+        "taker_fee_bps": 5
+    })
+}
+
+#[tokio::test]
+async fn test_backtest_run_returns_trades_and_stats() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "config": backtest_config(),
+        "candles": backtest_candles(),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/run")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    // Verify response structure
+    let result = &json["result"];
+    assert!(result["candles_processed"].as_u64().unwrap() > 0);
+    assert!(result["equity_curve"].as_array().unwrap().len() > 0);
+    assert!(result["stats"].is_object());
+    assert!(result["stats"]["sharpe_ratio"].is_number());
+    assert!(result["stats"]["max_drawdown_pct"].is_number());
+    assert!(result["stats"]["win_rate"].is_number());
+    assert!(
+        result["tokens_traded"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("ETH"))
+    );
+}
+
+#[tokio::test]
+async fn test_backtest_run_rejects_empty_candles() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "config": backtest_config(),
+        "candles": [],
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/run")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_backtest_compare_returns_promotion_decision() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let mut candidate_config = backtest_config();
+    // Modify candidate: wider stops
+    candidate_config["harness"]["exit_rules"] = serde_json::json!([
+        {"type": "take_profit", "pct": 15.0},
+        {"type": "stop_loss", "pct": 12.0}
+    ]);
+
+    let body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": candidate_config,
+        "candles": backtest_candles(),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/compare")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    // Verify comparison structure
+    assert!(json["should_promote"].is_boolean());
+    assert!(json["comparison"]["sharpe_delta"].is_number());
+    assert!(json["comparison"]["drawdown_delta"].is_number());
+    assert!(json["comparison"]["win_rate_delta"].is_number());
+    assert!(json["comparison"]["current"]["stats"].is_object());
+    assert!(json["comparison"]["candidate"]["stats"].is_object());
+}
+
+#[tokio::test]
+async fn test_backtest_run_with_sqrt_impact_slippage() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let mut config = backtest_config();
+    config["slippage"] = serde_json::json!({
+        "model": "sqrt_impact",
+        "base_bps": 10,
+        "depth_usd": "100000"
+    });
+
+    let body = serde_json::json!({
+        "config": config,
+        "candles": backtest_candles(),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/run")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json["result"]["candles_processed"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn test_backtest_compare_rejects_empty_candles() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "candles": [],
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/compare")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_backtest_walk_forward_returns_split_results() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let mut candidate = backtest_config();
+    candidate["harness"]["exit_rules"] = serde_json::json!([
+        {"type": "take_profit", "pct": 12.0},
+        {"type": "stop_loss", "pct": 7.0}
+    ]);
+
+    let body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": candidate,
+        "candles": backtest_candles(),
+        "train_pct": 0.7
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/walk-forward")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    let result = &json["result"];
+    assert!(result["should_promote"].is_boolean());
+    assert!(result["train_candles"].as_u64().unwrap() > 0);
+    assert!(result["test_candles"].as_u64().unwrap() > 0);
+    assert!(result["train"]["current"]["stats"].is_object());
+    assert!(result["test"]["candidate"]["stats"].is_object());
+}
+
+// ── Candle store integration tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_candle_store_record_and_query() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "candles": [
+            {"timestamp": 1000, "token": "ETH", "open": "2500", "high": "2520", "low": "2490", "close": "2510", "volume": "50000"},
+            {"timestamp": 2000, "token": "ETH", "open": "2510", "high": "2530", "low": "2500", "close": "2525", "volume": "45000"},
+            {"timestamp": 1000, "token": "BTC", "open": "40000", "high": "40500", "low": "39800", "close": "40200", "volume": "30000"}
+        ]
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["recorded"].as_u64().unwrap(), 3);
+
+    // Query candles for ETH
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/market-data/candles?token=ETH")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candles = json["candles"].as_array().unwrap();
+    // May see candles from other tests sharing the same store, so check >= 2
+    assert!(candles.len() >= 2, "Should return at least 2 ETH candles");
+}
+
+#[tokio::test]
+async fn test_candle_store_rejects_empty_batch() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({"candles": []});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+// ── Evolution integration tests ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_evolution_status_returns_bot_info() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/status")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["bot_id"], "test-bot");
+}
+
+#[tokio::test]
+async fn test_evolution_run_rejects_insufficient_candles() {
+    let mock = MockServer::start().await;
+    let evo_bot_id = format!("evo-test-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &evo_bot_id).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/run")
+                .header("authorization", format!("Bearer {evo_bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("Not enough candle history"));
+}
+
+#[tokio::test]
+async fn test_evolution_full_cycle_record_then_evolve() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-cycle-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    // Step 1: Record 50 candles
+    let mut candles = Vec::new();
+    for i in 0..50 {
+        let base = if i < 25 {
+            100.0 - i as f64 * 1.5
+        } else {
+            65.0 + (i - 25) as f64 * 1.5
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.5),
+            "volume": "100000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    // Step 2: Run evolution
+    let mut candidate = backtest_config();
+    candidate["harness"]["exit_rules"] = serde_json::json!([
+        {"type": "take_profit", "pct": 12.0},
+        {"type": "stop_loss", "pct": 6.0}
+    ]);
+
+    let evo_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+
+    let evo_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/run")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&evo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(evo_resp.status(), 200);
+    let bytes = evo_resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json["candles_used"].as_u64().unwrap() >= 50);
+    assert!(json["result"]["should_promote"].is_boolean());
+    assert!(json["result"]["train_candles"].as_u64().unwrap() > 0);
+    assert!(json["result"]["test_candles"].as_u64().unwrap() > 0);
+}
+
+// ── Backtest multi-token tests ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_backtest_run_multi_token() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let mut candles = backtest_candles().as_array().unwrap().clone();
+    // Add BTC candles at same timestamps
+    for i in 0..30 {
+        let base = if i < 15 {
+            40000.0 - i as f64 * 500.0
+        } else {
+            33000.0 + (i - 15) as f64 * 500.0
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "BTC",
+            "open": base,
+            "high": base + 200.0,
+            "low": base - 100.0,
+            "close": base + 100.0,
+            "volume": 500000
+        }));
+    }
+
+    let body = serde_json::json!({
+        "config": backtest_config(),
+        "candles": candles,
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/backtest/run")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    let tokens = json["result"]["tokens_traded"].as_array().unwrap();
+    assert!(tokens.contains(&serde_json::json!("ETH")));
+    assert!(tokens.contains(&serde_json::json!("BTC")));
 }

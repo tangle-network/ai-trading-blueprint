@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod candle_store;
 pub mod metrics_store;
 pub mod routes;
 pub mod session_auth;
@@ -58,6 +59,9 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .merge(routes::adapters::router())
         .merge(routes::metrics::router())
         .merge(routes::trades::router())
+        .merge(routes::backtest::router())
+        .merge(routes::candles::router())
+        .merge(routes::evolution::router())
         .merge(routes::session::router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -134,6 +138,9 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::adapters::multi_bot_router())
         .merge(routes::metrics::multi_bot_router())
         .merge(routes::trades::multi_bot_router())
+        .merge(routes::backtest::multi_bot_router())
+        .merge(routes::candles::multi_bot_router())
+        .merge(routes::evolution::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,
