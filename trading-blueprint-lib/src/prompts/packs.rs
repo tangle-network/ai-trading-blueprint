@@ -1778,6 +1778,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::Value::default(),
         }
     }
 

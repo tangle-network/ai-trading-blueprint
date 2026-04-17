@@ -394,11 +394,73 @@ cd arena && pnpm dev
 
 State directory: `BLUEPRINT_STATE_DIR` (default `./blueprint-state/`). Wipe this + `scripts/data/operator*/trading/` for a full reset.
 
+## Backtest Engine (Meta-Harness Eval)
+
+The backtest engine (`trading-runtime::backtest`) is the evaluation harness that lets meta-harness judge strategy variants against historical data. Without it, there's no way to compare "what I did" vs "what I would have done."
+
+### Module Structure
+
+```
+trading-runtime/src/backtest/
+├── types.rs        # Candle, HarnessConfig, entry/exit rules, BacktestResult, BacktestComparison
+├── indicators.rs   # RSI (Wilder), EMA, SMA, ATR, crossover detection
+├── cost_model.rs   # Slippage, gas, and fee simulation
+├── engine.rs       # BacktestEngine — deterministic simulation loop
+└── mod.rs
+```
+
+### HarnessConfig
+
+The structured strategy representation that the AI agent produces and meta-harness evolves:
+
+```
+HarnessConfig
+├── entry_rules[]     signal (RSI, EMA cross, momentum, volume, funding) + condition + weight
+├── exit_rules[]      stop loss, take profit, trailing stop, time limit
+├── filters[]         volatility gate (ATR%), time filter, min volume
+├── position_sizing   fixed fraction, Kelly fraction, fixed amount
+└── entry_threshold   minimum weighted signal agreement (0.0–1.0)
+```
+
+### API Endpoints
+
+```
+POST /backtest/run      candles + HarnessConfig → BacktestResult (equity curve, trades, stats)
+POST /backtest/compare  candles + config_a + config_b → BacktestComparison + should_promote
+```
+
+Both endpoints are stateless — candles and config are passed in the request body. The sidecar agent loads candle data from its SQLite DB and sends it directly.
+
+### Integration with Meta-Harness
+
+The evolution loop (every 6h) calls these endpoints:
+
+```
+1. GET /metrics/history        → equity curve (current strategy's actual performance)
+2. GET /trades                 → trade history for diagnosis
+3. Agent diagnoses patterns    → "BTC longs losing, funding rate ignored"
+4. Agent proposes variant      → modified HarnessConfig
+5. POST /backtest/compare      → run both strategies on same candle data
+6. should_promote = true?      → update active harness, log to evolution history
+```
+
+Promotion criteria: Sharpe improvement >10% AND drawdown regression <5%.
+
+### Statistics
+
+The engine reuses `leaderboard::compute_stats` for consistent metrics across live trading and backtest:
+- Sharpe ratio (annualized, rf=0)
+- Sortino ratio
+- Max drawdown %
+- Win rate
+- Calmar ratio
+- Trade count
+
 ## Crate Map
 
 | Crate | Role |
 |-------|------|
-| `trading-runtime` | Core types, adapters, executor, validator client, market data |
+| `trading-runtime` | Core types, adapters, executor, validator client, market data, backtest engine |
 | `trading-http-api` | REST API consumed by AI agent sidecars |
 | `trading-blueprint-lib` | Tangle blueprint jobs + workflow orchestration |
 | `trading-blueprint-bin` | Operator binary (runs the trading blueprint) |

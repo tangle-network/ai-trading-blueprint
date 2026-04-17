@@ -1,4 +1,5 @@
 pub mod adapters;
+pub mod backtest;
 pub mod calldata_decoder;
 pub mod chain;
 #[allow(clippy::too_many_arguments)]

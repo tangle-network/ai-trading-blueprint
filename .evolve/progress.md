@@ -55,6 +55,35 @@
 - `provision_core` checks for existing bot before creating — returns existing on match
 - Prevents duplicate bot records from operator restarts replaying on-chain events
 
+### 2026-04-16: /pursue Gen 5 — Backtest Engine Production Hardening
+
+**Architectural changes:**
+- Multi-asset backtest: Candle.token field, per-token indicator caches, HashMap<token, OpenPosition>
+- Unified timeline across all tokens, portfolio-level equity curve
+- Token-specific entry rules via `tokens: Vec<String>` filter
+- `max_positions` cap for portfolio risk management
+
+**Cost model overhaul:**
+- SlippageModel enum: FixedBps | SqrtImpact (effective_bps = base_bps * sqrt(size/depth))
+- Fixed slippage_cost reporting (was double-counting from already-slipped fills)
+- Proper slippage cost = |mid - fill| * units
+
+**Real Kelly sizing:**
+- RunningTradeStats tracks wins/losses/PnL within the backtest
+- Kelly = (p*b - q)/b with 5-trade minimum, conservative fallback, max_position_pct cap
+
+**Safety:**
+- HarnessConfig::validate() — catches empty rules, bad periods, zero weights, invalid thresholds
+- evolve-strategy.js: backup before promote, schema validation, write verification, rollback
+- Discard command logs full variant + comparison data for failure analysis
+
+**Evolution feedback:**
+- Loop prompt now instructs agent to read harness.json as primary decision framework
+- Per-token diagnosis in evolve-strategy.js diagnose output
+- Candle recording instructions in loop prompt
+
+**Tests:** 42 backtest (from 28), 248 runtime total, 0 regressions
+
 ## Converged
 All CRITICALs and HIGHs from both /harden rounds are resolved.
 - **CRITICAL: 0** (9 fixed across Gen 1-3)

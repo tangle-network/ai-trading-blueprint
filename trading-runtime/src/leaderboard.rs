@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single snapshot in a time-series used for leaderboard computation.
 /// Values are pre-parsed Decimals (not strings) for arithmetic safety.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EquityPoint {
     pub timestamp_secs: i64,
     pub account_value: Decimal,
