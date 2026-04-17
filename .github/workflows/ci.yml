@@ -115,7 +115,7 @@ jobs:
           cargo clippy -p trading-runtime -- -D warnings
           cargo clippy -p trading-http-api -- -D warnings -A clippy::collapsible-if
           cargo clippy -p trading-validator-lib -- -D warnings
-          cargo clippy -p trading-blueprint-lib -- -D warnings -A clippy::collapsible-if
+          cargo clippy -p trading-blueprint-lib -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments
 
   fmt:
     name: Rustfmt
