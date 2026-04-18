@@ -511,13 +511,14 @@ submit_service_request() {
   local req_id="$NEXT_REQ"
 
   if ! send_with_retry "$TANGLE" \
-    "requestService(uint64,address[],bytes,address[],uint64,address,uint256)" \
+    "requestService(uint64,address[],bytes,address[],uint64,address,uint256,uint8)" \
     "$bp_id" \
     "[$OPERATOR1_ADDR,$OPERATOR2_ADDR]" \
     "$config" \
     "$PERMITTED_CALLERS" \
     31536000 \
     "0x0000000000000000000000000000000000000000" \
+    0 \
     0 \
     --gas-price 0 --priority-gas-price 0 --gas-limit 3000000 \
     --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null; then
