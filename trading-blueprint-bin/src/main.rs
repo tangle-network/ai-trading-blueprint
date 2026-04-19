@@ -58,6 +58,34 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     setup_log();
 
+    // Derive SESSION_AUTH_SECRET from keystore if not explicitly set.
+    // This ensures consistent encryption across restarts without requiring
+    // the operator to manually set an env var.
+    if std::env::var("SESSION_AUTH_SECRET").is_err() {
+        let keystore_uri =
+            std::env::var("KEYSTORE_URI").unwrap_or_else(|_| "/tmp/keystore".to_string());
+        let keystore_path = std::path::Path::new(&keystore_uri);
+        if keystore_path.is_dir() {
+            // Read the first keystore file and derive a deterministic secret
+            if let Ok(entries) = std::fs::read_dir(keystore_path) {
+                for entry in entries.flatten() {
+                    if let Ok(content) = std::fs::read(&entry.path()) {
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(b"tangle-trading-session-auth-v1:");
+                        hasher.update(&content);
+                        let hash = hasher.finalize();
+                        let secret = hex::encode(hash);
+                        // SAFETY: called before any threads are spawned
+                        unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
+                        tracing::info!("Derived SESSION_AUTH_SECRET from keystore");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
         return Err(blueprint_sdk::Error::Other(msg));
     }
