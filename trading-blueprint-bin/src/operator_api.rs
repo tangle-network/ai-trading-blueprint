@@ -669,7 +669,12 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
                 .ok()
                 .map(|c| c.address)
         })
-        .unwrap_or_else(|| "0x0000000000000000000000000000000000000000".into());
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::UNAUTHORIZED,
+                "Authentication required".to_string(),
+            )
+        })?;
     let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
         .await
         .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad body: {e}")))?;
@@ -800,45 +805,41 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
                 )
             })?;
 
-    // 3. Write the user's prompt to the bot's memory as the first conversation
+    // 3. Write the user's prompt to the bot's memory as the first conversation.
+    // Content is passed via env var (FILE_CONTENT) to avoid any shell interpretation.
     if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id) {
         let date = chrono::Utc::now().format("%Y-%m-%d");
         let timestamp = chrono::Utc::now().format("%H:%M UTC");
-        let escaped_prompt = prompt.replace('\'', "'\\''");
 
-        let cmds = vec![
-            format!(
-                "sh -lc 'mkdir -p /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research'"
+        let strategy_content = format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n");
+        let toc_content = format!(
+            "# Memory Index\nUpdated: {date} | Iteration: 0\n\n\
+             ## Conversations\n\
+             - [Strategy Brief](conversations/{date}-strategy.md) — **ACTION NEEDED** — Owner described their strategy\n\n\
+             ## Decisions\n\
+             (none yet)\n\n\
+             ## Research\n\
+             (none yet)\n\n\
+             ## Performance\n\
+             - New agent, no trades yet\n"
+        );
+
+        let writes: &[(&str, &str)] = &[
+            (
+                &format!("/home/agent/memory/conversations/{date}-strategy.md"),
+                &strategy_content,
             ),
-            format!(
-                "sh -lc 'cat > /home/agent/memory/conversations/{date}-strategy.md << \"CONVEOF\"\n\
-                 # Strategy Brief\n\n\
-                 ## Owner ({timestamp})\n\
-                 {escaped_prompt}\n\
-                 CONVEOF\n'"
-            ),
-            format!(
-                "sh -lc 'cat > /home/agent/memory/toc.md << \"TOCEOF\"\n\
-                 # Memory Index\n\
-                 Updated: {date} | Iteration: 0\n\n\
-                 ## Conversations\n\
-                 - [Strategy Brief](conversations/{date}-strategy.md) — **ACTION NEEDED** — Owner described their strategy\n\n\
-                 ## Decisions\n\
-                 (none yet)\n\n\
-                 ## Research\n\
-                 (none yet)\n\n\
-                 ## Performance\n\
-                 - New agent, no trades yet\n\
-                 TOCEOF\n'"
-            ),
+            ("/home/agent/memory/toc.md", &toc_content),
         ];
 
-        for cmd in cmds {
+        for (path, content) in writes {
             let req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
                 sidecar_url: sandbox.sidecar_url.clone(),
-                command: cmd,
+                command: format!(
+                    r#"node -e "require('fs').mkdirSync(require('path').dirname(process.argv[1]),{{recursive:true}});require('fs').writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
+                ),
                 cwd: String::new(),
-                env_json: String::new(),
+                env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
                 timeout_ms: 10_000,
             };
             let _ = ai_agent_sandbox_blueprint_lib::run_exec_request(&req, &sandbox.token).await;
@@ -1448,7 +1449,7 @@ async fn send_chat_message(
     trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
 
     // Persist message to bot's memory filesystem so it survives across ticks.
-    // The bot reads /home/agent/memory/toc.md every tick and picks up new messages.
+    // Content is passed via FILE_CONTENT env var to avoid any shell interpretation.
     if let Some(msg_text) = body.get("message").and_then(|m| m.as_str()) {
         let session_slug = session_id
             .chars()
@@ -1458,39 +1459,62 @@ async fn send_chat_message(
         let date = chrono::Utc::now().format("%Y-%m-%d");
         let timestamp = chrono::Utc::now().format("%H:%M UTC");
         let conv_file = format!("conversations/{date}-{session_slug}.md");
+        let conv_path = format!("/home/agent/memory/{conv_file}");
 
-        // Escape single quotes for shell
-        let escaped_msg = msg_text.replace('\'', "'\\''");
-        let escaped_file = conv_file.replace('\'', "'\\''");
+        // Build append content (message entry to append to the conversation file)
+        let append_content = format!("\n## Owner ({timestamp})\n{msg_text}\n");
+        // Build ToC entry line to inject (only if the file isn't already listed)
+        let toc_entry = format!("- [{session_slug}]({conv_file}) — **ACTION NEEDED**");
 
-        let append_cmd = format!(
-            "sh -lc 'mkdir -p /home/agent/memory/conversations && \
-             echo \"\\n## Owner ({timestamp})\\n{escaped_msg}\" >> /home/agent/memory/{escaped_file}'",
-        );
-
-        // Update ToC to mark this conversation as ACTION NEEDED
-        let toc_cmd = format!(
-            "sh -lc 'if ! grep -q \"{escaped_file}\" /home/agent/memory/toc.md 2>/dev/null; then \
-             sed -i \"s/## Conversations/## Conversations\\n- [{session_slug}]({escaped_file}) — **ACTION NEEDED**/\" /home/agent/memory/toc.md 2>/dev/null || true; \
-             fi'",
-        );
+        let msg_owned = msg_text.to_string();
+        let sandbox_id = bot.sandbox_id.clone();
 
         // Fire-and-forget — don't block the chat response on filesystem writes
-        let sandbox_id = bot.sandbox_id.clone();
         tokio::spawn(async move {
-            if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&sandbox_id) {
-                for cmd in [&append_cmd, &toc_cmd] {
-                    let req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
-                        sidecar_url: sandbox.sidecar_url.clone(),
-                        command: cmd.clone(),
-                        cwd: String::new(),
-                        env_json: String::new(),
-                        timeout_ms: 10_000,
-                    };
-                    let _ = ai_agent_sandbox_blueprint_lib::run_exec_request(&req, &sandbox.token)
-                        .await;
-                }
-            }
+            let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&sandbox_id) else {
+                return;
+            };
+
+            // Append message to conversation file (create if needed)
+            let append_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: format!(
+                    r#"node -e "const fs=require('fs'),p=process.argv[1];fs.mkdirSync(require('path').dirname(p),{{recursive:true}});fs.appendFileSync(p,process.env.FILE_CONTENT)" "{conv_path}""#,
+                ),
+                cwd: String::new(),
+                env_json: serde_json::json!({"FILE_CONTENT": append_content}).to_string(),
+                timeout_ms: 10_000,
+            };
+            let _ =
+                ai_agent_sandbox_blueprint_lib::run_exec_request(&append_req, &sandbox.token).await;
+
+            // Update ToC: inject entry under "## Conversations" if not already present.
+            // Safe: conv_file and toc_entry are server-generated slugs, not user input.
+            let toc_update_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: format!(
+                    r#"node -e "
+const fs=require('fs'),p='/home/agent/memory/toc.md';
+try{{
+  let t=fs.readFileSync(p,'utf8');
+  if(!t.includes(process.env.CONV_FILE)){{
+    t=t.replace('## Conversations','## Conversations\n'+process.env.TOC_ENTRY);
+    fs.writeFileSync(p,t);
+  }}
+}}catch(e){{/* toc.md not yet created, skip */}}"
+"#,
+                ),
+                cwd: String::new(),
+                env_json: serde_json::json!({"CONV_FILE": conv_file, "TOC_ENTRY": toc_entry})
+                    .to_string(),
+                timeout_ms: 10_000,
+            };
+            let _ =
+                ai_agent_sandbox_blueprint_lib::run_exec_request(&toc_update_req, &sandbox.token)
+                    .await;
+
+            // Keep msg_owned alive until the spawn completes
+            let _ = msg_owned;
         });
     }
 

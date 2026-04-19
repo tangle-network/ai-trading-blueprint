@@ -93,12 +93,10 @@ pub async fn activate_bot_with_secrets(
                 }
             }
             Err(e) => {
-                tracing::warn!(
+                return Err(format!(
                     "Failed to resolve vault from factory for {bot_id}: {e}. \
-                     Using factory address as fallback."
-                );
-                // Strip the "factory:" prefix so downstream code gets a valid address
-                bot.vault_address = bot.vault_address.trim_start_matches("factory:").to_string();
+                     Refusing to trade with unresolved vault address."
+                ));
             }
         }
     }
@@ -197,11 +195,18 @@ pub async fn activate_bot_with_secrets(
         "Configuring split-tick workflows",
     );
 
-    let make_wf_id = || -> u64 {
+    // Generate a single base ID; research and conversation IDs are deterministic
+    // offsets so all three IDs are distinct and cleanup can use base+1, base+2.
+    let base_wf_id = {
         let ts = chrono::Utc::now().timestamp_millis() as u64;
         let rand_bits = (uuid::Uuid::new_v4().as_u128() & 0xFFFF) as u64;
-        ts.wrapping_mul(100_000).wrapping_add(rand_bits)
+        // Reserve 2 slots above for sibling workflows; ensure base is even to
+        // keep the namespace aligned.
+        (ts.wrapping_mul(100_000).wrapping_add(rand_bits)) & !0b11
     };
+    let workflow_id = base_wf_id; // fast tick
+    let research_id = base_wf_id + 1; // research tick
+    let conversation_id = base_wf_id + 2; // conversation tick
 
     let backend_profile = match &pack {
         Some(p) => crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
@@ -214,7 +219,6 @@ pub async fn activate_bot_with_secrets(
         Some(p) => crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
         None => crate::prompts::build_fast_tick_prompt(&bot.strategy_type),
     };
-    let workflow_id = make_wf_id();
     let fast_cron = if !bot.trading_loop_cron.is_empty() {
         bot.trading_loop_cron.clone()
     } else {
@@ -261,7 +265,6 @@ pub async fn activate_bot_with_secrets(
 
     // --- RESEARCH tick (15 turns, every 30 min, offset by 2 min) ---
     let research_prompt = crate::prompts::build_research_tick_prompt(&sidecar_bot);
-    let research_id = make_wf_id();
     let research_cron = "0 2,32 * * * *".to_string();
 
     let research_wf = json!({
@@ -301,7 +304,6 @@ pub async fn activate_bot_with_secrets(
 
     // --- CONVERSATION tick (10 turns, every 5 min, offset by 1 min) ---
     let conversation_prompt = crate::prompts::build_conversation_tick_prompt();
-    let conversation_id = make_wf_id();
     let conversation_cron = "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *".to_string();
 
     let conversation_wf = json!({
@@ -656,11 +658,31 @@ pub async fn wipe_bot_secrets(
         }
     }
 
-    // Stop and remove workflow
+    // Remove all three split-tick workflows (fast=base, research=base+1, conversation=base+2).
+    // Also sweep by name prefix to catch any stale workflows from a prior activation.
     if let Some(wf_id) = bot.workflow_id {
-        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ =
-            ai_agent_sandbox_blueprint_lib::workflows::workflows().map(|store| store.remove(&key));
+        if let Ok(store) = ai_agent_sandbox_blueprint_lib::workflows::workflows() {
+            // Remove by deterministic ID offsets
+            for id in [wf_id, wf_id.saturating_add(1), wf_id.saturating_add(2)] {
+                let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+                let _ = store.remove(&key);
+            }
+            // Sweep by name to handle any stale entries from a previous activation
+            // that used a different base_id (e.g., process restart mid-activation).
+            let prefixes = [
+                format!("fast-tick-{}", bot.id),
+                format!("research-tick-{}", bot.id),
+                format!("conversation-tick-{}", bot.id),
+            ];
+            if let Ok(all) = store.values() {
+                for entry in all {
+                    if prefixes.iter().any(|p| entry.name.starts_with(p.as_str())) {
+                        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(entry.id);
+                        let _ = store.remove(&key);
+                    }
+                }
+            }
+        }
     }
 
     // Wipe user secrets — sandbox-runtime preserves base env automatically
@@ -733,11 +755,12 @@ async fn resolve_vault_from_factory(
         as alloy::sol_types::SolType>::abi_decode(&result)
         .map_err(|e| format!("Failed to decode vault addresses: {e}"))?;
 
-    if vaults.is_empty() {
-        return Err("No vaults found for this service".into());
+    match vaults.len() {
+        0 => Err("No vaults found for this service".into()),
+        1 => Ok(format!("{:#x}", vaults[0])),
+        n => Err(format!(
+            "Ambiguous: {n} vaults found for service {}; cannot determine owner without explicit vault address",
+            bot.service_id
+        )),
     }
-
-    // Use the last vault (most recently created for this service)
-    let vault = vaults.last().unwrap();
-    Ok(format!("{:#x}", vault))
 }
