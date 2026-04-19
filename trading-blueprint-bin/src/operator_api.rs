@@ -1,4 +1,3 @@
-use alloy::primitives;
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -720,18 +719,22 @@ async fn create_bot(
         strategy_type: strategy_type.clone(),
         strategy_config_json: serde_json::to_string(&strategy_config).unwrap_or_default(),
         risk_params_json: r#"{"max_drawdown_pct":10}"#.into(),
-        factory_address: vault_factory.parse().unwrap_or(primitives::Address::ZERO),
-        asset_token: asset_token.parse().unwrap_or(primitives::Address::ZERO),
+        factory_address: vault_factory
+            .parse()
+            .unwrap_or(alloy_primitives::Address::ZERO),
+        asset_token: asset_token
+            .parse()
+            .unwrap_or(alloy_primitives::Address::ZERO),
         signers: Vec::new(),
-        required_sigs: primitives::U256::ZERO,
-        chain_id: primitives::U256::from(chain_id),
+        required_signatures: alloy_primitives::U256::ZERO,
+        chain_id: alloy_primitives::U256::from(chain_id),
         rpc_url,
         trading_loop_cron: "0 */5 * * * *".into(),
         cpu_cores: 1,
         memory_mb: 2048,
         max_lifetime_days: 30,
         validator_service_ids: Vec::new(),
-        max_collateral_bps: primitives::U256::ZERO,
+        max_collateral_bps: alloy_primitives::U256::ZERO,
     };
 
     // 1. Provision

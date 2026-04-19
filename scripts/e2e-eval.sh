@@ -58,14 +58,14 @@ echo ""
 # ── Phase 0: Infrastructure Check ──────────────────────────────────────
 echo -e "${YELLOW}Phase 0: Infrastructure${NC}"
 
-OPERATOR_OK=$(curl -sf "$OPERATOR_URL/api/meta" 2>/dev/null && echo "true" || echo "false")
-score "Operator API reachable" 5 "$OPERATOR_OK" "GET /api/meta → $(curl -sf "$OPERATOR_URL/api/meta" 2>/dev/null | head -c 50 || echo 'unreachable')"
+OPERATOR_OK=$(curl -sf "$OPERATOR_URL/api/meta" >/dev/null 2>&1 && echo "true" || echo "false")
+score "Operator API reachable" 5 "$OPERATOR_OK" "GET /api/meta"
 
-TRADING_OK=$(curl -sf "$TRADING_URL/health" 2>/dev/null && echo "true" || echo "false")
-score "Trading API reachable" 5 "$TRADING_OK" "GET /health → $(curl -sf "$TRADING_URL/health" 2>/dev/null | head -c 30 || echo 'unreachable')"
+TRADING_OK=$(curl -sf "$TRADING_URL/health" >/dev/null 2>&1 && echo "true" || echo "false")
+score "Trading API reachable" 5 "$TRADING_OK" "GET /health"
 
-ANVIL_OK=$(cast chain-id --rpc-url http://127.0.0.1:8545 2>/dev/null && echo "true" || echo "false")
-score "Anvil chain running" 5 "$ANVIL_OK" "chain-id = $(cast chain-id --rpc-url http://127.0.0.1:8545 2>/dev/null || echo 'N/A')"
+ANVIL_OK=$(cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && echo "true" || echo "false")
+score "Anvil chain running" 5 "$ANVIL_OK" "chain 31337"
 
 if [[ "$OPERATOR_OK" != "true" || "$TRADING_OK" != "true" ]]; then
   echo -e "\n${RED}Infrastructure not ready. Start the operator first.${NC}"
@@ -99,16 +99,16 @@ STRATEGY_PROMPT="I want a DeFi trading agent that trades ETH/USDC on Uniswap V3.
 
 START_TIME=$(date +%s)
 
+CREATE_BODY=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'prompt': sys.argv[1],
+    'name': 'E2E Eval Agent',
+}))" "$STRATEGY_PROMPT")
+
 CREATE_RESPONSE=$(curl -sf -X POST "$OPERATOR_URL/api/bots" \
   -H "Content-Type: application/json" \
-  $AUTH_HEADER \
-  -d "$(python3 -c "
-import json
-print(json.dumps({
-  'prompt': '''$STRATEGY_PROMPT''',
-  'name': 'E2E Eval Agent',
-}))
-")" 2>&1 || echo '{"error":"request failed"}')
+  -d "$CREATE_BODY" 2>&1 || echo '{"error":"request failed"}')
 
 END_TIME=$(date +%s)
 PROVISION_TIME=$((END_TIME - START_TIME))
