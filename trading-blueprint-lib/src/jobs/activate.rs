@@ -190,36 +190,32 @@ pub async fn activate_bot_with_secrets(
         }
     }
 
-    // 4. Create workflow
-    update_activation_progress(bot_id, "creating_workflow", "Configuring trading loop");
-    let workflow_id = {
+    // 4. Create workflows (split-tick architecture: FAST + RESEARCH + CONVERSATION)
+    update_activation_progress(
+        bot_id,
+        "creating_workflow",
+        "Configuring split-tick workflows",
+    );
+
+    let make_wf_id = || -> u64 {
         let ts = chrono::Utc::now().timestamp_millis() as u64;
         let rand_bits = (uuid::Uuid::new_v4().as_u128() & 0xFFFF) as u64;
         ts.wrapping_mul(100_000).wrapping_add(rand_bits)
     };
 
-    let (loop_prompt, backend_profile) = match &pack {
-        Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
-            crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
-        ),
-        None => (
-            crate::prompts::build_loop_prompt(&bot.strategy_type),
-            crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
-        ),
+    let backend_profile = match &pack {
+        Some(p) => crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
+        None => crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
     };
+    let profile_json = serde_json::to_string(&backend_profile).unwrap_or_default();
 
-    let wf = json!({
-        "sidecar_url": record.sidecar_url,
-        "prompt": loop_prompt,
-        "session_id": format!("trading-{bot_id}"),
-        "max_turns": pack.as_ref().map(|p| p.max_turns).filter(|&t| t > 0).unwrap_or(10),
-        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(600_000),
-        "sidecar_token": record.token,
-        "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
-    });
-
-    let cron_config = if !bot.trading_loop_cron.is_empty() {
+    // --- FAST trading tick (3 turns, every 5 min) ---
+    let fast_prompt = match &pack {
+        Some(p) => crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
+        None => crate::prompts::build_fast_tick_prompt(&bot.strategy_type),
+    };
+    let workflow_id = make_wf_id();
+    let fast_cron = if !bot.trading_loop_cron.is_empty() {
         bot.trading_loop_cron.clone()
     } else {
         pack.as_ref()
@@ -227,32 +223,124 @@ pub async fn activate_bot_with_secrets(
             .unwrap_or_else(|| "0 */5 * * * *".to_string())
     };
 
+    let fast_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": fast_prompt,
+        "session_id": format!("fast-{bot_id}"),
+        "max_turns": 5,
+        "timeout_ms": 120_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
     let next_run =
-        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &cron_config, None)
+        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &fast_cron, None)
             .unwrap_or(None);
 
-    let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
-        id: workflow_id,
-        name: format!("trading-loop-{bot_id}"),
-        workflow_json: wf.to_string(),
-        trigger_type: "cron".to_string(),
-        trigger_config: cron_config,
-        sandbox_config_json: String::new(),
-        target_kind: 0,
-        target_sandbox_id: record.id.clone(),
-        target_service_id: 0,
-        active: true,
-        next_run_at: next_run,
-        last_run_at: None,
-        owner: String::new(),
-    };
-
-    ai_agent_sandbox_blueprint_lib::workflows::workflows()?
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+    store
         .insert(
             ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id),
-            entry,
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: workflow_id,
+                name: format!("fast-tick-{bot_id}"),
+                workflow_json: fast_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: fast_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: next_run,
+                last_run_at: None,
+                owner: String::new(),
+            },
         )
-        .map_err(|e| format!("Failed to store workflow: {e}"))?;
+        .map_err(|e| format!("Failed to store fast workflow: {e}"))?;
+
+    // --- RESEARCH tick (15 turns, every 30 min, offset by 2 min) ---
+    let research_prompt = crate::prompts::build_research_tick_prompt(&sidecar_bot);
+    let research_id = make_wf_id();
+    let research_cron = "0 2,32 * * * *".to_string();
+
+    let research_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": research_prompt,
+        "session_id": format!("research-{bot_id}"),
+        "max_turns": 15,
+        "timeout_ms": 300_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
+    let research_next =
+        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &research_cron, None)
+            .unwrap_or(None);
+
+    store
+        .insert(
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(research_id),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: research_id,
+                name: format!("research-tick-{bot_id}"),
+                workflow_json: research_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: research_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: research_next,
+                last_run_at: None,
+                owner: String::new(),
+            },
+        )
+        .map_err(|e| format!("Failed to store research workflow: {e}"))?;
+
+    // --- CONVERSATION tick (10 turns, every 5 min, offset by 1 min) ---
+    let conversation_prompt = crate::prompts::build_conversation_tick_prompt();
+    let conversation_id = make_wf_id();
+    let conversation_cron = "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *".to_string();
+
+    let conversation_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": conversation_prompt,
+        "session_id": format!("convo-{bot_id}"),
+        "max_turns": 10,
+        "timeout_ms": 120_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
+    let convo_next = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+        "cron",
+        &conversation_cron,
+        None,
+    )
+    .unwrap_or(None);
+
+    store
+        .insert(
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(conversation_id),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: conversation_id,
+                name: format!("conversation-tick-{bot_id}"),
+                workflow_json: conversation_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: conversation_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: convo_next,
+                last_run_at: None,
+                owner: String::new(),
+            },
+        )
+        .map_err(|e| format!("Failed to store conversation workflow: {e}"))?;
 
     // 5. Update bot record
     let new_sandbox_id = record.id.clone();

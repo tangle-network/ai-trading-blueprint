@@ -193,26 +193,75 @@ Updated: 2026-04-19T19:00Z | Iteration: 58
 - Self-built tools: indicators.js, regime-detector, trade-quality-scorer
 ```"#;
 
-/// Build the loop iteration prompt sent by cron workflow.
+/// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
+pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
+    format!(
+        "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
+         1. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
+         2. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
+         3. If actionable setup exists → build intent, validate, execute. Otherwise → SKIP.\n\n\
+         Record the candle and log your decision. Report: price, action, reason (one line)."
+    )
+}
+
+/// Build the RESEARCH tick prompt — 15 turns, self-improvement + backtesting.
+pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> String {
+    format!(
+        "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
+         ## 1. Review performance\n\
+         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
+         ## 2. Identify ONE structural improvement\n\
+         Don't write another tool — you have 25+. Instead:\n\
+         - Test an existing tool: does it produce correct output?\n\
+         - Delete tools you don't use\n\
+         - OR propose a HarnessConfig mutation and BACKTEST it:\n\
+         ```\n\
+         curl -X POST {api_url}/market-data/candles -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' -d '{{\"token\":\"ETH\",\"limit\":200}}'\n\
+         ```\n\
+         Then walk-forward test:\n\
+         ```\n\
+         curl -X POST {api_url}/backtest/walk-forward -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' \\\n\
+           -d '{{\"current_config\": <current_harness>, \"candidate_config\": <mutation>, \"candles\": <array>}}'\n\
+         ```\n\n\
+         ## 3. Promote or discard\n\
+         If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
+         If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
+         ## 4. Update memory\n\
+         Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
+         Report: what you analyzed, what you changed, backtest results.",
+        api_url = config.trading_api_url,
+        token = config.trading_api_token,
+    )
+}
+
+/// Build the CONVERSATION tick prompt — handles owner messages.
+pub fn build_conversation_tick_prompt() -> String {
+    "CONVERSATION TICK. Check /home/agent/memory/toc.md for ACTION NEEDED.\n\n\
+     If no ACTION NEEDED conversations exist → reply with just: \"No messages.\"\n\n\
+     If ACTION NEEDED:\n\
+     1. Read the conversation file\n\
+     2. Think about what your owner is asking\n\
+     3. Research if needed (check prices, analyze data, evaluate protocols)\n\
+     4. Write your response to the conversation file (append ## Bot Response with timestamp)\n\
+     5. Update toc.md — change ACTION NEEDED to responded or in-progress\n\
+     6. If they asked you to change strategy or add assets, evaluate and act\n\n\
+     Your owner's messages are your top priority. Be thorough but concise."
+        .to_string()
+}
+
+/// Build the legacy combined loop prompt (kept for backward compat).
 pub fn build_loop_prompt(strategy_type: &str) -> String {
     format!(
         "Execute one trading loop iteration for your {strategy_type} strategy.\n\n\
-         Before acting, review your learning history:\n\
-         - Read /home/agent/state/phase.json for current phase\n\
-         - Read /home/agent/data/trading.json and review the memory array (last 10 entries)\n\
-         - Read /home/agent/memory/insights.jsonl (last 20 lines)\n\n\
-         Then follow your system instructions:\n\
-         1. Fetch current market prices\n\
-         2. Record candle data: `node /home/agent/tools/record-candle.js '<ohlcv json>'`\n\
-         3. Check portfolio state\n\
-         4. Check circuit breaker\n\
-         5. Analyze market conditions (weight signals by past accuracy)\n\
-         6. Generate and validate trade intents if conditions warrant\n\
-         7. Execute approved trades\n\
-         8. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
-         9. Write metrics to /home/agent/metrics/latest.json\n\
-         10. Report results as JSON\n\n\
          {MEMORY_CHECK_BLOCK}\n\n\
+         1. Fetch current market prices\n\
+         2. Record candle data\n\
+         3. Check portfolio and circuit breaker\n\
+         4. Analyze market conditions\n\
+         5. Trade or skip\n\
+         6. Log decision and write metrics\n\n\
          {EVOLUTION_BLOCK}"
     )
 }
