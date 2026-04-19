@@ -66,22 +66,15 @@ export default function CreateAgent() {
 
       // Call the operator API to provision a bot with the user's prompt
       const operatorUrl = ALL_TRADING_OPERATOR_API_URLS[0]
-      const res = await fetch(`${operatorUrl}/api/bots/provision`, {
+      const res = await fetch(`${operatorUrl}/api/bots`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders,
         },
         body: JSON.stringify({
+          prompt,
           name: prompt.slice(0, 50),
-          strategy_type: strategyType,
-          strategy_config_json: JSON.stringify({
-            user_prompt: prompt,
-            paper_trade: true,
-          }),
-          risk_params_json: JSON.stringify({
-            max_drawdown_pct: 10,
-          }),
         }),
       })
 

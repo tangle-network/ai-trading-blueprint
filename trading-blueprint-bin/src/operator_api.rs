@@ -1,3 +1,4 @@
+use alloy::primitives;
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -524,7 +525,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
         // Bot management
-        .route("/api/bots", get(list_bots))
+        .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
@@ -643,6 +644,201 @@ async fn create_session(
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
+
+/// Create a bot from a free-form prompt — provisions + activates in one call.
+/// This is the chat-first GTM endpoint: user describes a strategy, gets a live bot.
+#[derive(Deserialize)]
+struct CreateBotRequest {
+    /// Free-form strategy description from the user
+    prompt: String,
+    /// Optional strategy type override (auto-detected from prompt if omitted)
+    #[serde(default)]
+    strategy_type: Option<String>,
+    /// Optional name (defaults to first 50 chars of prompt)
+    #[serde(default)]
+    name: Option<String>,
+}
+
+async fn create_bot(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<CreateBotRequest>,
+) -> ApiResult<serde_json::Value> {
+    let prompt = body.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "prompt is required".to_string(),
+        ));
+    }
+
+    // Auto-detect strategy type from prompt
+    let prompt_lower = prompt.to_lowercase();
+    let strategy_type = body.strategy_type.unwrap_or_else(|| {
+        if prompt_lower.contains("yield")
+            || prompt_lower.contains("lending")
+            || prompt_lower.contains("aave")
+        {
+            "yield".into()
+        } else if prompt_lower.contains("polymarket")
+            || prompt_lower.contains("prediction")
+            || prompt_lower.contains("politic")
+        {
+            "prediction".into()
+        } else if prompt_lower.contains("perp")
+            || prompt_lower.contains("leverage")
+            || prompt_lower.contains("futures")
+        {
+            "perp".into()
+        } else {
+            "dex".into()
+        }
+    });
+
+    let name = body
+        .name
+        .unwrap_or_else(|| prompt.chars().take(50).collect());
+
+    // Build a TradingProvisionRequest
+    let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
+    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
+        .or_else(|_| std::env::var("USDC_ADDRESS"))
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
+    let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
+    let chain_id: u64 = std::env::var("CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(31337);
+
+    let strategy_config = serde_json::json!({
+        "user_prompt": prompt,
+        "paper_trade": true,
+    });
+
+    let request = trading_blueprint_lib::TradingProvisionRequest {
+        name: name.clone(),
+        strategy_type: strategy_type.clone(),
+        strategy_config_json: serde_json::to_string(&strategy_config).unwrap_or_default(),
+        risk_params_json: r#"{"max_drawdown_pct":10}"#.into(),
+        factory_address: vault_factory.parse().unwrap_or(primitives::Address::ZERO),
+        asset_token: asset_token.parse().unwrap_or(primitives::Address::ZERO),
+        signers: Vec::new(),
+        required_sigs: primitives::U256::ZERO,
+        chain_id: primitives::U256::from(chain_id),
+        rpc_url,
+        trading_loop_cron: "0 */5 * * * *".into(),
+        cpu_cores: 1,
+        memory_mb: 2048,
+        max_lifetime_days: 30,
+        validator_service_ids: Vec::new(),
+        max_collateral_bps: primitives::U256::ZERO,
+    };
+
+    // 1. Provision
+    let service_id = std::env::var("SERVICE_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1u64);
+    let call_id = chrono::Utc::now().timestamp() as u64;
+
+    let result = trading_blueprint_lib::jobs::provision_core(
+        request,
+        None,
+        call_id,
+        service_id,
+        caller.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let bot_id = result.sandbox_id.replace("sandbox-", "trading-");
+    let bot = state::get_bot(&bot_id).ok().flatten().ok_or_else(|| {
+        ApiError::message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Bot {bot_id} not found after provision"),
+        )
+    })?;
+
+    // 2. Auto-activate with AI provider from env
+    let mut user_env = serde_json::Map::new();
+    if let Ok(key) = std::env::var("ZAI_API_KEY") {
+        user_env.insert("ZAI_API_KEY".into(), serde_json::Value::String(key));
+    } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        user_env.insert("ANTHROPIC_API_KEY".into(), serde_json::Value::String(key));
+    }
+    // Pass the user's prompt as an env var so the agent can read it
+    user_env.insert(
+        "USER_STRATEGY_PROMPT".into(),
+        serde_json::Value::String(prompt.clone()),
+    );
+
+    let activate_result =
+        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, user_env, None)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Activation failed: {e}"),
+                )
+            })?;
+
+    // 3. Write the user's prompt to the bot's memory as the first conversation
+    if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id) {
+        let date = chrono::Utc::now().format("%Y-%m-%d");
+        let timestamp = chrono::Utc::now().format("%H:%M UTC");
+        let escaped_prompt = prompt.replace('\'', "'\\''");
+
+        let cmds = vec![
+            format!(
+                "sh -lc 'mkdir -p /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research'"
+            ),
+            format!(
+                "sh -lc 'cat > /home/agent/memory/conversations/{date}-strategy.md << \"CONVEOF\"\n\
+                 # Strategy Brief\n\n\
+                 ## Owner ({timestamp})\n\
+                 {escaped_prompt}\n\
+                 CONVEOF\n'"
+            ),
+            format!(
+                "sh -lc 'cat > /home/agent/memory/toc.md << \"TOCEOF\"\n\
+                 # Memory Index\n\
+                 Updated: {date} | Iteration: 0\n\n\
+                 ## Conversations\n\
+                 - [Strategy Brief](conversations/{date}-strategy.md) — **ACTION NEEDED** — Owner described their strategy\n\n\
+                 ## Decisions\n\
+                 (none yet)\n\n\
+                 ## Research\n\
+                 (none yet)\n\n\
+                 ## Performance\n\
+                 - New agent, no trades yet\n\
+                 TOCEOF\n'"
+            ),
+        ];
+
+        for cmd in cmds {
+            let req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: cmd,
+                cwd: String::new(),
+                env_json: String::new(),
+                timeout_ms: 10_000,
+            };
+            let _ = ai_agent_sandbox_blueprint_lib::run_exec_request(&req, &sandbox.token).await;
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "bot_id": bot.id,
+        "sandbox_id": activate_result.sandbox_id,
+        "strategy_type": strategy_type,
+        "name": name,
+        "status": "active",
+        "trading_api_url": activate_result.trading_api_url,
+        "trading_api_token": activate_result.trading_api_token,
+        "prompt": prompt,
+    })))
+}
 
 async fn list_bots(
     SessionAuth(_caller): SessionAuth,
