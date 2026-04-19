@@ -301,6 +301,7 @@ struct UpdateConfigRequest {
     strategy_config_json: Option<String>,
     risk_params_json: Option<String>,
     harness_json: Option<String>,
+    vault_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -970,6 +971,15 @@ async fn update_config(
     )
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Update vault address if provided
+    if let Some(addr) = &body.vault_address {
+        if let Ok(store) = state::bots() {
+            let _ = store.update(&state::bot_key(&bot.id), |b| {
+                b.vault_address.clone_from(addr);
+            });
+        }
+    }
 
     // Persist harness config if provided
     if let Some(harness_str) = &body.harness_json {

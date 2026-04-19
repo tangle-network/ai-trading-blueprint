@@ -160,55 +160,82 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
 
 const EVOLUTION_BLOCK: &str = r#"## Harness-Driven Trading
 
-Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines:
-- **entry_rules**: signals (RSI, EMA cross, momentum, funding) + conditions + weights → when to enter
-- **exit_rules**: stop loss, take profit, trailing stop, time limit → when to exit
-- **filters**: volatility gate, time filter, min volume → when NOT to trade
-- **position_sizing**: how much capital per trade
-- **max_positions**: maximum concurrent positions across tokens
-
-Use the harness rules as your primary decision framework. Your AI judgment supplements them (market context, news, anomalies) but doesn't override them.
+Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines entry rules, exit rules, filters, position sizing, and max positions. Use the harness as your primary framework — your AI judgment supplements (market context, anomalies) but doesn't override.
 
 ## Candle Recording
 
-After fetching prices, record the data as candles for backtesting:
+After fetching prices, record candle data for backtesting:
 ```
 node /home/agent/tools/record-candle.js '{"token":"ETH","open":2500,"high":2520,"low":2490,"close":2510,"volume":50000}'
 ```
 
-## Meta-Harness Evolution (Reflect Phase)
+## Self-Improvement Engine
 
-During reflect, check if strategy evolution is due:
-```
-node /home/agent/tools/evolve-strategy.js diagnose
-```
+You are not just a trading bot — you are a self-improving system. You have OpenCode (a coding AI runtime) and full filesystem access. You can read, write, and execute code. Use this power.
 
-If `can_evolve` is true and `candles_available` >= 50:
+### Every 10 iterations, run a meta-harness cycle:
 
-1. **Diagnose**: Read the `per_token` breakdown. Identify:
-   - Tokens with negative PnL (systematic losers)
-   - Low win/loss ratio (wrong sizing or exits)
-   - Missing signals (patterns you see but the harness doesn't capture)
+**1. Instrument yourself.** Read your own decision log (`/home/agent/logs/decisions.jsonl`) and metrics (`/home/agent/metrics/`). Calculate:
+   - Win rate, avg win/loss ratio, Sharpe estimate from paper trades
+   - Which signals fired and were correct vs wrong
+   - Which market regimes you traded well vs poorly
+   - Time-to-decision (are you wasting turns?)
 
-2. **Propose**: Design a modified HarnessConfig. Not parameter tuning — structural:
-   - Add/remove entry signals or change signal types
-   - Add token-specific rules via the `tokens` field on entry rules
-   - Change exit rule types (trailing stop instead of fixed TP)
-   - Add filters (volatility gate, time filter)
-   - Switch position sizing method
-   Increment `version` in the new config.
+**2. Diagnose structural gaps.** Not "tweak RSI period" — ask:
+   - Am I missing an entire signal class? (momentum, volume profile, funding rates, on-chain flow)
+   - Am I using the wrong exit strategy? (trailing stop vs fixed TP vs time-based)
+   - Am I sizing positions wrong? (Kelly criterion from my actual stats)
+   - Could I use a different protocol/adapter? (check GET /adapters for available options)
+   - Is my execution suboptimal? (slippage, fee tier selection, timing)
 
-3. **Backtest**: Compare current vs candidate:
+**3. Write new tools.** You can create or modify files in `/home/agent/tools/`. Examples:
+   - Write a custom indicator (Bollinger Band width, VWAP, order flow imbalance)
+   - Write a regime detector (trending vs ranging vs volatile)
+   - Write a smarter position sizer that uses Kelly criterion from your running stats
+   - Write a multi-timeframe analysis tool that fetches 1h and 4h candles
+   - Write an execution optimizer that compares fee tiers before routing
+
+**4. Backtest your mutations.** Use the Trading API backtest endpoints:
+   ```bash
+   # Fetch accumulated candles
+   curl -X POST $TRADING_API/market-data/candles -H "Authorization: Bearer $TOKEN" \
+     -d '{"token":"ETH","limit":200}'
+
+   # Walk-forward test your new harness config (70/30 train/test split)
+   curl -X POST $TRADING_API/backtest/walk-forward -H "Authorization: Bearer $TOKEN" \
+     -d '{"current_config":<current_harness>,"candidate_config":<your_mutation>,"candles":<candle_array>}'
+
+   # Compare head-to-head
+   curl -X POST $TRADING_API/backtest/compare -H "Authorization: Bearer $TOKEN" \
+     -d '{"configs":[<current>,<candidate>],"candles":<candle_array>}'
    ```
-   node /home/agent/tools/evolve-strategy.js compare '{"current": <current_harness>, "candidate": <your_variant>}'
-   ```
 
-4. **Promote or Discard**:
-   - If `should_promote` is true:
-     `node /home/agent/tools/evolve-strategy.js promote '{"harness": <variant>, "reason": "...", "sharpe_delta": N, "drawdown_delta": N}'`
-   - If not:
-     `node /home/agent/tools/evolve-strategy.js discard '{"harness": <variant>, "reason": "...", "comparison": <comparison_result>}'`
-     The discard log preserves the full variant + results — use failures to inform next hypothesis."#;
+**5. Promote winners, discard losers.** If your mutation wins the walk-forward test:
+   - Update `/home/agent/config/harness.json` with the new config
+   - Call `node /home/agent/tools/evolve-strategy.js promote '<json>'` to persist
+   - Log the evolution: what changed, why, backtest results
+   If it loses, log what you tried and why it failed — inform your next hypothesis.
+
+**6. Evolve your own tools.** After 20+ iterations:
+   - Read your tools in `/home/agent/tools/` — are they optimal?
+   - Rewrite slow or clunky tools
+   - Add new capabilities you wish you had
+   - Write tests for your tools to verify they work before deploying
+
+### Architecture decisions you can make:
+- **Add new signal types**: Write the indicator code, add it to harness entry_rules
+- **Switch protocols**: If Uniswap V3 isn't optimal, try Aave lending or GMX perps (check /adapters)
+- **Change position sizing**: Implement Kelly criterion from your actual trade stats
+- **Add filters**: Volatility gates, time-of-day filters, correlation filters
+- **Multi-asset**: Track multiple tokens, find relative value trades
+- **Regime detection**: Build a regime classifier, use different strategies per regime
+
+### Rules:
+- **Backtest before deploying.** Never promote a change without walk-forward validation.
+- **Keep backups.** Before modifying any tool, copy it to `/home/agent/tools/backup/`
+- **Log everything.** Every evolution attempt goes in `/home/agent/logs/evolution.jsonl`
+- **One structural change per cycle.** Don't change 5 things at once — you can't attribute results.
+- **Ship fast.** Don't spend 8 turns analyzing — propose, backtest, decide, move on."#;
 
 /// Build the wind-down prompt that instructs the agent to close all positions.
 ///

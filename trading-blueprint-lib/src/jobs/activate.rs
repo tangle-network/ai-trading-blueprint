@@ -73,7 +73,36 @@ pub async fn activate_bot_with_secrets(
     // 1. Load and validate
     update_activation_progress(bot_id, "validating", "Loading bot configuration");
 
-    let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
+    let mut bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
+
+    // Resolve vault address if still a factory placeholder from provision.
+    // The BSM creates the real vault on-chain in _handleProvisionResult, but
+    // never updates the operator-side record. Resolve it here before the bot
+    // starts trading.
+    if bot.vault_address.starts_with("factory:") {
+        let resolved = resolve_vault_from_factory(&bot).await;
+        match resolved {
+            Ok(addr) => {
+                tracing::info!("Resolved vault address for {bot_id}: {addr}");
+                bot.vault_address = addr.clone();
+                // Persist the resolved address so future restarts don't re-query
+                if let Ok(store) = bots() {
+                    let _ = store.update(&bot_key(bot_id), |b| {
+                        b.vault_address = addr.clone();
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve vault from factory for {bot_id}: {e}. \
+                     Using factory address as fallback."
+                );
+                // Strip the "factory:" prefix so downstream code gets a valid address
+                bot.vault_address = bot.vault_address.trim_start_matches("factory:").to_string();
+            }
+        }
+    }
+
     let sidecar_trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
     let mut sidecar_bot = bot.clone();
     sidecar_bot.trading_api_url = sidecar_trading_api_url.clone();
@@ -311,6 +340,15 @@ pub(crate) async fn write_prebuilt_tools(
     operator_address: &str,
     strategy_config: &serde_json::Value,
 ) -> Result<(), String> {
+    // Write workspace package.json with serve script for OpenCode agent
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/package.json",
+        r#"{"name":"trading-agent","version":"1.0.0","private":true,"scripts":{"serve":"opencode serve"}}"#,
+    )
+    .await?;
+
     // Write API config so tools can find the Trading HTTP API
     let config_json = serde_json::json!({
         "bot_id": bot_id,
@@ -531,4 +569,57 @@ pub async fn wipe_bot_secrets(
 
     tracing::info!("Bot {bot_id} secrets wiped. Now in awaiting-secrets state.");
     Ok(())
+}
+
+/// Resolve the real vault address from VaultFactory.getServiceVaults().
+///
+/// During provision, the factory address is stored as a placeholder because the
+/// BSM creates the real vault on-chain asynchronously. This queries the factory
+/// to find the vault deployed for this service.
+async fn resolve_vault_from_factory(
+    bot: &crate::state::TradingBotRecord,
+) -> Result<String, String> {
+    use alloy::primitives::Address;
+    use alloy::providers::Provider;
+    use alloy::providers::ProviderBuilder;
+    use alloy::sol_types::SolCall;
+
+    let factory_hex = bot.vault_address.trim_start_matches("factory:").trim();
+    let factory_addr: Address = factory_hex
+        .parse()
+        .map_err(|e| format!("Invalid factory address '{factory_hex}': {e}"))?;
+
+    let rpc_url: reqwest::Url = bot
+        .rpc_url
+        .parse()
+        .map_err(|e| format!("Invalid RPC URL '{}': {e}", bot.rpc_url))?;
+
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+    // Call VaultFactory.getServiceVaults(service_id)
+    let call = trading_runtime::contracts::IVaultFactory::getServiceVaultsCall {
+        serviceId: bot.service_id,
+    };
+    let calldata = call.abi_encode();
+
+    let result = provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(factory_addr)
+                .input(calldata.into()),
+        )
+        .await
+        .map_err(|e| format!("getServiceVaults call failed: {e}"))?;
+
+    let vaults = <alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Address>
+        as alloy::sol_types::SolType>::abi_decode(&result)
+        .map_err(|e| format!("Failed to decode vault addresses: {e}"))?;
+
+    if vaults.is_empty() {
+        return Err("No vaults found for this service".into());
+    }
+
+    // Use the last vault (most recently created for this service)
+    let vault = vaults.last().unwrap();
+    Ok(format!("{:#x}", vault))
 }

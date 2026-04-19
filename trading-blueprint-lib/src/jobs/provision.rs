@@ -166,9 +166,10 @@ pub async fn provision_core(
     };
 
     // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().
-    // Store factory_address as a placeholder so validators have a valid address for
-    // EIP-712 signing.  The BSM updates this to the real vault address on-chain.
-    let vault_address = format!("{:#x}", request.factory_address);
+    // Store factory address prefixed with "factory:" so activate can detect it needs
+    // resolution. The BSM creates the real vault on-chain, but never updates the
+    // operator-side record — activate resolves it via getServiceVaults().
+    let vault_address = format!("factory:{:#x}", request.factory_address);
 
     // Trading API URL points to the shared HTTP API running in the binary.
     // TRADING_API_URL overrides if explicitly set, otherwise:

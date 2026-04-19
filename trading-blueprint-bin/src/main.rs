@@ -556,8 +556,25 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .await;
 
     if let Err(e) = result {
-        tracing::error!("Runner failed fatally: {e:?}");
-        std::process::exit(1);
+        // In local dev, the Tangle event listener may fail to verify operator
+        // registration (e.g., contract not deployed or RPC mismatch). The cron
+        // workflow and HTTP APIs are already running in spawned tasks, so keep
+        // the process alive for local testing.
+        let is_local = std::env::var("CHAIN")
+            .map(|v| v == "testnet" || v == "local")
+            .unwrap_or(true);
+        if is_local {
+            tracing::warn!("Runner failed (non-fatal in local mode): {e:?}");
+            tracing::info!("APIs still running — starting standalone workflow cron");
+            // The runner failed (usually Tangle registration check), but the
+            // HTTP APIs are already spawned. Start the cron workflow manually
+            // so trading ticks keep firing.
+            trading_blueprint_lib::jobs::run_standalone_cron(service_id).await;
+            tokio::signal::ctrl_c().await.ok();
+        } else {
+            tracing::error!("Runner failed fatally: {e:?}");
+            std::process::exit(1);
+        }
     }
 
     Ok(())
