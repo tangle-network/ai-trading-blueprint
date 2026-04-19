@@ -658,10 +658,23 @@ struct CreateBotRequest {
     name: Option<String>,
 }
 
-async fn create_bot(
-    SessionAuth(caller): SessionAuth,
-    Json(body): Json<CreateBotRequest>,
-) -> ApiResult<serde_json::Value> {
+async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
+    let caller = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| {
+            let token = h.strip_prefix("Bearer ").unwrap_or(h);
+            sandbox_runtime::session_auth::validate_session_token(token)
+                .ok()
+                .map(|c| c.address)
+        })
+        .unwrap_or_else(|| "0x0000000000000000000000000000000000000000".into());
+    let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+        .await
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad body: {e}")))?;
+    let body: CreateBotRequest = serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?;
     let prompt = body.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(ApiError::message(
@@ -755,13 +768,14 @@ async fn create_bot(
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let bot_id = result.sandbox_id.replace("sandbox-", "trading-");
-    let bot = state::get_bot(&bot_id).ok().flatten().ok_or_else(|| {
-        ApiError::message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Bot {bot_id} not found after provision"),
-        )
-    })?;
+    let bot = state::find_bot_by_call(service_id, call_id)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Bot not found after provision (service={service_id}, call={call_id})"),
+            )
+        })?;
 
     // 2. Auto-activate with AI provider from env
     let mut user_env = serde_json::Map::new();
