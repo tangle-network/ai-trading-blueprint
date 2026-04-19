@@ -313,7 +313,7 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
 async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config && chmod 0777 /home/agent/.sidecar'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0777 /home/agent/.sidecar'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -322,6 +322,36 @@ async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(
     ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
         .await
         .map_err(|e| format!("Failed to prepare sidecar runtime directories: {e}"))?;
+
+    // Bootstrap memory ToC if it doesn't exist
+    let toc_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: r#"sh -lc 'test -f /home/agent/memory/toc.md || cat > /home/agent/memory/toc.md << "TOCEOF"
+# Memory Index
+Updated: new bot | Iteration: 0
+
+## Conversations
+(none yet — your owner can message you anytime)
+
+## Decisions
+(none yet — log non-obvious choices here)
+
+## Research
+(none yet)
+
+## Performance
+- New bot, no trades yet
+TOCEOF
+'"#
+        .to_string(),
+        cwd: String::new(),
+        env_json: String::new(),
+        timeout_ms: 10_000,
+    };
+    if let Err(e) = ai_agent_sandbox_blueprint_lib::run_exec_request(&toc_req, token).await {
+        tracing::warn!("Memory ToC bootstrap failed (non-fatal): {e}");
+    }
+
     Ok(())
 }
 

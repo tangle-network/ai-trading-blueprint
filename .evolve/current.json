@@ -1,13 +1,16 @@
 {
   "mode": "evolve",
+  "goal": "self-improving trading bot with positive walk-forward Sharpe",
+  "status": "in_progress",
   "generation": 7,
   "activePursuit": null,
-  "round": 1,
+  "round": 2,
   "critical": 0,
   "high": 0,
-  "rust_tests": "264 runtime (58 backtest)",
-  "api_tests": "66 HTTP API (12 backtest + 5 candle + 3 evolution)",
-  "forge_tests": "403/403",
-  "total_tests": 733,
-  "note": "Evolve round 1: harness_json persisted in TradingBotRecord. PATCH /api/bots/{id}/config accepts harness_json with validation. Default HarnessConfig stored on provision. state::update_harness() validates schema before persisting. Feedback loop fully closed: candle store → evolution endpoint → harness persistence → bot record → sidecar activation."
+  "updatedAt": "2026-04-19T06:00:00Z",
+  "note": "Evolve round 2: Bot operational (36+ ticks). Self-improving prompt deployed — bot can write code, backtest mutations, promote winners. Vault resolution fix committed. Scorecard expanded with live trading metrics. Waiting for iteration 40 meta-harness cycle.",
+  "metricClaims": {
+    "bot_self_improvement": "Bot writes and validates its own code mutations → improves without human intervention",
+    "live_bot_trade_quality": "Positive walk-forward Sharpe on out-of-sample data → strategy generalizes"
+  }
 }

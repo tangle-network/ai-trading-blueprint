@@ -1233,6 +1233,54 @@ async fn send_chat_message(
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
     trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
+
+    // Persist message to bot's memory filesystem so it survives across ticks.
+    // The bot reads /home/agent/memory/toc.md every tick and picks up new messages.
+    if let Some(msg_text) = body.get("message").and_then(|m| m.as_str()) {
+        let session_slug = session_id
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .take(30)
+            .collect::<String>();
+        let date = chrono::Utc::now().format("%Y-%m-%d");
+        let timestamp = chrono::Utc::now().format("%H:%M UTC");
+        let conv_file = format!("conversations/{date}-{session_slug}.md");
+
+        // Escape single quotes for shell
+        let escaped_msg = msg_text.replace('\'', "'\\''");
+        let escaped_file = conv_file.replace('\'', "'\\''");
+
+        let append_cmd = format!(
+            "sh -lc 'mkdir -p /home/agent/memory/conversations && \
+             echo \"\\n## Owner ({timestamp})\\n{escaped_msg}\" >> /home/agent/memory/{escaped_file}'",
+        );
+
+        // Update ToC to mark this conversation as ACTION NEEDED
+        let toc_cmd = format!(
+            "sh -lc 'if ! grep -q \"{escaped_file}\" /home/agent/memory/toc.md 2>/dev/null; then \
+             sed -i \"s/## Conversations/## Conversations\\n- [{session_slug}]({escaped_file}) — **ACTION NEEDED**/\" /home/agent/memory/toc.md 2>/dev/null || true; \
+             fi'",
+        );
+
+        // Fire-and-forget — don't block the chat response on filesystem writes
+        let sandbox_id = bot.sandbox_id.clone();
+        tokio::spawn(async move {
+            if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&sandbox_id) {
+                for cmd in [&append_cmd, &toc_cmd] {
+                    let req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                        sidecar_url: sandbox.sidecar_url.clone(),
+                        command: cmd.clone(),
+                        cwd: String::new(),
+                        env_json: String::new(),
+                        timeout_ms: 10_000,
+                    };
+                    let _ = ai_agent_sandbox_blueprint_lib::run_exec_request(&req, &sandbox.token)
+                        .await;
+                }
+            }
+        });
+    }
+
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,

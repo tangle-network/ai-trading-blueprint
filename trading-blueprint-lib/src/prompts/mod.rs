@@ -132,8 +132,66 @@ Authorization: Bearer {token}
         _ => MULTI_FRAGMENT,
     };
 
-    format!("{base}\n## Strategy\n{strategy_fragment}")
+    format!("{base}\n## Strategy\n{strategy_fragment}\n\n{MEMORY_BLOCK}")
 }
+
+const MEMORY_BLOCK: &str = r#"## Memory
+
+You have a persistent memory system at `/home/agent/memory/`. It survives across ticks.
+
+**Every tick**, read `/home/agent/memory/toc.md`. It's your table of contents — a short index of everything you know. Scan it for:
+- **Conversations** marked ACTION NEEDED — your owner sent you a message. Read it, think about it, respond.
+- **Research threads** in progress — continue or complete them.
+- **Decisions** you made — reference them for consistency.
+- **Performance reviews** — check if you have outstanding self-improvement items.
+
+### Memory structure
+```
+/home/agent/memory/
+  toc.md                        ← Read EVERY tick. Your index.
+  conversations/                ← Chat threads with your owner
+    YYYY-MM-DD-<topic>.md       ← One file per conversation thread
+  decisions/                    ← Why you did things (for future you)
+  research/                     ← Deep dives (market analysis, protocol evaluation)
+  insights.jsonl                ← One-liner learnings (append-only)
+```
+
+### Conversations with your owner
+Your owner can send you messages at any time. New messages appear as files in `conversations/` and are indexed in `toc.md` with **ACTION NEEDED**. When you see one:
+1. Read the conversation file
+2. Think about what they're asking
+3. Write your response to the SAME file (append under a `## Bot Response` heading with timestamp)
+4. Update toc.md — change ACTION NEEDED to "responded" or "in progress"
+5. If they asked you to research something, create a file in `research/` and start working on it
+6. If they asked you to change strategy, evaluate it, respond with your analysis, and act if appropriate
+
+### Managing your own memory
+- **You own the ToC.** Update it when you make decisions, complete research, or learn something.
+- **Summarize old threads.** If a conversation is >20 messages, summarize it and archive the detail.
+- **Log insights.** Append one-liners to `insights.jsonl` when you learn something reusable.
+- **Record decisions.** When you make a non-obvious choice, write a short note in `decisions/` explaining why.
+- **Don't dump everything into ToC.** Keep it under 30 lines. It's an index, not a diary.
+
+### Example toc.md
+```markdown
+# Memory Index
+Updated: 2026-04-19T19:00Z | Iteration: 58
+
+## Conversations
+- [BTC expansion](conversations/2026-04-19-btc-expansion.md) — Owner wants BTC. **ACTION NEEDED**
+- [Risk params](conversations/2026-04-18-risk-review.md) — Agreed on 2% max per trade. Resolved.
+
+## Decisions
+- [Regime filter](decisions/regime-filter.md) — Built after 0/12 counter-trend loss streak
+- [Skip streak](decisions/skip-streak.md) — 20+ skips preserving capital in downtrend
+
+## Research
+- [Hyperliquid eval](research/hyperliquid.md) — IN PROGRESS
+
+## Performance
+- 58 iterations, 12 trades (0 wins), capital preserved at $999.8K
+- Self-built tools: indicators.js, regime-detector, trade-quality-scorer
+```"#;
 
 /// Build the loop iteration prompt sent by cron workflow.
 pub fn build_loop_prompt(strategy_type: &str) -> String {
@@ -154,9 +212,18 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
          8. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
          9. Write metrics to /home/agent/metrics/latest.json\n\
          10. Report results as JSON\n\n\
+         {MEMORY_CHECK_BLOCK}\n\n\
          {EVOLUTION_BLOCK}"
     )
 }
+
+const MEMORY_CHECK_BLOCK: &str = r#"## Memory Check (do this FIRST)
+Read `/home/agent/memory/toc.md`. If any conversation is marked **ACTION NEEDED**, handle it before trading:
+1. Read the conversation file
+2. Write your response (append `## Bot Response (HH:MM UTC)` + your reply)
+3. Update toc.md — change ACTION NEEDED to "responded"
+4. If they asked you to do something, start doing it (research, strategy change, etc.)
+Your owner's messages are more important than any single trade."#;
 
 const EVOLUTION_BLOCK: &str = r#"## Harness-Driven Trading
 
