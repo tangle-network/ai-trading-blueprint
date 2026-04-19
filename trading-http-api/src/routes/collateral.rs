@@ -63,6 +63,17 @@ async fn release_collateral(
     State(state): State<Arc<TradingApiState>>,
     Json(req): Json<ReleaseCollateralRequest>,
 ) -> Result<Json<ReleaseCollateralResponse>, (StatusCode, String)> {
+    // Dedup: prevent concurrent/replay collateral releases for the same intent
+    if super::execute::check_and_insert_intent(&req.intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "Collateral release already submitted for intent {}",
+                req.intent_hash
+            ),
+        ));
+    }
+
     let vault_client = VaultClient::new(
         state.vault_address.clone(),
         state.rpc_url.clone().unwrap_or_default(),
@@ -422,6 +433,17 @@ async fn release_collateral_multi_bot(
     Extension(bot): Extension<crate::BotContext>,
     Json(req): Json<ReleaseCollateralRequest>,
 ) -> Result<Json<ReleaseCollateralResponse>, (StatusCode, String)> {
+    // Dedup: prevent concurrent/replay collateral releases for the same intent
+    if super::execute::check_and_insert_intent(&req.intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "Collateral release already submitted for intent {}",
+                req.intent_hash
+            ),
+        ));
+    }
+
     let vault_client =
         VaultClient::new(bot.vault_address.clone(), bot.rpc_url.clone(), bot.chain_id);
 

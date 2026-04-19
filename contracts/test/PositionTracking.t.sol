@@ -48,7 +48,7 @@ contract PositionTrackingTest is Setup {
         tokens[0] = address(tokenB);
         tokens[1] = makeAddr("tokenC");
 
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         assertEq(vault.heldTokenCount(), 2);
@@ -62,47 +62,101 @@ contract PositionTrackingTest is Setup {
         tokens[0] = address(tokenA); // deposit asset — should be skipped
         tokens[1] = address(tokenB);
 
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         assertEq(vault.heldTokenCount(), 1);
         assertEq(vault.getHeldTokens()[0], address(tokenB));
     }
 
-    function test_updateHeldTokens_onlyOperator() public {
+    /// @notice Audit C-1: updateHeldTokens is admin-only, not operator-reachable.
+    function test_updateHeldTokens_onlyAdmin() public {
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
 
-        bytes32 operatorRole = vault.OPERATOR_ROLE();
+        bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
+
+        // Operator no longer authorized (was the vector for NAV manipulation)
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole
+        ));
+        vault.updateHeldTokens(tokens);
+
+        // Random user also unauthorized
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, operatorRole
+            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
         ));
         vault.updateHeldTokens(tokens);
     }
 
+    /// @notice Audit C-1: can't clear a held-token list that still carries value.
+    function test_updateHeldTokens_rejectsNonzeroBalance() public {
+        // Seed heldTokens via admin with tokenB empty
+        address[] memory seed = new address[](1);
+        seed[0] = address(tokenB);
+        vm.prank(owner);
+        vault.updateHeldTokens(seed);
+
+        // Now mint tokenB into the vault — simulates an active position
+        tokenB.mint(address(vault), 1 ether);
+
+        // Attempt to clear the held list: must revert with HeldTokenNotEmpty
+        address[] memory replacement = new address[](0);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.HeldTokenNotEmpty.selector, address(tokenB), 1 ether));
+        vault.updateHeldTokens(replacement);
+    }
+
     function test_removeHeldToken() public {
-        // First add a token
+        // First add a token (balance is zero)
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
         assertEq(vault.heldTokenCount(), 1);
 
-        // Remove it
-        vm.prank(operator);
+        // Remove it — tokenB balance is 0, so removal is allowed
+        vm.prank(owner);
         vault.removeHeldToken(address(tokenB));
         assertEq(vault.heldTokenCount(), 0);
+    }
+
+    /// @notice Audit C-1: removeHeldToken reverts when the token has a nonzero balance.
+    ///         This blocks the attack where an operator hides value right before a deposit
+    ///         to manipulate share price.
+    function test_removeHeldToken_rejectsNonzeroBalance() public {
+        // Add tokenB + mint a balance
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(tokenB);
+        vm.prank(owner);
+        vault.updateHeldTokens(tokens);
+        tokenB.mint(address(vault), 100 ether);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.HeldTokenNotEmpty.selector, address(tokenB), 100 ether));
+        vault.removeHeldToken(address(tokenB));
+    }
+
+    /// @notice Audit C-1: operator cannot call removeHeldToken (previously the NAV vector).
+    function test_removeHeldToken_onlyAdmin() public {
+        bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(
+            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole
+        ));
+        vault.removeHeldToken(address(tokenB));
     }
 
     function test_positionsValue() public {
         // Mint tokenB to the vault
         tokenB.mint(address(vault), 500 ether);
 
-        // Add tokenB as held token
+        // Add tokenB as held token (admin-only since C-1)
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         // positionsValue should include tokenB balance
@@ -117,11 +171,11 @@ contract PositionTrackingTest is Setup {
     }
 
     function test_maxWithdraw_cappedByLiquidAssets() public {
-        // Mint tokenB to vault and add as held token
+        // Mint tokenB to vault and add as held token (admin-only since C-1)
         tokenB.mint(address(vault), 5000 ether);
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         // totalAssets = 10000 + 5000 = 15000, but liquidAssets = 10000
@@ -169,6 +223,15 @@ contract PositionTrackingTest is Setup {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.InvalidBps.selector));
         vault.setAdminUnwindMaxDrawdownBps(10001);
+    }
+
+    /// @notice Audit H-1: the storage default `adminUnwindMaxDrawdownBps = 0` used to mean
+    ///         "unlimited drawdown" — a compromised CREATOR_ROLE key could burn the vault
+    ///         in a single wind-down call. adminUnwind now falls back to
+    ///         DEFAULT_ADMIN_UNWIND_MAX_DRAWDOWN_BPS (500 = 5%) whenever the storage slot is 0.
+    function test_adminUnwindMaxDrawdownBps_hasFallbackConstant() public view {
+        assertEq(vault.adminUnwindMaxDrawdownBps(), 0, "storage default unchanged");
+        assertEq(vault.DEFAULT_ADMIN_UNWIND_MAX_DRAWDOWN_BPS(), 500, "fallback = 5%");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

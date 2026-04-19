@@ -366,10 +366,17 @@ async fn send_message(
             .to_string();
 
         if !msg_id.is_empty() {
-            session_auth::OWNER_MESSAGES
-                .entry(bot_id)
-                .or_default()
-                .insert(msg_id);
+            let mut set = session_auth::OWNER_MESSAGES.entry(bot_id).or_default();
+            // Cap at 10K entries per bot to prevent unbounded memory growth (RACE-7).
+            // On overflow, evict the oldest half (HashSet has no ordering, so we
+            // drain arbitrarily — message source tracking is best-effort).
+            if set.len() >= 10_000 {
+                let to_remove: Vec<String> = set.iter().take(5_000).cloned().collect();
+                for id in to_remove {
+                    set.remove(&id);
+                }
+            }
+            set.insert(msg_id);
         }
     }
 

@@ -150,7 +150,7 @@ static EXECUTED_INTENTS: Lazy<Mutex<IntentDedupStore>> = Lazy::new(|| {
 /// Returns `true` if the intent was already present (duplicate).
 ///
 /// Fail-closed: mutex poison → returns `true` (blocks execution).
-fn check_and_insert_intent(intent_hash: &str) -> bool {
+pub(crate) fn check_and_insert_intent(intent_hash: &str) -> bool {
     let Ok(mut guard) = EXECUTED_INTENTS.lock() else {
         // Fail-closed: poisoned mutex → treat as duplicate to prevent replay.
         tracing::error!("Intent dedup mutex poisoned — blocking execution for safety");

@@ -30,14 +30,28 @@ pub async fn discover_validator_endpoints(validator_service_ids: &[u64]) -> Vec<
         }
     }
 
-    // 2. If we got endpoints from on-chain, use them
+    // 2. If we got endpoints from on-chain, validate and use them
     if !endpoints.is_empty() {
-        tracing::info!(
-            "Discovered {} validator endpoints from on-chain for {} services",
-            endpoints.len(),
-            validator_service_ids.len(),
-        );
-        return endpoints;
+        // Validate all discovered endpoints to block SSRF (SSRF-2).
+        // On-chain metadata is user-controlled — operators self-register.
+        let (valid, blocked): (Vec<_>, Vec<_>) = endpoints
+            .into_iter()
+            .partition(|ep| trading_runtime::url_validation::validate_rpc_url(ep).is_ok());
+        if !blocked.is_empty() {
+            tracing::warn!(
+                "Blocked {} validator endpoints with internal/metadata addresses: {:?}",
+                blocked.len(),
+                blocked,
+            );
+        }
+        if !valid.is_empty() {
+            tracing::info!(
+                "Discovered {} valid validator endpoints from on-chain for {} services",
+                valid.len(),
+                validator_service_ids.len(),
+            );
+            return valid;
+        }
     }
 
     // 3. Fall back to env var

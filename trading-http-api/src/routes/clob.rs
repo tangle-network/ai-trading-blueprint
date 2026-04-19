@@ -139,6 +139,10 @@ async fn approve_collateral(
         )
     })?;
 
+    // Validate to block SSRF via user-supplied rpc_url
+    let rpc_url = trading_runtime::url_validation::validate_rpc_url(&rpc_url)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid rpc_url: {e}")))?;
+
     let results = clob
         .approve_collateral(&rpc_url, q.neg_risk)
         .await

@@ -760,7 +760,12 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1u64);
-    let call_id = chrono::Utc::now().timestamp() as u64;
+    // Use milliseconds + atomic counter to prevent same-second collision (RACE-2).
+    static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let call_id = (chrono::Utc::now().timestamp_millis() as u64)
+        .wrapping_mul(1000)
+        .wrapping_add(seq % 1000);
 
     let result = trading_blueprint_lib::jobs::provision_core(
         request,
@@ -3460,6 +3465,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::json!(null),
         };
         store.insert(state::bot_key("wd-bot"), bot).unwrap();
 
@@ -3514,6 +3520,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::json!(null),
         };
         state::bots()
             .unwrap()

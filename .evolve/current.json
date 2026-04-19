@@ -1,16 +1,11 @@
 {
-  "mode": "evolve",
-  "goal": "self-improving trading bot with positive walk-forward Sharpe",
-  "status": "in_progress",
-  "generation": 7,
-  "activePursuit": null,
-  "round": 2,
+  "mode": "harden",
+  "status": "clean",
+  "activeHarden": "2026-04-19-report.md",
   "critical": 0,
-  "high": 0,
-  "updatedAt": "2026-04-19T06:00:00Z",
-  "note": "Evolve round 2: Bot operational (36+ ticks). Self-improving prompt deployed — bot can write code, backtest mutations, promote winners. Vault resolution fix committed. Scorecard expanded with live trading metrics. Waiting for iteration 40 meta-harness cycle.",
-  "metricClaims": {
-    "bot_self_improvement": "Bot writes and validates its own code mutations → improves without human intervention",
-    "live_bot_trade_quality": "Positive walk-forward Sharpe on out-of-sample data → strategy generalizes"
-  }
+  "high": 1,
+  "medium": 0,
+  "low": 0,
+  "updatedAt": "2026-04-19T14:00:00Z",
+  "note": "Harden round 3 complete. 3 CRITICAL + 7 HIGH + 4 MEDIUM fixed. 1 HIGH deferred (CHAIN-A: calldata not in EIP-712 scope — requires protocol version bump). 884 tests passing (429 Forge + 455 Rust). Credential scan clean. SSRF vectors blocked."
 }

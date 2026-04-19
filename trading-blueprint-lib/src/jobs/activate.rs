@@ -8,9 +8,27 @@
 //! - `inject_secrets(id, user_env)` merges user env on top of base env
 //! - `wipe_secrets(id)` removes user env, preserving base env
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use serde_json::json;
 
 use crate::state::{bot_key, bots, clear_activation, get_bot, update_activation_progress};
+
+/// Per-bot mutex preventing concurrent activate/wipe operations.
+/// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
+static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
+    Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut map = BOT_LIFECYCLE_LOCKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    map.entry(bot_id.to_string())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 
 /// Result of successful activation.
 #[derive(Debug)]
@@ -70,6 +88,11 @@ pub async fn activate_bot_with_secrets(
     user_env: serde_json::Map<String, serde_json::Value>,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<ActivateResult, String> {
+    // Acquire per-bot lifecycle lock to prevent RACE-3 (concurrent activation)
+    // and RACE-6 (activate + wipe interleave).
+    let lock = bot_lifecycle_lock(bot_id);
+    let _guard = lock.lock().await;
+
     // 1. Load and validate
     update_activation_progress(bot_id, "validating", "Loading bot configuration");
 
@@ -648,6 +671,10 @@ pub async fn wipe_bot_secrets(
     bot_id: &str,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<(), String> {
+    // Acquire per-bot lifecycle lock to prevent RACE-6 (wipe + activate interleave).
+    let lock = bot_lifecycle_lock(bot_id);
+    let _guard = lock.lock().await;
+
     let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
     // Check sandbox state — secrets_configured is derived from sandbox record

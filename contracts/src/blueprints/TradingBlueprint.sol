@@ -595,10 +595,35 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
         // Use service operators as TradeValidator signers — operators (not users)
         // produce EIP-712 validation signatures via the validator blueprint.
-        // If provision request included explicit signers, use those as override.
+        // If provision request included explicit signers, use those as override — but
+        // only if every override address is in the service-level approved set. Audit
+        // finding H-6: without this check, a malicious consumer could submit a
+        // provision job with `signers = [theirAddr]` and single-sig requirement,
+        // bypassing the stricter signer set the service was approved under.
         address[] memory signers = _serviceOperators[serviceId];
         uint256 requiredSigs = signers.length > 0 ? 1 : 0;
         if (pp.signers.length > 0) {
+            address[] memory approved = svcCfg.signers;
+            if (approved.length > 0) {
+                // Enforce subset: every pp.signers[i] must be in svcCfg.signers.
+                // Skip + emit on mismatch (matches existing skip-on-error pattern —
+                // reverting would brick onJobResult for the entire service).
+                for (uint256 i = 0; i < pp.signers.length; i++) {
+                    bool found = false;
+                    for (uint256 j = 0; j < approved.length; j++) {
+                        if (pp.signers[i] == approved[j]) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        emit BotVaultSkipped(
+                            serviceId, jobCallId, "provision signer not in service-approved set"
+                        );
+                        return;
+                    }
+                }
+            }
             signers = pp.signers;
             requiredSigs = pp.requiredSigs;
         }
