@@ -26,7 +26,7 @@ use trading_runtime::hyperliquid::HyperliquidClient;
 
 static HL_CLIENT: OnceLock<HyperliquidClient> = OnceLock::new();
 
-fn get_hl_client(
+pub(crate) fn get_hl_client(
     state: &MultiBotTradingState,
 ) -> Result<&'static HyperliquidClient, (StatusCode, String)> {
     if let Some(client) = HL_CLIENT.get() {
