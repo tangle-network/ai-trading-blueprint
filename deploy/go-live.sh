@@ -58,7 +58,7 @@ set -euo pipefail
 echo "Installing build dependencies..."
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-  build-essential pkg-config libssl-dev protobuf-compiler git \
+  build-essential pkg-config libssl-dev protobuf-compiler libprotobuf-dev git \
   cmake clang libclang-dev curl docker.io >/dev/null 2>&1
 echo "Build deps installed"
 

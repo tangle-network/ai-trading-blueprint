@@ -70,7 +70,7 @@ fi
 # All build deps in one shot (Rust compilation needs these)
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-  build-essential pkg-config libssl-dev protobuf-compiler git \
+  build-essential pkg-config libssl-dev protobuf-compiler libprotobuf-dev git \
   cmake clang libclang-dev curl docker-compose-plugin >/dev/null 2>&1
 
 # Install Rust
