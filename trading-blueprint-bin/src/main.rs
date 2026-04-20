@@ -578,9 +578,39 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         runner = runner.producer(producer).background_service(gateway);
     }
 
+    let private_key_for_shutdown = std::env::var("PRIVATE_KEY").unwrap_or_default();
     let result = runner
-        .with_shutdown_handler(async {
-            tracing::info!("Shutting down trading blueprint");
+        .with_shutdown_handler(async move {
+            tracing::info!("Shutting down trading blueprint — closing HL positions");
+            // Emergency-close any open Hyperliquid positions on shutdown.
+            if !private_key_for_shutdown.is_empty() {
+                let is_testnet =
+                    std::env::var("HYPERLIQUID_TESTNET").is_ok_and(|v| v == "1" || v == "true");
+                let client = if is_testnet {
+                    trading_runtime::hyperliquid::HyperliquidClient::testnet(
+                        &private_key_for_shutdown,
+                    )
+                } else {
+                    trading_runtime::hyperliquid::HyperliquidClient::new(&private_key_for_shutdown)
+                };
+                match client {
+                    Ok(c) => {
+                        let results = c.emergency_close_all().await;
+                        for (asset, result) in &results {
+                            match result {
+                                Ok(()) => tracing::info!(asset, "Position closed on shutdown"),
+                                Err(e) => tracing::error!(asset, error = %e, "FAILED to close"),
+                            }
+                        }
+                        if results.is_empty() {
+                            tracing::info!("No open HL positions to close");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Could not init HL client for shutdown: {e}");
+                    }
+                }
+            }
         })
         .run()
         .await;

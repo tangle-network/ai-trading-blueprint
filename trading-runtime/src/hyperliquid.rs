@@ -427,6 +427,254 @@ impl HyperliquidClient {
     pub async fn get_mids(&self) -> Result<std::collections::HashMap<String, String>, String> {
         self.info.mids().await.map_err(|e| format!("HL mids: {e}"))
     }
+
+    /// Reconcile local position ledger against HL clearinghouse state.
+    ///
+    /// Called on startup to detect orphaned positions (open on HL but unknown locally).
+    /// Returns the list of HL positions found, with reconciliation status.
+    pub async fn reconcile_positions(
+        &self,
+        ledger: &PositionLedger,
+    ) -> Result<ReconciliationResult, String> {
+        let account = self.get_account().await?;
+        let mut orphaned = Vec::new();
+        let mut matched = Vec::new();
+        let mut stale = Vec::new();
+
+        // Check HL positions against local ledger
+        for hl_pos in &account.positions {
+            let size: f64 = hl_pos.size.parse().unwrap_or(0.0);
+            if size.abs() < 1e-10 {
+                continue;
+            }
+            match ledger.get(&hl_pos.asset) {
+                Some(local) => {
+                    matched.push(hl_pos.asset.clone());
+                    tracing::info!(
+                        asset = %hl_pos.asset,
+                        hl_size = %hl_pos.size,
+                        local_size = %local.size,
+                        "Position reconciled"
+                    );
+                }
+                None => {
+                    orphaned.push(hl_pos.clone());
+                    tracing::error!(
+                        asset = %hl_pos.asset,
+                        size = %hl_pos.size,
+                        entry = %hl_pos.entry_price,
+                        "ORPHANED POSITION — open on HL but not in local ledger"
+                    );
+                    // Add to ledger so we track it going forward
+                    ledger.upsert(HlPositionRecord {
+                        asset: hl_pos.asset.clone(),
+                        size: hl_pos.size.clone(),
+                        entry_price: hl_pos.entry_price.clone(),
+                        side: if size > 0.0 { "long" } else { "short" }.into(),
+                        sl_oid: None,
+                        tp_oid: None,
+                        opened_at: chrono::Utc::now().timestamp(),
+                        reconciled: true,
+                    });
+                }
+            }
+        }
+
+        // Check local records against HL (stale entries)
+        let hl_assets: std::collections::HashSet<String> =
+            account.positions.iter().map(|p| p.asset.clone()).collect();
+        for (asset, _) in ledger.all() {
+            if !hl_assets.contains(&asset) {
+                stale.push(asset.clone());
+                tracing::warn!(asset = %asset, "Stale local record — no HL position, removing");
+                ledger.remove(&asset);
+            }
+        }
+
+        Ok(ReconciliationResult {
+            orphaned_count: orphaned.len(),
+            matched_count: matched.len(),
+            stale_removed: stale.len(),
+            hl_positions: account.positions,
+        })
+    }
+
+    /// Emergency close all open HL positions (graceful shutdown).
+    ///
+    /// Places market-close orders for each position. Best-effort — logs errors
+    /// but doesn't propagate them (shutdown must complete).
+    pub async fn emergency_close_all(&self) -> Vec<(String, Result<(), String>)> {
+        let account = match self.get_account().await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!("Cannot fetch HL account for emergency close: {e}");
+                return vec![];
+            }
+        };
+
+        let mut results = Vec::new();
+        for pos in &account.positions {
+            let size: f64 = match pos.size.parse::<f64>() {
+                Ok(s) if s.abs() > 1e-10 => s,
+                _ => continue,
+            };
+
+            let close_req = PlaceOrderRequest {
+                asset: AssetId::Symbol(pos.asset.clone()),
+                is_buy: size < 0.0, // close long = sell, close short = buy
+                size: format!("{:.8}", size.abs()),
+                order_type: HlOrderType::Market,
+                reduce_only: true,
+                cloid: None,
+            };
+
+            tracing::warn!(
+                asset = %pos.asset,
+                size = %pos.size,
+                "EMERGENCY CLOSE — shutting down with open position"
+            );
+
+            let result = self.place_order(&close_req).await.map(|_| ());
+            if let Err(ref e) = result {
+                tracing::error!(
+                    asset = %pos.asset,
+                    size = %pos.size,
+                    error = %e,
+                    "EMERGENCY CLOSE FAILED — position remains open on HL"
+                );
+            }
+            results.push((pos.asset.clone(), result));
+        }
+        results
+    }
+}
+
+// ── Retry helper ────────────────────────────────────────────────────────────
+
+/// Retry an async operation with exponential backoff.
+/// Returns the result of the first successful attempt, or the last error.
+pub async fn with_retry<F, Fut, T>(label: &str, max_attempts: u32, f: F) -> Result<T, String>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let mut last_err = String::new();
+    for attempt in 0..max_attempts {
+        match f().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                last_err = e;
+                if attempt + 1 < max_attempts {
+                    let delay_ms = 1000 * 2u64.pow(attempt);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max = max_attempts,
+                        delay_ms,
+                        error = %last_err,
+                        "{label}: retrying after {delay_ms}ms"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "{label}: all {max_attempts} attempts failed: {last_err}"
+    ))
+}
+
+// ── Position ledger ─────────────────────────────────────────────────────────
+
+/// A single tracked HL position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HlPositionRecord {
+    pub asset: String,
+    pub size: String,
+    pub entry_price: String,
+    pub side: String,
+    pub sl_oid: Option<u64>,
+    pub tp_oid: Option<u64>,
+    pub opened_at: i64,
+    #[serde(default)]
+    pub reconciled: bool,
+}
+
+/// Persistent position ledger backed by a JSON file in the state directory.
+pub struct PositionLedger {
+    positions: std::sync::RwLock<std::collections::HashMap<String, HlPositionRecord>>,
+    path: std::path::PathBuf,
+}
+
+impl PositionLedger {
+    /// Load or create the position ledger from the state directory.
+    pub fn open(state_dir: &std::path::Path) -> Self {
+        let path = state_dir.join("hl-positions.json");
+        let positions = if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+                Err(e) => {
+                    tracing::error!(path = %path.display(), error = %e, "Failed to read position ledger");
+                    std::collections::HashMap::new()
+                }
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+        let count = positions.len();
+        if count > 0 {
+            tracing::info!(count, "Loaded HL position ledger from disk");
+        }
+        Self {
+            positions: std::sync::RwLock::new(positions),
+            path,
+        }
+    }
+
+    pub fn get(&self, asset: &str) -> Option<HlPositionRecord> {
+        self.positions.read().unwrap().get(asset).cloned()
+    }
+
+    pub fn upsert(&self, record: HlPositionRecord) {
+        let asset = record.asset.clone();
+        self.positions.write().unwrap().insert(asset, record);
+        self.flush();
+    }
+
+    pub fn remove(&self, asset: &str) {
+        self.positions.write().unwrap().remove(asset);
+        self.flush();
+    }
+
+    pub fn all(&self) -> Vec<(String, HlPositionRecord)> {
+        self.positions
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    fn flush(&self) {
+        let data = self.positions.read().unwrap();
+        if let Ok(json) = serde_json::to_string_pretty(&*data)
+            && let Err(e) = std::fs::write(&self.path, json)
+        {
+            tracing::error!(
+                path = %self.path.display(),
+                error = %e,
+                "Failed to persist HL position ledger"
+            );
+        }
+    }
+}
+
+/// Result of a startup reconciliation.
+#[derive(Debug)]
+pub struct ReconciliationResult {
+    pub orphaned_count: usize,
+    pub matched_count: usize,
+    pub stale_removed: usize,
+    pub hl_positions: Vec<PositionInfo>,
 }
 
 #[cfg(test)]
@@ -495,5 +743,87 @@ mod tests {
         let json = r#"{"asset": 1, "leverage": 10}"#;
         let req: SetLeverageRequest = serde_json::from_str(json).unwrap();
         assert!(req.is_cross); // default true
+    }
+
+    #[test]
+    fn position_ledger_crud() {
+        let dir = std::env::temp_dir().join(format!("hl-ledger-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ledger = PositionLedger::open(&dir);
+        assert!(ledger.all().is_empty());
+
+        ledger.upsert(HlPositionRecord {
+            asset: "ETH".into(),
+            size: "0.1".into(),
+            entry_price: "2500".into(),
+            side: "long".into(),
+            sl_oid: Some(123),
+            tp_oid: Some(456),
+            opened_at: 1000,
+            reconciled: false,
+        });
+        assert_eq!(ledger.all().len(), 1);
+        assert!(ledger.get("ETH").is_some());
+
+        // Persistence — reopen from disk
+        let ledger2 = PositionLedger::open(&dir);
+        assert_eq!(ledger2.all().len(), 1);
+        assert_eq!(ledger2.get("ETH").unwrap().size, "0.1");
+
+        // Remove
+        ledger2.remove("ETH");
+        assert!(ledger2.get("ETH").is_none());
+
+        // Verify removal persisted
+        let ledger3 = PositionLedger::open(&dir);
+        assert!(ledger3.all().is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn position_record_serde() {
+        let rec = HlPositionRecord {
+            asset: "BTC".into(),
+            size: "-0.01".into(),
+            entry_price: "67000".into(),
+            side: "short".into(),
+            sl_oid: None,
+            tp_oid: Some(789),
+            opened_at: 12345,
+            reconciled: true,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let parsed: HlPositionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.asset, "BTC");
+        assert_eq!(parsed.side, "short");
+        assert!(parsed.reconciled);
+    }
+
+    #[tokio::test]
+    async fn retry_succeeds_on_second_attempt() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let attempts = AtomicU32::new(0);
+        let result = with_retry("test", 3, || {
+            let n = attempts.fetch_add(1, Ordering::Relaxed);
+            async move {
+                if n == 0 {
+                    Err("transient".into())
+                } else {
+                    Ok(42u32)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn retry_exhausts_attempts() {
+        let result: Result<(), String> =
+            with_retry("test", 2, || async { Err("permanent".into()) }).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("2 attempts"));
     }
 }
