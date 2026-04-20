@@ -739,6 +739,51 @@ async fn execute_hyperliquid_trade(
     // Map intent action to HL order params
     let action = parse_action(&req.intent.action)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
+
+    // Envelope check — replaces validator signatures for HL trades.
+    // Cancels and closes always pass. Opens are checked against the envelope.
+    let is_open = matches!(
+        action,
+        trading_runtime::types::Action::OpenLong
+            | trading_runtime::types::Action::OpenShort
+            | trading_runtime::types::Action::Buy
+    );
+    if is_open {
+        let envelope = super::hyperliquid::get_envelope(state);
+        let asset = req
+            .intent
+            .metadata
+            .get("asset")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&req.intent.token_out);
+        let size_usd = valuation
+            .notional_usd
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let leverage: u32 = req
+            .intent
+            .metadata
+            .get("leverage")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        // Approximate current exposure from HL account (best-effort)
+        let current_exposure = 0.0; // TODO: pull from position ledger
+        let check = envelope.check_trade(
+            asset,
+            size_usd.try_into().unwrap_or(0.0),
+            leverage,
+            true,
+            current_exposure,
+        );
+        if !check.allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "Trade rejected by envelope: {}",
+                    check.reason.unwrap_or_default()
+                ),
+            ));
+        }
+    }
     let is_buy = matches!(
         action,
         trading_runtime::types::Action::OpenLong
@@ -984,9 +1029,10 @@ async fn execute_multi_bot(
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
 
-    // Off-chain signature verification — prevents fabricated validator signatures
-    // from reaching any execution path. Paper trades are exempt.
-    if !bot.paper_trade {
+    // Hyperliquid trades use envelope-based authorization (instant, no validator round-trip).
+    // All other protocols use per-trade validator signature verification.
+    let is_hl = req.intent.target_protocol == "hyperliquid";
+    if !bot.paper_trade && !is_hl {
         verify_signatures_offchain(&req.validation, &bot.vault_address)?;
     }
 

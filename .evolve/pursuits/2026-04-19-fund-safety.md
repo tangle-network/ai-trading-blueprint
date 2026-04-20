@@ -1,4 +1,4 @@
-# Pursuit: Fund Safety — Don't Lose Money on Crash/Restart
+# Pursuit: Fund Safety + Trading Envelope Architecture
 Generation: 10
 Status: building
 

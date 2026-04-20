@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{
     Json, Router,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -50,6 +50,42 @@ pub(crate) fn get_hl_client(
     HL_CLIENT
         .get()
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "HL client race".into()))
+}
+
+// ── Trading envelope ────────────────────────────────────────────────────────
+
+use std::sync::RwLock;
+use trading_runtime::trading_envelope::TradingEnvelope;
+
+static ENVELOPE: std::sync::LazyLock<RwLock<TradingEnvelope>> = std::sync::LazyLock::new(|| {
+    // Load from state dir if available, otherwise use default
+    let state_dir = sandbox_runtime::store::state_dir();
+    let path = state_dir.join("trading-envelope.json");
+    let env = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        TradingEnvelope::default()
+    };
+    RwLock::new(env)
+});
+
+pub(crate) fn get_envelope(_state: &MultiBotTradingState) -> TradingEnvelope {
+    ENVELOPE.read().unwrap().clone()
+}
+
+fn set_envelope(env: TradingEnvelope) {
+    // Persist to disk
+    let state_dir = sandbox_runtime::store::state_dir();
+    let path = state_dir.join("trading-envelope.json");
+    if let Ok(json) = serde_json::to_string_pretty(&env) {
+        if let Err(e) = std::fs::write(&path, json) {
+            tracing::error!(error = %e, "Failed to persist trading envelope");
+        }
+    }
+    *ENVELOPE.write().unwrap() = env;
 }
 
 // ── Request/Response types ──────────────────────────────────────────────────
@@ -153,6 +189,51 @@ async fn get_prices(
     Ok(Json(mids))
 }
 
+// ── Envelope endpoints ──────────────────────────────────────────────────────
+
+async fn get_envelope_handler(
+    State(state): State<Arc<MultiBotTradingState>>,
+) -> Json<TradingEnvelope> {
+    Json(get_envelope(&state))
+}
+
+async fn update_envelope_handler(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    Json(env): Json<TradingEnvelope>,
+) -> Result<Json<TradingEnvelope>, (StatusCode, String)> {
+    // Validate envelope constraints
+    if env.max_leverage == 0 {
+        return Err((StatusCode::BAD_REQUEST, "max_leverage must be > 0".into()));
+    }
+    if env.max_position_usd <= 0.0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_position_usd must be > 0".into(),
+        ));
+    }
+    if env.allowed_assets.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "allowed_assets must be non-empty".into(),
+        ));
+    }
+    if env.max_drawdown_pct <= 0.0 || env.max_drawdown_pct > 1.0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_drawdown_pct must be in (0, 1]".into(),
+        ));
+    }
+
+    set_envelope(env.clone());
+    tracing::info!(
+        assets = ?env.allowed_assets,
+        max_pos = env.max_position_usd,
+        max_lev = env.max_leverage,
+        "Trading envelope updated"
+    );
+    Ok(Json(env))
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
@@ -163,4 +244,8 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route("/hyperliquid/leverage", post(set_leverage))
         .route("/hyperliquid/account", get(get_account))
         .route("/hyperliquid/prices", get(get_prices))
+        .route(
+            "/hyperliquid/envelope",
+            get(get_envelope_handler).put(update_envelope_handler),
+        )
 }

@@ -16,6 +16,7 @@ pub mod portfolio;
 pub mod signature_verify;
 pub mod simulator;
 pub mod strategy;
+pub mod trading_envelope;
 pub mod types;
 pub mod url_validation;
 pub mod validator_client;
