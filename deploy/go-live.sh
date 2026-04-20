@@ -138,6 +138,49 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Step 4.5: Request a service instance
+# ──────────────────────────────────────────────────────────────────────────────
+
+TANGLE_CONTRACT="${TANGLE_CONTRACT:-}"
+RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-}"
+
+echo "=== Step 4.5: Requesting service instance ==="
+if [ -n "$TANGLE_CONTRACT" ] && [ -n "$RESTAKING_CONTRACT" ] && [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ]; then
+  SERVICE_REQUEST_OUTPUT=$(cargo tangle blueprint service request \
+    --http-rpc-url "$TANGLE_HTTP_RPC" \
+    --ws-rpc-url "$TANGLE_RPC" \
+    --keystore-path ./keystore \
+    --tangle-contract "$TANGLE_CONTRACT" \
+    --restaking-contract "$RESTAKING_CONTRACT" \
+    --blueprint-id "$BLUEPRINT_ID" \
+    --operator "$OPERATOR_ADDRESS" \
+    --ttl 0 \
+    --json 2>&1 || echo "{}")
+
+  SERVICE_ID=$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"service_id":\s*\K\d+' 2>/dev/null || echo "")
+  REQUEST_ID=$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' 2>/dev/null || echo "")
+  echo "Service request: ID=${REQUEST_ID:-unknown}, Service=${SERVICE_ID:-pending}"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 4.6: Auto-approve (operator approves their own service request)
+  # ──────────────────────────────────────────────────────────────────────────────
+
+  if [ -n "$REQUEST_ID" ]; then
+    echo "=== Step 4.6: Approving service request ==="
+    cargo tangle blueprint service approve \
+      --http-rpc-url "$TANGLE_HTTP_RPC" \
+      --ws-rpc-url "$TANGLE_RPC" \
+      --keystore-path ./keystore \
+      --tangle-contract "$TANGLE_CONTRACT" \
+      --restaking-contract "$RESTAKING_CONTRACT" 2>&1 || echo "Approval may need manual action"
+  fi
+else
+  echo "SKIP: Set TANGLE_CONTRACT and RESTAKING_CONTRACT to request a service."
+  echo "  You can do this manually later:"
+  echo "  cargo tangle blueprint service request --blueprint-id $BLUEPRINT_ID --operator $OPERATOR_ADDRESS ..."
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Step 5: Configure .env on server
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -148,7 +191,7 @@ cat > /opt/trading-blueprint/.env << 'ENVEOF'
 
 # Tangle Protocol
 BLUEPRINT_ID=${BLUEPRINT_ID:-0}
-SERVICE_ID=1
+SERVICE_ID=${SERVICE_ID:-1}
 CHAIN=testnet
 HTTP_RPC_URL=${TANGLE_HTTP_RPC}
 CHAIN_ID=${CHAIN_ID}
