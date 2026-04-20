@@ -1029,11 +1029,25 @@ async fn execute_multi_bot(
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
 
-    // Hyperliquid trades use envelope-based authorization (instant, no validator round-trip).
-    // All other protocols use per-trade validator signature verification.
-    let is_hl = req.intent.target_protocol == "hyperliquid";
-    if !bot.paper_trade && !is_hl {
-        verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+    // Validation trust level determines which authorization path fires:
+    // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
+    // - Envelope: trades within approved bounds skip validators (instant)
+    // - SelfOperated: no external validation, local policy only (instant)
+    use trading_runtime::ValidationTrust;
+    if !bot.paper_trade {
+        match bot.validation_trust {
+            ValidationTrust::PerTrade => {
+                verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+            }
+            ValidationTrust::Envelope => {
+                // Envelope check happens in execute_hyperliquid_trade or is
+                // skipped for closes/cancels. No validator round-trip needed.
+            }
+            ValidationTrust::SelfOperated => {
+                // Operator trusts themselves. No external validation.
+                // Envelope bounds still enforced for risk management.
+            }
+        }
     }
 
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());

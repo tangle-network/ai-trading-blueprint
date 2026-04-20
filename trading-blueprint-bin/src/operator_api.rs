@@ -3466,6 +3466,7 @@ mod tests {
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::json!(null),
+            validation_trust: trading_runtime::ValidationTrust::default(),
         };
         store.insert(state::bot_key("wd-bot"), bot).unwrap();
 
@@ -3521,6 +3522,7 @@ mod tests {
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::json!(null),
+            validation_trust: trading_runtime::ValidationTrust::default(),
         };
         state::bots()
             .unwrap()
