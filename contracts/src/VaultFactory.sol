@@ -182,7 +182,12 @@ contract VaultFactory is Ownable2Step {
         FeeDistributor.FeeConfig calldata feeConfig
     ) internal returns (address vault, address shareAddr) {
         if (assetToken == address(0) || admin == address(0)) revert ZeroAddress();
-        if (signers.length == 0 || requiredSigs == 0 || requiredSigs > signers.length) {
+        // H-2+H-4: enforce minimum signer floor. 1-of-n collapses the validator
+        // layer — a single compromised key = bounded-by-whitelist theft. Require at
+        // least 2 signers with at least 2-of-n threshold for meaningful multi-sig.
+        if (
+            signers.length < 2 || requiredSigs < 2 || requiredSigs > signers.length
+        ) {
             revert InvalidSignerConfig();
         }
 

@@ -145,10 +145,16 @@ contract TradeValidator is EIP712, Ownable2Step {
         emit SignerRemoved(vault, signer);
     }
 
-    /// @notice Update the required signature count for a vault
+    /// @notice Update the required signature count for a vault (increase only).
+    /// @dev M-3: threshold can only go up, never down. Prevents a compromised factory
+    ///      owner from silently reducing the quorum to 1-of-n and self-signing trades.
+    ///      To lower the threshold, deploy a new vault.
     function setRequiredSignatures(address vault, uint256 requiredSigs) external onlyOwner {
         VaultConfig storage config = _vaultConfigs[vault];
         if (requiredSigs == 0 || requiredSigs > config.signers.length()) {
+            revert InvalidRequiredSignatures();
+        }
+        if (requiredSigs < config.requiredSignatures) {
             revert InvalidRequiredSignatures();
         }
         config.requiredSignatures = requiredSigs;

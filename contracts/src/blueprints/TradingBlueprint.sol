@@ -280,13 +280,16 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint256 requiredSigs;
         if (cfg.signers.length > 0) {
             signers = cfg.signers;
-            requiredSigs = cfg.requiredSignatures > 0 ? cfg.requiredSignatures : 1;
+            // H-2: enforce minimum quorum. Explicit config honored if >= 2, else floor at 2.
+            uint256 cfgReq = cfg.requiredSignatures > 0 ? cfg.requiredSignatures : 2;
+            requiredSigs = cfgReq < 2 ? 2 : cfgReq;
         } else {
             signers = new address[](operators.length);
             for (uint256 i = 0; i < operators.length; i++) {
                 signers[i] = operators[i];
             }
-            requiredSigs = signers.length > 0 ? 1 : 0;
+            // H-2: default to 2-of-n (not 1-of-n) to prevent single-key compromise drain.
+            requiredSigs = signers.length >= 2 ? 2 : signers.length;
         }
 
         if (signers.length == 0 || requiredSigs == 0) {
@@ -601,7 +604,8 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         // provision job with `signers = [theirAddr]` and single-sig requirement,
         // bypassing the stricter signer set the service was approved under.
         address[] memory signers = _serviceOperators[serviceId];
-        uint256 requiredSigs = signers.length > 0 ? 1 : 0;
+        // H-2: default to 2-of-n (not 1-of-n) to prevent single-key compromise drain.
+        uint256 requiredSigs = signers.length >= 2 ? 2 : signers.length;
         if (pp.signers.length > 0) {
             address[] memory approved = svcCfg.signers;
             if (approved.length > 0) {
