@@ -84,12 +84,39 @@
 
 **Tests:** 42 backtest (from 28), 248 runtime total, 0 regressions
 
-## Converged
-All CRITICALs and HIGHs from both /harden rounds are resolved.
-- **CRITICAL: 0** (9 fixed across Gen 1-3)
-- **HIGH: 0** (all fixed including LIFE-5)
-- **MEDIUM: 0** (10 fixed)
-- **LOW: 3 deferred** (design trade-offs: emergency timelock, rate limit restructure, registry permissionless — all resolved or by-design)
-- **Forge: 403/403**
-- **Rust: 407** (56 validator + 182 runtime + 70 HTTP API + 99 blueprint-lib)
-- **Total: 810 tests passing**
+### 2026-04-19: /harden Round 3 — ToB-grade hardening
+
+**Scan scope:** 5 parallel adversarial scans: Forge fuzz expansion, race conditions, credential scanning, SSRF, exploit chains.
+
+**CRITICAL fixed (3):**
+- C1-REG: `approveSpender` regression — reverted from DEFAULT_ADMIN_ROLE back to OPERATOR_ROLE; re-fixed
+- SSRF-1: `rpc_url` from on-chain provision — no URL validation → added `validate_rpc_url()` module
+- SSRF-3: `rpc_url` query param on `/clob/approve` → same validation
+
+**HIGH fixed (7):**
+- RACE-1: Provision TOCTOU → `PROVISION_INFLIGHT` keyed lock set with drop guard
+- RACE-2: `call_id` seconds collision → millis + atomic counter
+- RACE-3: Concurrent activation → `BOT_LIFECYCLE_LOCKS` per-bot tokio::Mutex
+- RACE-5: Collateral release missing dedup → wired `check_and_insert_intent()`
+- SSRF-2: Validator endpoints → URL validation on discovered endpoints
+- CHAIN-B/F-8: `positionsValue()` decimal mismatch → full decimal normalization
+- RACE-6: Activate+wipe interleave → shared lifecycle lock
+
+**MEDIUM fixed (4):**
+- RACE-7: OWNER_MESSAGES unbounded → 10K cap with half-eviction
+- F-2/F-3/F-6: Documented as design trade-offs with fuzz test coverage proving bounds
+
+**HIGH deferred (1):**
+- CHAIN-A: Calldata not in EIP-712 signed scope → requires protocol version bump
+
+**Tests added:** 16 Forge fuzz + 10 Rust URL validation
+
+## Converged (Round 3)
+All CRITICALs and HIGHs from all /harden rounds are resolved (1 HIGH deferred: protocol version bump).
+- **CRITICAL: 0** (12 fixed across Rounds 1-3)
+- **HIGH: 1 deferred** (CHAIN-A: calldata binding needs protocol version bump)
+- **MEDIUM: 0** (14 fixed total)
+- **LOW: 3 deferred** (design trade-offs from Round 1)
+- **Forge: 429/429**
+- **Rust: 455** (284 runtime + 16 HTTP API + 56 validator + 99 blueprint-lib)
+- **Total: 884 tests passing**

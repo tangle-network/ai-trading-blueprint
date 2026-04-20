@@ -8,9 +8,27 @@
 //! - `inject_secrets(id, user_env)` merges user env on top of base env
 //! - `wipe_secrets(id)` removes user env, preserving base env
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use serde_json::json;
 
 use crate::state::{bot_key, bots, clear_activation, get_bot, update_activation_progress};
+
+/// Per-bot mutex preventing concurrent activate/wipe operations.
+/// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
+static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
+    Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut map = BOT_LIFECYCLE_LOCKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    map.entry(bot_id.to_string())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 
 /// Result of successful activation.
 #[derive(Debug)]
@@ -70,10 +88,42 @@ pub async fn activate_bot_with_secrets(
     user_env: serde_json::Map<String, serde_json::Value>,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<ActivateResult, String> {
+    // Acquire per-bot lifecycle lock to prevent RACE-3 (concurrent activation)
+    // and RACE-6 (activate + wipe interleave).
+    let lock = bot_lifecycle_lock(bot_id);
+    let _guard = lock.lock().await;
+
     // 1. Load and validate
     update_activation_progress(bot_id, "validating", "Loading bot configuration");
 
-    let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
+    let mut bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
+
+    // Resolve vault address if still a factory placeholder from provision.
+    // The BSM creates the real vault on-chain in _handleProvisionResult, but
+    // never updates the operator-side record. Resolve it here before the bot
+    // starts trading.
+    if bot.vault_address.starts_with("factory:") {
+        let resolved = resolve_vault_from_factory(&bot).await;
+        match resolved {
+            Ok(addr) => {
+                tracing::info!("Resolved vault address for {bot_id}: {addr}");
+                bot.vault_address = addr.clone();
+                // Persist the resolved address so future restarts don't re-query
+                if let Ok(store) = bots() {
+                    let _ = store.update(&bot_key(bot_id), |b| {
+                        b.vault_address = addr.clone();
+                    });
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to resolve vault from factory for {bot_id}: {e}. \
+                     Refusing to trade with unresolved vault address."
+                ));
+            }
+        }
+    }
+
     let sidecar_trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
     let mut sidecar_bot = bot.clone();
     sidecar_bot.trading_api_url = sidecar_trading_api_url.clone();
@@ -161,36 +211,38 @@ pub async fn activate_bot_with_secrets(
         }
     }
 
-    // 4. Create workflow
-    update_activation_progress(bot_id, "creating_workflow", "Configuring trading loop");
-    let workflow_id = {
+    // 4. Create workflows (split-tick architecture: FAST + RESEARCH + CONVERSATION)
+    update_activation_progress(
+        bot_id,
+        "creating_workflow",
+        "Configuring split-tick workflows",
+    );
+
+    // Generate a single base ID; research and conversation IDs are deterministic
+    // offsets so all three IDs are distinct and cleanup can use base+1, base+2.
+    let base_wf_id = {
         let ts = chrono::Utc::now().timestamp_millis() as u64;
         let rand_bits = (uuid::Uuid::new_v4().as_u128() & 0xFFFF) as u64;
-        ts.wrapping_mul(100_000).wrapping_add(rand_bits)
+        // Reserve 2 slots above for sibling workflows; ensure base is even to
+        // keep the namespace aligned.
+        (ts.wrapping_mul(100_000).wrapping_add(rand_bits)) & !0b11
     };
+    let workflow_id = base_wf_id; // fast tick
+    let research_id = base_wf_id + 1; // research tick
+    let conversation_id = base_wf_id + 2; // conversation tick
 
-    let (loop_prompt, backend_profile) = match &pack {
-        Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
-            crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
-        ),
-        None => (
-            crate::prompts::build_loop_prompt(&bot.strategy_type),
-            crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
-        ),
+    let backend_profile = match &pack {
+        Some(p) => crate::prompts::build_pack_agent_profile(p, &sidecar_bot),
+        None => crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
     };
+    let profile_json = serde_json::to_string(&backend_profile).unwrap_or_default();
 
-    let wf = json!({
-        "sidecar_url": record.sidecar_url,
-        "prompt": loop_prompt,
-        "session_id": format!("trading-{bot_id}"),
-        "max_turns": pack.as_ref().map(|p| p.max_turns).filter(|&t| t > 0).unwrap_or(10),
-        "timeout_ms": pack.as_ref().map(|p| p.timeout_ms).filter(|&t| t > 0).unwrap_or(600_000),
-        "sidecar_token": record.token,
-        "backend_profile_json": serde_json::to_string(&backend_profile).unwrap_or_default(),
-    });
-
-    let cron_config = if !bot.trading_loop_cron.is_empty() {
+    // --- FAST trading tick (3 turns, every 5 min) ---
+    let fast_prompt = match &pack {
+        Some(p) => crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
+        None => crate::prompts::build_fast_tick_prompt(&bot.strategy_type),
+    };
+    let fast_cron = if !bot.trading_loop_cron.is_empty() {
         bot.trading_loop_cron.clone()
     } else {
         pack.as_ref()
@@ -198,32 +250,122 @@ pub async fn activate_bot_with_secrets(
             .unwrap_or_else(|| "0 */5 * * * *".to_string())
     };
 
+    let fast_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": fast_prompt,
+        "session_id": format!("fast-{bot_id}"),
+        "max_turns": 5,
+        "timeout_ms": 120_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
     let next_run =
-        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &cron_config, None)
+        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &fast_cron, None)
             .unwrap_or(None);
 
-    let entry = ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
-        id: workflow_id,
-        name: format!("trading-loop-{bot_id}"),
-        workflow_json: wf.to_string(),
-        trigger_type: "cron".to_string(),
-        trigger_config: cron_config,
-        sandbox_config_json: String::new(),
-        target_kind: 0,
-        target_sandbox_id: record.id.clone(),
-        target_service_id: 0,
-        active: true,
-        next_run_at: next_run,
-        last_run_at: None,
-        owner: String::new(),
-    };
-
-    ai_agent_sandbox_blueprint_lib::workflows::workflows()?
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+    store
         .insert(
             ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id),
-            entry,
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: workflow_id,
+                name: format!("fast-tick-{bot_id}"),
+                workflow_json: fast_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: fast_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: next_run,
+                last_run_at: None,
+                owner: String::new(),
+            },
         )
-        .map_err(|e| format!("Failed to store workflow: {e}"))?;
+        .map_err(|e| format!("Failed to store fast workflow: {e}"))?;
+
+    // --- RESEARCH tick (15 turns, every 30 min, offset by 2 min) ---
+    let research_prompt = crate::prompts::build_research_tick_prompt(&sidecar_bot);
+    let research_cron = "0 2,32 * * * *".to_string();
+
+    let research_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": research_prompt,
+        "session_id": format!("research-{bot_id}"),
+        "max_turns": 15,
+        "timeout_ms": 300_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
+    let research_next =
+        ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", &research_cron, None)
+            .unwrap_or(None);
+
+    store
+        .insert(
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(research_id),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: research_id,
+                name: format!("research-tick-{bot_id}"),
+                workflow_json: research_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: research_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: research_next,
+                last_run_at: None,
+                owner: String::new(),
+            },
+        )
+        .map_err(|e| format!("Failed to store research workflow: {e}"))?;
+
+    // --- CONVERSATION tick (10 turns, every 5 min, offset by 1 min) ---
+    let conversation_prompt = crate::prompts::build_conversation_tick_prompt();
+    let conversation_cron = "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *".to_string();
+
+    let conversation_wf = json!({
+        "sidecar_url": record.sidecar_url,
+        "prompt": conversation_prompt,
+        "session_id": format!("convo-{bot_id}"),
+        "max_turns": 10,
+        "timeout_ms": 120_000,
+        "sidecar_token": record.token,
+        "backend_profile_json": &profile_json,
+    });
+
+    let convo_next = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+        "cron",
+        &conversation_cron,
+        None,
+    )
+    .unwrap_or(None);
+
+    store
+        .insert(
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_key(conversation_id),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+                id: conversation_id,
+                name: format!("conversation-tick-{bot_id}"),
+                workflow_json: conversation_wf.to_string(),
+                trigger_type: "cron".to_string(),
+                trigger_config: conversation_cron,
+                sandbox_config_json: String::new(),
+                target_kind: 0,
+                target_sandbox_id: record.id.clone(),
+                target_service_id: 0,
+                active: true,
+                next_run_at: convo_next,
+                last_run_at: None,
+                owner: String::new(),
+            },
+        )
+        .map_err(|e| format!("Failed to store conversation workflow: {e}"))?;
 
     // 5. Update bot record
     let new_sandbox_id = record.id.clone();
@@ -284,7 +426,7 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
 async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config && chmod 0777 /home/agent/.sidecar'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0777 /home/agent/.sidecar'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -293,6 +435,36 @@ async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(
     ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
         .await
         .map_err(|e| format!("Failed to prepare sidecar runtime directories: {e}"))?;
+
+    // Bootstrap memory ToC if it doesn't exist
+    let toc_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: r#"sh -lc 'test -f /home/agent/memory/toc.md || cat > /home/agent/memory/toc.md << "TOCEOF"
+# Memory Index
+Updated: new bot | Iteration: 0
+
+## Conversations
+(none yet — your owner can message you anytime)
+
+## Decisions
+(none yet — log non-obvious choices here)
+
+## Research
+(none yet)
+
+## Performance
+- New bot, no trades yet
+TOCEOF
+'"#
+        .to_string(),
+        cwd: String::new(),
+        env_json: String::new(),
+        timeout_ms: 10_000,
+    };
+    if let Err(e) = ai_agent_sandbox_blueprint_lib::run_exec_request(&toc_req, token).await {
+        tracing::warn!("Memory ToC bootstrap failed (non-fatal): {e}");
+    }
+
     Ok(())
 }
 
@@ -311,6 +483,15 @@ pub(crate) async fn write_prebuilt_tools(
     operator_address: &str,
     strategy_config: &serde_json::Value,
 ) -> Result<(), String> {
+    // Write workspace package.json with serve script for OpenCode agent
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/package.json",
+        r#"{"name":"trading-agent","version":"1.0.0","private":true,"scripts":{"serve":"opencode serve"}}"#,
+    )
+    .await?;
+
     // Write API config so tools can find the Trading HTTP API
     let config_json = serde_json::json!({
         "bot_id": bot_id,
@@ -490,6 +671,10 @@ pub async fn wipe_bot_secrets(
     bot_id: &str,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<(), String> {
+    // Acquire per-bot lifecycle lock to prevent RACE-6 (wipe + activate interleave).
+    let lock = bot_lifecycle_lock(bot_id);
+    let _guard = lock.lock().await;
+
     let bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
     // Check sandbox state — secrets_configured is derived from sandbox record
@@ -500,11 +685,31 @@ pub async fn wipe_bot_secrets(
         }
     }
 
-    // Stop and remove workflow
+    // Remove all three split-tick workflows (fast=base, research=base+1, conversation=base+2).
+    // Also sweep by name prefix to catch any stale workflows from a prior activation.
     if let Some(wf_id) = bot.workflow_id {
-        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ =
-            ai_agent_sandbox_blueprint_lib::workflows::workflows().map(|store| store.remove(&key));
+        if let Ok(store) = ai_agent_sandbox_blueprint_lib::workflows::workflows() {
+            // Remove by deterministic ID offsets
+            for id in [wf_id, wf_id.saturating_add(1), wf_id.saturating_add(2)] {
+                let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+                let _ = store.remove(&key);
+            }
+            // Sweep by name to handle any stale entries from a previous activation
+            // that used a different base_id (e.g., process restart mid-activation).
+            let prefixes = [
+                format!("fast-tick-{}", bot.id),
+                format!("research-tick-{}", bot.id),
+                format!("conversation-tick-{}", bot.id),
+            ];
+            if let Ok(all) = store.values() {
+                for entry in all {
+                    if prefixes.iter().any(|p| entry.name.starts_with(p.as_str())) {
+                        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(entry.id);
+                        let _ = store.remove(&key);
+                    }
+                }
+            }
+        }
     }
 
     // Wipe user secrets — sandbox-runtime preserves base env automatically
@@ -531,4 +736,58 @@ pub async fn wipe_bot_secrets(
 
     tracing::info!("Bot {bot_id} secrets wiped. Now in awaiting-secrets state.");
     Ok(())
+}
+
+/// Resolve the real vault address from VaultFactory.getServiceVaults().
+///
+/// During provision, the factory address is stored as a placeholder because the
+/// BSM creates the real vault on-chain asynchronously. This queries the factory
+/// to find the vault deployed for this service.
+async fn resolve_vault_from_factory(
+    bot: &crate::state::TradingBotRecord,
+) -> Result<String, String> {
+    use alloy::primitives::Address;
+    use alloy::providers::Provider;
+    use alloy::providers::ProviderBuilder;
+    use alloy::sol_types::SolCall;
+
+    let factory_hex = bot.vault_address.trim_start_matches("factory:").trim();
+    let factory_addr: Address = factory_hex
+        .parse()
+        .map_err(|e| format!("Invalid factory address '{factory_hex}': {e}"))?;
+
+    let rpc_url: reqwest::Url = bot
+        .rpc_url
+        .parse()
+        .map_err(|e| format!("Invalid RPC URL '{}': {e}", bot.rpc_url))?;
+
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+    // Call VaultFactory.getServiceVaults(service_id)
+    let call = trading_runtime::contracts::IVaultFactory::getServiceVaultsCall {
+        serviceId: bot.service_id,
+    };
+    let calldata = call.abi_encode();
+
+    let result = provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(factory_addr)
+                .input(calldata.into()),
+        )
+        .await
+        .map_err(|e| format!("getServiceVaults call failed: {e}"))?;
+
+    let vaults = <alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Address>
+        as alloy::sol_types::SolType>::abi_decode(&result)
+        .map_err(|e| format!("Failed to decode vault addresses: {e}"))?;
+
+    match vaults.len() {
+        0 => Err("No vaults found for this service".into()),
+        1 => Ok(format!("{:#x}", vaults[0])),
+        n => Err(format!(
+            "Ambiguous: {n} vaults found for service {}; cannot determine owner without explicit vault address",
+            bot.service_id
+        )),
+    }
 }

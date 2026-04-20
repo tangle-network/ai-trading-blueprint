@@ -6,10 +6,38 @@ use axum::{Json, Router};
 use sandbox_runtime::api_types::{
     CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
 };
-use sandbox_runtime::operator_api::TerminalRelayError;
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+// ── Terminal relay types (local, sandbox-runtime keeps these private) ────
+
+/// Error returned by terminal relay helpers.
+struct TerminalRelayError {
+    status: StatusCode,
+    message: String,
+    code: Option<String>,
+    retry_after_ms: Option<u64>,
+}
+
+impl From<sandbox_runtime::error::SandboxError> for TerminalRelayError {
+    fn from(err: sandbox_runtime::error::SandboxError) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            message: err.to_string(),
+            code: None,
+            retry_after_ms: None,
+        }
+    }
+}
+
+/// Summary of a live terminal session (mirrors sandbox-runtime's private type).
+#[derive(Debug, Serialize)]
+struct LiveTerminalSessionSummary {
+    session_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    title: String,
+}
 
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
@@ -117,8 +145,17 @@ pub struct BotDetailResponse {
 impl BotDetailResponse {
     fn from_record(b: TradingBotRecord) -> Self {
         let runtime = state::bot_runtime_status(&b);
-        let workflow_status = b.workflow_id.and_then(|workflow_id| {
-            ai_agent_sandbox_blueprint_lib::workflows::workflow_runtime_status(workflow_id).ok()
+        let workflow_running = b
+            .workflow_id
+            .map(ai_agent_sandbox_blueprint_lib::workflows::is_workflow_running)
+            .unwrap_or(false);
+        let workflow_latest_execution = b.workflow_id.and_then(|wid| {
+            let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wid);
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_runtime()
+                .ok()?
+                .get(&key)
+                .ok()?
+                .and_then(|meta| meta.latest_execution)
         });
         Self {
             id: b.id,
@@ -137,11 +174,8 @@ impl BotDetailResponse {
             trading_api_token: b.trading_api_token,
             sandbox_id: b.sandbox_id,
             workflow_id: b.workflow_id.map(|workflow_id| workflow_id.to_string()),
-            workflow_running: workflow_status
-                .as_ref()
-                .map(|status| status.running)
-                .unwrap_or(false),
-            latest_execution: workflow_status.and_then(|status| status.latest_execution),
+            workflow_running,
+            latest_execution: workflow_latest_execution,
             secrets_configured: runtime.secrets_configured,
             sandbox_exists: runtime.sandbox_exists,
             sandbox_state: runtime.sandbox_state,
@@ -267,6 +301,7 @@ struct UpdateConfigRequest {
     strategy_config_json: Option<String>,
     risk_params_json: Option<String>,
     harness_json: Option<String>,
+    vault_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -489,7 +524,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
         // Bot management
-        .route("/api/bots", get(list_bots))
+        .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
@@ -608,6 +643,225 @@ async fn create_session(
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
+
+/// Create a bot from a free-form prompt — provisions + activates in one call.
+/// This is the chat-first GTM endpoint: user describes a strategy, gets a live bot.
+#[derive(Deserialize)]
+struct CreateBotRequest {
+    /// Free-form strategy description from the user
+    prompt: String,
+    /// Optional strategy type override (auto-detected from prompt if omitted)
+    #[serde(default)]
+    strategy_type: Option<String>,
+    /// Optional name (defaults to first 50 chars of prompt)
+    #[serde(default)]
+    name: Option<String>,
+}
+
+async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
+    let caller = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| {
+            let token = h.strip_prefix("Bearer ").unwrap_or(h);
+            sandbox_runtime::session_auth::validate_session_token(token)
+                .ok()
+                .map(|c| c.address)
+        })
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::UNAUTHORIZED,
+                "Authentication required".to_string(),
+            )
+        })?;
+    let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+        .await
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad body: {e}")))?;
+    let body: CreateBotRequest = serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?;
+    let prompt = body.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "prompt is required".to_string(),
+        ));
+    }
+
+    // Auto-detect strategy type from prompt
+    let prompt_lower = prompt.to_lowercase();
+    let strategy_type = body.strategy_type.unwrap_or_else(|| {
+        if prompt_lower.contains("yield")
+            || prompt_lower.contains("lending")
+            || prompt_lower.contains("aave")
+        {
+            "yield".into()
+        } else if prompt_lower.contains("polymarket")
+            || prompt_lower.contains("prediction")
+            || prompt_lower.contains("politic")
+        {
+            "prediction".into()
+        } else if prompt_lower.contains("perp")
+            || prompt_lower.contains("leverage")
+            || prompt_lower.contains("futures")
+        {
+            "perp".into()
+        } else {
+            "dex".into()
+        }
+    });
+
+    let name = body
+        .name
+        .unwrap_or_else(|| prompt.chars().take(50).collect());
+
+    // Build a TradingProvisionRequest
+    let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
+    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
+        .or_else(|_| std::env::var("USDC_ADDRESS"))
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
+    let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
+    let chain_id: u64 = std::env::var("CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(31337);
+
+    let strategy_config = serde_json::json!({
+        "user_prompt": prompt,
+        "paper_trade": true,
+    });
+
+    let request = trading_blueprint_lib::TradingProvisionRequest {
+        name: name.clone(),
+        strategy_type: strategy_type.clone(),
+        strategy_config_json: serde_json::to_string(&strategy_config).unwrap_or_default(),
+        risk_params_json: r#"{"max_drawdown_pct":10}"#.into(),
+        factory_address: vault_factory
+            .parse()
+            .unwrap_or(alloy_primitives::Address::ZERO),
+        asset_token: asset_token
+            .parse()
+            .unwrap_or(alloy_primitives::Address::ZERO),
+        signers: Vec::new(),
+        required_signatures: alloy_primitives::U256::ZERO,
+        chain_id: alloy_primitives::U256::from(chain_id),
+        rpc_url,
+        trading_loop_cron: "0 */5 * * * *".into(),
+        cpu_cores: 1,
+        memory_mb: 2048,
+        max_lifetime_days: 30,
+        validator_service_ids: Vec::new(),
+        max_collateral_bps: alloy_primitives::U256::ZERO,
+    };
+
+    // 1. Provision
+    let service_id = std::env::var("SERVICE_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1u64);
+    // Use milliseconds + atomic counter to prevent same-second collision (RACE-2).
+    static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let call_id = (chrono::Utc::now().timestamp_millis() as u64)
+        .wrapping_mul(1000)
+        .wrapping_add(seq % 1000);
+
+    let result = trading_blueprint_lib::jobs::provision_core(
+        request,
+        None,
+        call_id,
+        service_id,
+        caller.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let bot = state::find_bot_by_call(service_id, call_id)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Bot not found after provision (service={service_id}, call={call_id})"),
+            )
+        })?;
+
+    // 2. Auto-activate with AI provider from env
+    let mut user_env = serde_json::Map::new();
+    if let Ok(key) = std::env::var("ZAI_API_KEY") {
+        user_env.insert("ZAI_API_KEY".into(), serde_json::Value::String(key));
+    } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        user_env.insert("ANTHROPIC_API_KEY".into(), serde_json::Value::String(key));
+    }
+    // Pass the user's prompt as an env var so the agent can read it
+    user_env.insert(
+        "USER_STRATEGY_PROMPT".into(),
+        serde_json::Value::String(prompt.clone()),
+    );
+
+    let activate_result =
+        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, user_env, None)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Activation failed: {e}"),
+                )
+            })?;
+
+    // 3. Write the user's prompt to the bot's memory as the first conversation.
+    // Content is passed via env var (FILE_CONTENT) to avoid any shell interpretation.
+    if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id) {
+        let date = chrono::Utc::now().format("%Y-%m-%d");
+        let timestamp = chrono::Utc::now().format("%H:%M UTC");
+
+        let strategy_content = format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n");
+        let toc_content = format!(
+            "# Memory Index\nUpdated: {date} | Iteration: 0\n\n\
+             ## Conversations\n\
+             - [Strategy Brief](conversations/{date}-strategy.md) — **ACTION NEEDED** — Owner described their strategy\n\n\
+             ## Decisions\n\
+             (none yet)\n\n\
+             ## Research\n\
+             (none yet)\n\n\
+             ## Performance\n\
+             - New agent, no trades yet\n"
+        );
+
+        let writes: &[(&str, &str)] = &[
+            (
+                &format!("/home/agent/memory/conversations/{date}-strategy.md"),
+                &strategy_content,
+            ),
+            ("/home/agent/memory/toc.md", &toc_content),
+        ];
+
+        for (path, content) in writes {
+            let req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: format!(
+                    r#"node -e "require('fs').mkdirSync(require('path').dirname(process.argv[1]),{{recursive:true}});require('fs').writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
+                ),
+                cwd: String::new(),
+                env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
+                timeout_ms: 10_000,
+            };
+            let _ = ai_agent_sandbox_blueprint_lib::run_exec_request(&req, &sandbox.token).await;
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "bot_id": bot.id,
+        "sandbox_id": activate_result.sandbox_id,
+        "strategy_type": strategy_type,
+        "name": name,
+        "status": "active",
+        "trading_api_url": activate_result.trading_api_url,
+        "trading_api_token": activate_result.trading_api_token,
+        "prompt": prompt,
+    })))
+}
 
 async fn list_bots(
     SessionAuth(_caller): SessionAuth,
@@ -869,14 +1123,54 @@ async fn run_now(
             )
         })?;
 
-    let accepted = ai_agent_sandbox_blueprint_lib::workflows::start_workflow_run(entry)
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
         .map_err(map_run_now_error)?;
+
+    let accepted_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Spawn workflow execution in the background so we return immediately.
+    let wf_key_bg = wf_key.clone();
+    tokio::spawn(async move {
+        // _run_guard is moved into this task and dropped when done.
+        let _guard = _run_guard;
+        match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+            Ok(execution) => {
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+                    workflow_id,
+                    execution.latest_execution,
+                );
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                    .ok()
+                    .and_then(|store| {
+                        store
+                            .update(&wf_key_bg, |e| {
+                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_execution(
+                                    e,
+                                    execution.last_run_at,
+                                    execution.next_run_at,
+                                );
+                            })
+                            .ok()
+                    });
+            }
+            Err(err) => {
+                tracing::error!("Workflow {workflow_id} execution failed: {err}");
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                    workflow_id,
+                    err,
+                );
+            }
+        }
+    });
 
     Ok(Json(RunNowResponse {
         status: "started".to_string(),
-        workflow_id: accepted.workflow_id.to_string(),
-        session_id: accepted.session_id,
-        accepted_at: accepted.accepted_at,
+        workflow_id: workflow_id.to_string(),
+        session_id: String::new(),
+        accepted_at,
     }))
 }
 
@@ -896,6 +1190,15 @@ async fn update_config(
     )
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Update vault address if provided
+    if let Some(addr) = &body.vault_address {
+        if let Ok(store) = state::bots() {
+            let _ = store.update(&state::bot_key(&bot.id), |b| {
+                b.vault_address.clone_from(addr);
+            });
+        }
+    }
 
     // Persist harness config if provided
     if let Some(harness_str) = &body.harness_json {
@@ -1149,6 +1452,77 @@ async fn send_chat_message(
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
     trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
+
+    // Persist message to bot's memory filesystem so it survives across ticks.
+    // Content is passed via FILE_CONTENT env var to avoid any shell interpretation.
+    if let Some(msg_text) = body.get("message").and_then(|m| m.as_str()) {
+        let session_slug = session_id
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .take(30)
+            .collect::<String>();
+        let date = chrono::Utc::now().format("%Y-%m-%d");
+        let timestamp = chrono::Utc::now().format("%H:%M UTC");
+        let conv_file = format!("conversations/{date}-{session_slug}.md");
+        let conv_path = format!("/home/agent/memory/{conv_file}");
+
+        // Build append content (message entry to append to the conversation file)
+        let append_content = format!("\n## Owner ({timestamp})\n{msg_text}\n");
+        // Build ToC entry line to inject (only if the file isn't already listed)
+        let toc_entry = format!("- [{session_slug}]({conv_file}) — **ACTION NEEDED**");
+
+        let msg_owned = msg_text.to_string();
+        let sandbox_id = bot.sandbox_id.clone();
+
+        // Fire-and-forget — don't block the chat response on filesystem writes
+        tokio::spawn(async move {
+            let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&sandbox_id) else {
+                return;
+            };
+
+            // Append message to conversation file (create if needed)
+            let append_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: format!(
+                    r#"node -e "const fs=require('fs'),p=process.argv[1];fs.mkdirSync(require('path').dirname(p),{{recursive:true}});fs.appendFileSync(p,process.env.FILE_CONTENT)" "{conv_path}""#,
+                ),
+                cwd: String::new(),
+                env_json: serde_json::json!({"FILE_CONTENT": append_content}).to_string(),
+                timeout_ms: 10_000,
+            };
+            let _ =
+                ai_agent_sandbox_blueprint_lib::run_exec_request(&append_req, &sandbox.token).await;
+
+            // Update ToC: inject entry under "## Conversations" if not already present.
+            // Safe: conv_file and toc_entry are server-generated slugs, not user input.
+            let toc_update_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+                sidecar_url: sandbox.sidecar_url.clone(),
+                command: format!(
+                    r#"node -e "
+const fs=require('fs'),p='/home/agent/memory/toc.md';
+try{{
+  let t=fs.readFileSync(p,'utf8');
+  if(!t.includes(process.env.CONV_FILE)){{
+    t=t.replace('## Conversations','## Conversations\n'+process.env.TOC_ENTRY);
+    fs.writeFileSync(p,t);
+  }}
+}}catch(e){{/* toc.md not yet created, skip */}}"
+"#,
+                ),
+                cwd: String::new(),
+                env_json: serde_json::json!({"CONV_FILE": conv_file, "TOC_ENTRY": toc_entry})
+                    .to_string(),
+                timeout_ms: 10_000,
+            };
+            let _ =
+                ai_agent_sandbox_blueprint_lib::run_exec_request(&toc_update_req, &sandbox.token)
+                    .await;
+
+            // Keep msg_owned alive until the spawn completes
+            let _ = msg_owned;
+        });
+    }
+
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::POST,
@@ -1188,6 +1562,62 @@ async fn stream_chat_events(
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
+// ── Terminal relay helpers (call sidecar directly) ─────────────────────
+
+const TERMINAL_PROMPT: &str = r"\u:\w\$ ";
+const TERMINAL_SIDECAR_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn sidecar_terminal_post(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    path: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    sandbox_runtime::http::sidecar_post_json(&sandbox.sidecar_url, path, &sandbox.token, payload)
+        .await
+        .map_err(TerminalRelayError::from)
+}
+
+async fn sidecar_terminal_get(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    path: &str,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    sandbox_runtime::http::sidecar_get_json(&sandbox.sidecar_url, path, &sandbox.token)
+        .await
+        .map_err(TerminalRelayError::from)
+}
+
+async fn sidecar_terminal_method(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    method: reqwest::Method,
+    path: &str,
+    payload: Option<serde_json::Value>,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    let url = sandbox_runtime::http::build_url(&sandbox.sidecar_url, path)
+        .map_err(TerminalRelayError::from)?;
+    let headers =
+        sandbox_runtime::http::auth_headers(&sandbox.token).map_err(TerminalRelayError::from)?;
+    let (_status, body) = sandbox_runtime::http::send_json(method, url, payload, headers)
+        .await
+        .map_err(TerminalRelayError::from)?;
+    serde_json::from_str(&body).map_err(|e| TerminalRelayError {
+        status: StatusCode::BAD_GATEWAY,
+        message: format!("Invalid sidecar JSON: {e}"),
+        code: None,
+        retry_after_ms: None,
+    })
+}
+
+fn parse_terminal_session(v: &serde_json::Value) -> Option<LiveTerminalSessionSummary> {
+    let id = v
+        .get("id")
+        .or_else(|| v.get("session_id"))
+        .and_then(|v| v.as_str())?;
+    Some(LiveTerminalSessionSummary {
+        session_id: id.to_string(),
+        title: String::new(),
+    })
+}
+
 // ── Terminal session proxy handlers ─────────────────────────────────────
 
 async fn list_terminal_sessions(
@@ -1195,9 +1625,14 @@ async fn list_terminal_sessions(
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    let sessions = sandbox_runtime::operator_api::list_live_terminal_sessions(&target.sandbox)
+    let parsed = sidecar_terminal_get(&target.sandbox, "/terminals")
         .await
         .map_err(|err| terminal_error_response(err, &target.bot))?;
+    let sessions: Vec<LiveTerminalSessionSummary> = parsed
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_terminal_session).collect())
+        .unwrap_or_default();
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
@@ -1205,16 +1640,43 @@ async fn create_terminal_session(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
     Json(req): Json<CreateLiveTerminalSessionRequest>,
-) -> Result<
-    Json<sandbox_runtime::operator_api::LiveSessionSummary>,
-    (StatusCode, Json<OperatorErrorResponse>),
-> {
+) -> Result<Json<LiveTerminalSessionSummary>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    let session =
-        sandbox_runtime::operator_api::create_live_terminal_session(&target.sandbox, &req)
-            .await
-            .map_err(|err| terminal_error_response(err, &target.bot))?;
-    Ok(Json(session))
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "env".into(),
+        serde_json::json!({
+            "PS1": TERMINAL_PROMPT,
+            "PROMPT_DIRTRIM": "0",
+        }),
+    );
+    let cwd = req.cwd.trim();
+    if !cwd.is_empty() {
+        payload.insert("cwd".into(), serde_json::json!(cwd));
+    }
+    if let Some(cols) = req.cols {
+        payload.insert("cols".into(), serde_json::json!(cols));
+    }
+    if let Some(rows) = req.rows {
+        payload.insert("rows".into(), serde_json::json!(rows));
+    }
+    let parsed = sidecar_terminal_post(
+        &target.sandbox,
+        "/terminals",
+        serde_json::Value::Object(payload),
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    let session_id = parsed
+        .get("id")
+        .or_else(|| parsed.get("session_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(Json(LiveTerminalSessionSummary {
+        session_id,
+        title: String::new(),
+    }))
 }
 
 async fn stream_terminal_session(
@@ -1222,9 +1684,61 @@ async fn stream_terminal_session(
     Path((bot_id, session_id)): Path<(String, String)>,
 ) -> Result<Response, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    sandbox_runtime::operator_api::stream_live_terminal_session(&target.sandbox, &session_id)
-        .await
-        .map_err(|err| terminal_error_response(err, &target.bot))
+    let stream_path = format!("/terminals/{session_id}/stream");
+    let url = sandbox_runtime::http::build_url(&target.sandbox.sidecar_url, &stream_path)
+        .map_err(|e| terminal_error_response(TerminalRelayError::from(e), &target.bot))?;
+    let headers = sandbox_runtime::http::auth_headers(&target.sandbox.token)
+        .map_err(|e| terminal_error_response(TerminalRelayError::from(e), &target.bot))?;
+    let client = reqwest::Client::builder()
+        .timeout(TERMINAL_SIDECAR_TIMEOUT)
+        .build()
+        .map_err(|e| {
+            terminal_error_response(
+                TerminalRelayError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: format!("HTTP client error: {e}"),
+                    code: None,
+                    retry_after_ms: None,
+                },
+                &target.bot,
+            )
+        })?;
+    let response = client.get(url).headers(headers).send().await.map_err(|e| {
+        terminal_error_response(
+            TerminalRelayError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("Stream request failed: {e}"),
+                code: None,
+                retry_after_ms: None,
+            },
+            &target.bot,
+        )
+    })?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(terminal_error_response(
+            TerminalRelayError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("Sidecar returned {status}: {body}"),
+                code: None,
+                retry_after_ms: None,
+            },
+            &target.bot,
+        ));
+    }
+    use futures_util::StreamExt;
+    let mut proxied = axum::response::Response::new(axum::body::Body::from_stream(
+        response
+            .bytes_stream()
+            .map(|result| result.map_err(std::io::Error::other)),
+    ));
+    *proxied.status_mut() = StatusCode::OK;
+    proxied.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    Ok(proxied)
 }
 
 async fn delete_terminal_session(
@@ -1232,11 +1746,17 @@ async fn delete_terminal_session(
     Path((bot_id, session_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    let result =
-        sandbox_runtime::operator_api::delete_live_terminal_session(&target.sandbox, &session_id)
-            .await
-            .map_err(|err| terminal_error_response(err, &target.bot))?;
-    Ok(Json(result))
+    sidecar_terminal_method(
+        &target.sandbox,
+        reqwest::Method::DELETE,
+        &format!("/terminals/{session_id}"),
+        None,
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(
+        serde_json::json!({ "deleted": true, "session_id": session_id }),
+    ))
 }
 
 async fn resize_terminal_session(
@@ -1256,11 +1776,14 @@ async fn resize_terminal_session(
     }
 
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    sandbox_runtime::operator_api::resize_live_terminal_session(
+    sidecar_terminal_method(
         &target.sandbox,
-        &session_id,
-        req.cols,
-        req.rows,
+        reqwest::Method::PATCH,
+        &format!("/terminals/{session_id}"),
+        Some(serde_json::json!({
+            "cols": req.cols,
+            "rows": req.rows,
+        })),
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
@@ -1284,10 +1807,10 @@ async fn send_terminal_input(
     }
 
     let target = resolve_live_terminal_target(&bot_id, &caller)?;
-    sandbox_runtime::operator_api::send_live_terminal_input(
+    sidecar_terminal_post(
         &target.sandbox,
-        &session_id,
-        &req.data,
+        &format!("/terminals/{session_id}/input"),
+        serde_json::json!({ "data": req.data }),
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
@@ -2186,15 +2709,12 @@ async fn get_leaderboard(
         .iter()
         .filter_map(|bot| {
             // Get metric snapshots for equity curve
-            let snapshots = trading_http_api::metrics_store::snapshots_for_bot(
-                &bot.id,
-                None,
-                None,
-                Some(10000),
-            )
-            .ok()?;
+            let snapshots =
+                trading_http_api::metrics_store::snapshots_for_bot(&bot.id, None, None, 10000)
+                    .ok()?;
 
             let equity_points: Vec<trading_runtime::leaderboard::EquityPoint> = snapshots
+                .snapshots
                 .iter()
                 .filter_map(|s| {
                     let val = s.account_value_usd.parse::<rust_decimal::Decimal>().ok()?;
@@ -2209,6 +2729,7 @@ async fn get_leaderboard(
             let trades = trading_http_api::trade_store::trades_for_bot(&bot.id, 10000, 0).ok()?;
             // Approximate per-trade PnL from notional values where available
             let trade_pnls: Vec<rust_decimal::Decimal> = trades
+                .trades
                 .iter()
                 .filter_map(|t| {
                     let amount_in: rust_decimal::Decimal = t.amount_in.parse().ok()?;
@@ -2340,14 +2861,52 @@ async fn debug_run_now(
             )
         })?;
 
-    let accepted = ai_agent_sandbox_blueprint_lib::workflows::start_workflow_run(entry)
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
         .map_err(map_run_now_error)?;
+
+    let accepted_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let wf_key_bg = wf_key.clone();
+    tokio::spawn(async move {
+        let _guard = _run_guard;
+        match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+            Ok(execution) => {
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+                    workflow_id,
+                    execution.latest_execution,
+                );
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                    .ok()
+                    .and_then(|store| {
+                        store
+                            .update(&wf_key_bg, |e| {
+                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_execution(
+                                    e,
+                                    execution.last_run_at,
+                                    execution.next_run_at,
+                                );
+                            })
+                            .ok()
+                    });
+            }
+            Err(err) => {
+                tracing::error!("Debug workflow {workflow_id} execution failed: {err}");
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                    workflow_id,
+                    err,
+                );
+            }
+        }
+    });
 
     Ok(Json(serde_json::json!({
         "status": "started",
-        "workflow_id": accepted.workflow_id.to_string(),
-        "session_id": accepted.session_id,
-        "accepted_at": accepted.accepted_at,
+        "workflow_id": workflow_id.to_string(),
+        "session_id": "",
+        "accepted_at": accepted_at,
     })))
 }
 
@@ -2906,6 +3465,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::json!(null),
         };
         store.insert(state::bot_key("wd-bot"), bot).unwrap();
 
@@ -2960,6 +3520,7 @@ mod tests {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::json!(null),
         };
         state::bots()
             .unwrap()

@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::Mutex;
+
 use blueprint_sdk::tangle::extract::{CallId, Caller, TangleArg, TangleResult};
 use sandbox_runtime::provision_progress::{self, ProvisionPhase};
 use serde_json::{Map, Value};
@@ -6,6 +9,24 @@ use crate::state::{TradingBotRecord, bot_key, bots};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
+
+/// Keyed lock set for provision dedup — prevents TOCTOU race between
+/// find_bot_by_call and insert. A (service_id, call_id) pair is inserted
+/// before the check and removed after the insert, ensuring only one
+/// concurrent provision for a given key can proceed.
+static PROVISION_INFLIGHT: std::sync::LazyLock<Mutex<HashSet<(u64, u64)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Drop guard that removes a (service_id, call_id) from PROVISION_INFLIGHT.
+struct InflightGuard(u64, u64);
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = PROVISION_INFLIGHT.lock() {
+            set.remove(&(self.0, self.1));
+        }
+    }
+}
 
 fn parse_strategy_config_object(
     strategy_config_json: &str,
@@ -101,6 +122,10 @@ pub async fn provision_core(
     // 0. Dedup check — if a bot already exists for this (service_id, call_id),
     // return it instead of creating a duplicate. This handles operator restarts
     // that replay past on-chain events.
+    //
+    // Race-safety: PROVISION_INFLIGHT prevents TOCTOU between the
+    // find_bot_by_call check and the later insert. If another concurrent
+    // provision for the same key is already running, we block it here.
     if call_id > 0 {
         if let Ok(Some(existing)) = crate::state::find_bot_by_call(service_id, call_id) {
             tracing::info!(
@@ -122,7 +147,26 @@ pub async fn provision_core(
                 workflow_id: existing.workflow_id.unwrap_or(0),
             });
         }
+
+        // Atomically claim this (service_id, call_id) slot. If another call
+        // already holds it, reject as duplicate-in-progress.
+        let already_inflight = {
+            let mut set = PROVISION_INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+            !set.insert((service_id, call_id))
+        };
+        if already_inflight {
+            return Err(format!(
+                "Provision already in progress for (service_id={service_id}, call_id={call_id})"
+            ));
+        }
     }
+
+    // Drop guard: auto-clears PROVISION_INFLIGHT on any exit (success, error, panic).
+    let _inflight_guard = if call_id > 0 {
+        Some(InflightGuard(service_id, call_id))
+    } else {
+        None
+    };
 
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());
@@ -162,13 +206,16 @@ pub async fn provision_core(
     let rpc_url = if request.rpc_url.is_empty() {
         std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string())
     } else {
-        request.rpc_url.clone()
+        // Validate user-supplied RPC URL to block SSRF (internal IPs, metadata endpoints)
+        trading_runtime::url_validation::validate_rpc_url(&request.rpc_url)
+            .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
     };
 
     // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().
-    // Store factory_address as a placeholder so validators have a valid address for
-    // EIP-712 signing.  The BSM updates this to the real vault address on-chain.
-    let vault_address = format!("{:#x}", request.factory_address);
+    // Store factory address prefixed with "factory:" so activate can detect it needs
+    // resolution. The BSM creates the real vault on-chain, but never updates the
+    // operator-side record — activate resolves it via getServiceVaults().
+    let vault_address = format!("factory:{:#x}", request.factory_address);
 
     // Trading API URL points to the shared HTTP API running in the binary.
     // TRADING_API_URL overrides if explicitly set, otherwise:
@@ -387,6 +434,8 @@ pub async fn provision_core(
             mark_provision_failed(call_id, &msg);
             msg
         })?;
+
+    // InflightGuard (_inflight_guard) auto-clears PROVISION_INFLIGHT on drop.
 
     if let Err(e) = provision_progress::update_provision(
         call_id,

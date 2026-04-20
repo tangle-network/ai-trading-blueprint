@@ -42,11 +42,16 @@ contract AdversarialTest is Setup {
     // C-1: approveSpender() bypasses validator signatures
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice C-1: approveSpender requires OPERATOR_ROLE — non-operator cannot call it.
+    /// @notice C-1: approveSpender requires DEFAULT_ADMIN_ROLE — neither operator nor user can call it.
     function test_ATTACK_approveSpenderDrainsVault() public {
         address attacker = makeAddr("attacker");
 
-        // Non-operator (user) attempts to approve attacker — should REVERT
+        // Operator attempts to approve attacker — should REVERT (no longer OPERATOR_ROLE)
+        vm.prank(operator);
+        vm.expectRevert();
+        vault.approveSpender(address(tokenA), attacker, type(uint256).max);
+
+        // Non-admin (user) attempts to approve attacker — should REVERT
         vm.prank(user);
         vm.expectRevert();
         vault.approveSpender(address(tokenA), attacker, type(uint256).max);

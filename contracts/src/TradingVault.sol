@@ -69,6 +69,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error ExceedsCollateralLimit(uint256 requested, uint256 available);
     error CollateralNotEnabled();
+    error ApprovalSpenderMismatch(address spender, address target);
+    error HeldTokenNotEmpty(address token, uint256 balance);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -139,6 +141,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     mapping(address => bool) public isHeldToken;
     uint256 public depositAssetReserveBps;
     uint256 public adminUnwindMaxDrawdownBps;
+
+    /// @notice Fallback drawdown cap used by adminUnwind when adminUnwindMaxDrawdownBps is 0.
+    /// @dev Audit finding H-1: previously `adminUnwindMaxDrawdownBps = 0` meant "no limit",
+    ///      so a compromised CREATOR_ROLE key could burn arbitrary vault value in a single
+    ///      wind-down call. 0 now falls back to this constant (5%) so the cap always applies.
+    ///      Explicit non-zero configurations continue to take precedence.
+    uint256 public constant DEFAULT_ADMIN_UNWIND_MAX_DRAWDOWN_BPS = 500;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CLOB COLLATERAL MANAGEMENT
@@ -381,6 +390,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Execute a validated trade with vault-held token approvals applied atomically.
+    /// @dev Audit finding C-2: the `approvals[]` array is not hashed into the signed
+    ///      intentHash, so historically an operator could pair a validator-signed trade
+    ///      intent with arbitrary ERC-20 allowances to drain the vault. The fix binds
+    ///      every approval's `spender` to `params.target` — the same address validators
+    ///      see in the policy + target-whitelist path — which eliminates the rogue-spender
+    ///      vector. Protocols that need allowance to a different address than the call
+    ///      target should use a separate admin-only approval flow (`approveSpender`).
     function executeWithApprovals(
         ExecuteParams calldata params,
         ApprovalCall[] calldata approvals,
@@ -388,7 +404,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _prepareExecution(params, signatures, scores);
-        _applyApprovals(approvals);
+        _applyApprovals(approvals, params.target);
         _executeTrade(params);
     }
 
@@ -410,10 +426,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkValidators(params.intentHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
-    function _applyApprovals(ApprovalCall[] calldata approvals) internal {
+    function _applyApprovals(ApprovalCall[] calldata approvals, address target) internal {
         for (uint256 i = 0; i < approvals.length; ++i) {
             ApprovalCall calldata approval = approvals[i];
             if (approval.token == address(0) || approval.spender == address(0)) revert ZeroAddress();
+            if (approval.spender != target) revert ApprovalSpenderMismatch(approval.spender, target);
             IERC20(approval.token).forceApprove(approval.spender, approval.amount);
             emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
         }
@@ -658,11 +675,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         (bool success,) = target.call{value: value}(data);
         if (!success) revert ExecutionFailed();
 
-        if (adminUnwindMaxDrawdownBps > 0) {
-            uint256 totalAfter = totalAssets();
-            if (totalBefore > 0 && totalAfter * 10000 < totalBefore * (10000 - adminUnwindMaxDrawdownBps)) {
-                revert ExcessiveDrawdown();
-            }
+        // Audit H-1: always enforce a drawdown cap. 0 falls back to the default (5%) rather
+        // than being interpreted as "unlimited". Non-zero values continue to override.
+        uint256 drawdownCap =
+            adminUnwindMaxDrawdownBps == 0 ? DEFAULT_ADMIN_UNWIND_MAX_DRAWDOWN_BPS : adminUnwindMaxDrawdownBps;
+        uint256 totalAfter = totalAssets();
+        if (totalBefore > 0 && totalAfter * 10000 < totalBefore * (10000 - drawdownCap)) {
+            revert ExcessiveDrawdown();
         }
 
         uint256 assetAfter = _asset.balanceOf(address(this));
@@ -744,7 +763,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     ///      as a preparatory step before executing the main protocol action.
     function approveSpender(address token, address spender, uint256 amount)
         external
-        onlyRole(OPERATOR_ROLE)
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
     {
         if (token == address(0) || spender == address(0)) revert ZeroAddress();
@@ -777,13 +796,35 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // MULTI-ASSET POSITION TRACKING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Sum of held-token balances (raw units, same-decimal assumption).
-    /// @dev Only accurate when all held tokens share the deposit asset's decimals.
-    ///      Multi-asset vaults with mixed decimals should use VaultShare.totalNAV()
-    ///      with an oracle for USD-normalized valuation instead.
+    /// @notice Sum of held-token balances, normalized to deposit asset decimals.
+    /// @dev Scales each held token's balance to the deposit asset's decimal precision.
+    ///      Tokens whose decimals cannot be read (non-standard ERC-20) are included
+    ///      at raw balance as a conservative fallback.
     function positionsValue() public view returns (uint256 total) {
+        uint8 assetDec;
+        try IERC20Metadata(asset()).decimals() returns (uint8 d) {
+            assetDec = d;
+        } catch {
+            // Non-standard deposit asset — fall back to raw balance sum
+            for (uint256 i = 0; i < heldTokens.length; i++) {
+                total += IERC20(heldTokens[i]).balanceOf(address(this));
+            }
+            return total;
+        }
         for (uint256 i = 0; i < heldTokens.length; i++) {
-            total += IERC20(heldTokens[i]).balanceOf(address(this));
+            uint256 bal = IERC20(heldTokens[i]).balanceOf(address(this));
+            if (bal == 0) continue;
+            uint8 tokenDec = assetDec; // default: assume same decimals
+            try IERC20Metadata(heldTokens[i]).decimals() returns (uint8 d) {
+                tokenDec = d;
+            } catch {}
+            if (tokenDec == assetDec) {
+                total += bal;
+            } else if (tokenDec > assetDec) {
+                total += bal / (10 ** (tokenDec - assetDec));
+            } else {
+                total += bal * (10 ** (assetDec - tokenDec));
+            }
         }
     }
 
@@ -802,11 +843,22 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         return IERC20(asset()).balanceOf(address(this));
     }
 
-    /// @notice Replace the held token list (OPERATOR only). Skips the deposit asset and enforces MAX_HELD_TOKENS.
-    function updateHeldTokens(address[] calldata tokens) external onlyRole(OPERATOR_ROLE) {
-        // Clear existing
+    /// @notice Replace the held token list. Skips the deposit asset and enforces MAX_HELD_TOKENS.
+    /// @dev Admin-only (DEFAULT_ADMIN_ROLE). Audit finding C-1: this function was previously
+    ///      OPERATOR_ROLE-callable, which let an operator mutate positionsValue() directly and
+    ///      manipulate NAV in the share-price window. In provisioned vaults the admin is the
+    ///      BSM blueprint contract, so this becomes a migration/recovery tool rather than an
+    ///      operator-reachable NAV knob. Under normal operation `_addHeldToken` populates this
+    ///      list automatically on every successful trade — this function should only be needed
+    ///      for emergency cleanup or post-upgrade migration.
+    function updateHeldTokens(address[] calldata tokens) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        // Clear existing — only allow tokens currently carrying zero balance. Removing a token
+        // with nonzero balance would zero its contribution to positionsValue() and drop NAV.
         for (uint256 i = 0; i < heldTokens.length; i++) {
-            isHeldToken[heldTokens[i]] = false;
+            address held = heldTokens[i];
+            uint256 bal = IERC20(held).balanceOf(address(this));
+            if (bal > 0) revert HeldTokenNotEmpty(held, bal);
+            isHeldToken[held] = false;
         }
         delete heldTokens;
         // Add new (skip deposit asset, enforce max)
@@ -819,8 +871,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @notice Remove a single held token from the tracking list (OPERATOR only)
-    function removeHeldToken(address token) external onlyRole(OPERATOR_ROLE) {
+    /// @notice Remove a single held token from the tracking list.
+    /// @dev Admin-only (DEFAULT_ADMIN_ROLE) + requires the token's current balance to be zero.
+    ///      Audit finding C-1: previously OPERATOR_ROLE with no balance check — operator could
+    ///      drop a held token right before a deposit to manipulate share price. Zero-balance
+    ///      enforcement means this is now a pure cleanup operation.
+    function removeHeldToken(address token) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        if (bal > 0) revert HeldTokenNotEmpty(token, bal);
         _removeHeldToken(token);
     }
 

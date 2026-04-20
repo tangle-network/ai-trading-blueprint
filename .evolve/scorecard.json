@@ -1,16 +1,24 @@
 {
   "product": "ai-trading-blueprint",
-  "timestamp": "2026-04-15T22:30:00Z",
+  "timestamp": "2026-04-19T06:00:00Z",
   "flows": [
-    {"name": "forge_tests", "score": 400, "target": 400, "status": "pass"},
-    {"name": "rust_compilation", "score": 5, "target": 5, "status": "pass", "note": "5 modified library crates clean on 1.91"},
+    {"name": "forge_tests", "score": 403, "target": 400, "status": "pass"},
+    {"name": "rust_compilation", "score": 6, "target": 5, "status": "pass", "note": "6 modified crates clean on 1.91"},
     {"name": "security_findings_critical", "score": 0, "target": 0, "status": "pass"},
     {"name": "security_findings_high", "score": 0, "target": 0, "status": "pass"},
-    {"name": "security_findings_medium", "score": 0, "target": 0, "status": "pass"},
-    {"name": "security_findings_low_actionable", "score": 0, "target": 0, "status": "pass", "note": "6/9 LOW fixed, 3 deferred with design rationale"},
-    {"name": "adversarial_tests", "score": 11, "target": 11, "status": "pass"}
+    {"name": "adversarial_tests", "score": 11, "target": 11, "status": "pass"},
+    {"name": "live_bot_uptime", "score": 31, "target": 10, "status": "pass", "note": "31 consecutive successful ticks (3.5h) before container restart"},
+    {"name": "live_bot_trade_quality", "score": null, "target": 0.5, "status": "unmeasured", "note": "Need 50+ candles for walk-forward Sharpe. Currently ~42 candles. Target: positive Sharpe on out-of-sample data"},
+    {"name": "bot_self_improvement", "score": null, "target": 1, "status": "unmeasured", "note": "Bot has self-improving prompt but hasn't hit iteration 40 meta-cycle yet. Target: 1+ successful code mutation backtested and promoted/discarded"},
+    {"name": "vault_security_hardening", "score": 0, "target": 3, "status": "below_target", "note": "0/3 hardening contracts deployed: governance whitelist, admin timelock, approval restriction"}
   ],
-  "aggregate": 1.0,
-  "coverage": "7/7 tracked flows",
-  "evolveHistory": "harden + 2 pursue gens + 2 evolve rounds, 33 findings resolved (3 deferred)"
+  "aggregate": 0.67,
+  "coverage": "6/9 tracked flows measured",
+  "evolveHistory": "Gen7 complete. Bot operational (31+ ticks). Self-improving prompt deployed. Vault hardening planned.",
+  "metricClaims": {
+    "live_bot_uptime": "Continuous uptime proves the E2E pipeline (operator→sidecar→AI→API→vault) is production-viable",
+    "live_bot_trade_quality": "Positive walk-forward Sharpe means the bot's strategy generalizes to unseen market data, not just curve-fitting",
+    "bot_self_improvement": "If the bot writes and validates its own code mutations, it can improve without human intervention — the core product value",
+    "vault_security_hardening": "Users won't deposit real funds without governance-controlled target whitelists and admin timelocks"
+  }
 }

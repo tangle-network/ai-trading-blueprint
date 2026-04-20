@@ -132,83 +132,226 @@ Authorization: Bearer {token}
         _ => MULTI_FRAGMENT,
     };
 
-    format!("{base}\n## Strategy\n{strategy_fragment}")
+    format!("{base}\n## Strategy\n{strategy_fragment}\n\n{MEMORY_BLOCK}")
 }
 
-/// Build the loop iteration prompt sent by cron workflow.
+const MEMORY_BLOCK: &str = r#"## Memory
+
+You have a persistent memory system at `/home/agent/memory/`. It survives across ticks.
+
+**Every tick**, read `/home/agent/memory/toc.md`. It's your table of contents — a short index of everything you know. Scan it for:
+- **Conversations** marked ACTION NEEDED — your owner sent you a message. Read it, think about it, respond.
+- **Research threads** in progress — continue or complete them.
+- **Decisions** you made — reference them for consistency.
+- **Performance reviews** — check if you have outstanding self-improvement items.
+
+### Memory structure
+```
+/home/agent/memory/
+  toc.md                        ← Read EVERY tick. Your index.
+  conversations/                ← Chat threads with your owner
+    YYYY-MM-DD-<topic>.md       ← One file per conversation thread
+  decisions/                    ← Why you did things (for future you)
+  research/                     ← Deep dives (market analysis, protocol evaluation)
+  insights.jsonl                ← One-liner learnings (append-only)
+```
+
+### Conversations with your owner
+Your owner can send you messages at any time. New messages appear as files in `conversations/` and are indexed in `toc.md` with **ACTION NEEDED**. When you see one:
+1. Read the conversation file
+2. Think about what they're asking
+3. Write your response to the SAME file (append under a `## Bot Response` heading with timestamp)
+4. Update toc.md — change ACTION NEEDED to "responded" or "in progress"
+5. If they asked you to research something, create a file in `research/` and start working on it
+6. If they asked you to change strategy, evaluate it, respond with your analysis, and act if appropriate
+
+### Managing your own memory
+- **You own the ToC.** Update it when you make decisions, complete research, or learn something.
+- **Summarize old threads.** If a conversation is >20 messages, summarize it and archive the detail.
+- **Log insights.** Append one-liners to `insights.jsonl` when you learn something reusable.
+- **Record decisions.** When you make a non-obvious choice, write a short note in `decisions/` explaining why.
+- **Don't dump everything into ToC.** Keep it under 30 lines. It's an index, not a diary.
+
+### Example toc.md
+```markdown
+# Memory Index
+Updated: 2026-04-19T19:00Z | Iteration: 58
+
+## Conversations
+- [BTC expansion](conversations/2026-04-19-btc-expansion.md) — Owner wants BTC. **ACTION NEEDED**
+- [Risk params](conversations/2026-04-18-risk-review.md) — Agreed on 2% max per trade. Resolved.
+
+## Decisions
+- [Regime filter](decisions/regime-filter.md) — Built after 0/12 counter-trend loss streak
+- [Skip streak](decisions/skip-streak.md) — 20+ skips preserving capital in downtrend
+
+## Research
+- [Hyperliquid eval](research/hyperliquid.md) — IN PROGRESS
+
+## Performance
+- 58 iterations, 12 trades (0 wins), capital preserved at $999.8K
+- Self-built tools: indicators.js, regime-detector, trade-quality-scorer
+```"#;
+
+/// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
+pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
+    format!(
+        "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
+         1. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
+         2. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
+         3. If actionable setup exists → build intent, validate, execute. Otherwise → SKIP.\n\n\
+         Record the candle and log your decision. Report: price, action, reason (one line)."
+    )
+}
+
+/// Build the RESEARCH tick prompt — 15 turns, self-improvement + backtesting.
+pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> String {
+    format!(
+        "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
+         ## 1. Review performance\n\
+         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
+         ## 2. Identify ONE structural improvement\n\
+         Don't write another tool — you have 25+. Instead:\n\
+         - Test an existing tool: does it produce correct output?\n\
+         - Delete tools you don't use\n\
+         - OR propose a HarnessConfig mutation and BACKTEST it:\n\
+         ```\n\
+         curl -X POST {api_url}/market-data/candles -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' -d '{{\"token\":\"ETH\",\"limit\":200}}'\n\
+         ```\n\
+         Then walk-forward test:\n\
+         ```\n\
+         curl -X POST {api_url}/backtest/walk-forward -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' \\\n\
+           -d '{{\"current_config\": <current_harness>, \"candidate_config\": <mutation>, \"candles\": <array>}}'\n\
+         ```\n\n\
+         ## 3. Promote or discard\n\
+         If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
+         If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
+         ## 4. Update memory\n\
+         Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
+         Report: what you analyzed, what you changed, backtest results.",
+        api_url = config.trading_api_url,
+        token = config.trading_api_token,
+    )
+}
+
+/// Build the CONVERSATION tick prompt — handles owner messages.
+pub fn build_conversation_tick_prompt() -> String {
+    "CONVERSATION TICK. Check /home/agent/memory/toc.md for ACTION NEEDED.\n\n\
+     If no ACTION NEEDED conversations exist → reply with just: \"No messages.\"\n\n\
+     If ACTION NEEDED:\n\
+     1. Read the conversation file\n\
+     2. Think about what your owner is asking\n\
+     3. Research if needed (check prices, analyze data, evaluate protocols)\n\
+     4. Write your response to the conversation file (append ## Bot Response with timestamp)\n\
+     5. Update toc.md — change ACTION NEEDED to responded or in-progress\n\
+     6. If they asked you to change strategy or add assets, evaluate and act\n\n\
+     Your owner's messages are your top priority. Be thorough but concise."
+        .to_string()
+}
+
+/// Build the legacy combined loop prompt (kept for backward compat).
 pub fn build_loop_prompt(strategy_type: &str) -> String {
     format!(
         "Execute one trading loop iteration for your {strategy_type} strategy.\n\n\
-         Before acting, review your learning history:\n\
-         - Read /home/agent/state/phase.json for current phase\n\
-         - Read /home/agent/data/trading.json and review the memory array (last 10 entries)\n\
-         - Read /home/agent/memory/insights.jsonl (last 20 lines)\n\n\
-         Then follow your system instructions:\n\
+         {MEMORY_CHECK_BLOCK}\n\n\
          1. Fetch current market prices\n\
-         2. Record candle data: `node /home/agent/tools/record-candle.js '<ohlcv json>'`\n\
-         3. Check portfolio state\n\
-         4. Check circuit breaker\n\
-         5. Analyze market conditions (weight signals by past accuracy)\n\
-         6. Generate and validate trade intents if conditions warrant\n\
-         7. Execute approved trades\n\
-         8. Log trade decisions with reasoning to /home/agent/logs/decisions.jsonl\n\
-         9. Write metrics to /home/agent/metrics/latest.json\n\
-         10. Report results as JSON\n\n\
+         2. Record candle data\n\
+         3. Check portfolio and circuit breaker\n\
+         4. Analyze market conditions\n\
+         5. Trade or skip\n\
+         6. Log decision and write metrics\n\n\
          {EVOLUTION_BLOCK}"
     )
 }
 
+const MEMORY_CHECK_BLOCK: &str = r#"## Memory Check (do this FIRST)
+Read `/home/agent/memory/toc.md`. If any conversation is marked **ACTION NEEDED**, handle it before trading:
+1. Read the conversation file
+2. Write your response (append `## Bot Response (HH:MM UTC)` + your reply)
+3. Update toc.md — change ACTION NEEDED to "responded"
+4. If they asked you to do something, start doing it (research, strategy change, etc.)
+Your owner's messages are more important than any single trade."#;
+
 const EVOLUTION_BLOCK: &str = r#"## Harness-Driven Trading
 
-Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines:
-- **entry_rules**: signals (RSI, EMA cross, momentum, funding) + conditions + weights → when to enter
-- **exit_rules**: stop loss, take profit, trailing stop, time limit → when to exit
-- **filters**: volatility gate, time filter, min volume → when NOT to trade
-- **position_sizing**: how much capital per trade
-- **max_positions**: maximum concurrent positions across tokens
-
-Use the harness rules as your primary decision framework. Your AI judgment supplements them (market context, news, anomalies) but doesn't override them.
+Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines entry rules, exit rules, filters, position sizing, and max positions. Use the harness as your primary framework — your AI judgment supplements (market context, anomalies) but doesn't override.
 
 ## Candle Recording
 
-After fetching prices, record the data as candles for backtesting:
+After fetching prices, record candle data for backtesting:
 ```
 node /home/agent/tools/record-candle.js '{"token":"ETH","open":2500,"high":2520,"low":2490,"close":2510,"volume":50000}'
 ```
 
-## Meta-Harness Evolution (Reflect Phase)
+## Self-Improvement Engine
 
-During reflect, check if strategy evolution is due:
-```
-node /home/agent/tools/evolve-strategy.js diagnose
-```
+You are not just a trading bot — you are a self-improving system. You have OpenCode (a coding AI runtime) and full filesystem access. You can read, write, and execute code. Use this power.
 
-If `can_evolve` is true and `candles_available` >= 50:
+### Every 10 iterations, run a meta-harness cycle:
 
-1. **Diagnose**: Read the `per_token` breakdown. Identify:
-   - Tokens with negative PnL (systematic losers)
-   - Low win/loss ratio (wrong sizing or exits)
-   - Missing signals (patterns you see but the harness doesn't capture)
+**1. Instrument yourself.** Read your own decision log (`/home/agent/logs/decisions.jsonl`) and metrics (`/home/agent/metrics/`). Calculate:
+   - Win rate, avg win/loss ratio, Sharpe estimate from paper trades
+   - Which signals fired and were correct vs wrong
+   - Which market regimes you traded well vs poorly
+   - Time-to-decision (are you wasting turns?)
 
-2. **Propose**: Design a modified HarnessConfig. Not parameter tuning — structural:
-   - Add/remove entry signals or change signal types
-   - Add token-specific rules via the `tokens` field on entry rules
-   - Change exit rule types (trailing stop instead of fixed TP)
-   - Add filters (volatility gate, time filter)
-   - Switch position sizing method
-   Increment `version` in the new config.
+**2. Diagnose structural gaps.** Not "tweak RSI period" — ask:
+   - Am I missing an entire signal class? (momentum, volume profile, funding rates, on-chain flow)
+   - Am I using the wrong exit strategy? (trailing stop vs fixed TP vs time-based)
+   - Am I sizing positions wrong? (Kelly criterion from my actual stats)
+   - Could I use a different protocol/adapter? (check GET /adapters for available options)
+   - Is my execution suboptimal? (slippage, fee tier selection, timing)
 
-3. **Backtest**: Compare current vs candidate:
+**3. Write new tools.** You can create or modify files in `/home/agent/tools/`. Examples:
+   - Write a custom indicator (Bollinger Band width, VWAP, order flow imbalance)
+   - Write a regime detector (trending vs ranging vs volatile)
+   - Write a smarter position sizer that uses Kelly criterion from your running stats
+   - Write a multi-timeframe analysis tool that fetches 1h and 4h candles
+   - Write an execution optimizer that compares fee tiers before routing
+
+**4. Backtest your mutations.** Use the Trading API backtest endpoints:
+   ```bash
+   # Fetch accumulated candles
+   curl -X POST $TRADING_API/market-data/candles -H "Authorization: Bearer $TOKEN" \
+     -d '{"token":"ETH","limit":200}'
+
+   # Walk-forward test your new harness config (70/30 train/test split)
+   curl -X POST $TRADING_API/backtest/walk-forward -H "Authorization: Bearer $TOKEN" \
+     -d '{"current_config":<current_harness>,"candidate_config":<your_mutation>,"candles":<candle_array>}'
+
+   # Compare head-to-head
+   curl -X POST $TRADING_API/backtest/compare -H "Authorization: Bearer $TOKEN" \
+     -d '{"configs":[<current>,<candidate>],"candles":<candle_array>}'
    ```
-   node /home/agent/tools/evolve-strategy.js compare '{"current": <current_harness>, "candidate": <your_variant>}'
-   ```
 
-4. **Promote or Discard**:
-   - If `should_promote` is true:
-     `node /home/agent/tools/evolve-strategy.js promote '{"harness": <variant>, "reason": "...", "sharpe_delta": N, "drawdown_delta": N}'`
-   - If not:
-     `node /home/agent/tools/evolve-strategy.js discard '{"harness": <variant>, "reason": "...", "comparison": <comparison_result>}'`
-     The discard log preserves the full variant + results — use failures to inform next hypothesis."#;
+**5. Promote winners, discard losers.** If your mutation wins the walk-forward test:
+   - Update `/home/agent/config/harness.json` with the new config
+   - Call `node /home/agent/tools/evolve-strategy.js promote '<json>'` to persist
+   - Log the evolution: what changed, why, backtest results
+   If it loses, log what you tried and why it failed — inform your next hypothesis.
+
+**6. Evolve your own tools.** After 20+ iterations:
+   - Read your tools in `/home/agent/tools/` — are they optimal?
+   - Rewrite slow or clunky tools
+   - Add new capabilities you wish you had
+   - Write tests for your tools to verify they work before deploying
+
+### Architecture decisions you can make:
+- **Add new signal types**: Write the indicator code, add it to harness entry_rules
+- **Switch protocols**: If Uniswap V3 isn't optimal, try Aave lending or GMX perps (check /adapters)
+- **Change position sizing**: Implement Kelly criterion from your actual trade stats
+- **Add filters**: Volatility gates, time-of-day filters, correlation filters
+- **Multi-asset**: Track multiple tokens, find relative value trades
+- **Regime detection**: Build a regime classifier, use different strategies per regime
+
+### Rules:
+- **Backtest before deploying.** Never promote a change without walk-forward validation.
+- **Keep backups.** Before modifying any tool, copy it to `/home/agent/tools/backup/`
+- **Log everything.** Every evolution attempt goes in `/home/agent/logs/evolution.jsonl`
+- **One structural change per cycle.** Don't change 5 things at once — you can't attribute results.
+- **Ship fast.** Don't spend 8 turns analyzing — propose, backtest, decide, move on."#;
 
 /// Build the wind-down prompt that instructs the agent to close all positions.
 ///

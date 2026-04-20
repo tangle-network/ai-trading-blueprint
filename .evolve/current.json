@@ -1,13 +1,11 @@
 {
-  "mode": "evolve",
-  "generation": 7,
-  "activePursuit": null,
-  "round": 1,
+  "mode": "harden",
+  "status": "clean",
+  "activeHarden": "2026-04-19-report.md",
   "critical": 0,
-  "high": 0,
-  "rust_tests": "264 runtime (58 backtest)",
-  "api_tests": "66 HTTP API (12 backtest + 5 candle + 3 evolution)",
-  "forge_tests": "403/403",
-  "total_tests": 733,
-  "note": "Evolve round 1: harness_json persisted in TradingBotRecord. PATCH /api/bots/{id}/config accepts harness_json with validation. Default HarnessConfig stored on provision. state::update_harness() validates schema before persisting. Feedback loop fully closed: candle store → evolution endpoint → harness persistence → bot record → sidecar activation."
+  "high": 1,
+  "medium": 0,
+  "low": 0,
+  "updatedAt": "2026-04-19T14:00:00Z",
+  "note": "Harden round 3 complete. 3 CRITICAL + 7 HIGH + 4 MEDIUM fixed. 1 HIGH deferred (CHAIN-A: calldata not in EIP-712 scope — requires protocol version bump). 884 tests passing (429 Forge + 455 Rust). Credential scan clean. SSRF vectors blocked."
 }

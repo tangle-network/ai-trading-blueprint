@@ -50,11 +50,41 @@ impl HeartbeatConsumer for TradingHeartbeatConsumer {
     }
 }
 
+fn derive_session_auth_secret() {
+    // Load .env before anything reads env vars (AI keys, config, etc.)
+    dotenvy::dotenv().ok();
+
+    // Derive SESSION_AUTH_SECRET from keystore if not explicitly set.
+    // Must run before tokio spawns any threads to avoid set_var data races.
+    if std::env::var("SESSION_AUTH_SECRET").is_err() {
+        let keystore_uri =
+            std::env::var("KEYSTORE_URI").unwrap_or_else(|_| "/tmp/keystore".to_string());
+        let keystore_path = std::path::Path::new(&keystore_uri);
+        if keystore_path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(keystore_path) {
+                for entry in entries.flatten() {
+                    if let Ok(content) = std::fs::read(&entry.path()) {
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(b"tangle-trading-session-auth-v1:");
+                        hasher.update(&content);
+                        let hash = hasher.finalize();
+                        let secret = hex::encode(hash);
+                        // SAFETY: single-threaded at this point — called before
+                        // tokio spawns any worker threads.
+                        unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
-    // Load .env before anything reads env vars (AI keys, config, etc.)
-    dotenvy::dotenv().ok();
+    derive_session_auth_secret();
 
     setup_log();
 
@@ -556,8 +586,25 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .await;
 
     if let Err(e) = result {
-        tracing::error!("Runner failed fatally: {e:?}");
-        std::process::exit(1);
+        // In local dev, the Tangle event listener may fail to verify operator
+        // registration (e.g., contract not deployed or RPC mismatch). The cron
+        // workflow and HTTP APIs are already running in spawned tasks, so keep
+        // the process alive for local testing.
+        let is_local = std::env::var("CHAIN")
+            .map(|v| v == "testnet" || v == "local")
+            .unwrap_or(false);
+        if is_local {
+            tracing::warn!("Runner failed (non-fatal in local mode): {e:?}");
+            tracing::info!("APIs still running — starting standalone workflow cron");
+            // The runner failed (usually Tangle registration check), but the
+            // HTTP APIs are already spawned. Start the cron workflow manually
+            // so trading ticks keep firing.
+            trading_blueprint_lib::jobs::run_standalone_cron(service_id).await;
+            tokio::signal::ctrl_c().await.ok();
+        } else {
+            tracing::error!("Runner failed fatally: {e:?}");
+            std::process::exit(1);
+        }
     }
 
     Ok(())

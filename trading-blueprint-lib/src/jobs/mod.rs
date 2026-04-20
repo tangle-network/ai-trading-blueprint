@@ -33,3 +33,24 @@ pub use task::task;
 pub use webhook_event::webhook_event;
 pub use webhook_event::webhook_event_core;
 pub use workflow_tick::trading_workflow_tick as workflow_tick;
+
+/// Run a standalone cron loop for workflow ticks when the full Blueprint
+/// runner isn't available (e.g., local dev without proper Tangle registration).
+pub async fn run_standalone_cron(service_id: u64) {
+    let schedule =
+        std::env::var("WORKFLOW_CRON_SCHEDULE").unwrap_or_else(|_| "0 * * * * *".to_string());
+    tracing::info!(
+        "Starting standalone workflow cron (service {service_id}, schedule: {schedule})"
+    );
+
+    let _ = schedule; // Used for logging, actual interval is fixed
+    loop {
+        // Simple fixed-interval tick (every 60s) — good enough for local dev.
+        // The real cron scheduling happens via the BlueprintRunner's CronJob producer.
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        match workflow_tick::trading_workflow_tick().await {
+            Ok(_result) => {}
+            Err(e) => tracing::error!("Standalone workflow tick failed: {e}"),
+        }
+    }
+}

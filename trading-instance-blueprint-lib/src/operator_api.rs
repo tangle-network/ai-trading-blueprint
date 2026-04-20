@@ -6,13 +6,41 @@ use axum::{Json, Router};
 use sandbox_runtime::api_types::{
     CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
 };
-use sandbox_runtime::operator_api::TerminalRelayError;
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
+
+// ── Terminal relay types (local, sandbox-runtime keeps these private) ────
+
+/// Error returned by terminal relay helpers.
+struct TerminalRelayError {
+    status: StatusCode,
+    message: String,
+    code: Option<String>,
+    retry_after_ms: Option<u64>,
+}
+
+impl From<sandbox_runtime::error::SandboxError> for TerminalRelayError {
+    fn from(err: sandbox_runtime::error::SandboxError) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            message: err.to_string(),
+            code: None,
+            retry_after_ms: None,
+        }
+    }
+}
+
+/// Summary of a live terminal session (mirrors sandbox-runtime's private type).
+#[derive(Debug, Serialize)]
+struct LiveTerminalSessionSummary {
+    session_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    title: String,
+}
 
 // ── Response types ──────────────────────────────────────────────────────
 
@@ -1322,31 +1350,119 @@ async fn stream_chat_events(
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
+// ── Terminal relay helpers (call sidecar directly) ─────────────────────
+
+const TERMINAL_PROMPT: &str = r"\u:\w\$ ";
+const TERMINAL_SIDECAR_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn sidecar_terminal_post(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    path: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    sandbox_runtime::http::sidecar_post_json(&sandbox.sidecar_url, path, &sandbox.token, payload)
+        .await
+        .map_err(TerminalRelayError::from)
+}
+
+async fn sidecar_terminal_get(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    path: &str,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    sandbox_runtime::http::sidecar_get_json(&sandbox.sidecar_url, path, &sandbox.token)
+        .await
+        .map_err(TerminalRelayError::from)
+}
+
+async fn sidecar_terminal_method(
+    sandbox: &sandbox_runtime::runtime::SandboxRecord,
+    method: reqwest::Method,
+    path: &str,
+    payload: Option<serde_json::Value>,
+) -> Result<serde_json::Value, TerminalRelayError> {
+    let url = sandbox_runtime::http::build_url(&sandbox.sidecar_url, path)
+        .map_err(TerminalRelayError::from)?;
+    let headers =
+        sandbox_runtime::http::auth_headers(&sandbox.token).map_err(TerminalRelayError::from)?;
+    let (_status, body) = sandbox_runtime::http::send_json(method, url, payload, headers)
+        .await
+        .map_err(TerminalRelayError::from)?;
+    serde_json::from_str(&body).map_err(|e| TerminalRelayError {
+        status: StatusCode::BAD_GATEWAY,
+        message: format!("Invalid sidecar JSON: {e}"),
+        code: None,
+        retry_after_ms: None,
+    })
+}
+
+fn parse_terminal_session(v: &serde_json::Value) -> Option<LiveTerminalSessionSummary> {
+    let id = v
+        .get("id")
+        .or_else(|| v.get("session_id"))
+        .and_then(|v| v.as_str())?;
+    Some(LiveTerminalSessionSummary {
+        session_id: id.to_string(),
+        title: String::new(),
+    })
+}
+
 // ── Terminal session proxy handlers ─────────────────────────────────────
 
 async fn list_terminal_sessions(
     SessionAuth(caller): SessionAuth,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&caller)?;
-    let sessions = sandbox_runtime::operator_api::list_live_terminal_sessions(&target.sandbox)
+    let parsed = sidecar_terminal_get(&target.sandbox, "/terminals")
         .await
         .map_err(|err| terminal_error_response(err, &target.bot))?;
+    let sessions: Vec<LiveTerminalSessionSummary> = parsed
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_terminal_session).collect())
+        .unwrap_or_default();
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
 async fn create_terminal_session(
     SessionAuth(caller): SessionAuth,
     Json(req): Json<CreateLiveTerminalSessionRequest>,
-) -> Result<
-    Json<sandbox_runtime::operator_api::LiveSessionSummary>,
-    (StatusCode, Json<OperatorErrorResponse>),
-> {
+) -> Result<Json<LiveTerminalSessionSummary>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&caller)?;
-    let session =
-        sandbox_runtime::operator_api::create_live_terminal_session(&target.sandbox, &req)
-            .await
-            .map_err(|err| terminal_error_response(err, &target.bot))?;
-    Ok(Json(session))
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "env".into(),
+        serde_json::json!({
+            "PS1": TERMINAL_PROMPT,
+            "PROMPT_DIRTRIM": "0",
+        }),
+    );
+    let cwd = req.cwd.trim();
+    if !cwd.is_empty() {
+        payload.insert("cwd".into(), serde_json::json!(cwd));
+    }
+    if let Some(cols) = req.cols {
+        payload.insert("cols".into(), serde_json::json!(cols));
+    }
+    if let Some(rows) = req.rows {
+        payload.insert("rows".into(), serde_json::json!(rows));
+    }
+    let parsed = sidecar_terminal_post(
+        &target.sandbox,
+        "/terminals",
+        serde_json::Value::Object(payload),
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    let session_id = parsed
+        .get("id")
+        .or_else(|| parsed.get("session_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(Json(LiveTerminalSessionSummary {
+        session_id,
+        title: String::new(),
+    }))
 }
 
 async fn stream_terminal_session(
@@ -1354,9 +1470,61 @@ async fn stream_terminal_session(
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&caller)?;
-    sandbox_runtime::operator_api::stream_live_terminal_session(&target.sandbox, &session_id)
-        .await
-        .map_err(|err| terminal_error_response(err, &target.bot))
+    let stream_path = format!("/terminals/{session_id}/stream");
+    let url = sandbox_runtime::http::build_url(&target.sandbox.sidecar_url, &stream_path)
+        .map_err(|e| terminal_error_response(TerminalRelayError::from(e), &target.bot))?;
+    let headers = sandbox_runtime::http::auth_headers(&target.sandbox.token)
+        .map_err(|e| terminal_error_response(TerminalRelayError::from(e), &target.bot))?;
+    let client = reqwest::Client::builder()
+        .timeout(TERMINAL_SIDECAR_TIMEOUT)
+        .build()
+        .map_err(|e| {
+            terminal_error_response(
+                TerminalRelayError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: format!("HTTP client error: {e}"),
+                    code: None,
+                    retry_after_ms: None,
+                },
+                &target.bot,
+            )
+        })?;
+    let response = client.get(url).headers(headers).send().await.map_err(|e| {
+        terminal_error_response(
+            TerminalRelayError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("Stream request failed: {e}"),
+                code: None,
+                retry_after_ms: None,
+            },
+            &target.bot,
+        )
+    })?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(terminal_error_response(
+            TerminalRelayError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("Sidecar returned {status}: {body}"),
+                code: None,
+                retry_after_ms: None,
+            },
+            &target.bot,
+        ));
+    }
+    use futures_util::StreamExt;
+    let mut proxied = axum::response::Response::new(axum::body::Body::from_stream(
+        response
+            .bytes_stream()
+            .map(|result| result.map_err(std::io::Error::other)),
+    ));
+    *proxied.status_mut() = StatusCode::OK;
+    proxied.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    Ok(proxied)
 }
 
 async fn delete_terminal_session(
@@ -1364,11 +1532,17 @@ async fn delete_terminal_session(
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
     let target = resolve_live_terminal_target(&caller)?;
-    let result =
-        sandbox_runtime::operator_api::delete_live_terminal_session(&target.sandbox, &session_id)
-            .await
-            .map_err(|err| terminal_error_response(err, &target.bot))?;
-    Ok(Json(result))
+    sidecar_terminal_method(
+        &target.sandbox,
+        reqwest::Method::DELETE,
+        &format!("/terminals/{session_id}"),
+        None,
+    )
+    .await
+    .map_err(|err| terminal_error_response(err, &target.bot))?;
+    Ok(Json(
+        serde_json::json!({ "deleted": true, "session_id": session_id }),
+    ))
 }
 
 async fn resize_terminal_session(
@@ -1388,11 +1562,14 @@ async fn resize_terminal_session(
     }
 
     let target = resolve_live_terminal_target(&caller)?;
-    sandbox_runtime::operator_api::resize_live_terminal_session(
+    sidecar_terminal_method(
         &target.sandbox,
-        &session_id,
-        req.cols,
-        req.rows,
+        reqwest::Method::PATCH,
+        &format!("/terminals/{session_id}"),
+        Some(serde_json::json!({
+            "cols": req.cols,
+            "rows": req.rows,
+        })),
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
@@ -1416,10 +1593,10 @@ async fn send_terminal_input(
     }
 
     let target = resolve_live_terminal_target(&caller)?;
-    sandbox_runtime::operator_api::send_live_terminal_input(
+    sidecar_terminal_post(
         &target.sandbox,
-        &session_id,
-        &req.data,
+        &format!("/terminals/{session_id}/input"),
+        serde_json::json!({ "data": req.data }),
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;

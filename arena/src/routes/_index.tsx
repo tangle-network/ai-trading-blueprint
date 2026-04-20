@@ -136,6 +136,22 @@ export default function IndexPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+      {/* Create CTA */}
+      <Link
+        to="/create"
+        className="block mb-8 p-6 rounded-xl border border-violet-500/20 bg-gradient-to-r from-violet-500/5 to-indigo-500/5 hover:from-violet-500/10 hover:to-indigo-500/10 transition-all group"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-display font-bold text-xl mb-1">Create Your Trading Agent</h2>
+            <p className="text-sm text-arena-elements-textSecondary">
+              Describe what you want to trade. Your AI agent builds itself, learns, and evolves.
+            </p>
+          </div>
+          <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+        </div>
+      </Link>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
         <div>

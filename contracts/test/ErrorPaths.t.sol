@@ -401,7 +401,7 @@ contract ErrorPathsTest is Setup {
         tokenB.mint(address(vault), 8000 ether);
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         // Now liquidAssets = 10000 (tokenA), but totalAssets = 18000
@@ -424,7 +424,7 @@ contract ErrorPathsTest is Setup {
         tokenB.mint(address(vault), 50_000 ether);
         address[] memory tokens = new address[](1);
         tokens[0] = address(tokenB);
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         // totalAssets = 60000, liquidAssets = 10000
@@ -600,7 +600,7 @@ contract ErrorPathsTest is Setup {
         }
 
         // Only first 20 should be added (MAX_HELD_TOKENS = 20)
-        vm.prank(operator);
+        vm.prank(owner);
         vault.updateHeldTokens(tokens);
 
         assertEq(vault.heldTokenCount(), 20, "Should cap at MAX_HELD_TOKENS");
