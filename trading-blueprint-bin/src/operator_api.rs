@@ -3565,6 +3565,14 @@ mod tests {
                 responses: Vec::new(),
                 simulation: None,
             },
+            signal_price: None,
+            fill_price: None,
+            slippage_bps: None,
+            signal_to_fill_ms: None,
+            decision_source: None,
+            runner_signal: None,
+            agent_reasoning: None,
+            harness_version: None,
         }
     }
 
