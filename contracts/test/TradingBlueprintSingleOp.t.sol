@@ -585,6 +585,7 @@ contract TradingBlueprintMultiOpTest is Setup {
     function test_provisionJob_usesOperatorsAsSigners() public {
         _initService();
         _joinOperator(operator);
+        _joinOperator(operator2);
 
         // Provision with no explicit signers — should use operators as signers
         bytes memory inputs = _buildBotProvisionInputsNoSigners();
@@ -596,10 +597,11 @@ contract TradingBlueprintMultiOpTest is Setup {
         address vault = blueprint.botVaults(serviceId, 1);
         assertTrue(vault != address(0), "Bot vault should be deployed");
 
-        // TradeValidator should have 1 signer (the operator) with requiredSigs = 1
-        assertEq(tradeValidator.getSignerCount(vault), 1, "Should have 1 signer (the operator)");
-        assertEq(tradeValidator.getRequiredSignatures(vault), 1, "Should require 1 signature");
-        assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator should be a signer");
+        // H-2: default is now 2-of-n (not 1-of-n) to prevent single-key compromise.
+        assertEq(tradeValidator.getSignerCount(vault), 2, "Should have 2 signers (the operators)");
+        assertEq(tradeValidator.getRequiredSignatures(vault), 2, "Should require 2 signatures (H-2 floor)");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
