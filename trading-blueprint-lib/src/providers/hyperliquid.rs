@@ -67,31 +67,74 @@ impl TradingProvider for HyperliquidProvider {
     }
 }
 
-pub(crate) const HYPERLIQUID_EXPERT_PROMPT: &str = r#"## Hyperliquid Protocol Knowledge
+pub(crate) const HYPERLIQUID_EXPERT_PROMPT: &str = r#"## Hyperliquid Perpetuals — Full Trading API
 
-### Hyperliquid API
+You have native Hyperliquid perps trading via the trading API. Use these endpoints
+instead of the on-chain bridge adapter — they're faster and support all order types.
 
-REST endpoint: `POST https://api.hyperliquid.xyz/info`
+### Place Orders — POST /hyperliquid/order
 
-Request bodies by type:
-- `{"type": "allMids"}` — Midpoint prices for all perpetual markets
-- `{"type": "metaAndAssetCtxs"}` — Funding rates, open interest, and market metadata
-- `{"type": "candleSnapshot", "req": {"coin": "ETH", "interval": "1h", "startTime": <unix_ms>}}` — Historical candles
-- `{"type": "l2Book", "coin": "ETH"}` — L2 order book
+```json
+// Market buy 0.1 ETH perp
+{"asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {"type": "market"}}
 
-Use Hyperliquid for:
-- Funding rate data (compare with GMX for arbitrage)
-- Volume and open interest analysis
-- Technical analysis via candle data
-- Order book depth for market making
+// Limit sell 0.05 BTC perp at $68,000
+{"asset": "BTC", "is_buy": false, "size": "0.05", "order_type": {"type": "limit", "price": "68000"}}
 
-### Technical Analysis with Pandas
+// Stop-loss: sell ETH if price drops to $2,400
+{"asset": "ETH", "is_buy": false, "size": "0.1", "order_type": {"type": "stop_loss", "trigger_price": "2400", "is_market": true}, "reduce_only": true}
 
-Fetch candle data from Hyperliquid and compute:
-- Moving averages: 20-period and 50-period SMA
-- RSI: 14-period, overbought >70, oversold <30
-- Bollinger Bands: 20-period SMA ± 2σ
-- Use `pandas` for computation, store results in signals table
+// Take-profit: sell ETH at $3,000
+{"asset": "ETH", "is_buy": false, "size": "0.1", "order_type": {"type": "take_profit", "trigger_price": "3000", "is_market": true}, "reduce_only": true}
+```
+
+### Bracket Orders (entry + SL + TP) — POST /hyperliquid/bracket
+
+Places entry, stop-loss, and take-profit as a grouped order:
+```json
+{
+  "entry": {"asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {"type": "market"}},
+  "stop_loss": {"asset": "ETH", "is_buy": false, "size": "0.1", "order_type": {"type": "stop_loss", "trigger_price": "2400", "is_market": true}},
+  "take_profit": {"asset": "ETH", "is_buy": false, "size": "0.1", "order_type": {"type": "take_profit", "trigger_price": "3000", "is_market": true}}
+}
+```
+
+### Cancel Orders — POST /hyperliquid/cancel
+```json
+{"asset": 1, "order_id": 12345}
+```
+
+### Set Leverage — POST /hyperliquid/leverage
+```json
+{"asset": 1, "leverage": 5, "is_cross": true}
+```
+Set before placing orders. `is_cross: true` for cross-margin, `false` for isolated.
+
+### Account State — GET /hyperliquid/account
+Returns positions, margin, equity, open orders. Use to check:
+- Current positions and P&L
+- Available margin before new trades
+- Open orders that might conflict
+
+### Prices — GET /hyperliquid/prices
+Returns mid prices for all HL perp markets as `{"ETH": "2500.5", "BTC": "67432.1", ...}`.
+
+### Asset IDs
+Use symbol strings ("ETH", "BTC", "SOL", etc.) or numeric indices (0=BTC, 1=ETH, ...).
+
+### Risk Management Rules
+1. Always set leverage BEFORE placing orders
+2. Use bracket orders (entry + SL + TP) for every position
+3. Never risk more than 2% of account per trade
+4. Check GET /hyperliquid/account before opening new positions
+5. Use reduce_only=true for all exit orders (SL, TP, manual close)
+
+### Read-Only Market Data (direct API)
+For analysis, you can also call the HL info API directly:
+- `POST https://api.hyperliquid.xyz/info` with `{"type": "allMids"}` — all mid prices
+- `{"type": "metaAndAssetCtxs"}` — funding rates, open interest, metadata
+- `{"type": "candleSnapshot", "req": {"coin": "ETH", "interval": "1h", "startTime": <unix_ms>}}` — candles
+- `{"type": "l2Book", "coin": "ETH"}` — order book depth
 "#;
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ pub mod contracts;
 pub mod error;
 pub mod executor;
 pub mod fees;
+pub mod hyperliquid;
 pub mod intent;
 pub mod leaderboard;
 pub mod market_data;
