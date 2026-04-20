@@ -56,7 +56,7 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-echo "=== Installing Docker + deps ==="
+echo "=== Installing Docker + build deps ==="
 ssh "root@$SERVER_IP" bash <<'REMOTE'
 set -euo pipefail
 
@@ -67,9 +67,15 @@ if ! command -v docker &>/dev/null; then
   systemctl start docker
 fi
 
-# Install docker-compose plugin
-if ! docker compose version &>/dev/null; then
-  apt-get update && apt-get install -y docker-compose-plugin
+# All build deps in one shot (Rust compilation needs these)
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+  build-essential pkg-config libssl-dev protobuf-compiler git \
+  cmake clang libclang-dev curl docker-compose-plugin >/dev/null 2>&1
+
+# Install Rust
+if ! command -v rustc &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.0
 fi
 
 # Mount the volume (Hetzner attaches at /dev/disk/by-id/scsi-0HC_Volume_*)

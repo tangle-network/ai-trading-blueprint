@@ -53,7 +53,34 @@ else
   echo "=== Step 1: Building on $SERVER_IP ==="
   ssh "root@$SERVER_IP" bash <<'REMOTE'
 set -euo pipefail
+
+# Install all build deps in one shot
+echo "Installing build dependencies..."
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+  build-essential pkg-config libssl-dev protobuf-compiler git \
+  cmake clang libclang-dev curl docker.io >/dev/null 2>&1
+echo "Build deps installed"
+
+# Install Rust if missing
+if ! command -v rustc &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.0
+fi
 source ~/.cargo/env 2>/dev/null || true
+
+# Swap for compilation (4GB RAM isn't enough for release builds)
+if ! swapon --show | grep -q swapfile; then
+  echo "Adding 4GB swap..."
+  fallocate -l 4G /mnt/trading-data/swapfile 2>/dev/null || true
+  chmod 600 /mnt/trading-data/swapfile
+  mkswap /mnt/trading-data/swapfile 2>/dev/null || true
+  swapon /mnt/trading-data/swapfile 2>/dev/null || true
+fi
+
+# State directory
+mkdir -p /mnt/trading-data/blueprint-state
+chmod 700 /mnt/trading-data/blueprint-state
+mkdir -p /opt/trading-blueprint
 
 cd /opt/trading-blueprint
 if [ ! -d repo ]; then
@@ -67,7 +94,8 @@ cd repo
 # Comment out [patch] sections for remote build
 sed -i '/^\[patch\./,/^$/s/^/#/' Cargo.toml
 
-cargo build --release -p trading-blueprint-bin
+echo "Building release binary (CARGO_BUILD_JOBS=2 for memory safety)..."
+CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
 cp target/release/trading-blueprint-bin /usr/local/bin/trading-blueprint
 echo "Binary installed: $(ls -lh /usr/local/bin/trading-blueprint | awk '{print $5}')"
 REMOTE
