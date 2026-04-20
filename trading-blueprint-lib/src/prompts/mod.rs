@@ -112,6 +112,20 @@ Authorization: Bearer {token}
 - GET /hyperliquid/account — Positions, margin, open orders
 - GET /hyperliquid/prices — Mid prices for all HL perp markets
 
+### Strategy Runner (rule-based signals from HarnessConfig)
+- POST /strategy/tick — Feed a candle, get entry/exit signals back
+  Body: {{ "candle": {{ "timestamp": 123, "token": "ETH", "open": "2500", "high": "2520", "low": "2480", "close": "2510", "volume": "1000" }} }}
+  Optional: "target_protocol": "hyperliquid" to auto-execute signals
+  Without target_protocol: returns signals as advisory (you decide what to act on)
+- POST /strategy/config — Update harness rules (after evolve-strategy.js promote)
+  Body: the HarnessConfig JSON
+- GET /strategy/state — Current runner state (harness version, rules count)
+
+Use /strategy/tick in your trading loop to get rule-based signals. You can:
+1. Auto-execute: set target_protocol and signals trade automatically
+2. Advisory: omit target_protocol, read signals, decide yourself whether to trade
+3. Compare: run /strategy/tick AND your own analysis, trade only when both agree
+
 ### Polymarket CLOB Endpoints
 - GET /clob/midpoint?token_id=<id> — Get midpoint price for a CLOB token
 - GET /clob/book?token_id=<id> — Get order book (bids/asks)

@@ -12,5 +12,6 @@ pub mod market_data;
 pub mod metrics;
 pub mod portfolio;
 pub mod session;
+pub mod strategy;
 pub mod trades;
 pub mod validate;
