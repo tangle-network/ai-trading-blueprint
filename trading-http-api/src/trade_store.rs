@@ -37,6 +37,34 @@ pub struct TradeRecord {
     #[serde(default)]
     pub valuation_status: TradeValuationStatus,
     pub validation: StoredValidation,
+
+    // ── Execution quality metrics (#2) ──────────────────────────────
+    /// Mid price at the moment the signal/decision was generated
+    #[serde(default)]
+    pub signal_price: Option<String>,
+    /// Actual fill price from the exchange
+    #[serde(default)]
+    pub fill_price: Option<String>,
+    /// Slippage in basis points: (fill - signal) / signal * 10000
+    #[serde(default)]
+    pub slippage_bps: Option<f64>,
+    /// Time from signal generation to fill confirmation (milliseconds)
+    #[serde(default)]
+    pub signal_to_fill_ms: Option<u64>,
+
+    // ── Decision trace (#5) ─────────────────────────────────────────
+    /// What triggered this trade (rule signal, agent decision, or both)
+    #[serde(default)]
+    pub decision_source: Option<String>,
+    /// The strategy runner signal that recommended this trade (if any)
+    #[serde(default)]
+    pub runner_signal: Option<serde_json::Value>,
+    /// Agent's reasoning for this trade (free-text from the LLM)
+    #[serde(default)]
+    pub agent_reasoning: Option<String>,
+    /// Harness config version that was active when this trade was made
+    #[serde(default)]
+    pub harness_version: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]

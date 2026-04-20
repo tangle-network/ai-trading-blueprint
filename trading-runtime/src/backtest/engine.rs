@@ -296,12 +296,24 @@ impl BacktestEngine {
         let train_promotes = train_comparison.should_promote();
         let test_promotes = test_comparison.should_promote();
 
+        // Compute overfitting detection via Sharpe ratio decay
+        let is_sharpe = train_comparison.candidate.stats.sharpe_ratio;
+        let oos_sharpe = test_comparison.candidate.stats.sharpe_ratio;
+        let sharpe_ratio_decay = if is_sharpe.abs() > 0.01 {
+            oos_sharpe / is_sharpe
+        } else {
+            0.0
+        };
+        let likely_overfit = sharpe_ratio_decay < 0.3;
+
         Ok(WalkForwardResult {
             train: train_comparison,
             test: test_comparison,
-            should_promote: train_promotes && test_promotes,
+            should_promote: train_promotes && test_promotes && !likely_overfit,
             train_candles: train_candles.len(),
             test_candles: test_candles.len(),
+            sharpe_ratio_decay,
+            likely_overfit,
         })
     }
 
@@ -344,9 +356,18 @@ impl BacktestEngine {
                             .insert(key, indicators::ema_crossover(short, long));
                     }
                 }
+                // These signals compute inline (no cache needed)
                 SignalType::PriceMomentum { .. }
                 | SignalType::VolumeSurge { .. }
-                | SignalType::FundingRate => {}
+                | SignalType::FundingRate
+                | SignalType::Macd { .. }
+                | SignalType::SmaCross { .. }
+                | SignalType::BollingerBand { .. }
+                | SignalType::AtrBreakout { .. }
+                | SignalType::Obv { .. }
+                | SignalType::Vwap { .. }
+                | SignalType::FundingRateSpread { .. }
+                | SignalType::MeanReversion { .. } => {}
             }
         }
 
@@ -372,7 +393,16 @@ impl BacktestEngine {
                 SignalType::VolumeSurge {
                     lookback_candles, ..
                 } => *lookback_candles,
-                SignalType::FundingRate => 0,
+                SignalType::FundingRate | SignalType::FundingRateSpread { .. } => 0,
+                SignalType::Macd { slow_period, .. } => *slow_period + 1,
+                SignalType::SmaCross { long_period, .. } => *long_period,
+                SignalType::BollingerBand { period, .. } => *period,
+                SignalType::AtrBreakout { period, .. } => *period + 1,
+                SignalType::Obv { lookback_candles } => *lookback_candles,
+                SignalType::Vwap { period } => *period,
+                SignalType::MeanReversion {
+                    lookback_candles, ..
+                } => *lookback_candles,
             };
             max = max.max(lookback);
         }
@@ -862,6 +892,197 @@ pub(crate) fn evaluate_signal(
                 _ => 0.0,
             }
         }
+
+        // ── New signal types (Gen 12) ───────────────────────────────────
+        SignalType::Macd {
+            fast_period,
+            slow_period,
+            signal_period,
+        } => {
+            let (macd_line, signal_line, _histogram) =
+                indicators::macd(closes, *fast_period, *slow_period, *signal_period);
+            if idx == 0 {
+                return 0.0;
+            }
+            let prev_above =
+                macd_line.get(idx - 1).unwrap_or(&0.0) > signal_line.get(idx - 1).unwrap_or(&0.0);
+            let curr_above =
+                macd_line.get(idx).unwrap_or(&0.0) > signal_line.get(idx).unwrap_or(&0.0);
+            match condition {
+                EntryCondition::CrossAbove => {
+                    if !prev_above && curr_above {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                EntryCondition::CrossBelow => {
+                    if prev_above && !curr_above {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
+
+        SignalType::SmaCross {
+            short_period,
+            long_period,
+        } => {
+            let short_sma = indicators::sma(closes, *short_period);
+            let long_sma = indicators::sma(closes, *long_period);
+            if idx == 0 {
+                return 0.0;
+            }
+            let prev_above =
+                short_sma.get(idx - 1).unwrap_or(&0.0) > long_sma.get(idx - 1).unwrap_or(&0.0);
+            let curr_above = short_sma.get(idx).unwrap_or(&0.0) > long_sma.get(idx).unwrap_or(&0.0);
+            match condition {
+                EntryCondition::CrossAbove => {
+                    if !prev_above && curr_above {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                EntryCondition::CrossBelow => {
+                    if prev_above && !curr_above {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
+
+        SignalType::BollingerBand { period, std_dev } => {
+            let (upper, _middle, lower) = indicators::bollinger_bands(closes, *period, *std_dev);
+            let price = closes.get(idx).copied().unwrap_or(0.0);
+            match condition {
+                EntryCondition::Below { .. } => {
+                    if price < lower.get(idx).copied().unwrap_or(0.0) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                EntryCondition::Above { .. } => {
+                    if price > upper.get(idx).copied().unwrap_or(0.0) {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
+
+        SignalType::AtrBreakout { period, multiplier } => {
+            let highs: Vec<f64> = candles
+                .iter()
+                .map(|c| c.high.to_f64().unwrap_or(0.0))
+                .collect();
+            let lows: Vec<f64> = candles
+                .iter()
+                .map(|c| c.low.to_f64().unwrap_or(0.0))
+                .collect();
+            let atr_vals = indicators::atr(&highs, &lows, closes, *period);
+            if idx < *period {
+                return 0.0;
+            }
+            let prev_close = closes.get(idx - 1).copied().unwrap_or(0.0);
+            let curr_close = closes[idx];
+            let atr_val = atr_vals.get(idx - 1).copied().unwrap_or(0.0);
+            let move_size = (curr_close - prev_close).abs();
+            if move_size > atr_val * multiplier {
+                if curr_close > prev_close { 1.0 } else { -1.0 }
+            } else {
+                0.0
+            }
+        }
+
+        SignalType::Obv { lookback_candles } => {
+            let obv_vals = indicators::obv(closes, volumes);
+            if idx < *lookback_candles || *lookback_candles == 0 {
+                return 0.0;
+            }
+            let prev = obv_vals.get(idx - lookback_candles).copied().unwrap_or(0.0);
+            let curr = obv_vals.get(idx).copied().unwrap_or(0.0);
+            match condition {
+                EntryCondition::Positive => {
+                    if curr > prev {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                EntryCondition::Negative => {
+                    if curr < prev {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
+
+        SignalType::Vwap { period } => {
+            let vwap_vals = indicators::vwap(closes, volumes, *period);
+            let price = closes.get(idx).copied().unwrap_or(0.0);
+            let vwap_val = vwap_vals.get(idx).copied().unwrap_or(0.0);
+            match condition {
+                EntryCondition::Below { .. } => {
+                    if price < vwap_val {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                EntryCondition::Above { .. } => {
+                    if price > vwap_val {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
+
+        SignalType::FundingRateSpread { threshold_bps } => {
+            let ts = candles.get(idx).map(|c| c.timestamp).unwrap_or(0);
+            let rate = funding
+                .iter()
+                .rev()
+                .find(|f| f.timestamp <= ts && f.token == token)
+                .map(|f| f.rate.to_f64().unwrap_or(0.0))
+                .unwrap_or(0.0);
+            let spread_bps = rate.abs() * 10000.0;
+            if spread_bps > *threshold_bps {
+                if rate < 0.0 { 1.0 } else { -1.0 }
+            } else {
+                0.0
+            }
+        }
+
+        SignalType::MeanReversion {
+            lookback_candles,
+            z_score_threshold,
+        } => {
+            let z_scores = indicators::z_score(closes, *lookback_candles);
+            let z = z_scores.get(idx).copied().unwrap_or(0.0);
+            if z < -*z_score_threshold {
+                1.0 // oversold → long
+            } else if z > *z_score_threshold {
+                -1.0 // overbought → short
+            } else {
+                0.0
+            }
+        }
     }
 }
 
@@ -893,6 +1114,9 @@ fn empty_result() -> BacktestResult {
         tokens_traded: vec![],
     }
 }
+
+// Walk-forward overfitting detection is built into the existing
+// WalkForwardResult in types.rs (sharpe_ratio_decay + likely_overfit fields).
 
 #[cfg(test)]
 mod tests {

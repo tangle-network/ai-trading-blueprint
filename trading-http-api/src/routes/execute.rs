@@ -568,6 +568,14 @@ async fn execute_paper_trade(
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     };
     trade_store::record_trade(record).await.map_err(|e| {
         (
@@ -625,6 +633,14 @@ async fn execute_real_trade(
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     };
     // On-chain tx already succeeded — persistence failure must NOT return 500
     // (agent would retry and potentially double-spend). Log error but return 200.
@@ -700,6 +716,14 @@ async fn execute_clob_trade(
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     };
     // CLOB order already submitted — persistence failure must NOT return 500
     // (agent would retry and submit a duplicate order). Log and return 200.
@@ -888,6 +912,14 @@ async fn execute_hyperliquid_trade(
         notional_usd: valuation.notional_usd.map(|v| v.to_string()),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     };
     if let Err(e) = trade_store::record_trade(record).await {
         tracing::error!(

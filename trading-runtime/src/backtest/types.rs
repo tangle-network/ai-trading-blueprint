@@ -283,24 +283,68 @@ pub struct EntryRule {
 }
 
 /// Technical signal types computed from candle data.
+///
+/// The meta-harness evolves which signals are used and their parameters.
+/// Add new signal types here to expand the agent's vocabulary — the
+/// evolve-strategy.js loop will discover which combinations work.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalType {
+    // ── Momentum ────────────────────────────────────────────
     Rsi {
         period: usize,
-    },
-    EmaCross {
-        short_period: usize,
-        long_period: usize,
     },
     PriceMomentum {
         lookback_candles: usize,
     },
+    Macd {
+        fast_period: usize,
+        slow_period: usize,
+        signal_period: usize,
+    },
+
+    // ── Trend ───────────────────────────────────────────────
+    EmaCross {
+        short_period: usize,
+        long_period: usize,
+    },
+    SmaCross {
+        short_period: usize,
+        long_period: usize,
+    },
+
+    // ── Volatility ──────────────────────────────────────────
+    BollingerBand {
+        period: usize,
+        std_dev: f64,
+    },
+    AtrBreakout {
+        period: usize,
+        multiplier: f64,
+    },
+
+    // ── Volume ──────────────────────────────────────────────
     VolumeSurge {
         lookback_candles: usize,
         multiplier: f64,
     },
+    Obv {
+        lookback_candles: usize,
+    },
+    Vwap {
+        period: usize,
+    },
+
+    // ── Market structure ────────────────────────────────────
     FundingRate,
+    FundingRateSpread {
+        /// Threshold in bps — signal fires when spread exceeds this
+        threshold_bps: f64,
+    },
+    MeanReversion {
+        lookback_candles: usize,
+        z_score_threshold: f64,
+    },
 }
 
 /// Conditions evaluated against signal values.
@@ -457,6 +501,13 @@ pub struct WalkForwardResult {
     pub should_promote: bool,
     pub train_candles: usize,
     pub test_candles: usize,
+    /// Ratio of out-of-sample Sharpe to in-sample Sharpe.
+    /// > 0.5 = likely generalizes. < 0.3 = likely overfit.
+    #[serde(default)]
+    pub sharpe_ratio_decay: f64,
+    /// Whether the config is likely overfit (sharpe_ratio_decay < 0.3)
+    #[serde(default)]
+    pub likely_overfit: bool,
 }
 
 /// Precomputed indicator arrays per token, keyed by their parameters.
