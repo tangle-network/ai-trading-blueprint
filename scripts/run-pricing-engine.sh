@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run a pricing engine instance for one operator.
 #
-# Requires: pricing-engine-server binary (from ../blueprint), running Anvil instance.
+# Local Anvil defaults are still supported, but the preferred testnet path is to
+# source protocol addresses from a `tnt-core` deployment manifest first.
 #
 # Usage:
 #   ./scripts/run-pricing-engine.sh --config scripts/operator1.toml
@@ -9,11 +10,26 @@
 #
 # Or run both operators:
 #   ./scripts/run-pricing-engine.sh --both
+#
+# Base Sepolia example:
+#   source ./scripts/load-base-sepolia-env.sh
+#   export BLUEPRINT_ID=<deployed blueprint id>
+#   ./scripts/run-pricing-engine.sh --config scripts/operator1.toml
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+
+LOAD_BASE_SEPOLIA="${LOAD_BASE_SEPOLIA:-auto}"
+MANIFEST_DEFAULT="$ROOT_DIR/../tnt-core/deployments/base-sepolia/latest.json"
+
+if [[ "$LOAD_BASE_SEPOLIA" != "0" && "$LOAD_BASE_SEPOLIA" != "false" ]]; then
+  if [[ -n "${TNT_CORE_DEPLOYMENT_MANIFEST:-}" || -f "$MANIFEST_DEFAULT" ]]; then
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/load-base-sepolia-env.sh" "${TNT_CORE_DEPLOYMENT_MANIFEST:-$MANIFEST_DEFAULT}"
+  fi
+fi
 
 # Defaults (override via env)
 : "${HTTP_RPC_URL:=http://127.0.0.1:8545}"
@@ -76,6 +92,10 @@ echo "Starting pricing engine"
 echo "  Config:  $CONFIG"
 echo "  Pricing: $PRICING_CONFIG"
 echo "  RPC:     $HTTP_RPC_URL"
+echo "  WS RPC:  $WS_RPC_URL"
+echo "  Tangle:  $TANGLE_CONTRACT"
+echo "  Staking: $RESTAKING_CONTRACT"
+echo "  Status:  $STATUS_REGISTRY_CONTRACT"
 echo "  Binary:  $PRICING_BIN"
 
 exec "$PRICING_BIN" \

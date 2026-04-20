@@ -166,6 +166,40 @@ cargo run --release -p trading-validator-bin
 cd arena && pnpm dev
 ```
 
+### Base Sepolia Operator Prep
+
+Fresh protocol deploys come from `tnt-core`, not this repo. After `tnt-core` broadcast completes, load the protocol addresses directly from its manifest:
+
+```bash
+source ./scripts/load-base-sepolia-env.sh \
+  /home/drew/code/tnt-core/deployments/base-sepolia/latest.json
+```
+
+That exports the current:
+
+- `TANGLE_CONTRACT`
+- `RESTAKING_CONTRACT` for the staking or `MultiAssetDelegation` contract
+- `STATUS_REGISTRY_CONTRACT`
+- `STATUS_REGISTRY_ADDRESS` for the operator heartbeat path
+- `HTTP_RPC_URL=https://sepolia.base.org`
+- `WS_RPC_URL=wss://base-sepolia-rpc.publicnode.com`
+- `CHAIN_ID=84532`
+
+Then set the blueprint-specific IDs from your own service deployment:
+
+```bash
+export BLUEPRINT_ID=<trading blueprint id>
+export SERVICE_ID=<service instance id>
+```
+
+Pricing engine launch:
+
+```bash
+./scripts/run-pricing-engine.sh --config scripts/operator1.toml
+```
+
+The server note that mentions only `TANGLE_CONTRACT` and `RESTAKING_CONTRACT` is outdated for this repo. Current operator flows also require `STATUS_REGISTRY_CONTRACT`, and `RESTAKING_CONTRACT` remains the correct env var name even though the underlying protocol contract is the staking or `MultiAssetDelegation` address.
+
 ### Testing
 
 ```bash
