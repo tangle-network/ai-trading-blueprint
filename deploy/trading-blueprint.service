@@ -1,5 +1,5 @@
 [Unit]
-Description=AI Trading Blueprint Operator
+Description=Tangle Blueprint Manager — AI Trading Blueprint Operator
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
@@ -7,26 +7,41 @@ Requires=docker.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/trading-blueprint
-EnvironmentFile=/opt/trading-blueprint/.env
-ExecStart=/usr/local/bin/trading-blueprint
+WorkingDirectory=/opt/trading-blueprint/repo
+
+# Cargo-tangle needs to be in PATH
+Environment=PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=RUST_LOG=info,blueprint_manager=debug,trading_blueprint=debug
+
+# The BPM watches the chain, discovers blueprints, spawns binaries.
+# --no-vm: run native (not in VM sandbox)
+# --allow-unchecked-attestations: skip GitHub attestation checks (testnet)
+# --settings-file: blueprint-specific env vars
+ExecStart=/root/.cargo/bin/cargo-tangle blueprint run \
+  --protocol tangle \
+  --network testnet \
+  --keystore-path /mnt/trading-data/blueprint-state/keystore \
+  --data-dir /mnt/trading-data/bpm-data \
+  --settings-file /opt/trading-blueprint/repo/settings.env \
+  --no-vm \
+  --allow-unchecked-attestations
+
 Restart=always
 RestartSec=10
 
-# Graceful shutdown — gives time for HL emergency position close
-TimeoutStopSec=30
+# Graceful shutdown — BPM forwards SIGTERM to managed blueprints
+TimeoutStopSec=60
 KillSignal=SIGTERM
 
-# Security hardening
+# Security
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/mnt/trading-state /var/run/docker.sock /tmp
+ReadWritePaths=/mnt/trading-data /var/run/docker.sock /tmp /opt/trading-blueprint
 PrivateTmp=yes
 
-# Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=trading-blueprint
+SyslogIdentifier=blueprint-manager
 
 [Install]
 WantedBy=multi-user.target
