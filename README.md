@@ -1,29 +1,34 @@
 # AI Trading Blueprints
 
-Autonomous AI trading agents with decentralized risk validation and on-chain execution, built on [Tangle Network](https://tangle.tools).
+Self-improving autonomous trading agents with decentralized risk validation, built on [Tangle Network](https://tangle.tools).
 
-AI agents run inside sandboxed Docker containers, analyze markets across 8 DeFi protocols, and generate trade intents that must pass through a three-layer security model — AI reasoning, a decentralized validator committee (2-of-3 EIP-712 signatures), and on-chain policy enforcement — before any capital moves.
+Agents trade across 10 DeFi protocols (Hyperliquid perps, Uniswap, Polymarket, Aave, GMX, etc.) with a three-tier security model: per-trade validator signatures for untrusted operators, pre-approved trading envelopes for instant execution, and self-operated mode for trusted operators. The same strategy config drives backtesting, paper trading, and live execution.
 
 ## Architecture
 
 ```
-Cron Tick → AI Agent → Fetch Prices → Check Portfolio → Analyze
-               │
-               ▼
-          Build Intent → Validate (3 nodes) → Execute (on-chain)
-               │              │
-               ▼              ▼
-          Store History   Policy + AI Score + EIP-712 Sign
-                              │
-                     if approved (score ≥ 50)
-                              │
-                              ▼
-                     vault.execute(params, sigs, scores)
-                              │
-                     PolicyEngine + TradeValidator
-                     2-of-3 multisig verification
-                              │
-                     Trade on DEX / Lending / Perp
+                    ┌─────────────────────────────────────┐
+                    │         SELF-IMPROVING LOOP          │
+                    │                                       │
+  Candle data ──→ StrategyRunner ──→ TradeSignal           │
+                       │                 │                  │
+               ┌───────┴──────┐    ┌─────┴──────┐         │
+               │ Advisory     │    │ Auto-exec   │         │
+               │ (agent       │    │ (bracket    │         │
+               │  decides)    │    │  orders)    │         │
+               └───────┬──────┘    └─────┬──────┘         │
+                       │                 │                  │
+                Trade records + execution quality           │
+                       │                                    │
+              evolve-strategy.js ──→ mutate HarnessConfig  │
+                       │                                    │
+              POST /strategy/config ──→ runner updates     │
+                       └────────────────────────────────────┘
+
+  Validation trust:
+    PerTrade    → validator EIP-712 sigs per trade (5-30s)
+    Envelope    → pre-approved bounds, instant execution
+    SelfOperated → local policy only, no external validation
 ```
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system diagrams.
@@ -53,14 +58,16 @@ Operator mapping:
 
 | Adapter | Type | Operations |
 |---------|------|------------|
+| **Hyperliquid** | Perpetuals | Native L1 API: market/limit/stop-loss/take-profit/bracket orders, leverage, positions |
 | **Uniswap V3** | DEX | Token swaps (exact in/out) |
 | **Aave V3** | Lending | Supply, borrow, repay, withdraw |
 | **GMX v2** | Perpetuals | Leveraged long/short |
 | **Morpho** | Lending | Optimized lending rates |
 | **Vertex** | Perpetuals | Perp trading |
-| **Hyperliquid** | Perpetuals | High-frequency leverage |
 | **Polymarket** | Prediction | On-chain CTF + off-chain CLOB orders |
+| **Aerodrome** | DEX | Base L2 swaps |
 | **TWAP** | Execution | Time-weighted average price |
+| **Stat Arb** | Execution | Cross-venue statistical arbitrage |
 
 ## Strategy Packs
 
@@ -78,13 +85,21 @@ Modular AI prompt packs compose protocol adapters into trading strategies:
 
 ## Security Model
 
-Every trade passes through three independent validation layers:
+Three-tier validation trust, set per bot at provision time:
 
-1. **AI Agent Reasoning** (off-chain) — Market analysis, portfolio context, risk assessment. Runs in an isolated Docker sidecar with no direct chain access.
+| Trust Level | Who | Validation | Latency |
+|-------------|-----|-----------|---------|
+| **PerTrade** | Untrusted operators | Validator EIP-712 signatures per trade | 5-30s |
+| **Envelope** | Depositor-approved strategy | Pre-approved bounds, instant within | ~0ms |
+| **SelfOperated** | Self-hosted operators | Local policy only (envelope still enforced) | ~0ms |
 
-2. **Decentralized Validator Committee** (off-chain + signatures) — 3 independent validator nodes each evaluate policy compliance (40% weight) and AI scoring (60% weight), then sign with EIP-712. Requires 2-of-3 valid signatures.
+**Trading Envelope** — operators approve a policy surface (allowed assets, max position size, leverage cap, total exposure limit, drawdown threshold, SL distance range). Trades within the envelope execute instantly. Cancels always instant. The exact entry/exit within the envelope is unpredictable — prevents front-running.
 
-3. **On-Chain Guards** (hard limits) — `PolicyEngine` enforces token whitelists, position caps, leverage limits, rate limiting, and slippage bounds. `TradeValidator` recovers and verifies m-of-n EIP-712 signatures. Intent deduplication prevents replay.
+**On-Chain Guards** — `PolicyEngine` enforces token whitelists, position caps, leverage limits, rate limiting. `TradeValidator` verifies m-of-n EIP-712 signatures (minimum 2-of-2 floor). Intent deduplication prevents replay.
+
+**Fund Safety** — position ledger survives restarts, startup reconciliation detects orphaned positions, SIGTERM handler emergency-closes all open positions, retry with exponential backoff on API failures.
+
+**Security Audit** — 3 harden rounds, 12 CRITICALs + 8 HIGHs fixed, 429 Forge fuzz tests including adversarial scenarios (donation attacks, cross-vault NAV manipulation, score averaging, lockup bypass).
 
 ## Project Structure
 
@@ -150,21 +165,28 @@ cd arena && pnpm install
 ### Local Development
 
 ```bash
-# 1. Start local chain
+# Option A: cargo tangle harness (recommended)
+cargo tangle harness up   # boots anvil, deploys contracts, runs operator
+
+# Option B: manual
 anvil --host 0.0.0.0
-
-# 2. Deploy contracts and register blueprint
 ./scripts/deploy-local.sh
-
-# 3. Start operator node
 cargo run --release -p trading-blueprint-bin
 
-# 4. Start validator nodes (separate terminals)
+# Validator nodes (separate terminals)
 cargo run --release -p trading-validator-bin
 
-# 5. Start frontend
+# Frontend
 cd arena && pnpm dev
 ```
+
+### Deploy to Hetzner (production)
+
+```bash
+./deploy/go-live.sh <server-ip> <operator-private-key>
+```
+
+Uses the Blueprint Manager (`cargo tangle blueprint run`), not the raw binary. Supports N service instances per BPM.
 
 ### Base Sepolia Operator Prep
 
@@ -203,28 +225,28 @@ The server note that mentions only `TANGLE_CONTRACT` and `RESTAKING_CONTRACT` is
 ### Testing
 
 ```bash
-# Solidity (379 tests)
+# Solidity (429 tests including adversarial fuzz)
 cd contracts && forge test
 
-# Rust unit tests
-cargo test -p trading-runtime          # 159 tests
-cargo test -p trading-http-api         # 47 tests
-cargo test -p trading-blueprint-lib    # 132 tests (94 unit + 38 integration)
-cargo test -p trading-validator-lib    # 42 tests
-cargo test -p trading-instance-blueprint-lib  # 33 tests
+# Rust unit tests (481 tests)
+cargo test -p trading-runtime --lib          # 310 tests
+cargo test -p trading-http-api --lib         # 16 tests
+cargo test -p trading-blueprint-lib --lib    # 99 tests
+cargo test -p trading-validator-lib --lib    # 56 tests
 
-# Arena frontend (36 tests)
-cd arena && pnpm vitest run
+# Integration tests
+cargo test -p trading-runtime --test new_signals_integration      # 9 signal type tests
+cargo test -p trading-runtime --test backtest_runner_equivalence  # backtest↔live equivalence
 
-# Full E2E with Docker sidecars (~6s)
+# Hyperliquid E2E (requires funded testnet account)
+HYPERLIQUID_E2E=1 EXECUTOR_PRIVATE_KEY=0x... \
+  cargo test -p trading-runtime --test hyperliquid_e2e -- --nocapture
+
+# Full E2E with Docker sidecars
 SIDECAR_E2E=1 cargo test -p trading-blueprint-lib --test tangle_e2e_full
-
-# Full E2E with AI scoring (~45s)
-SIDECAR_E2E=1 ZAI_API_KEY=<key> cargo test -p trading-blueprint-lib --test tangle_e2e_full
-
-# Binary process E2E (~9s)
-SIDECAR_E2E=1 cargo test -p trading-blueprint-lib --test tangle_binary_e2e
 ```
+
+**Total: 928 tests (429 Forge + 499 Rust), 0 failures.**
 
 ## Operator API
 
@@ -260,10 +282,46 @@ REST API on port 9100, consumed by AI agents running inside sidecars:
 | `POST /portfolio/state` | Current holdings and positions |
 | `POST /circuit-breaker/check` | Risk limit enforcement |
 | `POST /validate` | Trade intent validation (fans out to validator committee) |
-| `POST /execute` | On-chain trade execution through vault |
+| `POST /execute` | Trade execution (routes to vault, HL, or CLOB based on target_protocol) |
+| **Hyperliquid** | |
+| `POST /hyperliquid/order` | Place any order type (market/limit/stop/TP) |
+| `POST /hyperliquid/bracket` | Entry + stop-loss + take-profit grouped |
+| `POST /hyperliquid/cancel` | Cancel order |
+| `POST /hyperliquid/leverage` | Set leverage (cross/isolated) |
+| `GET /hyperliquid/account` | Positions, margin, open orders |
+| `GET /hyperliquid/prices` | Mid prices for all HL perp markets |
+| `GET/PUT /hyperliquid/envelope` | View/update trading envelope |
+| **Strategy Runner** | |
+| `POST /strategy/tick` | Feed candle, get entry/exit signals (optional auto-execute) |
+| `POST /strategy/config` | Update harness config (from evolve-strategy.js) |
+| `GET /strategy/state` | Current runner state (harness version, rules) |
+| **Collateral** | |
 | `GET /collateral/status` | CLOB collateral status |
 | `POST /collateral/release` | Release vault funds for off-chain CLOB trading |
 | `POST /collateral/return` | Return CLOB funds to vault |
+
+## Self-Improving Strategy Loop
+
+The meta-harness automatically evolves trading strategies through backtesting:
+
+1. **Backtest** — `HarnessConfig` defines entry/exit rules evaluated against historical candles
+2. **Paper trade** — same config drives the `StrategyRunner` against live market data
+3. **Live trade** — same config, real money, via `/strategy/tick` with `target_protocol`
+4. **Evaluate** — execution quality metrics (slippage, fill time) + decision traces
+5. **Evolve** — `evolve-strategy.js` mutates config, backtests variants, promotes winners
+6. **Guard** — walk-forward validation blocks configs that overfit in-sample data
+
+### Signal Types (13)
+
+| Category | Signals |
+|----------|---------|
+| Momentum | RSI, MACD, PriceMomentum |
+| Trend | EMA Cross, SMA Cross |
+| Volatility | Bollinger Bands, ATR Breakout |
+| Volume | Volume Surge, OBV, VWAP |
+| Market Structure | FundingRate, FundingRateSpread, MeanReversion |
+
+The agent can combine any signals with weighted conditions. The meta-harness discovers which combinations work.
 
 ## License
 
