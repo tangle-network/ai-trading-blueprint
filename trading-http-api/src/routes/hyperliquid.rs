@@ -8,13 +8,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{
     Json, Router,
-    routing::{get, post, put},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use trading_runtime::hyperliquid::{
-    AccountInfo, AssetId, CancelOrderRequest, HlOrderType, PlaceOrderRequest, SetLeverageRequest,
+    AccountInfo, CancelOrderRequest, PlaceOrderRequest, SetLeverageRequest,
 };
 
 use crate::MultiBotTradingState;
