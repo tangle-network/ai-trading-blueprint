@@ -166,6 +166,134 @@ pub fn ema_crossover(short_ema: &[f64], long_ema: &[f64]) -> Vec<i8> {
     signals
 }
 
+/// MACD (Moving Average Convergence Divergence).
+///
+/// Returns (macd_line, signal_line, histogram), each the same length as `closes`.
+pub fn macd(
+    closes: &[f64],
+    fast_period: usize,
+    slow_period: usize,
+    signal_period: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let fast_ema = ema(closes, fast_period);
+    let slow_ema = ema(closes, slow_period);
+
+    let n = closes.len();
+    let mut macd_line = vec![0.0; n];
+    for i in 0..n {
+        macd_line[i] = fast_ema[i] - slow_ema[i];
+    }
+
+    let signal_line = ema(&macd_line, signal_period);
+    let mut histogram = vec![0.0; n];
+    for i in 0..n {
+        histogram[i] = macd_line[i] - signal_line[i];
+    }
+
+    (macd_line, signal_line, histogram)
+}
+
+/// Bollinger Bands: (upper, middle, lower).
+///
+/// Middle = SMA(period), upper/lower = middle ± std_dev * σ.
+pub fn bollinger_bands(
+    closes: &[f64],
+    period: usize,
+    std_dev_mult: f64,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let n = closes.len();
+    let middle = sma(closes, period);
+    let mut upper = vec![0.0; n];
+    let mut lower = vec![0.0; n];
+
+    for i in 0..n {
+        let start = if i >= period { i + 1 - period } else { 0 };
+        let window = &closes[start..=i];
+        let mean = middle[i];
+        let variance: f64 =
+            window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / window.len() as f64;
+        let std_dev = variance.sqrt();
+        upper[i] = mean + std_dev_mult * std_dev;
+        lower[i] = mean - std_dev_mult * std_dev;
+    }
+
+    (upper, middle, lower)
+}
+
+/// OBV (On-Balance Volume).
+///
+/// Cumulative volume where up-close adds and down-close subtracts.
+pub fn obv(closes: &[f64], volumes: &[f64]) -> Vec<f64> {
+    let n = closes.len().min(volumes.len());
+    let mut result = vec![0.0; n];
+    if n == 0 {
+        return result;
+    }
+    result[0] = volumes[0];
+    for i in 1..n {
+        if closes[i] > closes[i - 1] {
+            result[i] = result[i - 1] + volumes[i];
+        } else if closes[i] < closes[i - 1] {
+            result[i] = result[i - 1] - volumes[i];
+        } else {
+            result[i] = result[i - 1];
+        }
+    }
+    result
+}
+
+/// VWAP (Volume-Weighted Average Price) over a rolling window.
+pub fn vwap(closes: &[f64], volumes: &[f64], period: usize) -> Vec<f64> {
+    let n = closes.len().min(volumes.len());
+    let mut result = vec![0.0; n];
+    if n == 0 || period == 0 {
+        return result;
+    }
+
+    let mut sum_pv = 0.0;
+    let mut sum_v = 0.0;
+
+    for i in 0..n {
+        sum_pv += closes[i] * volumes[i];
+        sum_v += volumes[i];
+        if i >= period {
+            sum_pv -= closes[i - period] * volumes[i - period];
+            sum_v -= volumes[i - period];
+        }
+        result[i] = if sum_v > 0.0 {
+            sum_pv / sum_v
+        } else {
+            closes[i]
+        };
+    }
+    result
+}
+
+/// Z-score of price relative to a rolling mean (for mean-reversion signals).
+///
+/// z = (close - mean) / std_dev. Values > threshold = overbought, < -threshold = oversold.
+pub fn z_score(closes: &[f64], lookback: usize) -> Vec<f64> {
+    let n = closes.len();
+    let mut result = vec![0.0; n];
+    if n < 2 || lookback < 2 {
+        return result;
+    }
+
+    for i in lookback..n {
+        let window = &closes[i + 1 - lookback..=i];
+        let mean: f64 = window.iter().sum::<f64>() / window.len() as f64;
+        let variance: f64 =
+            window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / window.len() as f64;
+        let std_dev = variance.sqrt();
+        result[i] = if std_dev > 1e-10 {
+            (closes[i] - mean) / std_dev
+        } else {
+            0.0
+        };
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
