@@ -1,0 +1,32 @@
+[Unit]
+Description=AI Trading Blueprint Operator
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/trading-blueprint
+EnvironmentFile=/opt/trading-blueprint/.env
+ExecStart=/usr/local/bin/trading-blueprint
+Restart=always
+RestartSec=10
+
+# Graceful shutdown — gives time for HL emergency position close
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/mnt/trading-state /var/run/docker.sock /tmp
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-blueprint
+
+[Install]
+WantedBy=multi-user.target
