@@ -894,6 +894,7 @@ fn multi_bot_state_with_market(market_data_base_url: &str) -> Arc<MultiBotTradin
                     chain_id: 31337,
                     rpc_url: "http://localhost:8545".to_string(),
                     validator_endpoints: vec![],
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
             } else {
                 None
@@ -2012,6 +2013,7 @@ async fn test_multi_bot_clob_execute() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     validator_endpoints: vec![],
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
             } else {
                 None
@@ -2101,6 +2103,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     validator_endpoints: vec![],
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
             } else {
                 None
@@ -2184,6 +2187,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     validator_endpoints: vec![],
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
             } else {
                 None

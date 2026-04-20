@@ -1,0 +1,34 @@
+# Tangle Harness config — local dev environment
+#
+# Usage: cargo tangle harness up
+#
+# Spins up a local anvil chain, deploys contracts, and runs the trading
+# blueprint + validator blueprint side by side.
+
+[chain]
+anvil = true
+chain_id = 31337
+
+[[blueprint]]
+name = "trading"
+path = "."
+port = 9100
+health_path = "/health"
+startup_timeout_secs = 120
+
+[blueprint.env]
+CHAIN = "local"
+OPERATOR_MAX_CAPACITY = "10"
+MARKET_DATA_BASE_URL = "https://api.coingecko.com/api/v3"
+VALIDATION_DEADLINE_SECS = "3600"
+VALIDATOR_MIN_SCORE = "50"
+BLUEPRINT_STATE_DIR = "./blueprint-state"
+RUST_LOG = "info,trading_blueprint_lib=debug,trading_runtime=debug"
+# HYPERLIQUID_TESTNET = "1"
+
+# Uncomment to also run the validator blueprint locally:
+# [[blueprint]]
+# name = "validator"
+# path = "../ai-trading-validator-blueprint"
+# port = 9090
+# health_path = "/health"

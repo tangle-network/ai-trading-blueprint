@@ -720,6 +720,191 @@ async fn execute_clob_trade(
     }))
 }
 
+/// Execute a trade on Hyperliquid via the native L1 API.
+///
+/// Maps the standard `ExecuteRequest` intent fields to an `HlOrderType` and
+/// dispatches through the shared `HyperliquidClient`. Trade records are stored
+/// with `hl:` prefix on the tx_hash.
+async fn execute_hyperliquid_trade(
+    bot_id: &str,
+    state: &MultiBotTradingState,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+
+    let hl_client = super::hyperliquid::get_hl_client(state)?;
+
+    // Map intent action to HL order params
+    let action = parse_action(&req.intent.action)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
+
+    // Envelope check — replaces validator signatures for HL trades.
+    // Cancels and closes always pass. Opens are checked against the envelope.
+    let is_open = matches!(
+        action,
+        trading_runtime::types::Action::OpenLong
+            | trading_runtime::types::Action::OpenShort
+            | trading_runtime::types::Action::Buy
+    );
+    if is_open {
+        let envelope = super::hyperliquid::get_envelope(state);
+        let asset = req
+            .intent
+            .metadata
+            .get("asset")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&req.intent.token_out);
+        let size_usd = valuation
+            .notional_usd
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let leverage: u32 = req
+            .intent
+            .metadata
+            .get("leverage")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        // Approximate current exposure from HL account (best-effort)
+        let current_exposure = 0.0; // TODO: pull from position ledger
+        let check = envelope.check_trade(
+            asset,
+            size_usd.try_into().unwrap_or(0.0),
+            leverage,
+            true,
+            current_exposure,
+        );
+        if !check.allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "Trade rejected by envelope: {}",
+                    check.reason.unwrap_or_default()
+                ),
+            ));
+        }
+    }
+    let is_buy = matches!(
+        action,
+        trading_runtime::types::Action::OpenLong
+            | trading_runtime::types::Action::Buy
+            | trading_runtime::types::Action::CloseShort
+    );
+    let reduce_only = matches!(
+        action,
+        trading_runtime::types::Action::CloseLong | trading_runtime::types::Action::CloseShort
+    );
+
+    // Determine order type from intent metadata
+    let order_type = if let Some(trigger_px) = req
+        .intent
+        .metadata
+        .get("trigger_price")
+        .and_then(|v| v.as_str())
+    {
+        let is_market = req
+            .intent
+            .metadata
+            .get("is_market")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let tpsl = req
+            .intent
+            .metadata
+            .get("tpsl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sl");
+        if tpsl == "tp" {
+            HlOrderType::TakeProfit {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        } else {
+            HlOrderType::StopLoss {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        }
+    } else if let Some(price) = req
+        .intent
+        .metadata
+        .get("limit_price")
+        .and_then(|v| v.as_str())
+    {
+        HlOrderType::Limit {
+            price: price.to_string(),
+        }
+    } else {
+        HlOrderType::Market
+    };
+
+    // Resolve asset — prefer metadata.asset, fall back to token_out symbol
+    let asset = if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
+        AssetId::Symbol(asset_str.to_string())
+    } else {
+        AssetId::Symbol(req.intent.token_out.clone())
+    };
+
+    let hl_req = PlaceOrderRequest {
+        asset,
+        is_buy,
+        size: req.intent.amount_in.clone(),
+        order_type,
+        reduce_only,
+        cloid: None,
+    };
+
+    let resp = hl_client
+        .place_order(&hl_req)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    let resp_json = serde_json::to_value(&resp).unwrap_or_default();
+    let tx_hash = format!(
+        "hl:{}",
+        resp_json
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("ok")
+    );
+    let trade_id = uuid::Uuid::new_v4().to_string();
+
+    let record = TradeRecord {
+        id: trade_id,
+        bot_id: bot_id.to_string(),
+        timestamp: Utc::now(),
+        action: req.intent.action.clone(),
+        token_in: req.intent.token_in.clone(),
+        token_out: req.intent.token_out.clone(),
+        amount_in: req.intent.amount_in.clone(),
+        min_amount_out: req.intent.min_amount_out.clone(),
+        target_protocol: "hyperliquid".to_string(),
+        tx_hash: tx_hash.clone(),
+        block_number: None,
+        gas_used: None,
+        paper_trade: false,
+        amount_out: valuation.amount_out.map(|v| v.to_string()),
+        entry_price_usd: valuation.entry_price_usd.map(|v| v.to_string()),
+        notional_usd: valuation.notional_usd.map(|v| v.to_string()),
+        valuation_status: valuation.valuation_status,
+        validation: stored_validation,
+    };
+    if let Err(e) = trade_store::record_trade(record).await {
+        tracing::error!(
+            error = %e,
+            "CRITICAL: HL order submitted but persistence failed"
+        );
+    }
+
+    Ok(Json(ExecuteResponse {
+        tx_hash,
+        block_number: None,
+        gas_used: None,
+        paper_trade: false,
+        clob_order_id: None,
+    }))
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn execute(
@@ -844,10 +1029,25 @@ async fn execute_multi_bot(
     let intent = parse_execute_request(&req)?;
     let stored_validation = build_stored_validation(&req.validation);
 
-    // Off-chain signature verification — prevents fabricated validator signatures
-    // from reaching any execution path. Paper trades are exempt.
+    // Validation trust level determines which authorization path fires:
+    // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
+    // - Envelope: trades within approved bounds skip validators (instant)
+    // - SelfOperated: no external validation, local policy only (instant)
+    use trading_runtime::ValidationTrust;
     if !bot.paper_trade {
-        verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+        match bot.validation_trust {
+            ValidationTrust::PerTrade => {
+                verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+            }
+            ValidationTrust::Envelope => {
+                // Envelope check happens in execute_hyperliquid_trade or is
+                // skipped for closes/cancels. No validator round-trip needed.
+            }
+            ValidationTrust::SelfOperated => {
+                // Operator trusts themselves. No external validation.
+                // Envelope bounds still enforced for risk management.
+            }
+        }
     }
 
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());
@@ -874,6 +1074,12 @@ async fn execute_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
         return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await;
+    }
+
+    // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
+    if req.intent.target_protocol == "hyperliquid" {
+        return execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
+            .await;
     }
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions

@@ -83,6 +83,8 @@ pub struct BotContext {
     pub chain_id: u64,
     pub rpc_url: String,
     pub validator_endpoints: Vec<String>,
+    /// Validation trust level — determines per-trade vs envelope vs self-operated.
+    pub validation_trust: trading_runtime::ValidationTrust,
 }
 
 /// Shared state for the multi-bot trading HTTP API.
@@ -141,6 +143,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::backtest::multi_bot_router())
         .merge(routes::candles::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
+        .merge(routes::hyperliquid::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,

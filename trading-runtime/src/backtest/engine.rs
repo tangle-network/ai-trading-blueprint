@@ -29,6 +29,10 @@ impl BacktestEngine {
         Self { config }
     }
 
+    pub fn config(&self) -> &BacktestConfig {
+        &self.config
+    }
+
     /// Run a backtest over historical candle data (potentially multi-asset).
     ///
     /// Candles can contain multiple tokens — they're partitioned internally.
@@ -707,7 +711,7 @@ fn mark_to_market(pos: &OpenPosition, current_price: Decimal) -> Decimal {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn evaluate_signal(
+pub(crate) fn evaluate_signal(
     signal: &SignalType,
     condition: &EntryCondition,
     idx: usize,

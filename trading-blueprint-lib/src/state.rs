@@ -10,6 +10,8 @@ fn default_paper_trade() -> bool {
     true
 }
 
+pub use trading_runtime::ValidationTrust;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TradingBotRecord {
     pub id: String,
@@ -57,6 +59,10 @@ pub struct TradingBotRecord {
     /// Persisted across container restarts. Updated via operator API or evolution.
     #[serde(default)]
     pub harness_json: serde_json::Value,
+    /// Validation trust level — controls whether trades need per-trade validator
+    /// signatures, envelope-only checks, or no external validation.
+    #[serde(default)]
+    pub validation_trust: ValidationTrust,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -573,6 +579,7 @@ mod tests {
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::Value::default(),
+            validation_trust: trading_runtime::ValidationTrust::default(),
         }
     }
 

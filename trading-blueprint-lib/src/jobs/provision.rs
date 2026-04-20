@@ -402,6 +402,7 @@ pub async fn provision_core(
         service_id,
         harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
             .unwrap_or_default(),
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     // 8. Store bot record

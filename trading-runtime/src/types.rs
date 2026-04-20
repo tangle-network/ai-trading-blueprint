@@ -3,6 +3,25 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Validation trust level — determines which authorization path fires for trades.
+///
+/// Set at provision time based on the relationship between depositor and operator.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationTrust {
+    /// Every trade requires validator EIP-712 signatures (5-30s round-trip).
+    /// For untrusted operators or public services.
+    #[default]
+    PerTrade,
+    /// Trades within an approved envelope execute instantly.
+    /// Envelope approved once by validators, checked locally per-trade.
+    Envelope,
+    /// Operator is trusted to trade without external validation.
+    /// Local policy checks only (envelope bounds still enforced).
+    /// For self-hosted operators running their own infrastructure.
+    SelfOperated,
+}
+
 /// A trade intent — the primary unit of trading activity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeIntent {

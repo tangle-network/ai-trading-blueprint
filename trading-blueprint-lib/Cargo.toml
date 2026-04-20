@@ -9,8 +9,8 @@ license.workspace = true
 [dependencies]
 trading-runtime = { path = "../trading-runtime" }
 trading-http-api = { path = "../trading-http-api" }
-sandbox-runtime = { path = "../../ai-agent-sandbox-blueprint/sandbox-runtime" }
-ai-agent-sandbox-blueprint-lib = { path = "../../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
+sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
+ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
 axum = "0.8"
 hex = "0.4"

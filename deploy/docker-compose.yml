@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  trading-blueprint:
+    image: trading-blueprint:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "9100:9100"  # Trading HTTP API (bot-facing)
+      - "9200:9200"  # Operator API (admin-facing)
+    volumes:
+      # Persistent state — survives container restarts, image updates.
+      # Contains: bot records, trade history, position ledger, intent dedup,
+      # trading envelopes, harness configs. Mount to a Hetzner volume for
+      # easy migration (detach volume → attach to new VM).
+      - blueprint-state:/data/blueprint-state
+      # Docker socket — needed to manage sidecar containers for bots.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - BLUEPRINT_STATE_DIR=/data/blueprint-state
+      - RUST_LOG=info,trading_blueprint_lib=debug,trading_runtime=debug
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  blueprint-state:
+    driver: local
+    # On Hetzner, bind-mount to a Hetzner Cloud Volume for persistence:
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /mnt/trading-state

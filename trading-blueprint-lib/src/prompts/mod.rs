@@ -89,11 +89,28 @@ Authorization: Bearer {token}
 - POST /portfolio/state — Get current portfolio positions
 - POST /validate — Submit a trade intent for validator approval
   Body: {{ "strategy_id": "...", "action": "swap", "token_in": "0x...", "token_out": "0x...", "amount_in": "1000", "min_amount_out": "950", "target_protocol": "uniswap_v3" }}
-- POST /execute — Execute an approved trade on-chain (or via CLOB for polymarket_clob)
+- POST /execute — Execute an approved trade on-chain (or via CLOB/Hyperliquid)
   Body: {{ "intent": {{...}}, "validation": {{...}} }}
+  For Hyperliquid: set target_protocol to "hyperliquid", use metadata fields:
+  - "asset": "ETH" (or "BTC", "SOL", etc.)
+  - "limit_price": "2500" (for limit orders, omit for market)
+  - "trigger_price": "2400" + "tpsl": "sl" (for stop-loss)
+  - "trigger_price": "3000" + "tpsl": "tp" (for take-profit)
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
+
+### Hyperliquid Perps Endpoints (native L1 API — preferred for HL)
+- POST /hyperliquid/order — Place any order type directly
+  Body: {{ "asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {{ "type": "market" }} }}
+- POST /hyperliquid/bracket — Entry + stop-loss + take-profit grouped
+  Body: {{ "entry": {{...}}, "stop_loss": {{...}}, "take_profit": {{...}} }}
+- POST /hyperliquid/cancel — Cancel an order
+  Body: {{ "asset": 1, "order_id": 12345 }}
+- POST /hyperliquid/leverage — Set leverage (do this BEFORE placing orders)
+  Body: {{ "asset": 1, "leverage": 5, "is_cross": true }}
+- GET /hyperliquid/account — Positions, margin, open orders
+- GET /hyperliquid/prices — Mid prices for all HL perp markets
 
 ### Polymarket CLOB Endpoints
 - GET /clob/midpoint?token_id=<id> — Get midpoint price for a CLOB token
@@ -449,6 +466,7 @@ mod tests {
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::Value::default(),
+            validation_trust: trading_runtime::ValidationTrust::default(),
         }
     }
 
