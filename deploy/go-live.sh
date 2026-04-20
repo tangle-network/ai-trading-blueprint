@@ -96,7 +96,7 @@ sed -i '/^\[patch\./,/^$/s/^/#/' Cargo.toml
 
 echo "Building release binary (CARGO_BUILD_JOBS=2 for memory safety)..."
 CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
-cp target/release/trading-blueprint-bin /usr/local/bin/trading-blueprint
+cp target/release/trading-blueprint /usr/local/bin/trading-blueprint
 echo "Binary installed: $(ls -lh /usr/local/bin/trading-blueprint | awk '{print $5}')"
 REMOTE
 fi
