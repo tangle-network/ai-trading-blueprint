@@ -1,11 +1,10 @@
 {
-  "mode": "harden",
-  "status": "clean",
-  "activeHarden": "2026-04-19-report.md",
+  "mode": "pursue",
+  "status": "deploying",
+  "generation": 11,
+  "activePursuit": "2026-04-19-fund-safety.md",
   "critical": 0,
-  "high": 1,
-  "medium": 0,
-  "low": 0,
-  "updatedAt": "2026-04-19T14:00:00Z",
-  "note": "Harden round 3 complete. 3 CRITICAL + 7 HIGH + 4 MEDIUM fixed. 1 HIGH deferred (CHAIN-A: calldata not in EIP-712 scope — requires protocol version bump). 884 tests passing (429 Forge + 455 Rust). Credential scan clean. SSRF vectors blocked."
+  "high": 0,
+  "updatedAt": "2026-04-19T18:00:00Z",
+  "note": "Gen 9-11 shipped (HL perps, fund safety, unified pipeline). Hetzner server ready (178.104.232.124). cargo-tangle building on server. Blocked on Tangle testnet contract deployment (other agent). Next: go-live.sh end-to-end."
 }
