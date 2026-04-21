@@ -10,9 +10,9 @@
 # This script automates:
 #   1. Install cargo-tangle + build deps on server
 #   2. Build the blueprint binary (so BPM can find it locally)
-#   3. Deploy blueprint contracts to Tangle testnet
-#   4. Register as operator
-#   5. Request + approve a service instance
+#   3. Deploy blueprint contracts to the configured EVM stack
+#   4. Register the operator on restaking + blueprint layers
+#   5. Request + approve a fixed-membership service instance
 #   6. Start the Blueprint Manager via systemd
 #
 # Usage:
@@ -35,6 +35,8 @@ set -euo pipefail
 
 SERVER_IP="${1:?Usage: go-live.sh <server-ip> <operator-private-key>}"
 PRIVATE_KEY="${2:?Usage: go-live.sh <server-ip> <operator-private-key>}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
 TANGLE_RPC="${TANGLE_RPC:-wss://rpc.tangle.tools}"
 TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-https://rpc.tangle.tools}"
 TANGLE_CONTRACT="${TANGLE_CONTRACT:-}"
@@ -44,10 +46,11 @@ CHAIN_ID="${CHAIN_ID:-5845}"
 HL_TESTNET="${HYPERLIQUID_TESTNET:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 BLUEPRINT_ID="${BLUEPRINT_ID:-}"
-REPO_URL="${REPO_URL:-https://github.com/tangle-network/ai-trading-blueprint.git}"
+REPO_URL="${REPO_URL:-$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "https://github.com/tangle-network/ai-trading-blueprint.git")}"
 REPO_REF="${REPO_REF:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
+LOCAL_KEYSTORE_DIR="${LOCAL_KEYSTORE_DIR:-$REPO_DIR/.deploy-keystore}"
+BLUEPRINT_DEFINITION="${BLUEPRINT_DEFINITION:-$REPO_DIR/blueprint-definition.json}"
+OPERATOR_STAKE_AMOUNT="${OPERATOR_STAKE_AMOUNT:-1000000000000000000}"
 
 # Derive operator address from private key
 OPERATOR_ADDRESS=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || echo "")
@@ -56,6 +59,21 @@ if [ -z "$OPERATOR_ADDRESS" ]; then
   exit 1
 fi
 echo "Operator: $OPERATOR_ADDRESS"
+
+decode_cast_uint() {
+  local value
+  value="$(printf '%s\n' "$1" | awk '{print $1}' | tr -d '\r\n')"
+  if [[ "$value" == 0x* ]]; then
+    cast to-dec "$value"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+if [ -z "$TANGLE_CONTRACT" ] || [ -z "$STAKING_CONTRACT" ] || [ -z "$STATUS_REGISTRY_CONTRACT" ]; then
+  echo "ERROR: TANGLE_CONTRACT, STAKING_CONTRACT, and STATUS_REGISTRY_CONTRACT must be set"
+  exit 1
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 1: Install deps + Rust + cargo-tangle on server
@@ -112,6 +130,8 @@ source ~/.cargo/env
 cd /opt/trading-blueprint
 if [ ! -d repo ]; then
   git clone "$REPO_URL" repo
+else
+  cd repo && git fetch --all --tags && cd ..
 fi
 
 cd repo
@@ -137,10 +157,19 @@ REMOTE
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Step 3: Set up keystore on server
+# Step 3: Set up keystores
 # ──────────────────────────────────────────────────────────────────────────────
 
-echo "=== Step 3: Setting up keystore ==="
+echo "=== Step 3: Setting up keystores ==="
+mkdir -p "$LOCAL_KEYSTORE_DIR"
+if [ -z "$(find "$LOCAL_KEYSTORE_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+  cargo tangle key import \
+    --key-type ecdsa \
+    --secret "${PRIVATE_KEY#0x}" \
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
+    --protocol tangle
+fi
+
 ssh "root@$SERVER_IP" bash <<REMOTE
 set -euo pipefail
 KEYSTORE_DIR="/mnt/trading-data/blueprint-state/keystore"
@@ -148,8 +177,13 @@ mkdir -p "\$KEYSTORE_DIR"
 chmod 700 "\$KEYSTORE_DIR"
 
 if [ -z "\$(ls -A \$KEYSTORE_DIR 2>/dev/null)" ]; then
-  echo "${PRIVATE_KEY}" > "\$KEYSTORE_DIR/operator.key"
-  chmod 600 "\$KEYSTORE_DIR/operator.key"
+  source ~/.cargo/env
+  cd /opt/trading-blueprint/repo
+  cargo tangle key import \
+    --key-type ecdsa \
+    --secret "${PRIVATE_KEY#0x}" \
+    --keystore-path "\$KEYSTORE_DIR" \
+    --protocol tangle >/dev/null
   echo "Keystore initialized"
 else
   echo "Keystore already exists"
@@ -168,12 +202,16 @@ if [ -n "$BLUEPRINT_ID" ]; then
 else
   echo "Deploying new blueprint..."
   cargo tangle blueprint deploy tangle \
+    --network testnet \
+    --definition "$BLUEPRINT_DEFINITION" \
     --http-rpc-url "$TANGLE_HTTP_RPC" \
     --ws-rpc-url "$TANGLE_RPC" \
-    --package trading-blueprint-bin \
-    --keystore-path ./keystore 2>&1 | tee /tmp/deploy-output.txt
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
+    --tangle-contract "$TANGLE_CONTRACT" \
+    --restaking-contract "$STAKING_CONTRACT" \
+    --status-registry-contract "$STATUS_REGISTRY_CONTRACT" 2>&1 | tee /tmp/deploy-output.txt
 
-  BLUEPRINT_ID=$(grep -oP 'blueprint_id[=: ]+\K\d+' /tmp/deploy-output.txt 2>/dev/null || echo "0")
+  BLUEPRINT_ID=$(sed -n 's/.*blueprint=\([0-9][0-9]*\).*/\1/p' /tmp/deploy-output.txt | tail -1)
   echo "Deployed blueprint ID: $BLUEPRINT_ID"
 fi
 
@@ -183,10 +221,24 @@ fi
 
 echo "=== Step 5: Registering as operator ==="
 if [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ]; then
-  cargo tangle blueprint register \
-    --blueprint-id "$BLUEPRINT_ID" \
+  cargo tangle operator register \
+    --http-rpc-url "$TANGLE_HTTP_RPC" \
     --ws-rpc-url "$TANGLE_RPC" \
-    --keystore-uri ./keystore 2>&1 || echo "Registration may already exist"
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
+    --tangle-contract "$TANGLE_CONTRACT" \
+    --restaking-contract "$STAKING_CONTRACT" \
+    --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
+    --amount "$OPERATOR_STAKE_AMOUNT" 2>&1 || echo "Restaking registration may already exist"
+
+  cargo tangle blueprint register \
+    --http-rpc-url "$TANGLE_HTTP_RPC" \
+    --ws-rpc-url "$TANGLE_RPC" \
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
+    --tangle-contract "$TANGLE_CONTRACT" \
+    --restaking-contract "$STAKING_CONTRACT" \
+    --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
+    --blueprint-id "$BLUEPRINT_ID" \
+    2>&1 || echo "Blueprint registration may already exist"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -195,18 +247,47 @@ fi
 
 SERVICE_ID=""
 if [ -n "$TANGLE_CONTRACT" ] && [ -n "$STAKING_CONTRACT" ] && [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ]; then
+  SERVICE_COUNT_BEFORE=$(cast call "$TANGLE_CONTRACT" "serviceCount()(uint64)" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || echo "0x0")
+  SERVICE_COUNT_BEFORE=$(decode_cast_uint "$SERVICE_COUNT_BEFORE")
   echo "=== Step 6: Requesting service instance ==="
   SERVICE_REQUEST_OUTPUT=$(cargo tangle blueprint service request \
     --http-rpc-url "$TANGLE_HTTP_RPC" \
     --ws-rpc-url "$TANGLE_RPC" \
-    --keystore-path ./keystore \
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
     --tangle-contract "$TANGLE_CONTRACT" \
-    --staking-contract "$STAKING_CONTRACT" \
+    --restaking-contract "$STAKING_CONTRACT" \
+    --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
     --blueprint-id "$BLUEPRINT_ID" \
     --operator "$OPERATOR_ADDRESS" \
     --ttl 0 \
     --json 2>&1 || echo "{}")
-  SERVICE_ID=$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"service_id":\s*\K\d+' 2>/dev/null || echo "1")
+  REQUEST_ID=$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' 2>/dev/null || echo "")
+  if [ -z "$REQUEST_ID" ]; then
+    echo "ERROR: Could not parse request_id from service request output"
+    echo "$SERVICE_REQUEST_OUTPUT"
+    exit 1
+  fi
+
+  cargo tangle blueprint service approve \
+    --http-rpc-url "$TANGLE_HTTP_RPC" \
+    --ws-rpc-url "$TANGLE_RPC" \
+    --keystore-path "$LOCAL_KEYSTORE_DIR" \
+    --tangle-contract "$TANGLE_CONTRACT" \
+    --restaking-contract "$STAKING_CONTRACT" \
+    --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
+    --request-id "$REQUEST_ID" \
+    --restaking-percent 100 \
+    --json
+
+  sleep 2
+  SERVICE_COUNT_AFTER=$(cast call "$TANGLE_CONTRACT" "serviceCount()(uint64)" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || echo "0x0")
+  SERVICE_COUNT_AFTER=$(decode_cast_uint "$SERVICE_COUNT_AFTER")
+  if [ "$SERVICE_COUNT_AFTER" -le "$SERVICE_COUNT_BEFORE" ]; then
+    echo "ERROR: serviceCount did not increase after approval"
+    exit 1
+  fi
+  SERVICE_ID=$((SERVICE_COUNT_AFTER - 1))
+  echo "Request ID: $REQUEST_ID"
   echo "Service ID: $SERVICE_ID"
 else
   echo "=== Step 6: SKIP (set TANGLE_CONTRACT + STAKING_CONTRACT for auto-request) ==="
@@ -256,6 +337,7 @@ WantedBy=multi-user.target
 EOF
 
 # Write settings.env for the BPM
+SESSION_AUTH_SECRET="${SESSION_AUTH_SECRET:-$(cast keccak "tangle-trading-session-auth-v1:${PRIVATE_KEY#0x}")}"
 cat > /opt/trading-blueprint/repo/settings.env << 'SETTINGSEOF'
 BLUEPRINT_ID=${BLUEPRINT_ID:-0}
 SERVICE_ID=${SERVICE_ID:-1}
@@ -269,6 +351,7 @@ RPC_URL=${TANGLE_HTTP_RPC}
 WS_RPC_URL=${TANGLE_RPC}
 CHAIN_ID=${CHAIN_ID}
 KEYSTORE_URI=/mnt/trading-data/blueprint-state/keystore
+SESSION_AUTH_SECRET=${SESSION_AUTH_SECRET}
 OPERATOR_MAX_CAPACITY=10
 MARKET_DATA_BASE_URL=https://api.coingecko.com/api/v3
 VALIDATION_DEADLINE_SECS=3600

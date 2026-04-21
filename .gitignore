@@ -40,6 +40,7 @@ dependencies/
 # Runtime state (test artifacts)
 blueprint-state/
 **/blueprint-state/
+.tmp/
 
 # Node.js / Frontend
 node_modules/
