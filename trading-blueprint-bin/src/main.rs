@@ -54,26 +54,66 @@ fn derive_session_auth_secret() {
     // Load .env before anything reads env vars (AI keys, config, etc.)
     dotenvy::dotenv().ok();
 
+    fn derive_secret_from_seed(seed: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"tangle-trading-session-auth-v1:");
+        hasher.update(seed);
+        hex::encode(hasher.finalize())
+    }
+
+    fn normalize_keystore_path(path: String) -> std::path::PathBuf {
+        if let Some(stripped) = path.strip_prefix("file://") {
+            std::path::PathBuf::from(stripped)
+        } else {
+            std::path::PathBuf::from(path)
+        }
+    }
+
     // Derive SESSION_AUTH_SECRET from keystore if not explicitly set.
     // Must run before tokio spawns any threads to avoid set_var data races.
     if std::env::var("SESSION_AUTH_SECRET").is_err() {
-        let keystore_uri =
-            std::env::var("KEYSTORE_URI").unwrap_or_else(|_| "/tmp/keystore".to_string());
-        let keystore_path = std::path::Path::new(&keystore_uri);
-        if keystore_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(keystore_path) {
+        let keystore_path = std::env::var("KEYSTORE_URI")
+            .ok()
+            .or_else(|| std::env::var("KEYSTORE_PATH").ok())
+            .map(normalize_keystore_path);
+        if let Some(keystore_path) = keystore_path {
+            if keystore_path.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(keystore_path) {
+                    for entry in entries.flatten() {
+                        if let Ok(content) = std::fs::read(&entry.path()) {
+                            let secret = derive_secret_from_seed(&content);
+                            // SAFETY: single-threaded at this point — called before
+                            // tokio spawns any worker threads.
+                            unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(private_key) = std::env::var("PRIVATE_KEY") {
+            let normalized = private_key.trim().trim_start_matches("0x");
+            if !normalized.is_empty() {
+                let secret = derive_secret_from_seed(normalized.as_bytes());
+                // SAFETY: single-threaded at this point — called before
+                // tokio spawns any worker threads.
+                unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
+                return;
+            }
+        }
+
+        let default_keystore_path = std::path::Path::new("/tmp/keystore");
+        if default_keystore_path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(default_keystore_path) {
                 for entry in entries.flatten() {
                     if let Ok(content) = std::fs::read(&entry.path()) {
-                        use sha2::{Digest, Sha256};
-                        let mut hasher = Sha256::new();
-                        hasher.update(b"tangle-trading-session-auth-v1:");
-                        hasher.update(&content);
-                        let hash = hasher.finalize();
-                        let secret = hex::encode(hash);
+                        let secret = derive_secret_from_seed(&content);
                         // SAFETY: single-threaded at this point — called before
                         // tokio spawns any worker threads.
                         unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                        break;
+                        return;
                     }
                 }
             }
@@ -389,6 +429,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     paper_trade: bot.paper_trade,
                     chain_id: bot.chain_id,
                     rpc_url: bot.rpc_url,
+                    strategy_config: bot.strategy_config,
                     validator_endpoints: validator_eps.clone(),
                     validation_trust: bot.validation_trust,
                 })

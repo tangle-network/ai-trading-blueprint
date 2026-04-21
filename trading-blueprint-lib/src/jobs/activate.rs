@@ -103,23 +103,40 @@ pub async fn activate_bot_with_secrets(
     // never updates the operator-side record. Resolve it here before the bot
     // starts trading.
     if bot.vault_address.starts_with("factory:") {
-        let resolved = resolve_vault_from_factory(&bot).await;
-        match resolved {
-            Ok(addr) => {
-                tracing::info!("Resolved vault address for {bot_id}: {addr}");
-                bot.vault_address = addr.clone();
-                // Persist the resolved address so future restarts don't re-query
-                if let Ok(store) = bots() {
-                    let _ = store.update(&bot_key(bot_id), |b| {
-                        b.vault_address = addr.clone();
-                    });
-                }
+        let factory_hex = bot.vault_address.trim_start_matches("factory:").trim();
+        let zero_factory_placeholder =
+            factory_hex.eq_ignore_ascii_case("0x0000000000000000000000000000000000000000");
+
+        if bot.paper_trade && zero_factory_placeholder {
+            let addr = "0x0000000000000000000000000000000000000000".to_string();
+            tracing::info!(
+                "Paper-trade bot {bot_id} has no vault factory configured; using zero vault address"
+            );
+            bot.vault_address = addr.clone();
+            if let Ok(store) = bots() {
+                let _ = store.update(&bot_key(bot_id), |b| {
+                    b.vault_address = addr.clone();
+                });
             }
-            Err(e) => {
-                return Err(format!(
-                    "Failed to resolve vault from factory for {bot_id}: {e}. \
-                     Refusing to trade with unresolved vault address."
-                ));
+        } else {
+            let resolved = resolve_vault_from_factory(&bot).await;
+            match resolved {
+                Ok(addr) => {
+                    tracing::info!("Resolved vault address for {bot_id}: {addr}");
+                    bot.vault_address = addr.clone();
+                    // Persist the resolved address so future restarts don't re-query
+                    if let Ok(store) = bots() {
+                        let _ = store.update(&bot_key(bot_id), |b| {
+                            b.vault_address = addr.clone();
+                        });
+                    }
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to resolve vault from factory for {bot_id}: {e}. \
+                         Refusing to trade with unresolved vault address."
+                    ));
+                }
             }
         }
     }

@@ -82,6 +82,7 @@ pub struct BotContext {
     pub paper_trade: bool,
     pub chain_id: u64,
     pub rpc_url: String,
+    pub strategy_config: serde_json::Value,
     pub validator_endpoints: Vec<String>,
     /// Validation trust level — determines per-trade vs envelope vs self-operated.
     pub validation_trust: trading_runtime::ValidationTrust,
