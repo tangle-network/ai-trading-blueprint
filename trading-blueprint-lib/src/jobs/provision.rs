@@ -17,6 +17,8 @@ use sandbox_runtime::SandboxRecord;
 static PROVISION_INFLIGHT: std::sync::LazyLock<Mutex<HashSet<(u64, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
+const DEFAULT_PAPER_INITIAL_CAPITAL_USD: &str = "10000";
+
 /// Drop guard that removes a (service_id, call_id) from PROVISION_INFLIGHT.
 struct InflightGuard(u64, u64);
 
@@ -78,6 +80,31 @@ fn parse_paper_trade_from_strategy_config(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_) => Err("strategy_config_json.paper_trade must be a boolean".to_string()),
         None => Ok(None),
+    }
+}
+
+fn default_paper_initial_capital_value() -> Value {
+    let configured = std::env::var("DEFAULT_PAPER_INITIAL_CAPITAL_USD")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_PAPER_INITIAL_CAPITAL_USD.to_string());
+    Value::String(configured)
+}
+
+fn apply_strategy_defaults(
+    strategy_config: &mut Map<String, Value>,
+    request: &TradingProvisionRequest,
+    paper_trade: bool,
+) {
+    strategy_config
+        .entry("asset_token".to_string())
+        .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+
+    if paper_trade {
+        strategy_config
+            .entry("initial_capital_usd".to_string())
+            .or_insert_with(default_paper_initial_capital_value);
     }
 }
 
@@ -183,7 +210,7 @@ pub async fn provision_core(
         tracing::warn!("Provision metadata update failed: {e}");
     }
 
-    let parsed_strategy_config = parse_strategy_config_object(&request.strategy_config_json)
+    let mut parsed_strategy_config = parse_strategy_config_object(&request.strategy_config_json)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
     let runtime_backend =
         parse_runtime_backend_from_strategy_config(parsed_strategy_config.as_ref())
@@ -191,6 +218,8 @@ pub async fn provision_core(
     let paper_trade = parse_paper_trade_from_strategy_config(parsed_strategy_config.as_ref())
         .inspect_err(|e| mark_provision_failed(call_id, e))?
         .unwrap_or(true);
+    let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
+    apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();

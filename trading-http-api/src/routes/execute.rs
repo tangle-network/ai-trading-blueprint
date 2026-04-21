@@ -388,15 +388,18 @@ impl TradeValuationSnapshot {
 }
 
 fn resolve_position_size(
+    chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<(Decimal, Option<Decimal>), (StatusCode, String)> {
-    let amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
+    let raw_in: Decimal = intent.amount_in.parse().map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             format!("Invalid amount_in '{}': {e}", intent.amount_in),
         )
     })?;
-    let amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let raw_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let amount_in = crate::amounts::normalize_trade_amount(chain_id, &intent.token_in, raw_in);
+    let amount_out = crate::amounts::normalize_trade_amount(chain_id, &intent.token_out, raw_out);
     let size = if amount_out > Decimal::ZERO {
         amount_out
     } else {
@@ -410,7 +413,7 @@ async fn resolve_market_valuation(
     chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
-    let (position_size, amount_out) = resolve_position_size(intent)?;
+    let (position_size, amount_out) = resolve_position_size(chain_id, intent)?;
     if position_size <= Decimal::ZERO {
         return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
     }
@@ -1183,7 +1186,7 @@ mod tests {
     fn resolve_position_size_prefers_output_amount_when_available() {
         let intent = make_intent("WETH", "USDC", "1.25", "3200");
 
-        let (size, amount_out) = resolve_position_size(&intent).expect("size");
+        let (size, amount_out) = resolve_position_size(None, &intent).expect("size");
         assert_eq!(size, Decimal::new(3200, 0));
         assert_eq!(amount_out, Some(Decimal::new(3200, 0)));
     }
@@ -1192,9 +1195,24 @@ mod tests {
     fn resolve_position_size_falls_back_to_input_amount() {
         let intent = make_intent("WETH", "WBTC", "2", "0");
 
-        let (size, amount_out) = resolve_position_size(&intent).expect("size");
+        let (size, amount_out) = resolve_position_size(None, &intent).expect("size");
         assert_eq!(size, Decimal::new(2, 0));
         assert_eq!(amount_out, None);
+    }
+
+    #[test]
+    fn resolve_position_size_normalizes_known_base_raw_units() {
+        // Raw ERC-20 units: 1000 USDC in (1e9) + 0.429 WETH out (4.29e17).
+        let intent = make_intent(
+            "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+            "0x4200000000000000000000000000000000000006",
+            "1000000000",
+            "429000000000000000",
+        );
+
+        let (size, amount_out) = resolve_position_size(Some(84532), &intent).expect("size");
+        assert_eq!(size.to_string(), "0.429");
+        assert_eq!(amount_out.map(|v| v.to_string()), Some("0.429".to_string()));
     }
 
     fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {

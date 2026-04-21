@@ -50,41 +50,13 @@ impl HeartbeatConsumer for TradingHeartbeatConsumer {
     }
 }
 
-fn derive_session_auth_secret() {
-    // Load .env before anything reads env vars (AI keys, config, etc.)
-    dotenvy::dotenv().ok();
-
-    // Derive SESSION_AUTH_SECRET from keystore if not explicitly set.
-    // Must run before tokio spawns any threads to avoid set_var data races.
-    if std::env::var("SESSION_AUTH_SECRET").is_err() {
-        let keystore_uri =
-            std::env::var("KEYSTORE_URI").unwrap_or_else(|_| "/tmp/keystore".to_string());
-        let keystore_path = std::path::Path::new(&keystore_uri);
-        if keystore_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(keystore_path) {
-                for entry in entries.flatten() {
-                    if let Ok(content) = std::fs::read(&entry.path()) {
-                        use sha2::{Digest, Sha256};
-                        let mut hasher = Sha256::new();
-                        hasher.update(b"tangle-trading-session-auth-v1:");
-                        hasher.update(&content);
-                        let hash = hasher.finalize();
-                        let secret = hex::encode(hash);
-                        // SAFETY: single-threaded at this point — called before
-                        // tokio spawns any worker threads.
-                        unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
-    derive_session_auth_secret();
+    // Load .env before anything reads env vars (AI keys, config, etc.).
+    dotenvy::dotenv().ok();
+    // Derive SESSION_AUTH_SECRET now — before any worker thread is spawned.
+    trading_blueprint_lib::session_auth::ensure_from_env();
 
     setup_log();
 
@@ -389,6 +361,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     paper_trade: bot.paper_trade,
                     chain_id: bot.chain_id,
                     rpc_url: bot.rpc_url,
+                    strategy_config: bot.strategy_config,
                     validator_endpoints: validator_eps.clone(),
                     validation_trust: bot.validation_trust,
                 })

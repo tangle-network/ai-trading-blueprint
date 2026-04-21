@@ -69,7 +69,12 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
     })
 }
 
-async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiState> {
+/// Test state with a per-test bot_id and explicit chain_id.
+///
+/// Use this for any test that writes to the global `trade_store`: sharing a
+/// bot_id across tests races on `trades?limit=...&offset=0` when tests run in
+/// parallel.
+async fn test_state_isolated(mock_uri: &str, bot_id: &str, chain_id: u64) -> Arc<TradingApiState> {
     ensure_state_dir();
 
     Arc::new(TradingApiState {
@@ -79,7 +84,7 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
+            chain_id,
         )
         .expect("test executor"),
         portfolio: RwLock::new(PortfolioState::default()),
@@ -94,7 +99,7 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
         sidecar_url: String::new(),
         sidecar_token: String::new(),
         rpc_url: None,
-        chain_id: None,
+        chain_id: Some(chain_id),
         clob_client: None,
     })
 }
@@ -687,6 +692,82 @@ async fn test_trade_detail_with_reasoning() {
 }
 
 #[tokio::test]
+async fn test_single_bot_portfolio_normalizes_raw_base_units() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/simple/price"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ethereum": { "usd": 2320.69 }
+        })))
+        .mount(&mock)
+        .await;
+
+    let bot_id = format!("bot-norm-{}", uuid::Uuid::new_v4());
+    let state = test_state_isolated(&format!("{}/api/v3", mock.uri()), &bot_id, 84532).await;
+    let app = build_router(state);
+
+    let body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "test-strat",
+            "action": "swap",
+            "token_in": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+            "token_out": "0x4200000000000000000000000000000000000006",
+            "amount_in": "1000000000",
+            "min_amount_out": "429000000000000000",
+            "target_protocol": "uniswap_v3"
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 100,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": []
+        }
+    }))
+    .unwrap();
+
+    let auth = format!("Bearer {bot_id}");
+    let exec_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exec_response.status(), 200);
+
+    let portfolio_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(portfolio_response.status(), 200);
+
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+    assert_eq!(portfolio_json["total_value_usd"], "995.57601");
+    assert_eq!(portfolio_json["positions"][0]["amount"], "0.429");
+    assert_eq!(portfolio_json["positions"][0]["value_usd"], "995.57601");
+}
+
+#[tokio::test]
 async fn test_trade_not_found() {
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;
@@ -874,25 +955,54 @@ async fn test_metrics_current() {
 // ── Multi-bot trading API tests ─────────────────────────────────────────────
 
 fn multi_bot_state() -> Arc<MultiBotTradingState> {
-    multi_bot_state_with_market("http://localhost:1234")
+    multi_bot_state_with_market_and_bot("http://localhost:1234", "bot-token-abc", "bot-1", 31337)
 }
 
 fn multi_bot_state_with_market(market_data_base_url: &str) -> Arc<MultiBotTradingState> {
+    multi_bot_state_with_market_and_bot(market_data_base_url, "bot-token-abc", "bot-1", 31337)
+}
+
+fn multi_bot_state_with_market_and_bot(
+    market_data_base_url: &str,
+    auth_token: &str,
+    bot_id: &str,
+    chain_id: u64,
+) -> Arc<MultiBotTradingState> {
+    multi_bot_state_with_strategy_config_and_bot(
+        market_data_base_url,
+        auth_token,
+        bot_id,
+        chain_id,
+        serde_json::json!({}),
+    )
+}
+
+fn multi_bot_state_with_strategy_config_and_bot(
+    market_data_base_url: &str,
+    auth_token: &str,
+    bot_id: &str,
+    chain_id: u64,
+    strategy_config: serde_json::Value,
+) -> Arc<MultiBotTradingState> {
     ensure_state_dir();
+    let auth_token = auth_token.to_string();
+    let bot_id = bot_id.to_string();
+    let strategy_config = strategy_config.clone();
     Arc::new(MultiBotTradingState {
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: market_data_base_url.to_string(),
         validation_deadline_secs: 300,
         min_validator_score: 50,
-        resolve_bot: Box::new(|token: &str| {
-            if token == "bot-token-abc" {
+        resolve_bot: Box::new(move |token: &str| {
+            if token == auth_token {
                 Some(BotContext {
-                    bot_id: "bot-1".to_string(),
-                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    bot_id: bot_id.clone(),
+                    vault_address: "0x0000000000000000000000000000000000000000".to_string(),
                     paper_trade: true,
-                    chain_id: 31337,
+                    chain_id,
                     rpc_url: "http://localhost:8545".to_string(),
+                    strategy_config: strategy_config.clone(),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -1223,6 +1333,122 @@ async fn test_multi_bot_execute_paper_trade() {
 }
 
 #[tokio::test]
+async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/simple/price"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "usd-coin": { "usd": 1.0 }
+        })))
+        .mount(&mock)
+        .await;
+
+    let auth_token = "bot-token-synth";
+    let bot_id = format!("bot-synth-{}", uuid::Uuid::new_v4());
+    let state = multi_bot_state_with_market_and_bot(
+        &format!("{}/api/v3", mock.uri()),
+        auth_token,
+        &bot_id,
+        31337,
+    );
+    let app = build_multi_bot_router(state);
+
+    let exec_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exec_response.status(), 200);
+
+    let portfolio_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(portfolio_response.status(), 200);
+    let body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+    assert_eq!(json["total_value_usd"], "3000");
+    assert_eq!(positions.len(), 1);
+    assert_eq!(
+        positions[0]["token"],
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    );
+    assert_eq!(positions[0]["amount"], "3000");
+    assert_eq!(positions[0]["value_usd"], "3000");
+    assert_eq!(json["warnings"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
+    // Use a UUID bot_id to isolate from other multi-bot tests that share "bot-1"
+    // and write into the global trade_store (which synthesis reads back).
+    let auth_token = format!("seed-cap-{}", uuid::Uuid::new_v4());
+    let bot_id = format!("bot-seed-{}", uuid::Uuid::new_v4());
+    let state = multi_bot_state_with_strategy_config_and_bot(
+        "http://localhost:1234",
+        &auth_token,
+        &bot_id,
+        31337,
+        serde_json::json!({
+            "asset_token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "initial_capital_usd": "10000"
+        }),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+
+    assert_eq!(json["total_value_usd"], "10000");
+    assert_eq!(json["warnings"], serde_json::json!([]));
+    assert_eq!(json["has_unpriced_positions"], false);
+    assert_eq!(positions.len(), 1);
+    assert_eq!(
+        positions[0]["token"],
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    );
+    assert_eq!(positions[0]["amount"], "10000");
+    assert_eq!(positions[0]["value_usd"], "10000");
+}
+
+#[tokio::test]
 async fn test_multi_bot_execute_rejects_unapproved() {
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
@@ -1491,7 +1717,9 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
                     paper_trade: false,
                     chain_id: 31337,
                     rpc_url: "http://localhost:8545".to_string(),
+                    strategy_config: serde_json::json!({}),
                     validator_endpoints: validator_uris.clone(),
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
             } else {
                 None
@@ -2012,6 +2240,7 @@ async fn test_multi_bot_clob_execute() {
                     paper_trade: false,
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
+                    strategy_config: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -2102,6 +2331,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
                     paper_trade: false,
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
+                    strategy_config: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -2186,6 +2416,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
                     paper_trade: false,
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
+                    strategy_config: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -3027,7 +3258,7 @@ async fn test_evolution_status_returns_bot_info() {
 async fn test_evolution_run_rejects_insufficient_candles() {
     let mock = MockServer::start().await;
     let evo_bot_id = format!("evo-test-{}", uuid::Uuid::new_v4());
-    let state = test_state_with_bot_id(&mock.uri(), &evo_bot_id).await;
+    let state = test_state_isolated(&mock.uri(), &evo_bot_id, 31337).await;
     let app = build_router(state);
 
     let body = serde_json::json!({
@@ -3058,7 +3289,7 @@ async fn test_evolution_run_rejects_insufficient_candles() {
 async fn test_evolution_full_cycle_record_then_evolve() {
     let mock = MockServer::start().await;
     let bot_id = format!("evo-cycle-{}", uuid::Uuid::new_v4());
-    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let state = test_state_isolated(&mock.uri(), &bot_id, 31337).await;
     let app = build_router(state);
 
     // Step 1: Record 50 candles

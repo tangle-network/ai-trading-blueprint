@@ -18,6 +18,7 @@ use trading_instance_blueprint_lib::JOB_WORKFLOW_TICK;
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
     dotenvy::dotenv().ok();
+    trading_blueprint_lib::session_auth::ensure_from_env();
     setup_log();
 
     if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
@@ -222,6 +223,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     paper_trade: bot.paper_trade,
                     chain_id: bot.chain_id,
                     rpc_url: bot.rpc_url,
+                    strategy_config: bot.strategy_config,
                     validator_endpoints: validator_eps.clone(),
                     validation_trust: bot.validation_trust,
                 })

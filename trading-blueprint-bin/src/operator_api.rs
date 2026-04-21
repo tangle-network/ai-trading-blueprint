@@ -658,6 +658,17 @@ struct CreateBotRequest {
     name: Option<String>,
 }
 
+/// Canonical USDC address for the common chains we deploy on.
+/// Unknown chains fall through; callers must supply `ASSET_TOKEN_ADDRESS`.
+fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
+    match chain_id {
+        1 => Some("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // Ethereum USDC
+        8453 => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bDA02913"), // Base USDC
+        84532 => Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e"), // Base Sepolia USDC
+        _ => None,
+    }
+}
+
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
     let caller = req
         .headers()
@@ -716,16 +727,28 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .unwrap_or_else(|| prompt.chars().take(50).collect());
 
     // Build a TradingProvisionRequest
-    let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
-        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
-    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
-        .or_else(|_| std::env::var("USDC_ADDRESS"))
-        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
-    let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
     let chain_id: u64 = std::env::var("CHAIN_ID")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(31337);
+    let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
+    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
+        .or_else(|_| std::env::var("USDC_ADDRESS"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_asset_token_address(chain_id).map(str::to_string))
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::FAILED_DEPENDENCY,
+                format!(
+                    "No asset token configured for chain {chain_id}. \
+                     Set ASSET_TOKEN_ADDRESS or USDC_ADDRESS."
+                ),
+            )
+        })?;
+    let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
 
     let strategy_config = serde_json::json!({
         "user_prompt": prompt,
@@ -767,7 +790,10 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .wrapping_mul(1000)
         .wrapping_add(seq % 1000);
 
-    let result = trading_blueprint_lib::jobs::provision_core(
+    // provision_core returns a TradingProvisionOutput (vault/share/sandbox/workflow),
+    // but downstream activation needs the full bot record (including `id`), so we
+    // re-read from the store here.
+    trading_blueprint_lib::jobs::provision_core(
         request,
         None,
         call_id,
@@ -787,12 +813,37 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
             )
         })?;
 
-    // 2. Auto-activate with AI provider from env
+    // 2. Auto-activate with AI provider from env (first non-empty wins).
     let mut user_env = serde_json::Map::new();
-    if let Ok(key) = std::env::var("ZAI_API_KEY") {
-        user_env.insert("ZAI_API_KEY".into(), serde_json::Value::String(key));
-    } else if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        user_env.insert("ANTHROPIC_API_KEY".into(), serde_json::Value::String(key));
+    struct Provider {
+        env_key: &'static str,
+        opencode_provider: &'static str,
+        opencode_model: &'static str,
+    }
+    const PROVIDERS: &[Provider] = &[
+        Provider {
+            env_key: "ANTHROPIC_API_KEY",
+            opencode_provider: "anthropic",
+            opencode_model: "claude-sonnet-4-6",
+        },
+        Provider {
+            env_key: "ZAI_API_KEY",
+            opencode_provider: "zai-coding-plan",
+            opencode_model: "glm-4.7",
+        },
+    ];
+    for p in PROVIDERS {
+        let Ok(key) = std::env::var(p.env_key) else {
+            continue;
+        };
+        if key.is_empty() {
+            continue;
+        }
+        user_env.insert("OPENCODE_MODEL_PROVIDER".into(), p.opencode_provider.into());
+        user_env.insert("OPENCODE_MODEL_NAME".into(), p.opencode_model.into());
+        user_env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
+        user_env.insert(p.env_key.into(), key.into());
+        break;
     }
     // Pass the user's prompt as an env var so the agent can read it
     user_env.insert(
