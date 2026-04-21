@@ -579,6 +579,8 @@ async fn test_system_prompt_includes_api_info() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -821,6 +823,8 @@ async fn test_pack_profile_has_rich_content() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -871,6 +875,8 @@ async fn test_generic_strategy_gets_profile() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -926,6 +932,8 @@ async fn test_dex_profile_has_uniswap_content() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -968,6 +976,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
+            harness_json: serde_json::Value::Null,
+            validation_trust: trading_runtime::ValidationTrust::default(),
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -1011,6 +1021,8 @@ async fn test_build_pack_agent_profile_integration() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);

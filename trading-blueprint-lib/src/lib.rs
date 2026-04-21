@@ -15,6 +15,7 @@ pub mod polymarket_ws;
 pub mod prompts;
 pub mod providers;
 pub mod registration;
+pub mod session_auth;
 pub mod state;
 pub mod wind_down;
 

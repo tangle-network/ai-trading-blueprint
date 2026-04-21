@@ -14,63 +14,11 @@ use trading_blueprint_lib::context::TradingOperatorContext;
 use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_instance_blueprint_lib::JOB_WORKFLOW_TICK;
 
-fn derive_session_auth_secret() {
-    dotenvy::dotenv().ok();
-
-    fn derive_secret_from_seed(seed: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"tangle-trading-session-auth-v1:");
-        hasher.update(seed);
-        hex::encode(hasher.finalize())
-    }
-
-    fn normalize_keystore_path(path: String) -> std::path::PathBuf {
-        if let Some(stripped) = path.strip_prefix("file://") {
-            std::path::PathBuf::from(stripped)
-        } else {
-            std::path::PathBuf::from(path)
-        }
-    }
-
-    if std::env::var("SESSION_AUTH_SECRET").is_ok() {
-        return;
-    }
-
-    let keystore_path = std::env::var("KEYSTORE_URI")
-        .ok()
-        .or_else(|| std::env::var("KEYSTORE_PATH").ok())
-        .map(normalize_keystore_path);
-    if let Some(keystore_path) = keystore_path {
-        if keystore_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(keystore_path) {
-                for entry in entries.flatten() {
-                    if let Ok(content) = std::fs::read(entry.path()) {
-                        let secret = derive_secret_from_seed(&content);
-                        // SAFETY: called before tokio worker threads are spawned.
-                        unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(private_key) = std::env::var("PRIVATE_KEY") {
-        let normalized = private_key.trim().trim_start_matches("0x");
-        if !normalized.is_empty() {
-            let secret = derive_secret_from_seed(normalized.as_bytes());
-            // SAFETY: called before tokio worker threads are spawned.
-            unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-            return;
-        }
-    }
-}
-
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
-    derive_session_auth_secret();
+    dotenvy::dotenv().ok();
+    trading_blueprint_lib::session_auth::ensure_from_env();
     setup_log();
 
     if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {

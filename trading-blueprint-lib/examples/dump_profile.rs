@@ -53,6 +53,8 @@ fn main() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
+        harness_json: serde_json::Value::Null,
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = pack.build_agent_profile(&config);

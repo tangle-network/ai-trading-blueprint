@@ -224,6 +224,9 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             tee_config: None,
             extra_ports: std::collections::HashMap::new(),
             tee_attestation_json: None,
+            service_id: None,
+            ssh_login_user: None,
+            ssh_authorized_keys: Vec::new(),
         };
 
         let mut user_env = serde_json::Map::new();
@@ -759,6 +762,9 @@ fn mock_sandbox_record(id: &str) -> sandbox_runtime::SandboxRecord {
         tee_config: None,
         extra_ports: std::collections::HashMap::new(),
         tee_attestation_json: None,
+        service_id: None,
+        ssh_login_user: None,
+        ssh_authorized_keys: Vec::new(),
     }
 }
 
