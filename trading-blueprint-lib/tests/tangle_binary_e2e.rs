@@ -51,7 +51,7 @@ const OPERATOR_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4
 
 /// Deterministic contract addresses from the Blueprint SDK Anvil snapshot.
 const TANGLE_CONTRACT: &str = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9";
-const RESTAKING_CONTRACT: &str = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+const STAKING_CONTRACT: &str = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
 const STATUS_REGISTRY_CONTRACT: &str = "0xdC64a140Aa3E981100a9BecA4E685f962f0CF6C9";
 
 // ── Reusable process output capture ─────────────────────────────────────
@@ -195,7 +195,7 @@ fn start_binary(
         .env("OPERATOR_ADDRESS", &operator_address)
         .env("PRIVATE_KEY", OPERATOR_KEY)
         .env("TANGLE_CONTRACT", TANGLE_CONTRACT)
-        .env("RESTAKING_CONTRACT", RESTAKING_CONTRACT)
+        .env("STAKING_CONTRACT", STAKING_CONTRACT)
         .env("STATUS_REGISTRY_CONTRACT", STATUS_REGISTRY_CONTRACT)
         .env("SIDECAR_IMAGE", "tangle-sidecar:local")
         .env("SIDECAR_PULL_IMAGE", "false")

@@ -19,14 +19,17 @@
 #   ./go-live.sh <server-ip> <operator-private-key>
 #
 # Environment variables (optional):
-#   TANGLE_RPC=wss://rpc.tangle.tools         Tangle WS RPC
+#   TANGLE_RPC=wss://rpc.tangle.tools          Tangle WS RPC
 #   TANGLE_HTTP_RPC=https://rpc.tangle.tools   Tangle HTTP RPC
 #   TANGLE_CONTRACT=0x...                      Tangle core contract
-#   RESTAKING_CONTRACT=0x...                   Restaking contract
+#   STAKING_CONTRACT=0x...                     Staking contract
+#   STATUS_REGISTRY_CONTRACT=0x...             Status registry contract
 #   CHAIN_ID=5845                              Chain ID
 #   HYPERLIQUID_TESTNET=1                      Use HL testnet
 #   SKIP_BUILD=1                               Skip building on server
 #   BLUEPRINT_ID=N                             Use existing blueprint ID
+#   REPO_URL=https://github.com/tangle-network/ai-trading-blueprint.git
+#   REPO_REF=<branch-or-tag>                   Remote git ref to deploy
 
 set -euo pipefail
 
@@ -35,11 +38,14 @@ PRIVATE_KEY="${2:?Usage: go-live.sh <server-ip> <operator-private-key>}"
 TANGLE_RPC="${TANGLE_RPC:-wss://rpc.tangle.tools}"
 TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-https://rpc.tangle.tools}"
 TANGLE_CONTRACT="${TANGLE_CONTRACT:-}"
-RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-}"
+STAKING_CONTRACT="${STAKING_CONTRACT:-${RESTAKING_CONTRACT:-}}"
+STATUS_REGISTRY_CONTRACT="${STATUS_REGISTRY_CONTRACT:-}"
 CHAIN_ID="${CHAIN_ID:-5845}"
 HL_TESTNET="${HYPERLIQUID_TESTNET:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 BLUEPRINT_ID="${BLUEPRINT_ID:-}"
+REPO_URL="${REPO_URL:-https://github.com/tangle-network/ai-trading-blueprint.git}"
+REPO_REF="${REPO_REF:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -99,19 +105,19 @@ if [ "$SKIP_BUILD" = "1" ]; then
   echo "=== Skipping build (SKIP_BUILD=1) ==="
 else
   echo "=== Step 2: Building on $SERVER_IP ==="
-  ssh "root@$SERVER_IP" bash <<'REMOTE'
+  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" bash <<'REMOTE'
 set -euo pipefail
 source ~/.cargo/env
 
 cd /opt/trading-blueprint
 if [ ! -d repo ]; then
-  git clone --branch feat/hyperliquid-native-perps \
-    https://github.com/tangle-network/ai-trading-blueprint.git repo
-else
-  cd repo && git pull && cd ..
+  git clone "$REPO_URL" repo
 fi
 
 cd repo
+git fetch --all --tags
+git checkout "$REPO_REF"
+git pull --ff-only origin "$REPO_REF" || true
 # Comment out [patch] sections for remote build
 sed -i '/^\[patch\./,/^$/s/^/#/' Cargo.toml
 
@@ -188,14 +194,14 @@ fi
 # ──────────────────────────────────────────────────────────────────────────────
 
 SERVICE_ID=""
-if [ -n "$TANGLE_CONTRACT" ] && [ -n "$RESTAKING_CONTRACT" ] && [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ]; then
+if [ -n "$TANGLE_CONTRACT" ] && [ -n "$STAKING_CONTRACT" ] && [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ]; then
   echo "=== Step 6: Requesting service instance ==="
   SERVICE_REQUEST_OUTPUT=$(cargo tangle blueprint service request \
     --http-rpc-url "$TANGLE_HTTP_RPC" \
     --ws-rpc-url "$TANGLE_RPC" \
     --keystore-path ./keystore \
     --tangle-contract "$TANGLE_CONTRACT" \
-    --restaking-contract "$RESTAKING_CONTRACT" \
+    --staking-contract "$STAKING_CONTRACT" \
     --blueprint-id "$BLUEPRINT_ID" \
     --operator "$OPERATOR_ADDRESS" \
     --ttl 0 \
@@ -203,7 +209,7 @@ if [ -n "$TANGLE_CONTRACT" ] && [ -n "$RESTAKING_CONTRACT" ] && [ -n "$BLUEPRINT
   SERVICE_ID=$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"service_id":\s*\K\d+' 2>/dev/null || echo "1")
   echo "Service ID: $SERVICE_ID"
 else
-  echo "=== Step 6: SKIP (set TANGLE_CONTRACT + RESTAKING_CONTRACT for auto-request) ==="
+  echo "=== Step 6: SKIP (set TANGLE_CONTRACT + STAKING_CONTRACT for auto-request) ==="
   SERVICE_ID="1"
 fi
 
@@ -254,11 +260,15 @@ cat > /opt/trading-blueprint/repo/settings.env << 'SETTINGSEOF'
 BLUEPRINT_ID=${BLUEPRINT_ID:-0}
 SERVICE_ID=${SERVICE_ID:-1}
 TANGLE_CONTRACT=${TANGLE_CONTRACT}
-RESTAKING_CONTRACT=${RESTAKING_CONTRACT}
+STAKING_CONTRACT=${STAKING_CONTRACT}
+STATUS_REGISTRY_CONTRACT=${STATUS_REGISTRY_CONTRACT}
 PRIVATE_KEY=${PRIVATE_KEY}
 OPERATOR_ADDRESS=${OPERATOR_ADDRESS}
 HTTP_RPC_URL=${TANGLE_HTTP_RPC}
+RPC_URL=${TANGLE_HTTP_RPC}
+WS_RPC_URL=${TANGLE_RPC}
 CHAIN_ID=${CHAIN_ID}
+KEYSTORE_URI=/mnt/trading-data/blueprint-state/keystore
 OPERATOR_MAX_CAPACITY=10
 MARKET_DATA_BASE_URL=https://api.coingecko.com/api/v3
 VALIDATION_DEADLINE_SECS=3600

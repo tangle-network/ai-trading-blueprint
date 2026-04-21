@@ -81,19 +81,19 @@ fi
 # Mount the volume (Hetzner attaches at /dev/disk/by-id/scsi-0HC_Volume_*)
 VOLUME_DEV=$(ls /dev/disk/by-id/scsi-0HC_Volume_* 2>/dev/null | head -1)
 if [ -n "$VOLUME_DEV" ]; then
-  mkdir -p /mnt/trading-state
-  if ! mountpoint -q /mnt/trading-state; then
-    mount "$VOLUME_DEV" /mnt/trading-state
-    echo "$VOLUME_DEV /mnt/trading-state ext4 defaults 0 2" >> /etc/fstab
+  mkdir -p /mnt/trading-data
+  if ! mountpoint -q /mnt/trading-data; then
+    mount "$VOLUME_DEV" /mnt/trading-data
+    echo "$VOLUME_DEV /mnt/trading-data ext4 defaults 0 2" >> /etc/fstab
   fi
-  echo "Volume mounted at /mnt/trading-state"
+  echo "Volume mounted at /mnt/trading-data"
 else
   echo "WARNING: No Hetzner volume found, using local disk"
-  mkdir -p /mnt/trading-state
+  mkdir -p /mnt/trading-data
 fi
 
-mkdir -p /mnt/trading-state/blueprint-state
-chmod 700 /mnt/trading-state/blueprint-state
+mkdir -p /mnt/trading-data/blueprint-state
+chmod 700 /mnt/trading-data/blueprint-state
 
 # Create deploy directory
 mkdir -p /opt/trading-blueprint
@@ -115,7 +115,7 @@ fi
 echo ""
 echo "=== Setup complete ==="
 echo "Server: $SERVER_NAME ($SERVER_IP)"
-echo "Volume: $VOLUME_NAME (${VOLUME_SIZE}GB at /mnt/trading-state)"
+echo "Volume: $VOLUME_NAME (${VOLUME_SIZE}GB at /mnt/trading-data)"
 echo ""
 echo "Next steps:"
 echo "  1. Create /opt/trading-blueprint/.env on the server (see .env.example)"

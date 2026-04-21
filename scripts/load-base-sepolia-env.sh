@@ -19,7 +19,7 @@ fi
 NETWORK="$(jq -r '.network // empty' "$MANIFEST_PATH")"
 CHAIN_ID_FROM_MANIFEST="$(jq -r '.chainId // empty' "$MANIFEST_PATH")"
 TANGLE_FROM_MANIFEST="$(jq -r '.tangle // empty' "$MANIFEST_PATH")"
-RESTAKING_FROM_MANIFEST="$(jq -r '(.restaking // .staking) // empty' "$MANIFEST_PATH")"
+STAKING_FROM_MANIFEST="$(jq -r '(.staking // .restaking) // empty' "$MANIFEST_PATH")"
 STATUS_REGISTRY_FROM_MANIFEST="$(jq -r '.statusRegistry // empty' "$MANIFEST_PATH")"
 
 if [[ "$NETWORK" != "base-sepolia" ]]; then
@@ -27,7 +27,7 @@ if [[ "$NETWORK" != "base-sepolia" ]]; then
   exit 1
 fi
 
-if [[ -z "$TANGLE_FROM_MANIFEST" || -z "$RESTAKING_FROM_MANIFEST" || -z "$STATUS_REGISTRY_FROM_MANIFEST" ]]; then
+if [[ -z "$TANGLE_FROM_MANIFEST" || -z "$STAKING_FROM_MANIFEST" || -z "$STATUS_REGISTRY_FROM_MANIFEST" ]]; then
   echo "ERROR: manifest is missing one or more required protocol addresses" >&2
   exit 1
 fi
@@ -38,7 +38,8 @@ export RPC_URL="${RPC_URL:-$HTTP_RPC_URL}"
 export WS_RPC_URL="${WS_RPC_URL:-wss://base-sepolia-rpc.publicnode.com}"
 
 export TANGLE_CONTRACT="${TANGLE_CONTRACT:-$TANGLE_FROM_MANIFEST}"
-export RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-$RESTAKING_FROM_MANIFEST}"
+export STAKING_CONTRACT="${STAKING_CONTRACT:-${RESTAKING_CONTRACT:-$STAKING_FROM_MANIFEST}}"
+export RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-$STAKING_CONTRACT}"
 export STATUS_REGISTRY_CONTRACT="${STATUS_REGISTRY_CONTRACT:-$STATUS_REGISTRY_FROM_MANIFEST}"
 
 # QoS paths in the operator and validator binaries currently read STATUS_REGISTRY_ADDRESS.
@@ -48,5 +49,5 @@ echo "Loaded Base Sepolia protocol settings from $MANIFEST_PATH" >&2
 echo "  HTTP RPC: $HTTP_RPC_URL" >&2
 echo "  WS RPC:   $WS_RPC_URL" >&2
 echo "  Tangle:   $TANGLE_CONTRACT" >&2
-echo "  Staking:  $RESTAKING_CONTRACT" >&2
+echo "  Staking:  $STAKING_CONTRACT" >&2
 echo "  Status:   $STATUS_REGISTRY_CONTRACT" >&2

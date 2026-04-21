@@ -200,7 +200,7 @@ source ./scripts/load-base-sepolia-env.sh \
 That exports the current:
 
 - `TANGLE_CONTRACT`
-- `RESTAKING_CONTRACT` for the staking or `MultiAssetDelegation` contract
+- `STAKING_CONTRACT` for the staking or `MultiAssetDelegation` contract
 - `STATUS_REGISTRY_CONTRACT`
 - `STATUS_REGISTRY_ADDRESS` for the operator heartbeat path
 - `HTTP_RPC_URL=https://sepolia.base.org`
@@ -220,7 +220,7 @@ Pricing engine launch:
 ./scripts/run-pricing-engine.sh --config scripts/operator1.toml
 ```
 
-The server note that mentions only `TANGLE_CONTRACT` and `RESTAKING_CONTRACT` is outdated for this repo. Current operator flows also require `STATUS_REGISTRY_CONTRACT`, and `RESTAKING_CONTRACT` remains the correct env var name even though the underlying protocol contract is the staking or `MultiAssetDelegation` address.
+Use `STAKING_CONTRACT` as the contract name throughout the operator and deployment flow.
 
 ### Testing
 
