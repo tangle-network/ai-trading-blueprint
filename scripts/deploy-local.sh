@@ -43,7 +43,6 @@ USER_ACCOUNT_2="0xd04E36A1C370c6115e1C676838AcD0b430d740F3"
 
 # Tangle protocol addresses (deterministic from state snapshot)
 TANGLE="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-RESTAKING="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
 
 # Pricing engine gRPC ports (operators register these for RFQ quotes).
 # NOT the operator HTTP API (9200/9201) — the frontend's useQuotes hook

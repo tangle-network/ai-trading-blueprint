@@ -19,7 +19,7 @@ fi
 NETWORK="$(jq -r '.network // empty' "$MANIFEST_PATH")"
 CHAIN_ID_FROM_MANIFEST="$(jq -r '.chainId // empty' "$MANIFEST_PATH")"
 TANGLE_FROM_MANIFEST="$(jq -r '.tangle // empty' "$MANIFEST_PATH")"
-STAKING_FROM_MANIFEST="$(jq -r '(.staking // .restaking) // empty' "$MANIFEST_PATH")"
+STAKING_FROM_MANIFEST="$(jq -r '.staking // empty' "$MANIFEST_PATH")"
 STATUS_REGISTRY_FROM_MANIFEST="$(jq -r '.statusRegistry // empty' "$MANIFEST_PATH")"
 
 if [[ "$NETWORK" != "base-sepolia" ]]; then
@@ -38,8 +38,7 @@ export RPC_URL="${RPC_URL:-$HTTP_RPC_URL}"
 export WS_RPC_URL="${WS_RPC_URL:-wss://base-sepolia-rpc.publicnode.com}"
 
 export TANGLE_CONTRACT="${TANGLE_CONTRACT:-$TANGLE_FROM_MANIFEST}"
-export STAKING_CONTRACT="${STAKING_CONTRACT:-${RESTAKING_CONTRACT:-$STAKING_FROM_MANIFEST}}"
-export RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-$STAKING_CONTRACT}"
+export STAKING_CONTRACT="${STAKING_CONTRACT:-$STAKING_FROM_MANIFEST}"
 export STATUS_REGISTRY_CONTRACT="${STATUS_REGISTRY_CONTRACT:-$STATUS_REGISTRY_FROM_MANIFEST}"
 
 # QoS paths in the operator and validator binaries currently read STATUS_REGISTRY_ADDRESS.
