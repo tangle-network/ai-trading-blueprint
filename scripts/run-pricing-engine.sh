@@ -35,7 +35,7 @@ fi
 : "${HTTP_RPC_URL:=http://127.0.0.1:8545}"
 : "${WS_RPC_URL:=ws://127.0.0.1:8545}"
 : "${TANGLE_CONTRACT:=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}"
-: "${RESTAKING_CONTRACT:=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+: "${STAKING_CONTRACT:=${RESTAKING_CONTRACT:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}}"
 : "${STATUS_REGISTRY_CONTRACT:=0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf}"
 : "${BLUEPRINT_ID:=0}"
 : "${PRICING_CONFIG:=$SCRIPT_DIR/default_pricing.toml}"
@@ -94,7 +94,7 @@ echo "  Pricing: $PRICING_CONFIG"
 echo "  RPC:     $HTTP_RPC_URL"
 echo "  WS RPC:  $WS_RPC_URL"
 echo "  Tangle:  $TANGLE_CONTRACT"
-echo "  Staking: $RESTAKING_CONTRACT"
+echo "  Staking: $STAKING_CONTRACT"
 echo "  Status:  $STATUS_REGISTRY_CONTRACT"
 echo "  Binary:  $PRICING_BIN"
 
@@ -105,6 +105,6 @@ exec "$PRICING_BIN" \
   --ws-rpc-endpoint "$WS_RPC_URL" \
   --blueprint-id "$BLUEPRINT_ID" \
   --tangle-contract "$TANGLE_CONTRACT" \
-  --restaking-contract "$RESTAKING_CONTRACT" \
+  --staking-contract "$STAKING_CONTRACT" \
   --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
   "$@"
