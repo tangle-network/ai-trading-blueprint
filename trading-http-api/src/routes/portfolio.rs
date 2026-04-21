@@ -9,6 +9,7 @@ use axum::{Extension, Json, Router, extract::State, routing::post};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use trading_runtime::contracts::ITradingVault;
@@ -171,26 +172,42 @@ async fn get_state_multi_bot(
     let mut cash_balance = None;
     let mut has_unpriced_positions = false;
     let mut has_value_only_positions = false;
+    let mut total_value_decimal = Decimal::ZERO;
 
-    let total_value_usd = match read_vault_cash_position(&bot, &state.market_data_base_url).await {
+    match read_vault_cash_position(&bot, &state.market_data_base_url).await {
         Ok(Some(position)) => {
             cash_balance = Some(position.amount.clone());
             has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
             has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
-            let onchain_value = position.value_usd.clone();
+            if let Some(onchain_value) = position.value_usd.as_deref().and_then(parse_decimal_maybe)
+            {
+                total_value_decimal += onchain_value;
+            }
             positions.push(position);
-            onchain_value.unwrap_or_else(|| "0".to_string())
         }
-        Ok(None) => "0".to_string(),
+        Ok(None) => {}
         Err(e) => {
             warnings.push(format!(
                 "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
             ));
-            latest_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.account_value_usd.clone())
-                .unwrap_or_else(|| "0".to_string())
         }
+    }
+
+    if let Ok(synthetic) = synthesize_trade_positions(&bot, &state.market_data_base_url).await {
+        has_unpriced_positions |= synthetic.has_unpriced_positions;
+        has_value_only_positions |= synthetic.has_value_only_positions;
+        total_value_decimal += synthetic.total_value_usd;
+        positions.extend(synthetic.positions);
+    }
+
+    let total_value_usd = if positions.is_empty() {
+        latest_snapshot
+            .as_ref()
+            .and_then(|snapshot| parse_decimal_maybe(&snapshot.account_value_usd))
+            .unwrap_or(Decimal::ZERO)
+            .to_string()
+    } else {
+        total_value_decimal.to_string()
     };
 
     if positions.is_empty() && trade_total > 0 {
@@ -222,10 +239,460 @@ async fn get_state_multi_bot(
     })
 }
 
+#[derive(Default)]
+struct SyntheticPortfolio {
+    positions: Vec<PositionEntry>,
+    total_value_usd: Decimal,
+    has_unpriced_positions: bool,
+    has_value_only_positions: bool,
+}
+
+#[derive(Clone)]
+struct SyntheticPositionAccumulator {
+    token: String,
+    amount: Decimal,
+    entry_price: Option<Decimal>,
+    protocol: String,
+    position_type: PositionType,
+}
+
+impl SyntheticPositionAccumulator {
+    fn new(
+        token: String,
+        protocol: String,
+        position_type: PositionType,
+        amount: Decimal,
+        entry_price: Option<Decimal>,
+    ) -> Self {
+        Self {
+            token,
+            amount,
+            entry_price,
+            protocol,
+            position_type,
+        }
+    }
+
+    fn credit(&mut self, amount: Decimal, entry_price: Option<Decimal>) {
+        if amount <= Decimal::ZERO {
+            return;
+        }
+
+        self.entry_price = match (self.entry_price, entry_price) {
+            (Some(existing), Some(next)) if self.amount > Decimal::ZERO => {
+                Some(((existing * self.amount) + (next * amount)) / (self.amount + amount))
+            }
+            (Some(existing), _) => Some(existing),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        };
+        self.amount += amount;
+    }
+
+    fn debit(&mut self, amount: Decimal) {
+        if amount <= Decimal::ZERO {
+            return;
+        }
+
+        self.amount = (self.amount - amount).max(Decimal::ZERO);
+    }
+}
+
+async fn synthesize_trade_positions(
+    bot: &crate::BotContext,
+    market_data_base_url: &str,
+) -> Result<SyntheticPortfolio, String> {
+    let mut trades = trade_store::trades_for_bot(&bot.bot_id, 1000, 0)?.trades;
+    let mut positions: HashMap<String, SyntheticPositionAccumulator> = HashMap::new();
+    seed_initial_paper_cash(&mut positions, bot);
+
+    if trades.is_empty() && positions.is_empty() {
+        return Ok(SyntheticPortfolio::default());
+    }
+
+    trades.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    for trade in &trades {
+        apply_trade_to_synthetic_positions(&mut positions, bot.chain_id, trade);
+    }
+
+    let mut open_positions: Vec<SyntheticPositionAccumulator> = positions
+        .into_values()
+        .filter(|position| position.amount > Decimal::ZERO)
+        .collect();
+    if open_positions.is_empty() {
+        return Ok(SyntheticPortfolio::default());
+    }
+
+    let market_client = MarketDataClient::new(market_data_base_url.to_string());
+    let tokens: Vec<String> = open_positions
+        .iter()
+        .map(|position| position.token.clone())
+        .collect();
+    let prices = market_client
+        .get_prices_for_chain(Some(bot.chain_id), &tokens)
+        .await
+        .unwrap_or_default();
+    let current_prices: HashMap<String, Decimal> = prices
+        .into_iter()
+        .map(|price| (normalize_token_key(&price.token), price.price_usd))
+        .collect();
+
+    let mut synthesized = SyntheticPortfolio::default();
+    open_positions.sort_by(|a, b| a.token.cmp(&b.token));
+    for position in open_positions {
+        let current_price = current_prices
+            .get(&normalize_token_key(&position.token))
+            .copied()
+            .or_else(|| default_reference_price_usd(&position.token));
+        let fallback_price = position.entry_price;
+        let effective_price = current_price.or(fallback_price);
+        let valuation_status = match (current_price, position.entry_price) {
+            (Some(_), Some(_)) => ValuationStatus::Priced,
+            (Some(_), None) | (None, Some(_)) => ValuationStatus::ValueOnly,
+            (None, None) => ValuationStatus::Unpriced,
+        };
+        let value_usd = effective_price.map(|price| price * position.amount);
+        let unrealized_pnl = match (current_price, position.entry_price) {
+            (Some(current), Some(entry)) => Some((current - entry) * position.amount),
+            _ => None,
+        };
+
+        synthesized.has_unpriced_positions |= valuation_status == ValuationStatus::Unpriced;
+        synthesized.has_value_only_positions |= valuation_status == ValuationStatus::ValueOnly;
+        if let Some(value) = value_usd {
+            synthesized.total_value_usd += value;
+        }
+
+        synthesized.positions.push(PositionEntry {
+            token: position.token,
+            amount: position.amount.to_string(),
+            value_usd: value_usd.map(|value| value.to_string()),
+            entry_price: if valuation_status == ValuationStatus::Priced {
+                position.entry_price.map(|price| price.to_string())
+            } else {
+                None
+            },
+            current_price: effective_price.map(|price| price.to_string()),
+            unrealized_pnl: unrealized_pnl.map(|value| value.to_string()),
+            protocol: position.protocol,
+            position_type: serde_json::to_value(&position.position_type)
+                .ok()
+                .and_then(|value| value.as_str().map(String::from))
+                .unwrap_or_else(|| format!("{:?}", position.position_type)),
+            valuation_status,
+        });
+    }
+
+    Ok(synthesized)
+}
+
+fn seed_initial_paper_cash(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    bot: &crate::BotContext,
+) {
+    if !bot.paper_trade {
+        return;
+    }
+
+    let strategy = match bot.strategy_config.as_object() {
+        Some(strategy) => strategy,
+        None => return,
+    };
+    let token = strategy
+        .get("asset_token")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("USDC");
+    let capital = strategy
+        .get("initial_capital_usd")
+        .or_else(|| strategy.get("initial_capital"))
+        .or_else(|| strategy.get("cash_balance"))
+        .and_then(|value| match value {
+            serde_json::Value::String(value) => parse_decimal_maybe(value),
+            serde_json::Value::Number(value) => parse_decimal_maybe(&value.to_string()),
+            _ => None,
+        })
+        .unwrap_or(Decimal::ZERO);
+
+    if capital <= Decimal::ZERO {
+        return;
+    }
+
+    credit_spot_position(
+        positions,
+        token,
+        "paper",
+        capital,
+        default_reference_price_usd(token),
+    );
+}
+
+fn apply_trade_to_synthetic_positions(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    chain_id: u64,
+    trade: &trade_store::TradeRecord,
+) {
+    let action = trade.action.to_ascii_lowercase();
+
+    if trade_represents_spot_swap(&action) {
+        let amount_in = parse_decimal_maybe(&trade.amount_in)
+            .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
+            .unwrap_or(Decimal::ZERO);
+        let amount_out = trade
+            .amount_out
+            .as_deref()
+            .and_then(parse_decimal_maybe)
+            .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
+            .or_else(|| {
+                parse_decimal_maybe(&trade.min_amount_out)
+                    .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
+            })
+            .unwrap_or(amount_in);
+        debit_spot_position(
+            positions,
+            &trade.token_in,
+            &trade.target_protocol,
+            amount_in,
+        );
+        credit_spot_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            amount_out,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+        return;
+    }
+
+    let position_type = trade_position_type(&action, &trade.target_protocol);
+    let size = trade
+        .amount_out
+        .as_deref()
+        .and_then(parse_decimal_maybe)
+        .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
+        .or_else(|| {
+            parse_decimal_maybe(&trade.min_amount_out)
+                .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
+        })
+        .unwrap_or_else(|| {
+            parse_decimal_maybe(&trade.amount_in)
+                .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
+                .unwrap_or(Decimal::ZERO)
+        });
+
+    if trade_opens_position(&action) {
+        credit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            position_type,
+            size,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+    } else if trade_closes_position(&action) {
+        debit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            position_type,
+            size,
+        );
+    }
+}
+
+fn trade_represents_spot_swap(action: &str) -> bool {
+    matches!(action, "swap" | "buy" | "sell")
+}
+
+fn trade_opens_position(action: &str) -> bool {
+    matches!(action, "open_long" | "open_short" | "supply" | "borrow")
+}
+
+fn trade_closes_position(action: &str) -> bool {
+    matches!(
+        action,
+        "close_long" | "close_short" | "withdraw" | "repay" | "redeem"
+    )
+}
+
+fn trade_position_type(action: &str, protocol: &str) -> PositionType {
+    match (protocol, action) {
+        ("polymarket_clob", _) | ("polymarket", _) => PositionType::ConditionalToken,
+        (_, "open_long") => PositionType::LongPerp,
+        (_, "open_short") => PositionType::ShortPerp,
+        (_, "supply") => PositionType::Lending,
+        (_, "borrow") => PositionType::Borrowing,
+        _ => PositionType::Spot,
+    }
+}
+
+fn credit_spot_position(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    token: &str,
+    protocol: &str,
+    amount: Decimal,
+    entry_price: Option<Decimal>,
+) {
+    credit_position(
+        positions,
+        token,
+        protocol,
+        PositionType::Spot,
+        amount,
+        entry_price,
+    );
+}
+
+fn credit_position(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    token: &str,
+    protocol: &str,
+    position_type: PositionType,
+    amount: Decimal,
+    entry_price: Option<Decimal>,
+) {
+    if amount <= Decimal::ZERO {
+        return;
+    }
+
+    let key = synthetic_position_key(token, protocol, &position_type);
+    positions
+        .entry(key)
+        .and_modify(|position| position.credit(amount, entry_price))
+        .or_insert_with(|| {
+            SyntheticPositionAccumulator::new(
+                token.to_string(),
+                protocol.to_string(),
+                position_type,
+                amount,
+                entry_price,
+            )
+        });
+}
+
+fn debit_spot_position(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    token: &str,
+    protocol: &str,
+    amount: Decimal,
+) {
+    debit_position(positions, token, protocol, PositionType::Spot, amount);
+}
+
+fn debit_position(
+    positions: &mut HashMap<String, SyntheticPositionAccumulator>,
+    token: &str,
+    protocol: &str,
+    position_type: PositionType,
+    amount: Decimal,
+) {
+    if amount <= Decimal::ZERO {
+        return;
+    }
+
+    let key = synthetic_position_key(token, protocol, &position_type);
+    if let Some(position) = positions.get_mut(&key) {
+        position.debit(amount);
+    }
+}
+
+fn synthetic_position_key(token: &str, protocol: &str, position_type: &PositionType) -> String {
+    if *position_type == PositionType::Spot {
+        return format!("{}|spot", normalize_token_key(token));
+    }
+
+    format!(
+        "{}|{}|{:?}",
+        normalize_token_key(token),
+        protocol.to_ascii_lowercase(),
+        position_type
+    )
+}
+
+fn normalize_token_key(token: &str) -> String {
+    let normalized = token.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "usdc"
+        | "usd-coin"
+        | "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        | "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        | "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+        | "0x7f5c764cbc14f9669b88837ca1490cca17c31607" => "usdc".to_string(),
+        _ => normalized,
+    }
+}
+
+fn parse_decimal_maybe(value: &str) -> Option<Decimal> {
+    Decimal::from_str(value).ok()
+}
+
+fn normalize_trade_amount(chain_id: Option<u64>, token: &str, amount: Decimal) -> Decimal {
+    if amount <= Decimal::ZERO || !amount.fract().is_zero() || amount < Decimal::new(100_000, 0) {
+        return amount;
+    }
+
+    let Some(decimals) = known_token_decimals(chain_id, token) else {
+        return amount;
+    };
+    let scale = Decimal::from(10u64.pow(decimals as u32));
+    amount / scale
+}
+
+fn known_token_decimals(chain_id: Option<u64>, token: &str) -> Option<u8> {
+    let token = normalize_token_key(token);
+    match chain_id {
+        Some(8453) | Some(84532) => match token.as_str() {
+            "0x4200000000000000000000000000000000000006" => Some(18),
+            "usdc" => Some(6),
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" => Some(6),
+            "0x036cbd53842c5426634e7929541ec2318f3dcf7e" => Some(6),
+            "0x7f5c764cbc14f9669b88837ca1490cca17c31607" => Some(6),
+            _ => None,
+        },
+        Some(1) | Some(31337) | Some(31339) => match token.as_str() {
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some(18),
+            "usdc" => Some(6),
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some(6),
+            "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(6),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn default_reference_price_usd(token: &str) -> Option<Decimal> {
+    let normalized = normalize_token_key(token);
+    match normalized.as_str() {
+        "usdc"
+        | "usdt"
+        | "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        | "0xdac17f958d2ee523a2206206994597c13d831ec7"
+        | "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        | "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+        | "0x7f5c764cbc14f9669b88837ca1490cca17c31607" => Some(Decimal::ONE),
+        _ => None,
+    }
+}
+
 async fn read_vault_cash_position(
     bot: &crate::BotContext,
     market_data_base_url: &str,
 ) -> Result<Option<PositionEntry>, String> {
+    if bot.vault_address == format!("{:#x}", Address::ZERO)
+        || bot
+            .vault_address
+            .eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
+    {
+        return Ok(None);
+    }
+
     let provider = ProviderBuilder::new().connect_http(
         bot.rpc_url
             .parse()

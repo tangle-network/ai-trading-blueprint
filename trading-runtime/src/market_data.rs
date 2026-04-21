@@ -42,6 +42,13 @@ fn coingecko_id_for_address(chain_id: u64, token: &str) -> Option<&'static str> 
             "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("bitcoin"),
             _ => None,
         },
+        // Base and Base Sepolia commonly use canonical Base token addresses.
+        8453 | 84532 => match token.as_str() {
+            "0x4200000000000000000000000000000000000006" => Some("ethereum"),
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" => Some("usd-coin"),
+            "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf" => Some("bitcoin"),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -405,6 +412,29 @@ mod tests {
 
         assert_eq!(price.token, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
         assert_eq!(price.price_usd.to_string(), "2500.5");
+        assert!(price.source.ends_with("/simple/price"));
+    }
+
+    #[tokio::test]
+    async fn test_get_price_falls_back_to_coingecko_for_known_base_sepolia_token_address() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v3/simple/price"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ethereum": { "usd": 2319.09 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = MarketDataClient::new(format!("{}/api/v3", mock_server.uri()));
+        let price = client
+            .get_price_for_chain(Some(84532), "0x4200000000000000000000000000000000000006")
+            .await
+            .unwrap();
+
+        assert_eq!(price.token, "0x4200000000000000000000000000000000000006");
+        assert_eq!(price.price_usd.to_string(), "2319.09");
         assert!(price.source.ends_with("/simple/price"));
     }
 }
