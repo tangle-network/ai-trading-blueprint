@@ -33,24 +33,6 @@ check_var() {
   fi
 }
 
-check_any() {
-  local label="$1"
-  shift
-  local found=0
-  local var
-  for var in "$@"; do
-    if [[ -n "${!var:-}" ]]; then
-      printf '  [ok]   %s via %s\n' "$label" "$var"
-      found=1
-      break
-    fi
-  done
-  if [[ "$found" -eq 0 ]]; then
-    printf '  [miss] %s (%s)\n' "$label" "$*"
-    missing=1
-  fi
-}
-
 echo "=== Trading Blueprint Preflight ($MODE) ==="
 
 echo "Protocol"
@@ -58,7 +40,7 @@ check_var HTTP_RPC_URL
 check_var WS_RPC_URL
 check_var CHAIN_ID
 check_var TANGLE_CONTRACT
-check_any STAKING_CONTRACT STAKING_CONTRACT RESTAKING_CONTRACT
+check_var STAKING_CONTRACT
 check_var STATUS_REGISTRY_CONTRACT
 check_var BLUEPRINT_ID
 check_var SERVICE_ID
@@ -67,7 +49,14 @@ echo "Operator"
 check_var PRIVATE_KEY
 check_var OPERATOR_ADDRESS
 check_var KEYSTORE_URI false
-check_any AI_PROVIDER_KEY ZAI_API_KEY ANTHROPIC_API_KEY
+if [[ -n "${ZAI_API_KEY:-}" ]]; then
+  printf '  [ok]   AI_PROVIDER_KEY via ZAI_API_KEY\n'
+elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  printf '  [ok]   AI_PROVIDER_KEY via ANTHROPIC_API_KEY\n'
+else
+  printf '  [miss] AI_PROVIDER_KEY (ZAI_API_KEY or ANTHROPIC_API_KEY)\n'
+  missing=1
+fi
 
 echo "Runtime"
 check_var OPERATOR_API_PORT false
