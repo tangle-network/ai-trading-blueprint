@@ -713,15 +713,13 @@ async fn read_vault_cash_position(
     if let Ok(price_rows) = market_client
         .get_prices(std::slice::from_ref(&token_symbol))
         .await
-    {
-        if let Some(row) = price_rows
+        && let Some(row) = price_rows
             .iter()
             .find(|row| row.token.eq_ignore_ascii_case(&token_symbol))
-        {
-            current_price = Some(row.price_usd.to_string());
-            let amount_decimal = Decimal::from_str(&amount_display).unwrap_or(Decimal::ZERO);
-            value_usd = Some((amount_decimal * row.price_usd).to_string());
-        }
+    {
+        current_price = Some(row.price_usd.to_string());
+        let amount_decimal = Decimal::from_str(&amount_display).unwrap_or(Decimal::ZERO);
+        value_usd = Some((amount_decimal * row.price_usd).to_string());
     }
 
     Ok(Some(PositionEntry {

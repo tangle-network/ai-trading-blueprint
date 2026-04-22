@@ -117,8 +117,10 @@ if [[ -n "${ZAI_API_KEY:-}" ]]; then
   printf '  [ok]   AI_PROVIDER_KEY via ZAI_API_KEY\n'
 elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
   printf '  [ok]   AI_PROVIDER_KEY via ANTHROPIC_API_KEY\n'
+elif [[ -n "${TANGLE_ROUTER_API_KEY:-}" ]]; then
+  printf '  [ok]   AI_PROVIDER_KEY via TANGLE_ROUTER_API_KEY\n'
 else
-  printf '  [miss] AI_PROVIDER_KEY (ZAI_API_KEY or ANTHROPIC_API_KEY)\n'
+  printf '  [miss] AI_PROVIDER_KEY (ZAI_API_KEY, ANTHROPIC_API_KEY, or TANGLE_ROUTER_API_KEY)\n'
   missing=1
 fi
 
@@ -127,6 +129,7 @@ check_var OPERATOR_API_PORT false
 check_var TRADING_API_PORT false
 check_var SIDECAR_IMAGE false
 check_var SESSION_AUTH_SECRET false
+check_var TANGLE_ROUTER_BASE_URL false
 
 echo "Strategy/Execution"
 check_var VALIDATOR_ENDPOINTS false

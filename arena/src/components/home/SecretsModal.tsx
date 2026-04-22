@@ -40,7 +40,11 @@ export function SecretsModal({
   onClose: () => void;
 }) {
   const apiUrl = target?.apiUrl ?? OPERATOR_API_URL;
-  const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
+  const defaultProvider = (
+    DEFAULT_AI_PROVIDER === 'zai' || DEFAULT_AI_PROVIDER === 'tangle-router'
+      ? DEFAULT_AI_PROVIDER
+      : 'anthropic'
+  ) as AiProvider;
   const [provider, setProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
   const [extraEnvs, setExtraEnvs] = useState<SecretsEnvVar[]>([]);
