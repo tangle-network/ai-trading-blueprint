@@ -2088,17 +2088,48 @@ fn fallback_trade_value_usd(t: &serde_json::Value) -> Option<f64> {
     Some(quantity * price)
 }
 
-fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
+fn filter_metrics_history(
+    snapshots: Vec<MetricsSnapshotResponse>,
+    query: &MetricsHistoryQuery,
+) -> Vec<MetricsSnapshotResponse> {
+    let from = query
+        .from
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&chrono::Utc));
+    let to = query
+        .to
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&chrono::Utc));
+
+    let mut filtered: Vec<MetricsSnapshotResponse> = snapshots
+        .into_iter()
+        .filter(|snapshot| {
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&snapshot.timestamp)
+                .ok()
+                .map(|value| value.with_timezone(&chrono::Utc));
+            from.is_none_or(|from| timestamp.is_none_or(|ts| ts >= from))
+                && to.is_none_or(|to| timestamp.is_none_or(|ts| ts <= to))
+        })
+        .collect();
+
+    if let Some(limit) = query.limit {
+        filtered.truncate(limit);
+    }
+
+    filtered
+}
+
+fn fallback_metrics_history(
+    bot: &TradingBotRecord,
+    query: &MetricsHistoryQuery,
+) -> Vec<serde_json::Value> {
     let trades = fallback_trade_dataset(bot);
-    synthesize_metrics(bot, &trades)
+    filter_metrics_history(synthesize_metrics(bot, &trades), query)
         .into_iter()
         .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
         .collect()
-}
-
-fn fallback_metrics_snapshots(bot: &TradingBotRecord) -> Vec<MetricsSnapshotResponse> {
-    let trades = fallback_trade_dataset(bot);
-    synthesize_metrics(bot, &trades)
 }
 
 fn parse_metrics_snapshots(
@@ -2632,32 +2663,16 @@ async fn get_bot_metrics_history(
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let mut remote_query = Vec::new();
-    if let Some(from) = query.from {
-        remote_query.push(("from", from));
-    }
-    if let Some(to) = query.to {
-        remote_query.push(("to", to));
-    }
-    if let Some(limit) = query.limit {
-        remote_query.push(("limit", limit.to_string()));
+    let snapshots = resolve_metrics_history_for_bot(&bot, &query).await;
+    if !snapshots.is_empty() {
+        let json_snapshots = snapshots
+            .into_iter()
+            .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
+            .collect();
+        return Ok(Json(json_snapshots));
     }
 
-    match fetch_trading_api_json(&bot, "/metrics/history", &remote_query).await {
-        Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
-            Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
-            Ok(_) => Ok(Json(Vec::new())),
-            Err(err) => {
-                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                Ok(Json(Vec::new()))
-            }
-        },
-        Ok(None) => Ok(Json(Vec::new())),
-        Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
-            Ok(Json(Vec::new()))
-        }
-    }
+    Ok(Json(fallback_metrics_history(&bot, &query)))
 }
 
 async fn get_bot_trades(
