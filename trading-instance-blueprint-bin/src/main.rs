@@ -17,6 +17,15 @@ use trading_instance_blueprint_lib::JOB_WORKFLOW_TICK;
 fn derive_session_auth_secret() {
     dotenvy::dotenv().ok();
 
+    // Trading bots are meant to stay alive between ticks. The sandbox runtime
+    // interprets a requested idle timeout of 0 as "use the default timeout",
+    // so we override that default to 0 for this app unless the operator has
+    // explicitly chosen something else.
+    if std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").is_err() {
+        // SAFETY: called before tokio worker threads are spawned.
+        unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
+    }
+
     fn derive_secret_from_seed(seed: &[u8]) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();

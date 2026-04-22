@@ -205,6 +205,8 @@ fn seed_bot_with_identity(
         trading_loop_cron: "0 */5 * * * *".to_string(),
         call_id,
         service_id,
+        harness_json: serde_json::Value::default(),
+        validation_trust: trading_runtime::ValidationTrust::default(),
     };
     state::bots()
         .expect("bots store")
@@ -1280,6 +1282,14 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
             responses: Vec::new(),
             simulation: None,
         },
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     })
     .await
     .expect("record trade");
@@ -1417,6 +1427,14 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
             responses: Vec::new(),
             simulation: None,
         },
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
     })
     .await
     .expect("record trade");

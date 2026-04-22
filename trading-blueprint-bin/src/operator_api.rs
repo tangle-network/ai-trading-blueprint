@@ -667,6 +667,32 @@ fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
     }
 }
 
+fn strategy_context_filename(date: &str) -> String {
+    format!("conversations/{date}-strategy-context.md")
+}
+
+fn build_strategy_bootstrap_memory(
+    date: &str,
+    timestamp: &str,
+    prompt: &str,
+) -> (String, String, String) {
+    let conversation_file = strategy_context_filename(date);
+    let strategy_content = format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n");
+    let toc_content = format!(
+        "# Memory Index\nUpdated: {date} | Iteration: 0\n\n\
+         ## Conversations\n\
+         - [Strategy Brief]({conversation_file}) — Initial owner strategy brief. **ACTION NEEDED**\n\n\
+         ## Decisions\n\
+         (none yet)\n\n\
+         ## Research\n\
+         (none yet)\n\n\
+         ## Performance\n\
+         - New agent, no trades yet\n"
+    );
+
+    (conversation_file, strategy_content, toc_content)
+}
+
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
     let caller = req
         .headers()
@@ -838,28 +864,17 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
                 )
             })?;
 
-    // 3. Write the user's prompt to the bot's memory as the first conversation.
-    // Content is passed via env var (FILE_CONTENT) to avoid any shell interpretation.
+    // 3. Seed the user's initial prompt as an actionable owner conversation so
+    // the agent sees it through the normal ACTION NEEDED workflow on first tick.
     if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id) {
-        let date = chrono::Utc::now().format("%Y-%m-%d");
-        let timestamp = chrono::Utc::now().format("%H:%M UTC");
-
-        let strategy_content = format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n");
-        let toc_content = format!(
-            "# Memory Index\nUpdated: {date} | Iteration: 0\n\n\
-             ## Conversations\n\
-             - [Strategy Brief](conversations/{date}-strategy.md) — **ACTION NEEDED** — Owner described their strategy\n\n\
-             ## Decisions\n\
-             (none yet)\n\n\
-             ## Research\n\
-             (none yet)\n\n\
-             ## Performance\n\
-             - New agent, no trades yet\n"
-        );
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let timestamp = chrono::Utc::now().format("%H:%M UTC").to_string();
+        let (conversation_file, strategy_content, toc_content) =
+            build_strategy_bootstrap_memory(&date, &timestamp, &prompt);
 
         let writes: &[(&str, &str)] = &[
             (
-                &format!("/home/agent/memory/conversations/{date}-strategy.md"),
+                &format!("/home/agent/memory/{conversation_file}"),
                 &strategy_content,
             ),
             ("/home/agent/memory/toc.md", &toc_content),
@@ -2616,32 +2631,16 @@ async fn get_bot_metrics_history(
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let mut remote_query = Vec::new();
-    if let Some(from) = query.from {
-        remote_query.push(("from", from));
-    }
-    if let Some(to) = query.to {
-        remote_query.push(("to", to));
-    }
-    if let Some(limit) = query.limit {
-        remote_query.push(("limit", limit.to_string()));
+    let snapshots = resolve_metrics_history_for_bot(&bot, &query).await;
+    if !snapshots.is_empty() {
+        let json_snapshots = snapshots
+            .into_iter()
+            .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
+            .collect();
+        return Ok(Json(json_snapshots));
     }
 
-    match fetch_trading_api_json(&bot, "/metrics/history", &remote_query).await {
-        Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
-            Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
-            Ok(_) => Ok(Json(Vec::new())),
-            Err(err) => {
-                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                Ok(Json(Vec::new()))
-            }
-        },
-        Ok(None) => Ok(Json(Vec::new())),
-        Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
-            Ok(Json(Vec::new()))
-        }
-    }
+    Ok(Json(fallback_metrics_history(&bot)))
 }
 
 async fn get_bot_trades(
@@ -3253,6 +3252,24 @@ mod tests {
         assert!(json["nonce"].is_string());
         assert!(json["message"].is_string());
         assert!(json["expires_at"].is_number());
+    }
+
+    #[test]
+    fn test_strategy_bootstrap_memory_seeds_actionable_owner_message() {
+        let (conversation_file, strategy_content, toc_content) = build_strategy_bootstrap_memory(
+            "2026-04-22",
+            "07:25 UTC",
+            "Create a conservative Base Sepolia paper-trading bot.",
+        );
+
+        assert_eq!(
+            conversation_file,
+            "conversations/2026-04-22-strategy-context.md"
+        );
+        assert!(strategy_content.contains("# Strategy Brief"));
+        assert!(strategy_content.contains("## Owner (07:25 UTC)"));
+        assert!(toc_content.contains("[Strategy Brief]"));
+        assert!(toc_content.contains("ACTION NEEDED"));
     }
 
     #[tokio::test]

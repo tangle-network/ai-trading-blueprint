@@ -134,11 +134,22 @@ async fn run_task_in_bot(bot: &TradingBotRecord, prompt: &str) -> Result<(), Str
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Sandbox {} not found for bot {}", bot.sandbox_id, bot.id))?;
 
+    let sidecar_bot = super::activate::build_sidecar_bot_config(bot);
+    super::activate::ensure_sidecar_runtime_dirs(&sandbox.sidecar_url, &sandbox.token).await?;
+    super::activate::sync_profile_instructions(&sandbox.sidecar_url, &sandbox.token, &sidecar_bot)
+        .await?;
+
     // Build the full agent profile — same as the cron path uses
     let backend_profile = if let Some(pack) = packs::get_pack(&bot.strategy_type) {
-        Some(crate::prompts::build_pack_agent_profile(&pack, bot))
+        Some(crate::prompts::build_pack_agent_profile(
+            &pack,
+            &sidecar_bot,
+        ))
     } else {
-        Some(packs::build_generic_agent_profile(&bot.strategy_type, bot))
+        Some(packs::build_generic_agent_profile(
+            &bot.strategy_type,
+            &sidecar_bot,
+        ))
     };
 
     let task_req = ai_agent_sandbox_blueprint_lib::SandboxTaskRequest {
