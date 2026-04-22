@@ -1,4 +1,5 @@
 use crate::error::TradingError;
+use crate::token_metadata::coingecko_id_for_token as shared_coingecko_id_for_token;
 use crate::types::PriceData;
 use chrono::Utc;
 use rust_decimal::Decimal;
@@ -26,33 +27,6 @@ fn should_try_coingecko_fallback(base_url: &str) -> bool {
     base_url.contains("coingecko.com") || normalize_base_url(base_url).ends_with("/api/v3")
 }
 
-fn normalize_token_key(token: &str) -> String {
-    token.trim().to_ascii_lowercase()
-}
-
-fn coingecko_id_for_address(chain_id: u64, token: &str) -> Option<&'static str> {
-    let token = normalize_token_key(token);
-    match chain_id {
-        // Local execution fork reuses Ethereum mainnet token addresses.
-        1 | 31339 => match token.as_str() {
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some("ethereum"),
-            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some("usd-coin"),
-            "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some("tether"),
-            "0x6b175474e89094c44da98b954eedeac495271d0f" => Some("dai"),
-            "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("bitcoin"),
-            _ => None,
-        },
-        // Base and Base Sepolia commonly use canonical Base token addresses.
-        8453 | 84532 => match token.as_str() {
-            "0x4200000000000000000000000000000000000006" => Some("ethereum"),
-            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" => Some("usd-coin"),
-            "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf" => Some("bitcoin"),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn coingecko_id_for_symbol(token: &str) -> Option<&'static str> {
     match token.to_ascii_uppercase().as_str() {
         "ETH" | "WETH" => Some("ethereum"),
@@ -69,10 +43,7 @@ fn coingecko_id_for_symbol(token: &str) -> Option<&'static str> {
 }
 
 fn coingecko_id_for_token(chain_id: Option<u64>, token: &str) -> Option<&'static str> {
-    chain_id
-        .and_then(|chain_id| coingecko_id_for_address(chain_id, token))
-        .or_else(|| coingecko_id_for_address(1, token))
-        .or_else(|| coingecko_id_for_symbol(token))
+    shared_coingecko_id_for_token(chain_id, token).or_else(|| coingecko_id_for_symbol(token))
 }
 
 #[derive(Debug, Deserialize)]

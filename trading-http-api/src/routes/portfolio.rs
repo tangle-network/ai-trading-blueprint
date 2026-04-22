@@ -14,6 +14,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use trading_runtime::contracts::ITradingVault;
 use trading_runtime::market_data::MarketDataClient;
+use trading_runtime::token_metadata::known_token_decimals;
 use trading_runtime::types::{PositionType, PriceData, ValuationStatus};
 
 #[derive(Serialize)]
@@ -643,28 +644,6 @@ fn normalize_trade_amount(chain_id: Option<u64>, token: &str, amount: Decimal) -
     };
     let scale = Decimal::from(10u64.pow(decimals as u32));
     amount / scale
-}
-
-fn known_token_decimals(chain_id: Option<u64>, token: &str) -> Option<u8> {
-    let token = normalize_token_key(token);
-    match chain_id {
-        Some(8453) | Some(84532) => match token.as_str() {
-            "0x4200000000000000000000000000000000000006" => Some(18),
-            "usdc" => Some(6),
-            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" => Some(6),
-            "0x036cbd53842c5426634e7929541ec2318f3dcf7e" => Some(6),
-            "0x7f5c764cbc14f9669b88837ca1490cca17c31607" => Some(6),
-            _ => None,
-        },
-        Some(1) | Some(31337) | Some(31339) => match token.as_str() {
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some(18),
-            "usdc" => Some(6),
-            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some(6),
-            "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(6),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 fn default_reference_price_usd(token: &str) -> Option<Decimal> {

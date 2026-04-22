@@ -8,6 +8,7 @@ use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
 use trading_runtime::executor::get_adapter;
 use trading_runtime::intent::hash_intent;
+use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::validator_client::ValidatorClient;
 use trading_runtime::validator_client::{
     BalanceChangeSummary, ExecutionContext, SimulationSummary,
@@ -168,6 +169,7 @@ async fn validate(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, (StatusCode, String)> {
+    validate_chain_tokens(state.chain_id, &request.token_in, &request.token_out)?;
     let parsed = parse_validate_request(&request)?;
 
     let execution_context = build_execution_context(
@@ -379,6 +381,7 @@ async fn validate_multi_bot(
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
+    validate_chain_tokens(Some(bot.chain_id), &req.token_in, &req.token_out)?;
     let parsed = parse_validate_request(&req)?;
 
     // Use validator endpoints from the bot context
@@ -434,9 +437,47 @@ async fn validate_multi_bot(
     Ok(Json(build_validate_response(&result, parsed.deadline)))
 }
 
+fn validate_chain_tokens(
+    chain_id: Option<u64>,
+    token_in: &str,
+    token_out: &str,
+) -> Result<(), (StatusCode, String)> {
+    let Some(chain_id) = chain_id else {
+        return Ok(());
+    };
+
+    for token in [token_in, token_out] {
+        if let Some(other_chain_id) = address_chain_mismatch(chain_id, token) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Token {token} belongs to {}, but this bot is configured for {}. Use the correct token address for the configured chain.",
+                    chain_display_name(other_chain_id),
+                    chain_display_name(chain_id),
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_chain_tokens_rejects_mainnet_address_on_base_sepolia() {
+        let err = validate_chain_tokens(
+            Some(84532),
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        )
+        .expect_err("should reject mainnet token on base sepolia");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("Ethereum mainnet"));
+        assert!(err.1.contains("Base Sepolia"));
+    }
 
     #[test]
     fn test_decimal_to_u256_safe_positive() {
