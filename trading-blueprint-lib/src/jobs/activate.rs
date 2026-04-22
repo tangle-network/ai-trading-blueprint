@@ -177,9 +177,8 @@ pub async fn activate_bot_with_secrets(
     let is_mock = mock_sandbox.is_some();
     let record = if let Some(r) = mock_sandbox {
         // Store mock sandbox with user_env_json so has_user_secrets() works for guards
-        let user_env_json = serde_json::to_string(&user_env).unwrap_or_default();
         let mut stored = r.clone();
-        stored.user_env_json = user_env_json;
+        stored.user_env_json = serde_json::to_string(&user_env).unwrap_or_default();
         let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(stored.id.clone(), stored));
         r
     } else {

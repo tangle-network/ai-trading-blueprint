@@ -46,6 +46,13 @@ rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR"
 echo "  cleared $RUNTIME_DIR"
 
+find "$ROOT_DIR/.tmp" -maxdepth 1 -type f \
+  \( -name 'base-sepolia-*.json' -o -name 'base-sepolia-*.log' \) \
+  -print0 2>/dev/null | while IFS= read -r -d '' file; do
+  rm -f "$file"
+  echo "  cleared $file"
+done
+
 for dir in "$ROOT_DIR"/scripts/data/operator*/pricing-engine; do
   [[ -e "$dir" ]] || continue
   rm -rf "$dir"
