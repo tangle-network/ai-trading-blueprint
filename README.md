@@ -183,18 +183,27 @@ cd arena && pnpm dev
 ### Deploy to Hetzner (production)
 
 ```bash
-./deploy/go-live.sh <server-ip> <operator-private-key>
+./deploy/go-live-base-sepolia.sh <server-ip> <operator-private-key>
 ```
 
 Uses the Blueprint Manager (`cargo tangle blueprint run`), not the raw binary. Supports N service instances per BPM.
+The default Base Sepolia `tnt-core` manifest is committed at
+`deploy/manifests/base-sepolia/tnt-core.latest.json`, so operators do not need a
+matching sibling checkout. Override with `TNT_CORE_DEPLOYMENT_MANIFEST=/path/to/manifest.json`
+when targeting a different deployment snapshot.
 
 ### Base Sepolia Operator Prep
 
-Fresh protocol deploys come from `tnt-core`, not this repo. After `tnt-core` broadcast completes, load the protocol addresses directly from its manifest:
+Fresh protocol deploys come from `tnt-core`, not this repo. This repo carries a
+committed Base Sepolia manifest snapshot for the latest known-good deployment.
+Load protocol addresses from that file by default, or point at another manifest
+explicitly:
 
 ```bash
-source ./scripts/load-base-sepolia-env.sh \
-  /home/drew/code/tnt-core/deployments/base-sepolia/latest.json
+source ./scripts/load-base-sepolia-env.sh
+
+# or
+source ./scripts/load-base-sepolia-env.sh /path/to/tnt-core-manifest.json
 ```
 
 That exports the current:

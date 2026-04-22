@@ -31,18 +31,46 @@ SERVER_IP="${1:?Usage: go-live.sh <server-ip> <operator-private-key>}"
 PRIVATE_KEY="${2:?Usage: go-live.sh <server-ip> <operator-private-key>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+MANIFEST_DEFAULT="$REPO_DIR/deploy/manifests/base-sepolia/tnt-core.latest.json"
+if [[ ! -f "$MANIFEST_DEFAULT" ]]; then
+  MANIFEST_DEFAULT="$REPO_DIR/../tnt-core/deployments/base-sepolia/latest.json"
+fi
 
-TANGLE_RPC="${TANGLE_RPC:-wss://rpc.tangle.tools}"
-TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-https://rpc.tangle.tools}"
-CHAIN_ID="${CHAIN_ID:-5845}"
+DEFAULT_TANGLE_RPC="wss://rpc.tangle.tools"
+DEFAULT_TANGLE_HTTP_RPC="https://rpc.tangle.tools"
+DEFAULT_CHAIN_ID="5845"
+
+TANGLE_RPC="${TANGLE_RPC:-$DEFAULT_TANGLE_RPC}"
+TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-$DEFAULT_TANGLE_HTTP_RPC}"
+CHAIN_ID="${CHAIN_ID:-$DEFAULT_CHAIN_ID}"
 HL_TESTNET="${HYPERLIQUID_TESTNET:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
+SKIP_REMOTE_KEYSTORE="${SKIP_REMOTE_KEYSTORE:-0}"
+SKIP_OPERATOR_REGISTER="${SKIP_OPERATOR_REGISTER:-0}"
+SKIP_SERVICE_CREATE="${SKIP_SERVICE_CREATE:-0}"
 BLUEPRINT_ID="${BLUEPRINT_ID:-}"
+SERVICE_ID="${SERVICE_ID:-}"
 REPO_URL="${REPO_URL:-$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "https://github.com/tangle-network/ai-trading-blueprint.git")}"
 REPO_REF="${REPO_REF:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 LOCAL_KEYSTORE_DIR="${LOCAL_KEYSTORE_DIR:-$REPO_DIR/.deploy-keystore}"
 BLUEPRINT_DEFINITION="${BLUEPRINT_DEFINITION:-$REPO_DIR/blueprint-definition.json}"
 OPERATOR_STAKE_AMOUNT="${OPERATOR_STAKE_AMOUNT:-1000000000000000000}"
+TNT_CORE_DEPLOYMENT_MANIFEST="${TNT_CORE_DEPLOYMENT_MANIFEST:-$MANIFEST_DEFAULT}"
+
+if [[ -z "${TANGLE_CONTRACT:-}" && -f "$TNT_CORE_DEPLOYMENT_MANIFEST" ]]; then
+  # shellcheck source=/dev/null
+  source "$REPO_DIR/scripts/load-base-sepolia-env.sh" "$TNT_CORE_DEPLOYMENT_MANIFEST"
+  if [[ "$TANGLE_RPC" == "$DEFAULT_TANGLE_RPC" ]]; then
+    TANGLE_RPC="$WS_RPC_URL"
+  fi
+  if [[ "$TANGLE_HTTP_RPC" == "$DEFAULT_TANGLE_HTTP_RPC" ]]; then
+    TANGLE_HTTP_RPC="$HTTP_RPC_URL"
+  fi
+  if [[ "$CHAIN_ID" == "$DEFAULT_CHAIN_ID" ]]; then
+    CHAIN_ID="$CHAIN_ID_FROM_MANIFEST"
+  fi
+fi
 
 : "${TANGLE_CONTRACT:?TANGLE_CONTRACT must be set}"
 : "${STAKING_CONTRACT:?STAKING_CONTRACT must be set}"
@@ -50,6 +78,31 @@ OPERATOR_STAKE_AMOUNT="${OPERATOR_STAKE_AMOUNT:-1000000000000000000}"
 
 OPERATOR_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || true)"
 [ -n "$OPERATOR_ADDRESS" ] || { echo "ERROR: 'cast' (foundry) is required"; exit 1; }
+[ -f "$BLUEPRINT_DEFINITION" ] || { echo "ERROR: blueprint definition not found: $BLUEPRINT_DEFINITION"; exit 1; }
+
+if ! command -v cargo-tangle >/dev/null 2>&1; then
+  echo "ERROR: cargo-tangle is required locally" >&2
+  exit 1
+fi
+
+if actual_chain_id="$(cast chain-id --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null)"; then
+  if [[ "$actual_chain_id" != "$CHAIN_ID" ]]; then
+    echo "ERROR: chain id mismatch: expected $CHAIN_ID got $actual_chain_id" >&2
+    exit 1
+  fi
+else
+  echo "ERROR: unable to query chain id from $TANGLE_HTTP_RPC" >&2
+  exit 1
+fi
+
+for contract in "$TANGLE_CONTRACT" "$STAKING_CONTRACT" "$STATUS_REGISTRY_CONTRACT"; do
+  code="$(cast code "$contract" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || true)"
+  if [[ -z "$code" || "$code" == "0x" ]]; then
+    echo "ERROR: missing bytecode at $contract" >&2
+    exit 1
+  fi
+done
+
 echo "Operator: $OPERATOR_ADDRESS"
 
 # Shared cargo-tangle args for commands that talk to the chain.
@@ -90,8 +143,11 @@ wait_for_service_count_above() {
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 1: Bootstrap server
 # ──────────────────────────────────────────────────────────────────────────────
-echo "=== Step 1: Bootstrap $SERVER_IP ==="
-ssh "root@$SERVER_IP" bash <<'REMOTE'
+if [[ "$SKIP_BOOTSTRAP" = "1" ]]; then
+  echo "=== Step 1: skipped (SKIP_BOOTSTRAP=1) ==="
+else
+  echo "=== Step 1: Bootstrap $SERVER_IP ==="
+  ssh "root@$SERVER_IP" bash <<'REMOTE'
 set -euo pipefail
 
 apt-get update -qq
@@ -116,6 +172,7 @@ chmod 700 /mnt/trading-data/blueprint-state
 
 rustc --version
 REMOTE
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 2: Build blueprint binary + install cargo-tangle (BPM) on server
@@ -162,7 +219,10 @@ if [ -z "$(find "$LOCAL_KEYSTORE_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; 
     --protocol tangle
 fi
 
-ssh "root@$SERVER_IP" bash <<REMOTE
+if [[ "$SKIP_REMOTE_KEYSTORE" = "1" ]]; then
+  echo "Remote keystore step skipped (SKIP_REMOTE_KEYSTORE=1)"
+else
+  ssh "root@$SERVER_IP" bash <<REMOTE
 set -euo pipefail
 K=/mnt/trading-data/blueprint-state/keystore
 mkdir -p "\$K" && chmod 700 "\$K"
@@ -179,6 +239,7 @@ else
   echo "Keystore already exists"
 fi
 REMOTE
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 4: Deploy blueprint contracts
@@ -202,40 +263,52 @@ fi
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 5: Register operator (staking + blueprint)
 # ──────────────────────────────────────────────────────────────────────────────
-echo "=== Step 5: Register operator ==="
-cargo tangle operator register \
-  "${TANGLE_ARGS[@]}" \
-  --amount "$OPERATOR_STAKE_AMOUNT" 2>&1 || echo "(staking registration already exists, continuing)"
+if [[ "$SKIP_OPERATOR_REGISTER" = "1" ]]; then
+  echo "=== Step 5: skipped (SKIP_OPERATOR_REGISTER=1) ==="
+else
+  echo "=== Step 5: Register operator ==="
+  cargo tangle operator register \
+    "${TANGLE_ARGS[@]}" \
+    --amount "$OPERATOR_STAKE_AMOUNT" 2>&1 || echo "(staking registration already exists, continuing)"
 
-cargo tangle blueprint register \
-  "${TANGLE_ARGS[@]}" \
-  --blueprint-id "$BLUEPRINT_ID" 2>&1 || echo "(blueprint registration already exists, continuing)"
+  cargo tangle blueprint register \
+    "${TANGLE_ARGS[@]}" \
+    --blueprint-id "$BLUEPRINT_ID" 2>&1 || echo "(blueprint registration already exists, continuing)"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 6: Request + approve service instance
 # ──────────────────────────────────────────────────────────────────────────────
-echo "=== Step 6: Request + approve service ==="
-SERVICE_COUNT_BEFORE="$(service_count)"
+if [[ -n "$SERVICE_ID" || "$SKIP_SERVICE_CREATE" = "1" ]]; then
+  echo "=== Step 6: skipped service create (SERVICE_ID=${SERVICE_ID:-<unset>} SKIP_SERVICE_CREATE=$SKIP_SERVICE_CREATE) ==="
+  if [[ -z "$SERVICE_ID" ]]; then
+    echo "ERROR: SERVICE_ID must be set when SKIP_SERVICE_CREATE=1" >&2
+    exit 1
+  fi
+else
+  echo "=== Step 6: Request + approve service ==="
+  SERVICE_COUNT_BEFORE="$(service_count)"
 
-SERVICE_REQUEST_OUTPUT="$(cargo tangle blueprint service request \
-  "${TANGLE_ARGS[@]}" \
-  --blueprint-id "$BLUEPRINT_ID" \
-  --operator "$OPERATOR_ADDRESS" \
-  --ttl 0 \
-  --json)"
+  SERVICE_REQUEST_OUTPUT="$(cargo tangle blueprint service request \
+    "${TANGLE_ARGS[@]}" \
+    --blueprint-id "$BLUEPRINT_ID" \
+    --operator "$OPERATOR_ADDRESS" \
+    --ttl 0 \
+    --json)"
 
-REQUEST_ID="$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' || true)"
-[ -n "$REQUEST_ID" ] || { echo "ERROR: could not parse request_id"; echo "$SERVICE_REQUEST_OUTPUT"; exit 1; }
+  REQUEST_ID="$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' || true)"
+  [ -n "$REQUEST_ID" ] || { echo "ERROR: could not parse request_id"; echo "$SERVICE_REQUEST_OUTPUT"; exit 1; }
 
-cargo tangle blueprint service approve \
-  "${TANGLE_ARGS[@]}" \
-  --request-id "$REQUEST_ID" \
-  --staking-percent 100 \
-  --json
+  cargo tangle blueprint service approve \
+    "${TANGLE_ARGS[@]}" \
+    --request-id "$REQUEST_ID" \
+    --staking-percent 100 \
+    --json
 
-SERVICE_COUNT_AFTER="$(wait_for_service_count_above "$SERVICE_COUNT_BEFORE")"
-SERVICE_ID=$(( SERVICE_COUNT_AFTER - 1 ))
-echo "Request ID: $REQUEST_ID  Service ID: $SERVICE_ID"
+  SERVICE_COUNT_AFTER="$(wait_for_service_count_above "$SERVICE_COUNT_BEFORE")"
+  SERVICE_ID=$(( SERVICE_COUNT_AFTER - 1 ))
+  echo "Request ID: $REQUEST_ID  Service ID: $SERVICE_ID"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 7: Install systemd unit + settings.env
