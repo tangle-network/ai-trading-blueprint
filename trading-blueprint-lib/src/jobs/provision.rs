@@ -93,14 +93,20 @@ fn default_paper_initial_capital_value() -> Value {
     Value::String(configured)
 }
 
+fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
+    asset_token != alloy::primitives::Address::ZERO
+}
+
 fn apply_strategy_defaults(
     strategy_config: &mut Map<String, Value>,
     request: &TradingProvisionRequest,
     paper_trade: bool,
 ) {
-    strategy_config
-        .entry("asset_token".to_string())
-        .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+    if has_configured_asset_token(request.asset_token) {
+        strategy_config
+            .entry("asset_token".to_string())
+            .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+    }
 
     if paper_trade {
         strategy_config

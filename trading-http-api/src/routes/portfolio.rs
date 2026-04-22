@@ -174,6 +174,7 @@ async fn get_state_multi_bot(
     let mut has_unpriced_positions = false;
     let mut has_value_only_positions = false;
     let mut total_value_decimal = Decimal::ZERO;
+    let mut vault_lookup_failed = false;
 
     match read_vault_cash_position(&bot, &state.market_data_base_url).await {
         Ok(Some(position)) => {
@@ -188,6 +189,7 @@ async fn get_state_multi_bot(
         }
         Ok(None) => {}
         Err(e) => {
+            vault_lookup_failed = true;
             warnings.push(format!(
                 "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
             ));
@@ -201,12 +203,15 @@ async fn get_state_multi_bot(
         positions.extend(synthetic.positions);
     }
 
-    let total_value_usd = if positions.is_empty() {
-        latest_snapshot
-            .as_ref()
-            .and_then(|snapshot| parse_decimal_maybe(&snapshot.account_value_usd))
-            .unwrap_or(Decimal::ZERO)
+    let snapshot_total_value = latest_snapshot
+        .as_ref()
+        .and_then(|snapshot| parse_decimal_maybe(&snapshot.account_value_usd));
+    let total_value_usd = if vault_lookup_failed {
+        snapshot_total_value
+            .unwrap_or(total_value_decimal)
             .to_string()
+    } else if positions.is_empty() {
+        snapshot_total_value.unwrap_or(Decimal::ZERO).to_string()
     } else {
         total_value_decimal.to_string()
     };
@@ -403,7 +408,7 @@ fn seed_initial_paper_cash(
         .get("asset_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
         .unwrap_or("USDC");
     let capital = strategy
         .get("initial_capital_usd")
@@ -436,7 +441,7 @@ fn apply_trade_to_synthetic_positions(
 ) {
     let action = trade.action.to_ascii_lowercase();
 
-    if trade_represents_spot_swap(&action) {
+    if trade_represents_spot_swap(&action, &trade.target_protocol) {
         let amount_in = parse_decimal_maybe(&trade.amount_in)
             .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
             .unwrap_or(Decimal::ZERO);
@@ -485,7 +490,7 @@ fn apply_trade_to_synthetic_positions(
                 .unwrap_or(Decimal::ZERO)
         });
 
-    if trade_opens_position(&action) {
+    if trade_opens_position(&action, &trade.target_protocol) {
         credit_position(
             positions,
             &trade.token_out,
@@ -497,7 +502,7 @@ fn apply_trade_to_synthetic_positions(
                 .as_deref()
                 .and_then(parse_decimal_maybe),
         );
-    } else if trade_closes_position(&action) {
+    } else if trade_closes_position(&action, &trade.target_protocol) {
         debit_position(
             positions,
             &trade.token_out,
@@ -508,15 +513,30 @@ fn apply_trade_to_synthetic_positions(
     }
 }
 
-fn trade_represents_spot_swap(action: &str) -> bool {
-    matches!(action, "swap" | "buy" | "sell")
+fn trade_represents_spot_swap(action: &str, protocol: &str) -> bool {
+    match action {
+        "swap" => true,
+        "buy" | "sell" => !protocol_uses_non_spot_buy_sell(protocol),
+        _ => false,
+    }
 }
 
-fn trade_opens_position(action: &str) -> bool {
+fn trade_opens_position(action: &str, protocol: &str) -> bool {
+    if protocol_supports_buy_to_open(protocol) && action == "buy" {
+        return true;
+    }
+    if protocol_supports_dual_sided_opens(protocol) && matches!(action, "buy" | "sell") {
+        return true;
+    }
+
     matches!(action, "open_long" | "open_short" | "supply" | "borrow")
 }
 
-fn trade_closes_position(action: &str) -> bool {
+fn trade_closes_position(action: &str, protocol: &str) -> bool {
+    if protocol_supports_buy_to_open(protocol) && action == "sell" {
+        return true;
+    }
+
     matches!(
         action,
         "close_long" | "close_short" | "withdraw" | "repay" | "redeem"
@@ -524,14 +544,36 @@ fn trade_closes_position(action: &str) -> bool {
 }
 
 fn trade_position_type(action: &str, protocol: &str) -> PositionType {
-    match (protocol, action) {
+    match (protocol.to_ascii_lowercase().as_str(), action) {
         ("polymarket_clob", _) | ("polymarket", _) => PositionType::ConditionalToken,
+        ("hyperliquid", "buy") => PositionType::LongPerp,
+        ("hyperliquid", "sell") => PositionType::ShortPerp,
         (_, "open_long") => PositionType::LongPerp,
         (_, "open_short") => PositionType::ShortPerp,
         (_, "supply") => PositionType::Lending,
         (_, "borrow") => PositionType::Borrowing,
         _ => PositionType::Spot,
     }
+}
+
+fn protocol_uses_non_spot_buy_sell(protocol: &str) -> bool {
+    protocol_supports_buy_to_open(protocol) || protocol_supports_dual_sided_opens(protocol)
+}
+
+fn protocol_supports_buy_to_open(protocol: &str) -> bool {
+    matches!(
+        protocol.trim().to_ascii_lowercase().as_str(),
+        "polymarket_clob" | "polymarket"
+    )
+}
+
+fn protocol_supports_dual_sided_opens(protocol: &str) -> bool {
+    matches!(protocol.trim().to_ascii_lowercase().as_str(), "hyperliquid")
+}
+
+fn token_is_zero_placeholder(token: &str) -> bool {
+    let normalized = token.trim().to_ascii_lowercase();
+    normalized == "0x0000000000000000000000000000000000000000"
 }
 
 fn credit_spot_position(

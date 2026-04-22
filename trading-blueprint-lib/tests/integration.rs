@@ -248,6 +248,36 @@ async fn test_provision_respects_non_paper_flag_from_strategy_config() {
 }
 
 #[tokio::test]
+async fn test_provision_skips_zero_address_asset_token_default() {
+    let _dir = common::init_test_env();
+
+    let mut request = make_provision_request("test-zero-asset-paper", "dex");
+    request.asset_token = Address::ZERO;
+
+    let output = provision_core(
+        request,
+        Some(mock_sandbox("sb-zero-asset-paper")),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&output.sandbox_id).unwrap();
+    assert!(
+        bot.paper_trade,
+        "paper bots should remain enabled by default"
+    );
+    assert!(
+        bot.strategy_config.get("asset_token").is_none(),
+        "zero placeholder asset token should not be persisted into strategy config"
+    );
+    assert_eq!(bot.strategy_config["initial_capital_usd"], "10000");
+}
+
+#[tokio::test]
 async fn test_provision_firecracker_backend_surfaces_runtime_error() {
     let _dir = common::init_test_env();
     let call_id = 91_000_002u64;
