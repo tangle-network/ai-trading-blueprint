@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 use trading_runtime::executor::TradeExecutor;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient};
+use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::{
     PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
     ValidatorResponse, ValuationStatus,
@@ -438,6 +439,30 @@ async fn resolve_market_valuation(
     }
 }
 
+fn validate_chain_tokens(
+    chain_id: Option<u64>,
+    token_in: &str,
+    token_out: &str,
+) -> Result<(), (StatusCode, String)> {
+    let Some(chain_id) = chain_id else {
+        return Ok(());
+    };
+
+    for token in [token_in, token_out] {
+        if let Some(other_chain_id) = address_chain_mismatch(chain_id, token) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Token {token} belongs to {}, but this bot is configured for {}. Use the correct token address for the configured chain.",
+                    chain_display_name(other_chain_id),
+                    chain_display_name(chain_id),
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
 fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapshot {
     if size <= Decimal::ZERO || price <= Decimal::ZERO {
         return TradeValuationSnapshot::unpriced(size, None);
@@ -946,6 +971,11 @@ async fn execute(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    validate_chain_tokens(
+        state.chain_id,
+        &request.intent.token_in,
+        &request.intent.token_out,
+    )?;
     // Dedup check FIRST — before any validation or execution work.
     // Prevents race window where parallel requests both pass validation
     // before either inserts into the dedup store.
@@ -1047,6 +1077,11 @@ async fn execute_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Body read failed: {e}")))?;
     let req: ExecuteRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
+    validate_chain_tokens(
+        Some(bot.chain_id),
+        &req.intent.token_in,
+        &req.intent.token_out,
+    )?;
 
     // Dedup check FIRST — before any validation or execution work.
     if !req.validation.intent_hash.is_empty()
@@ -1213,6 +1248,36 @@ mod tests {
         let (size, amount_out) = resolve_position_size(Some(84532), &intent).expect("size");
         assert_eq!(size.to_string(), "0.429");
         assert_eq!(amount_out.map(|v| v.to_string()), Some("0.429".to_string()));
+    }
+
+    #[test]
+    fn resolve_position_size_normalizes_base_sepolia_usdc_raw_units() {
+        let intent = make_intent(
+            "0x4200000000000000000000000000000000000006",
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "1500000000000000000",
+            "3575000000",
+        );
+
+        let (size, amount_out) = resolve_position_size(Some(84532), &intent).expect("size");
+        assert_eq!(size.to_string(), "3575");
+        assert_eq!(
+            amount_out.map(|value| value.to_string()),
+            Some("3575".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_chain_tokens_rejects_mainnet_address_on_base_sepolia() {
+        let err = validate_chain_tokens(
+            Some(84532),
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        )
+        .expect_err("should reject mainnet token");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("Ethereum mainnet"));
+        assert!(err.1.contains("Base Sepolia"));
     }
 
     fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {
