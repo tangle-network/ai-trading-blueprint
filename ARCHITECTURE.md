@@ -392,7 +392,7 @@ cargo run --release -p trading-blueprint-bin
 cd arena && pnpm dev
 ```
 
-State directory: `BLUEPRINT_STATE_DIR` (default `./blueprint-state/`). Wipe this + `scripts/data/operator*/trading/` for a full reset.
+State directory: `BLUEPRINT_STATE_DIR` (default `./blueprint-state/`). Wipe this plus `scripts/data/operator*/pricing-engine/` for a full reset, while preserving `scripts/data/operator*/keystore/`.
 
 ## Backtest Engine (Meta-Harness Eval)
 

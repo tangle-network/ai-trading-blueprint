@@ -223,6 +223,14 @@ export BLUEPRINT_ID=<trading blueprint id>
 export SERVICE_ID=<service instance id>
 ```
 
+For local operator runs, keep secrets in an untracked root `settings.env` and use the tracked template as the starting point:
+
+```bash
+cp settings.env.example settings.env
+```
+
+Fill in only the local-only values you need, such as AI API keys, operator identity, or a custom `SESSION_AUTH_SECRET`. The repo ignores `settings.env`; only `settings.env.example` is meant to be committed.
+
 Pricing engine launch:
 
 ```bash
