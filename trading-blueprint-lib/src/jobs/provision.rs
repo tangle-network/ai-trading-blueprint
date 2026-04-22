@@ -18,6 +18,7 @@ static PROVISION_INFLIGHT: std::sync::LazyLock<Mutex<HashSet<(u64, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 const DEFAULT_PAPER_INITIAL_CAPITAL_USD: &str = "10000";
+const SIDECAR_STORAGE_PATH: &str = "/tmp/sidecar-state";
 
 /// Drop guard that removes a (service_id, call_id) from PROVISION_INFLIGHT.
 struct InflightGuard(u64, u64);
@@ -301,6 +302,10 @@ pub async fn provision_core(
     env.insert(
         "SUBMITTER_ADDRESS".into(),
         serde_json::Value::String(caller.clone()),
+    );
+    env.insert(
+        "STORAGE_PATH".into(),
+        serde_json::Value::String(SIDECAR_STORAGE_PATH.to_string()),
     );
 
     // Pass discovered validator endpoints to sidecar
