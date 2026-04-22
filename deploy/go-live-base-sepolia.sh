@@ -14,6 +14,11 @@ if command -v cast >/dev/null 2>&1; then
   export OPERATOR_ADDRESS="${OPERATOR_ADDRESS:-$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || true)}"
 fi
 
+if [[ -z "${ZAI_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" && -z "${TANGLE_ROUTER_API_KEY:-}" ]]; then
+  echo "ERROR: load ZAI_API_KEY, ANTHROPIC_API_KEY, or TANGLE_ROUTER_API_KEY before running the live operator deploy" >&2
+  exit 1
+fi
+
 # shellcheck source=/dev/null
 source "$ROOT_DIR/scripts/load-base-sepolia-env.sh" "$MANIFEST_PATH"
 

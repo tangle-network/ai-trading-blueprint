@@ -105,6 +105,35 @@ done
 
 echo "Operator: $OPERATOR_ADDRESS"
 
+AI_PROVIDER_SETTINGS=""
+if [[ -n "${ZAI_API_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="ZAI_API_KEY=${ZAI_API_KEY}"$'\n'
+fi
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"$'\n'
+fi
+if [[ -n "${TANGLE_ROUTER_API_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="TANGLE_ROUTER_API_KEY=${TANGLE_ROUTER_API_KEY}"$'\n'
+fi
+if [[ -n "${TANGLE_ROUTER_BASE_URL:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="TANGLE_ROUTER_BASE_URL=${TANGLE_ROUTER_BASE_URL}"$'\n'
+fi
+if [[ -n "${EXECUTOR_PRIVATE_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="EXECUTOR_PRIVATE_KEY=${EXECUTOR_PRIVATE_KEY}"$'\n'
+fi
+if [[ -n "${VALIDATOR_ENDPOINTS:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="VALIDATOR_ENDPOINTS=${VALIDATOR_ENDPOINTS}"$'\n'
+fi
+if [[ -n "${POLYMARKET_API_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="POLYMARKET_API_KEY=${POLYMARKET_API_KEY}"$'\n'
+fi
+if [[ -n "${POLYMARKET_API_SECRET:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="POLYMARKET_API_SECRET=${POLYMARKET_API_SECRET}"$'\n'
+fi
+if [[ -n "${POLYMARKET_API_PASSPHRASE:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="POLYMARKET_API_PASSPHRASE=${POLYMARKET_API_PASSPHRASE}"$'\n'
+fi
+
 # Shared cargo-tangle args for commands that talk to the chain.
 TANGLE_ARGS=(
   --http-rpc-url "$TANGLE_HTTP_RPC"
@@ -314,7 +343,7 @@ fi
 # Step 7: Install systemd unit + settings.env
 # ──────────────────────────────────────────────────────────────────────────────
 echo "=== Step 7: Install BPM systemd unit ==="
-ssh "root@$SERVER_IP" bash <<REMOTE
+ssh "root@$SERVER_IP" env AI_PROVIDER_SETTINGS="$AI_PROVIDER_SETTINGS" bash <<REMOTE
 set -euo pipefail
 cat > /etc/systemd/system/blueprint-manager.service <<'EOF'
 [Unit]
@@ -372,6 +401,7 @@ HYPERLIQUID_TESTNET=${HL_TESTNET}
 BLUEPRINT_STATE_DIR=/mnt/trading-data/blueprint-state
 EOF
 chmod 600 /opt/trading-blueprint/repo/settings.env
+printf '%s' "\$AI_PROVIDER_SETTINGS" >> /opt/trading-blueprint/repo/settings.env
 
 # SESSION_AUTH_SECRET is derived on first boot by the binary
 # (trading_blueprint_lib::session_auth::ensure_from_env) using the keystore
