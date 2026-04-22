@@ -12,8 +12,9 @@ use trading_blueprint_lib::jobs::{
     start_core, status_core, stop_core, wipe_bot_secrets,
 };
 use trading_blueprint_lib::prompts::{
-    build_generic_agent_profile, build_loop_prompt, build_pack_agent_profile,
-    build_pack_loop_prompt, build_system_prompt, packs,
+    PROFILE_INSTRUCTIONS_PATH, build_generic_agent_profile, build_loop_prompt,
+    build_pack_agent_profile, build_pack_loop_prompt, build_system_prompt, packs,
+    render_agent_instructions,
 };
 use trading_blueprint_lib::state::{bot_key, bots, find_bot_by_sandbox};
 use trading_blueprint_lib::{
@@ -40,12 +41,12 @@ fn make_provision_request_with_strategy_config(
         strategy_type: strategy.to_string(),
         strategy_config_json: strategy_config_json.to_string(),
         risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-        factory_address: Address::from([0xBB; 20]),
+        factory_address: Address::ZERO,
         asset_token: Address::from([0xCC; 20]),
         signers: vec![Address::from([0x01; 20]), Address::from([0x02; 20])],
         required_signatures: U256::from(2),
         chain_id: U256::from(31337),
-        rpc_url: "http://localhost:8545".to_string(),
+        rpc_url: "https://rpc.ankr.com/eth".to_string(),
         trading_loop_cron: "0 */5 * * * *".to_string(),
         cpu_cores: 2,
         memory_mb: 4096,
@@ -65,12 +66,12 @@ fn make_provision_request_with_lifetime(
         strategy_type: strategy.to_string(),
         strategy_config_json: r#"{"max_slippage":0.5}"#.to_string(),
         risk_params_json: r#"{"max_drawdown_pct":5.0}"#.to_string(),
-        factory_address: Address::from([0xBB; 20]),
+        factory_address: Address::ZERO,
         asset_token: Address::from([0xCC; 20]),
         signers: vec![Address::from([0x01; 20]), Address::from([0x02; 20])],
         required_signatures: U256::from(2),
         chain_id: U256::from(31337),
-        rpc_url: "http://localhost:8545".to_string(),
+        rpc_url: "https://rpc.ankr.com/eth".to_string(),
         trading_loop_cron: "0 */5 * * * *".to_string(),
         cpu_cores: 2,
         memory_mb: 4096,
@@ -263,7 +264,7 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
         };
 
     assert!(
-        err.contains("runtime_backend=firecracker was requested"),
+        err.contains("runtime_backend=firecracker") || err.contains("FIRECRACKER_HOST_AGENT_URL"),
         "unexpected error: {err}"
     );
 
@@ -279,7 +280,12 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
             .message
             .clone()
             .unwrap_or_default()
-            .contains("runtime_backend=firecracker was requested"),
+            .contains("runtime_backend=firecracker")
+            || status
+                .message
+                .clone()
+                .unwrap_or_default()
+                .contains("FIRECRACKER_HOST_AGENT_URL"),
         "unexpected failed phase message: {:?}",
         status.message
     );
@@ -328,6 +334,38 @@ async fn test_configure_partial_update() {
     assert_eq!(bot.strategy_config["target_apy"], 8.0);
     // Risk params should be unchanged
     assert_eq!(bot.risk_params["max_drawdown_pct"], 5.0);
+}
+
+#[tokio::test]
+async fn test_configure_rebuilds_workflow_profile_with_instruction_file() {
+    let _dir = common::init_test_env();
+
+    let sandbox_id = "sb-configure-workflow";
+    let bot_id = "trading-configure-workflow";
+    let wf_id = 55_001u64;
+
+    fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xCD", Some(wf_id));
+    fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+
+    configure_core(sandbox_id, r#"{"max_slippage":0.2}"#, "")
+        .await
+        .unwrap();
+
+    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .unwrap()
+        .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
+            wf_id,
+        ))
+        .unwrap()
+        .expect("workflow should still exist");
+    let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
+    let backend_profile: serde_json::Value =
+        serde_json::from_str(wf_json["backend_profile_json"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        backend_profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
+    assert!(backend_profile.get("resources").is_none());
 }
 
 #[tokio::test]
@@ -434,6 +472,13 @@ async fn test_deprovision_cleans_everything() {
 
     fixtures::seed_bot_record(bot_id, sandbox_id, "yield", "0xAA", Some(wf_id));
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+    fixtures::seed_workflow(wf_id + 1, "http://127.0.0.1:8080", "tok", "0 */30 * * * *");
+    fixtures::seed_workflow(
+        wf_id + 2,
+        "http://127.0.0.1:8080",
+        "tok",
+        "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+    );
 
     let response = deprovision_core(sandbox_id, true, None).await.unwrap();
     let json: serde_json::Value = serde_json::from_str(&response.json).unwrap();
@@ -444,12 +489,15 @@ async fn test_deprovision_cleans_everything() {
     assert!(find_bot_by_sandbox(sandbox_id).is_err());
 
     // Workflow should be gone
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap();
-    assert!(wf.is_none());
+    for workflow_id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
+                workflow_id,
+            ))
+            .unwrap();
+        assert!(wf.is_none(), "workflow {workflow_id} should be removed");
+    }
 }
 
 #[tokio::test]
@@ -579,7 +627,7 @@ async fn test_system_prompt_includes_api_info() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
@@ -823,17 +871,23 @@ async fn test_pack_profile_has_rich_content() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
 
-    // Profile uses resources.instructions, not systemPrompt
+    // Profile points to a shared instruction file, not systemPrompt
     assert!(profile.get("systemPrompt").is_none());
-    let instructions = profile["resources"]["instructions"]["content"]
-        .as_str()
-        .expect("profile should have resources.instructions.content");
+    assert_eq!(
+        profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
+    assert!(
+        profile.get("resources").is_none(),
+        "profile should not inline resources.instructions"
+    );
+    let instructions = render_agent_instructions("prediction", &config);
     assert!(instructions.contains("gamma-api.polymarket.com"));
     assert!(instructions.contains("clob.polymarket.com"));
     assert!(instructions.contains("/validate"));
@@ -875,15 +929,18 @@ async fn test_generic_strategy_gets_profile() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
 
-    let instructions = profile["resources"]["instructions"]["content"]
-        .as_str()
-        .expect("generic profile should have instructions");
+    assert_eq!(
+        profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
+    assert!(profile.get("resources").is_none());
+    let instructions = render_agent_instructions("exotic", &config);
     assert!(instructions.contains("persistent workspace"));
     assert!(instructions.contains("multi-strategy"));
     assert_eq!(profile["permission"]["bash"], "allow");
@@ -932,23 +989,26 @@ async fn test_dex_profile_has_uniswap_content() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
 
-    let instructions = profile["resources"]["instructions"]["content"]
-        .as_str()
-        .expect("profile must have resources.instructions.content");
+    assert_eq!(
+        profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
+    let instructions = render_agent_instructions("dex", &config);
     assert!(instructions.contains("Uniswap V3"));
     assert!(instructions.contains("persistent workspace"));
     assert!(instructions.contains("/home/agent/"));
+    assert!(instructions.contains("raw base units"));
 }
 
 #[tokio::test]
 async fn test_all_packs_use_instructions_not_system_prompt() {
-    // Verify all known pack types use resources.instructions, not systemPrompt
+    // Verify all known pack types use instructionFiles, not systemPrompt
     for strategy in &["prediction", "dex", "yield", "perp"] {
         let pack =
             packs::get_pack(strategy).unwrap_or_else(|| panic!("pack {strategy} should exist"));
@@ -976,7 +1036,7 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             trading_loop_cron: String::new(),
             call_id: 0,
             service_id: 0,
-            harness_json: serde_json::Value::Null,
+            harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
         };
 
@@ -986,10 +1046,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             "strategy {strategy} should not set systemPrompt directly"
         );
         assert!(
-            profile["resources"]["instructions"]["content"]
-                .as_str()
-                .is_some(),
-            "strategy {strategy} should have resources.instructions.content"
+            profile["instructionFiles"] == serde_json::json!([PROFILE_INSTRUCTIONS_PATH]),
+            "strategy {strategy} should point at the shared instruction file"
         );
     }
 }
@@ -1021,7 +1079,7 @@ async fn test_build_pack_agent_profile_integration() {
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
 
@@ -1031,11 +1089,13 @@ async fn test_build_pack_agent_profile_integration() {
     assert!(profile.get("systemPrompt").is_none());
     assert_eq!(profile["name"], "trading-yield");
     assert_eq!(profile["description"], "DeFi Yield Optimization");
+    assert_eq!(
+        profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
 
     // Content checks
-    let instructions = profile["resources"]["instructions"]["content"]
-        .as_str()
-        .unwrap();
+    let instructions = render_agent_instructions("yield", &config);
     assert!(instructions.contains("Aave V3"));
     assert!(instructions.contains("Morpho"));
     assert!(instructions.contains("0xVAULT_YIELD"));
@@ -1132,6 +1192,13 @@ async fn test_two_phase_provision_e2e() {
     let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
     assert!(wf_json["sidecar_url"].as_str().is_some());
     assert!(wf_json["prompt"].as_str().unwrap().contains("Trading tick"));
+    let backend_profile: serde_json::Value =
+        serde_json::from_str(wf_json["backend_profile_json"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        backend_profile["instructionFiles"],
+        serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
+    );
+    assert!(backend_profile.get("resources").is_none());
 
     // ── Phase 2b: Double-activate should fail ──────────────────────────────
     let err = activate_bot_with_secrets(
@@ -1161,6 +1228,18 @@ async fn test_two_phase_provision_e2e() {
         .get(&wf_key)
         .unwrap();
     assert!(wf.is_none(), "workflow should be removed after wipe");
+    for sibling_id in [result.workflow_id + 1, result.workflow_id + 2] {
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
+                sibling_id,
+            ))
+            .unwrap();
+        assert!(
+            wf.is_none(),
+            "sibling workflow {sibling_id} should be removed after wipe"
+        );
+    }
 
     // ── Phase 3b: Double-wipe should fail ──────────────────────────────────
     let err = wipe_bot_secrets(&bot_id, Some(mock_sandbox("sb-should-not-use")))
@@ -1262,12 +1341,18 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
 
         let wf_json: serde_json::Value = serde_json::from_str(&wf.workflow_json).unwrap();
         let prompt = wf_json["prompt"].as_str().unwrap();
+        let backend_profile: serde_json::Value =
+            serde_json::from_str(wf_json["backend_profile_json"].as_str().unwrap()).unwrap();
         assert!(
             prompt.contains("Trading tick")
                 || prompt.contains("Trading iteration")
                 || prompt.contains("trading"),
             "Workflow prompt for {strategy} should contain trading context, got: {}",
             &prompt[..prompt.len().min(100)]
+        );
+        assert_eq!(
+            backend_profile["instructionFiles"],
+            serde_json::json!([PROFILE_INSTRUCTIONS_PATH])
         );
     }
 }

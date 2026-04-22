@@ -13,7 +13,12 @@ use std::sync::Mutex;
 
 use serde_json::json;
 
-use crate::state::{bot_key, bots, clear_activation, get_bot, update_activation_progress};
+use crate::state::{
+    TradingBotRecord, bot_key, bots, clear_activation, get_bot, update_activation_progress,
+};
+
+pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
+    "/home/agent/.opencode/profile-instructions.md";
 
 /// Per-bot mutex preventing concurrent activate/wipe operations.
 /// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
@@ -71,6 +76,12 @@ pub(crate) fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
         }
         _ => api_url.to_string(),
     }
+}
+
+pub(crate) fn build_sidecar_bot_config(bot: &TradingBotRecord) -> TradingBotRecord {
+    let mut sidecar_bot = bot.clone();
+    sidecar_bot.trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
+    sidecar_bot
 }
 
 /// Activate a bot that is awaiting secrets.
@@ -141,9 +152,8 @@ pub async fn activate_bot_with_secrets(
         }
     }
 
-    let sidecar_trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
-    let mut sidecar_bot = bot.clone();
-    sidecar_bot.trading_api_url = sidecar_trading_api_url.clone();
+    let sidecar_bot = build_sidecar_bot_config(&bot);
+    let sidecar_trading_api_url = sidecar_bot.trading_api_url.clone();
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
@@ -216,6 +226,7 @@ pub async fn activate_bot_with_secrets(
             &record.sidecar_url,
             &record.token,
             bot_id,
+            bot.chain_id,
             &bot.strategy_type,
             &sidecar_trading_api_url,
             &bot.trading_api_token,
@@ -226,6 +237,13 @@ pub async fn activate_bot_with_secrets(
         {
             tracing::warn!("Pre-built tool deployment failed (non-fatal): {e}");
         }
+
+        update_activation_progress(
+            bot_id,
+            "syncing_instructions",
+            "Writing OpenCode profile instructions",
+        );
+        sync_profile_instructions(&record.sidecar_url, &record.token, &sidecar_bot).await?;
     }
 
     // 4. Create workflows (split-tick architecture: FAST + RESEARCH + CONVERSATION)
@@ -440,10 +458,13 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
     tracing::warn!("Sidecar health check timed out after {max_secs}s — proceeding anyway");
 }
 
-async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
+pub(crate) async fn ensure_sidecar_runtime_dirs(
+    sidecar_url: &str,
+    token: &str,
+) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0777 /home/agent/.sidecar'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown agent:agent /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; }'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -482,7 +503,52 @@ TOCEOF
         tracing::warn!("Memory ToC bootstrap failed (non-fatal): {e}");
     }
 
+    let agents_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: r##"sh -lc 'if [ ! -f /AGENTS.md ]; then cat > /AGENTS.md << "AGENTSEOF"
+# Sidecar Workspace
+
+This sandbox is pre-seeded for the trading agent runtime.
+Use /home/agent as the writable workspace root.
+AGENTSEOF
+fi'"##
+            .to_string(),
+        cwd: String::new(),
+        env_json: String::new(),
+        timeout_ms: 10_000,
+    };
+    ai_agent_sandbox_blueprint_lib::run_exec_request(&agents_req, token)
+        .await
+        .map_err(|e| format!("AGENTS bootstrap failed: {e}"))?;
+
+    let verify_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: "sh -lc 'test -d /home/agent/.sidecar/state/opencode && test -d /home/agent/.sidecar/state/sessions && test -f /AGENTS.md'"
+            .to_string(),
+        cwd: String::new(),
+        env_json: String::new(),
+        timeout_ms: 10_000,
+    };
+    ai_agent_sandbox_blueprint_lib::run_exec_request(&verify_req, token)
+        .await
+        .map_err(|e| format!("Sidecar bootstrap verification failed: {e}"))?;
+
     Ok(())
+}
+
+pub(crate) async fn sync_profile_instructions(
+    sidecar_url: &str,
+    token: &str,
+    bot: &TradingBotRecord,
+) -> Result<(), String> {
+    let instructions = crate::prompts::render_agent_instructions(&bot.strategy_type, bot);
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        SIDECAR_PROFILE_INSTRUCTIONS_PATH,
+        &instructions,
+    )
+    .await
 }
 
 /// Deploy pre-built trading tools to the sidecar filesystem.
@@ -494,6 +560,7 @@ pub(crate) async fn write_prebuilt_tools(
     sidecar_url: &str,
     token: &str,
     bot_id: &str,
+    chain_id: u64,
     strategy_type: &str,
     api_url: &str,
     api_token: &str,
@@ -512,6 +579,7 @@ pub(crate) async fn write_prebuilt_tools(
     // Write API config so tools can find the Trading HTTP API
     let config_json = serde_json::json!({
         "bot_id": bot_id,
+        "chain_id": chain_id,
         "api_url": api_url,
         "token": api_token,
         "operator_address": operator_address,
@@ -655,7 +723,7 @@ pub(crate) async fn write_prebuilt_tools(
 /// Write a file to the sidecar filesystem via the exec API.
 ///
 /// Uses an environment variable to pass content, avoiding shell escaping issues.
-async fn write_file_to_sidecar(
+pub(crate) async fn write_file_to_sidecar(
     sidecar_url: &str,
     token: &str,
     path: &str,
@@ -674,6 +742,35 @@ async fn write_file_to_sidecar(
         .await
         .map_err(|e| format!("Failed to write {path}: {e}"))?;
     tracing::debug!("Wrote pre-built tool: {path}");
+    Ok(())
+}
+
+pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(), String> {
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+
+    for id in [
+        workflow_id,
+        workflow_id.saturating_add(1),
+        workflow_id.saturating_add(2),
+    ] {
+        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        let _ = store.remove(&key);
+    }
+
+    let prefixes = [
+        format!("fast-tick-{bot_id}"),
+        format!("research-tick-{bot_id}"),
+        format!("conversation-tick-{bot_id}"),
+    ];
+    if let Ok(all) = store.values() {
+        for entry in all {
+            if prefixes.iter().any(|p| entry.name.starts_with(p.as_str())) {
+                let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(entry.id);
+                let _ = store.remove(&key);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -705,27 +802,8 @@ pub async fn wipe_bot_secrets(
     // Remove all three split-tick workflows (fast=base, research=base+1, conversation=base+2).
     // Also sweep by name prefix to catch any stale workflows from a prior activation.
     if let Some(wf_id) = bot.workflow_id {
-        if let Ok(store) = ai_agent_sandbox_blueprint_lib::workflows::workflows() {
-            // Remove by deterministic ID offsets
-            for id in [wf_id, wf_id.saturating_add(1), wf_id.saturating_add(2)] {
-                let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
-                let _ = store.remove(&key);
-            }
-            // Sweep by name to handle any stale entries from a previous activation
-            // that used a different base_id (e.g., process restart mid-activation).
-            let prefixes = [
-                format!("fast-tick-{}", bot.id),
-                format!("research-tick-{}", bot.id),
-                format!("conversation-tick-{}", bot.id),
-            ];
-            if let Ok(all) = store.values() {
-                for entry in all {
-                    if prefixes.iter().any(|p| entry.name.starts_with(p.as_str())) {
-                        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(entry.id);
-                        let _ = store.remove(&key);
-                    }
-                }
-            }
+        if let Err(err) = remove_bot_workflows(&bot.id, wf_id) {
+            tracing::warn!("Failed to remove workflows for bot {}: {err}", bot.id);
         }
     }
 

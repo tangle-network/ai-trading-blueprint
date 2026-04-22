@@ -205,7 +205,7 @@ fn seed_bot_with_identity(
         trading_loop_cron: "0 */5 * * * *".to_string(),
         call_id,
         service_id,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
     state::bots()
