@@ -12,11 +12,29 @@ const CONFIG_FILE = '/home/agent/config/api.json';
 const LOG_FILE = '/home/agent/logs/decisions.jsonl';
 const METRICS_FILE = '/home/agent/metrics/latest.json';
 
-const DEFAULT_WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
-const DEFAULT_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const DEFAULT_TOKENS_BY_CHAIN = {
+  1: {
+    weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  },
+  8453: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  },
+  84532: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  },
+};
+const DEFAULT_WETH = DEFAULT_TOKENS_BY_CHAIN[1].weth;
+const DEFAULT_USDC = DEFAULT_TOKENS_BY_CHAIN[1].usdc;
 const TOKEN_DECIMALS = {
   [DEFAULT_WETH.toLowerCase()]: 18,
   [DEFAULT_USDC.toLowerCase()]: 6,
+  [DEFAULT_TOKENS_BY_CHAIN[8453].weth.toLowerCase()]: 18,
+  [DEFAULT_TOKENS_BY_CHAIN[8453].usdc.toLowerCase()]: 6,
+  [DEFAULT_TOKENS_BY_CHAIN[84532].weth.toLowerCase()]: 18,
+  [DEFAULT_TOKENS_BY_CHAIN[84532].usdc.toLowerCase()]: 6,
   weth: 18,
   usdc: 6,
 };
@@ -154,7 +172,10 @@ function normalizeWeights(rawWeights) {
   };
 }
 
-function normalizeQaConfig(strategyConfig) {
+function normalizeQaConfig(config) {
+  const strategyConfig = config?.strategy_config || {};
+  const chainId = Number(config?.chain_id || strategyConfig?.chain_id || 0);
+  const chainDefaults = DEFAULT_TOKENS_BY_CHAIN[chainId] || DEFAULT_TOKENS_BY_CHAIN[1];
   const allowedDirections = Array.isArray(strategyConfig?.qa_allowed_directions)
     ? strategyConfig.qa_allowed_directions
         .map((value) => String(value).trim().toLowerCase())
@@ -174,11 +195,11 @@ function normalizeQaConfig(strategyConfig) {
       weth:
         strategyConfig?.qa_pair_tokens?.weth ||
         strategyConfig?.qa_pair_tokens?.base ||
-        DEFAULT_WETH,
+        chainDefaults.weth,
       usdc:
         strategyConfig?.qa_pair_tokens?.usdc ||
         strategyConfig?.qa_pair_tokens?.quote ||
-        DEFAULT_USDC,
+        chainDefaults.usdc,
     },
   };
 }
@@ -255,7 +276,7 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
 
 async function main() {
   const config = loadConfig();
-  const qaConfig = normalizeQaConfig(config.strategy_config || {});
+  const qaConfig = normalizeQaConfig(config);
 
   if (qaConfig.mode !== 'stochastic') {
     const result = { status: 'disabled', reason: 'qa_mode is not stochastic' };
