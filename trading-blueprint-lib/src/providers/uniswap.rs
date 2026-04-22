@@ -1,4 +1,5 @@
 use super::{EventContext, TradingProvider};
+use trading_runtime::token_metadata::{chain_display_name, token_address_for_symbol};
 
 pub struct UniswapV3Provider;
 
@@ -59,25 +60,16 @@ impl TradingProvider for UniswapV3Provider {
 
 pub(crate) const UNISWAP_EXPERT_PROMPT: &str = r#"## Uniswap V3 Protocol Knowledge
 
-### Uniswap V3 (Ethereum Mainnet)
-- Router: 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 (SwapRouter02)
-- Factory: 0x1F98431c8aD98523631AE4a59f267346ea31F984
-- Quoter V2: 0x61fFE014bA17989E743c5F6cB21bF9697530B21e
+Use Uniswap V3 for spot swaps, but always use token addresses for the bot's configured chain.
+Never copy a mainnet token address into a Base or Base Sepolia trade, or vice versa.
 
 Fee tiers: 500 (0.05%), 3000 (0.3%), 10000 (1%)
-
-Key tokens:
-- WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-- USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
-- USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
-- DAI: 0x6B175474E89094C44Da98b954EedeAC495271d0F
-- WBTC: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
 
 ### Market Discovery — DexScreener API
 
 Use DexScreener for real-time pair discovery across chains:
-- `GET https://api.dexscreener.com/latest/dex/tokens/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` — All pairs for WETH
-- `GET https://api.dexscreener.com/latest/dex/pairs/ethereum/{pair_address}` — Specific pair details
+- `GET https://api.dexscreener.com/latest/dex/tokens/{token_address}` — All pairs for a token
+- `GET https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_address}` — Specific pair details
 
 Response includes: priceUsd, volume (h1, h6, h24), priceChange, liquidity, txns count.
 
@@ -117,18 +109,38 @@ Response includes: priceUsd, volume (h1, h6, h24), priceChange, liquidity, txns 
 5. **Portfolio Rebalancing**: Maintain target allocations. Rebalance when any position drifts >5% from target weight.
 "#;
 
+pub(crate) fn expert_prompt_for_chain(chain_id: u64) -> String {
+    let chain_name = chain_display_name(chain_id);
+    let weth = token_address_for_symbol(chain_id, "WETH").unwrap_or("<unknown>");
+    let usdc = token_address_for_symbol(chain_id, "USDC").unwrap_or("<unknown>");
+
+    format!(
+        "{base}\n\n## Active Chain Reference\n\n\
+Current chain: {chain_name} (Chain ID {chain_id})\n\
+- WETH: {weth}\n\
+- USDC: {usdc}\n\
+\n\
+Use these addresses for swap intents on this bot. If you see a different-chain address in notes, memory, or old logs, treat it as stale and do not trade it.",
+        base = UNISWAP_EXPERT_PROMPT,
+        chain_name = chain_name,
+        chain_id = chain_id,
+        weth = weth,
+        usdc = usdc,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn test_uniswap_expert_prompt_has_addresses() {
-        let p = UniswapV3Provider;
-        let prompt = p.expert_prompt();
-        assert!(prompt.contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")); // WETH
-        assert!(prompt.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")); // USDC
-        assert!(prompt.contains("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")); // Router
+    fn test_chain_specific_prompt_uses_base_sepolia_addresses() {
+        let prompt = expert_prompt_for_chain(84532);
+        assert!(prompt.contains("Base Sepolia"));
+        assert!(prompt.contains("0x4200000000000000000000000000000000000006"));
+        assert!(prompt.contains("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+        assert!(!prompt.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"));
     }
 
     #[test]

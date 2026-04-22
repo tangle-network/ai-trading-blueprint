@@ -7,6 +7,21 @@ const { URL } = require('url');
 
 let _config = null;
 
+const TOKEN_DEFAULTS_BY_CHAIN = {
+  1: {
+    weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  },
+  8453: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  },
+  84532: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  },
+};
+
 function loadConfig() {
   if (_config) return _config;
   try {
@@ -18,6 +33,64 @@ function loadConfig() {
     };
   }
   return _config;
+}
+
+function tokenDefaults(config = loadConfig()) {
+  const chainId = Number(config.chain_id || 0);
+  return TOKEN_DEFAULTS_BY_CHAIN[chainId] || {};
+}
+
+function resolveTokenAddress(token) {
+  if (!token || typeof token !== 'string') return token;
+  const trimmed = token.trim();
+  if (trimmed.startsWith('0x')) return trimmed;
+
+  const defaults = tokenDefaults();
+  const key = trimmed.toLowerCase();
+  if (key === 'eth' || key === 'weth') return defaults.weth || trimmed;
+  if (key === 'usdc') return defaults.usdc || trimmed;
+  return trimmed;
+}
+
+function knownTokenSymbol(token) {
+  if (!token || typeof token !== 'string') return null;
+  const normalized = token.trim().toLowerCase();
+  const defaults = tokenDefaults();
+  if (defaults.weth && normalized === defaults.weth.toLowerCase()) return 'WETH';
+  if (defaults.usdc && normalized === defaults.usdc.toLowerCase()) return 'USDC';
+  if (normalized === 'weth' || normalized === 'eth') return 'WETH';
+  if (normalized === 'usdc') return 'USDC';
+  return null;
+}
+
+function defaultStrategyId(config = loadConfig()) {
+  const strategyType = config.strategy_config && config.strategy_config.strategy_type;
+  const prefix = strategyType || 'trading';
+  return `${prefix}-${config.bot_id || 'bot'}`;
+}
+
+function normalizeIntent(intent = {}) {
+  const config = loadConfig();
+  return {
+    ...intent,
+    strategy_id: intent.strategy_id || defaultStrategyId(config),
+    action: intent.action || intent.intent || 'swap',
+    token_in: resolveTokenAddress(intent.token_in || intent.tokenIn),
+    token_out: resolveTokenAddress(intent.token_out || intent.tokenOut),
+    amount_in: String(intent.amount_in || intent.amountIn || '0'),
+    min_amount_out: String(intent.min_amount_out || intent.minAmountOut || '0'),
+    target_protocol:
+      intent.target_protocol || intent.targetProtocol || intent.protocol || 'uniswap_v3',
+    deadline_secs: intent.deadline_secs || intent.deadlineSecs || 300,
+  };
+}
+
+function unwrapValidation(validation) {
+  if (!validation) return validation;
+  if (validation.approved !== undefined) return validation;
+  if (validation.data && validation.data.approved !== undefined) return validation.data;
+  if (validation.body && validation.body.approved !== undefined) return validation.body;
+  return validation;
 }
 
 function apiCall(method, path, body) {
@@ -54,11 +127,14 @@ function apiCall(method, path, body) {
 }
 
 async function validate(intent) {
-  return apiCall('POST', '/validate', intent);
+  return apiCall('POST', '/validate', normalizeIntent(intent));
 }
 
 async function execute(intent, validation) {
-  return apiCall('POST', '/execute', { intent, validation });
+  return apiCall('POST', '/execute', {
+    intent: normalizeIntent(intent),
+    validation: unwrapValidation(validation),
+  });
 }
 
 async function checkCircuitBreaker(maxDrawdownPct) {
@@ -86,6 +162,9 @@ async function getMetrics() {
 module.exports = {
   loadConfig,
   apiCall,
+  resolveTokenAddress,
+  knownTokenSymbol,
+  normalizeIntent,
   validate,
   execute,
   checkCircuitBreaker,

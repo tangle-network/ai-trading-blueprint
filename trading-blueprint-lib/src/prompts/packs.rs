@@ -1,6 +1,9 @@
 use serde_json::{Value, json};
 
+use crate::providers::uniswap;
 use crate::providers::{EventContext, TradingProvider, registry};
+
+pub const PROFILE_INSTRUCTIONS_PATH: &str = ".opencode/profile-instructions.md";
 
 /// Strategy Pack — self-contained strategy definition with expert-level protocol
 /// knowledge, setup commands, and tuned defaults.
@@ -72,6 +75,26 @@ fn compose_expert_prompt(provider_ids: &[&str], methodology: &str) -> String {
         .collect();
     if !methodology.is_empty() {
         sections.push(methodology);
+    }
+    sections.join("\n\n")
+}
+
+fn render_expert_prompt(pack: &StrategyPack, config: &crate::state::TradingBotRecord) -> String {
+    let reg = registry();
+    let mut sections = Vec::new();
+    for id in &pack.provider_ids {
+        let rendered = match *id {
+            "uniswap_v3" => Some(uniswap::expert_prompt_for_chain(config.chain_id)),
+            _ => reg
+                .get(id)
+                .map(|provider| provider.expert_prompt().to_string()),
+        };
+        if let Some(section) = rendered {
+            sections.push(section);
+        }
+    }
+    if !pack.strategy_methodology.is_empty() {
+        sections.push(pack.strategy_methodology.clone());
     }
     sections.join("\n\n")
 }
@@ -241,35 +264,58 @@ impl StrategyPack {
         None
     }
 
-    /// Build a full sidecar agent profile using `resources.instructions` instead
-    /// of `systemPrompt`. This preserves the sidecar's default coding identity
-    /// while appending expert trading knowledge.
+    /// Build a full sidecar agent profile using file-backed `instructionFiles`
+    /// instead of `systemPrompt`. This preserves the sidecar's default coding
+    /// identity while appending expert trading knowledge.
     pub fn build_agent_profile(&self, config: &crate::state::TradingBotRecord) -> Value {
-        let instructions = build_profile_instructions(
-            &self.strategy_type,
-            &self.system_prompt,
-            config,
-            &self.prompt_blocks,
-        );
-        json!({
-            "name": format!("trading-{}", self.strategy_type),
-            "description": self.name,
-            "resources": {
-                "instructions": {
-                    "content": instructions,
-                    "name": "trading-instructions.md"
-                }
-            },
-            "permission": {
-                "edit": "allow",
-                "bash": "allow",
-                "webfetch": "allow",
-                "mcp": "allow",
-                "external_directory": "allow"
-            },
-            "memory": { "enabled": true }
-        })
+        let _ = config;
+        build_file_backed_profile(format!("trading-{}", self.strategy_type), self.name.clone())
     }
+}
+
+pub fn render_pack_agent_instructions(
+    pack: &StrategyPack,
+    config: &crate::state::TradingBotRecord,
+) -> String {
+    build_profile_instructions(
+        &pack.strategy_type,
+        &render_expert_prompt(pack, config),
+        config,
+        &pack.prompt_blocks,
+    )
+}
+
+pub fn render_generic_agent_instructions(
+    strategy_type: &str,
+    config: &crate::state::TradingBotRecord,
+) -> String {
+    // Try to build a strategy fragment from providers
+    let strategy_fragment = match strategy_type {
+        "dex" => super::DEX_FRAGMENT,
+        "yield" => super::YIELD_FRAGMENT,
+        "perp" => super::PERP_FRAGMENT,
+        "prediction" => super::PREDICTION_FRAGMENT,
+        "volatility" => super::VOLATILITY_FRAGMENT,
+        "mm" => super::MM_FRAGMENT,
+        _ => super::MULTI_FRAGMENT,
+    };
+    build_profile_instructions(strategy_type, strategy_fragment, config, &[])
+}
+
+fn build_file_backed_profile(name: String, description: String) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "instructionFiles": [PROFILE_INSTRUCTIONS_PATH],
+        "permission": {
+            "edit": "allow",
+            "bash": "allow",
+            "webfetch": "allow",
+            "mcp": "allow",
+            "external_directory": "allow"
+        },
+        "memory": { "enabled": true }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1288,7 +1334,7 @@ fn strategy_iteration_protocol(strategy_type: &str) -> String {
         "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `swap` intent for `uniswap_v3`, validate it through the Trading HTTP API, then execute it if approved. Log the outcome immediately. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then call `api.validate(intent)` and `api.execute(intent, validation)`. Use raw base units for swap amounts (for example `2000000000` for 2,000 USDC), and include `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
@@ -1333,7 +1379,7 @@ fn strategy_typical_iteration(strategy_type: &str) -> String {
         "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, build a `swap` intent with `target_protocol: "uniswap_v3"`, validate it, then execute it if approved
+4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, raw base-unit `amount_in`, raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then call `api.validate(intent)` and `api.execute(intent, validation)`
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 
@@ -1569,35 +1615,11 @@ pub fn build_generic_agent_profile(
     strategy_type: &str,
     config: &crate::state::TradingBotRecord,
 ) -> Value {
-    // Try to build a strategy fragment from providers
-    let strategy_fragment = match strategy_type {
-        "dex" => super::DEX_FRAGMENT,
-        "yield" => super::YIELD_FRAGMENT,
-        "perp" => super::PERP_FRAGMENT,
-        "prediction" => super::PREDICTION_FRAGMENT,
-        "volatility" => super::VOLATILITY_FRAGMENT,
-        "mm" => super::MM_FRAGMENT,
-        _ => super::MULTI_FRAGMENT,
-    };
-    let instructions = build_profile_instructions(strategy_type, strategy_fragment, config, &[]);
-    json!({
-        "name": format!("trading-{}", strategy_type),
-        "description": format!("{} trading agent", strategy_type),
-        "resources": {
-            "instructions": {
-                "content": instructions,
-                "name": "trading-instructions.md"
-            }
-        },
-        "permission": {
-            "edit": "allow",
-            "bash": "allow",
-            "webfetch": "allow",
-            "mcp": "allow",
-            "external_directory": "allow"
-        },
-        "memory": { "enabled": true }
-    })
+    let _ = config;
+    build_file_backed_profile(
+        format!("trading-{}", strategy_type),
+        format!("{} trading agent", strategy_type),
+    )
 }
 
 #[cfg(test)]
@@ -1644,15 +1666,11 @@ mod tests {
     #[test]
     fn test_dex_pack_has_uniswap_addresses() {
         let pack = get_pack("dex").unwrap();
-        assert!(
-            pack.system_prompt
-                .contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-        ); // WETH
-        assert!(
-            pack.system_prompt
-                .contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-        ); // USDC
         assert!(pack.system_prompt.contains("uniswap_v3"));
+        assert!(
+            pack.system_prompt
+                .contains("token addresses for the bot's configured chain")
+        );
     }
 
     #[test]
@@ -1793,21 +1811,21 @@ mod tests {
             obj.get("systemPrompt").is_none(),
             "profile must not set systemPrompt"
         );
-        let resources = obj.get("resources").expect("profile must have resources");
-        let instructions = resources
-            .get("instructions")
-            .expect("resources must have instructions");
-        assert!(instructions.get("content").is_some());
-        assert_eq!(instructions["name"], "trading-instructions.md");
+        assert!(
+            obj.get("resources").is_none(),
+            "profile must not inline resources"
+        );
+        assert_eq!(
+            profile["instructionFiles"],
+            json!([PROFILE_INSTRUCTIONS_PATH]),
+            "profile must point OpenCode at the shared instruction file",
+        );
     }
 
     #[test]
     fn test_build_agent_profile_has_workspace_awareness() {
         let pack = get_pack("dex").unwrap();
-        let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &test_config());
 
         assert!(
             content.contains("persistent"),
@@ -1851,9 +1869,12 @@ mod tests {
         let obj = profile.as_object().unwrap();
 
         assert!(obj.get("systemPrompt").is_none());
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        assert!(obj.get("resources").is_none());
+        assert_eq!(
+            profile["instructionFiles"],
+            json!([PROFILE_INSTRUCTIONS_PATH])
+        );
+        let content = render_generic_agent_instructions("multi", &test_config());
         assert!(content.contains("/home/agent/"));
         assert!(content.contains("multi-strategy"));
         assert_eq!(profile["permission"]["bash"], "allow");
@@ -1864,10 +1885,7 @@ mod tests {
     fn test_build_agent_profile_contains_api_config() {
         let pack = get_pack("prediction").unwrap();
         let config = test_config();
-        let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &config);
 
         assert!(
             content.contains("http://test-api:9100"),
@@ -1876,6 +1894,19 @@ mod tests {
         assert!(content.contains("test-token"), "must contain bearer token");
         assert!(content.contains("0xVAULT"), "must contain vault address");
         assert!(content.contains("31337"), "must contain chain ID");
+    }
+
+    #[test]
+    fn test_dex_instructions_render_base_sepolia_tokens() {
+        let pack = get_pack("dex").unwrap();
+        let mut config = test_config();
+        config.chain_id = 84532;
+        let content = render_pack_agent_instructions(&pack, &config);
+
+        assert!(content.contains("Base Sepolia"));
+        assert!(content.contains("0x4200000000000000000000000000000000000006"));
+        assert!(content.contains("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
+        assert!(!content.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"));
     }
 
     #[test]
@@ -1919,10 +1950,7 @@ mod tests {
     #[test]
     fn test_profile_instructions_have_autonomy() {
         let pack = get_pack("dex").unwrap();
-        let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &test_config());
 
         assert!(
             content.contains("coding agent"),
@@ -1946,10 +1974,7 @@ mod tests {
     #[test]
     fn test_dex_profile_instructions_use_swap_workflow() {
         let pack = get_pack("dex").unwrap();
-        let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &test_config());
 
         assert!(
             content.contains("uniswap_v3"),
@@ -2220,10 +2245,7 @@ mod tests {
         config.strategy_config = serde_json::json!({
             "expert_knowledge_override": "Focus exclusively on US election markets."
         });
-        let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &config);
 
         assert!(
             content.contains("Focus exclusively on US election markets"),
@@ -2242,10 +2264,7 @@ mod tests {
         config.strategy_config = serde_json::json!({
             "custom_instructions": "Always check ETH/USDC pair first."
         });
-        let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &config);
 
         assert!(
             content.contains("Always check ETH/USDC pair first"),
@@ -2274,10 +2293,7 @@ mod tests {
             },
             "qa_allowed_directions": ["buy", "sell"]
         });
-        let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &config);
 
         assert!(
             content.contains("QA Stochastic Mode"),
@@ -2297,10 +2313,7 @@ mod tests {
     fn test_empty_strategy_config_no_extra_sections() {
         let pack = get_pack("prediction").unwrap();
         let config = test_config(); // strategy_config = {}
-        let profile = pack.build_agent_profile(&config);
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &config);
 
         assert!(
             !content.contains("Operator Strategy Override"),
@@ -2317,18 +2330,12 @@ mod tests {
         let perp = get_pack("perp").unwrap();
         assert!(!perp.prompt_blocks.is_empty());
         let config = test_config();
-        let content = perp.build_agent_profile(&config)["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let content = render_pack_agent_instructions(&perp, &config);
         for block in &perp.prompt_blocks {
             assert!(content.contains(block));
         }
         // Generic profile gets no blocks
-        let generic = build_generic_agent_profile("perp", &config);
-        let g = generic["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let g = render_generic_agent_instructions("perp", &config);
         assert!(!g.contains(BLOCK_DATA_PIPELINE));
     }
 }

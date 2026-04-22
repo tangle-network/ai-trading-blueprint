@@ -1,5 +1,6 @@
 pub mod packs;
 
+pub use packs::PROFILE_INSTRUCTIONS_PATH;
 pub use packs::build_generic_agent_profile;
 
 /// Build a full sidecar agent profile from a strategy pack.
@@ -8,6 +9,18 @@ pub fn build_pack_agent_profile(
     config: &crate::state::TradingBotRecord,
 ) -> serde_json::Value {
     pack.build_agent_profile(config)
+}
+
+/// Render the markdown instruction file content for a bot.
+pub fn render_agent_instructions(
+    strategy_type: &str,
+    config: &crate::state::TradingBotRecord,
+) -> String {
+    if let Some(pack) = packs::get_pack(strategy_type) {
+        packs::render_pack_agent_instructions(&pack, config)
+    } else {
+        packs::render_generic_agent_instructions(strategy_type, config)
+    }
 }
 
 /// Compact loop prompt that drives each trading iteration.
@@ -46,8 +59,9 @@ pub fn build_pack_loop_prompt(
                         Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
                      3. Check the circuit breaker before any trade:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-                     4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, validate it, then execute it using `api-client.js`.\n\
-                        Use token addresses, decimal amounts, and a conservative `min_amount_out` that respects slippage.\n\
+                     4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, then call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
+                        Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
+                        Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, target_protocol:'uniswap_v3'}}`.\n\
                      5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
                      6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
@@ -91,6 +105,7 @@ Authorization: Bearer {token}
   Body: {{ "strategy_id": "...", "action": "swap", "token_in": "0x...", "token_out": "0x...", "amount_in": "1000", "min_amount_out": "950", "target_protocol": "uniswap_v3" }}
 - POST /execute — Execute an approved trade on-chain (or via CLOB/Hyperliquid)
   Body: {{ "intent": {{...}}, "validation": {{...}} }}
+  For DEX swaps, `amount_in` and `min_amount_out` are raw token base units, not human-readable decimals.
   For Hyperliquid: set target_protocol to "hyperliquid", use metadata fields:
   - "asset": "ETH" (or "BTC", "SOL", etc.)
   - "limit_price": "2500" (for limit orders, omit for market)
@@ -230,7 +245,7 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
         "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
          1. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
          2. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         3. If actionable setup exists → build intent, validate, execute. Otherwise → SKIP.\n\n\
+         3. If actionable setup exists → build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
          Record the candle and log your decision. Report: price, action, reason (one line)."
     )
 }
@@ -547,6 +562,14 @@ mod tests {
         assert!(
             !prompt.contains("submit-trade.js --condition-id"),
             "dex loop prompt must not instruct the prediction trade helper"
+        );
+        assert!(
+            prompt.contains("raw base units"),
+            "dex loop prompt must describe swap amounts as raw base units"
+        );
+        assert!(
+            prompt.contains("2000000000"),
+            "dex loop prompt must give a concrete USDC base-unit example"
         );
     }
 
