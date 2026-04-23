@@ -41,9 +41,21 @@ pub struct IntentPayload {
     pub amount_in: String,
     pub min_amount_out: String,
     pub target_protocol: String,
+    /// Explicitly marks DEX amounts as raw token base units instead of
+    /// human-readable decimals. When omitted, the server falls back to a
+    /// conservative address-only heuristic for backward compatibility.
+    #[serde(default)]
+    pub amount_format: Option<AmountFormat>,
     /// Extra protocol-specific parameters (e.g., token_id and price for CLOB orders).
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AmountFormat {
+    Human,
+    BaseUnits,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -401,8 +413,18 @@ fn resolve_position_size(
         )
     })?;
     let raw_amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
-    let amount_in = normalize_trade_amount(chain_id, &intent.token_in, raw_amount_in);
-    let amount_out = normalize_trade_amount(chain_id, &intent.token_out, raw_amount_out);
+    let amount_in = normalize_trade_amount(
+        chain_id,
+        &intent.token_in,
+        raw_amount_in,
+        intent.amount_format,
+    );
+    let amount_out = normalize_trade_amount(
+        chain_id,
+        &intent.token_out,
+        raw_amount_out,
+        intent.amount_format,
+    );
     let size = if amount_out > Decimal::ZERO {
         amount_out
     } else {
@@ -416,6 +438,10 @@ async fn resolve_market_valuation(
     chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    if intent.action.eq_ignore_ascii_case("swap") && intent.token_in != intent.token_out {
+        return resolve_swap_valuation(market_client, chain_id, intent).await;
+    }
+
     let (position_size, amount_out) = resolve_position_size(chain_id, intent)?;
     if position_size <= Decimal::ZERO {
         return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
@@ -441,8 +467,93 @@ async fn resolve_market_valuation(
     }
 }
 
-fn normalize_trade_amount(chain_id: Option<u64>, token: &str, amount: Decimal) -> Decimal {
-    if amount <= Decimal::ZERO || !amount.fract().is_zero() || amount < Decimal::new(100_000, 0) {
+async fn resolve_swap_valuation(
+    market_client: &MarketDataClient,
+    chain_id: Option<u64>,
+    intent: &IntentPayload,
+) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    let raw_amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in '{}': {e}", intent.amount_in),
+        )
+    })?;
+    let raw_amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let amount_in = normalize_trade_amount(
+        chain_id,
+        &intent.token_in,
+        raw_amount_in,
+        intent.amount_format,
+    );
+    let min_amount_out = normalize_trade_amount(
+        chain_id,
+        &intent.token_out,
+        raw_amount_out,
+        intent.amount_format,
+    );
+
+    let token_out_price = market_client
+        .get_price_for_chain(chain_id, &intent.token_out)
+        .await
+        .ok();
+    let estimated_amount_out = match (
+        market_client
+            .get_price_for_chain(chain_id, &intent.token_in)
+            .await
+            .ok(),
+        token_out_price.as_ref(),
+    ) {
+        (Some(token_in_price), Some(token_out_price))
+            if amount_in > Decimal::ZERO && token_out_price.price_usd > Decimal::ZERO =>
+        {
+            Some((amount_in * token_in_price.price_usd) / token_out_price.price_usd)
+        }
+        _ => None,
+    };
+
+    let amount_out =
+        estimated_amount_out.or_else(|| (min_amount_out > Decimal::ZERO).then_some(min_amount_out));
+    let position_size = amount_out.unwrap_or_else(|| amount_in.max(Decimal::ZERO));
+    if position_size <= Decimal::ZERO {
+        return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
+    }
+
+    match token_out_price {
+        Some(token_out_price) => Ok(TradeValuationSnapshot::priced(
+            position_size,
+            amount_out,
+            token_out_price.price_usd,
+        )),
+        None => {
+            tracing::warn!(
+                token = %intent.token_out,
+                "Trade valuation unavailable; recording unpriced swap"
+            );
+            Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
+        }
+    }
+}
+
+fn normalize_trade_amount(
+    chain_id: Option<u64>,
+    token: &str,
+    amount: Decimal,
+    amount_format: Option<AmountFormat>,
+) -> Decimal {
+    if amount <= Decimal::ZERO || !amount.fract().is_zero() {
+        return amount;
+    }
+
+    let should_normalize = match amount_format {
+        Some(AmountFormat::Human) => false,
+        Some(AmountFormat::BaseUnits) => true,
+        None => {
+            token.starts_with("0x")
+                && amount >= Decimal::new(100_000, 0)
+                && known_token_decimals(chain_id, token).is_some()
+        }
+    };
+    if !should_normalize {
         return amount;
     }
 
@@ -1228,6 +1339,7 @@ mod tests {
             amount_in: amount_in.to_string(),
             min_amount_out: min_amount_out.to_string(),
             target_protocol: "uniswap_v3".to_string(),
+            amount_format: None,
             metadata: serde_json::Value::Null,
         }
     }
@@ -1297,6 +1409,23 @@ mod tests {
         assert!(err.1.contains("Base Sepolia"));
     }
 
+    #[test]
+    fn normalize_trade_amount_keeps_large_human_readable_symbol_amounts() {
+        let amount = normalize_trade_amount(Some(84532), "USDC", Decimal::new(200_000, 0), None);
+        assert_eq!(amount.to_string(), "200000");
+    }
+
+    #[test]
+    fn normalize_trade_amount_respects_explicit_base_units() {
+        let amount = normalize_trade_amount(
+            Some(84532),
+            "USDC",
+            Decimal::new(2_000_000_000, 0),
+            Some(AmountFormat::BaseUnits),
+        );
+        assert_eq!(amount.to_string(), "2000");
+    }
+
     fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {
         ExecuteRequest {
             intent: IntentPayload {
@@ -1307,6 +1436,7 @@ mod tests {
                 amount_in: "10000000000000000".to_string(),
                 min_amount_out: "1000000".to_string(),
                 target_protocol: "uniswap_v3".to_string(),
+                amount_format: None,
                 metadata: serde_json::Value::Null,
             },
             validation: ValidationPayload {

@@ -42,6 +42,7 @@ const MIN_BASE_UNITS = {
   buy: BigInt('5000000'),
   sell: BigInt('5000000000000000'),
 };
+const DEFAULT_SLIPPAGE_BPS = 200;
 
 function loadConfig() {
   try {
@@ -225,6 +226,32 @@ function decimalToBaseUnits(value, decimals) {
   return BigInt(sanitized);
 }
 
+function tokenDecimals(token) {
+  const key = String(token || '').trim().toLowerCase();
+  return TOKEN_DECIMALS[key] || 18;
+}
+
+function baseUnitsToDecimal(units, decimals) {
+  if (units <= BigInt(0)) return 0;
+  const raw = units.toString();
+  if (decimals === 0) return Number(raw);
+  const padded = raw.padStart(decimals + 1, '0');
+  const whole = padded.slice(0, -decimals);
+  const fraction = padded.slice(-decimals).replace(/0+$/, '');
+  return Number(fraction ? `${whole}.${fraction}` : whole);
+}
+
+function priceMap(entries) {
+  const map = new Map();
+  for (const entry of entries || []) {
+    const key = String(entry?.token || '').toLowerCase();
+    const price = Number(entry?.price_usd || 0);
+    if (!key || !Number.isFinite(price) || price <= 0) continue;
+    map.set(key, price);
+  }
+  return map;
+}
+
 function findPosition(portfolio, symbol, address) {
   const addressLower = address.toLowerCase();
   const symbolLower = symbol.toLowerCase();
@@ -251,7 +278,7 @@ function buildFeasibleDirections(portfolio, qaConfig) {
   return feasible;
 }
 
-function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
+function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits, prices) {
   const pct = sizeBucket === 'big_trade' ? qaConfig.sizes.bigPct : qaConfig.sizes.smallPct;
   const basisPoints = BigInt(Math.max(1, Math.round(pct * 10000)));
   const proposedUnits = (availableUnits * basisPoints) / BigInt(10000);
@@ -261,6 +288,22 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
 
   const tokenIn = direction === 'buy' ? qaConfig.pairTokens.usdc : qaConfig.pairTokens.weth;
   const tokenOut = direction === 'buy' ? qaConfig.pairTokens.weth : qaConfig.pairTokens.usdc;
+  const tokenInKey = tokenIn.toLowerCase();
+  const tokenOutKey = tokenOut.toLowerCase();
+  const tokenInPrice = prices.get(tokenInKey);
+  const tokenOutPrice = prices.get(tokenOutKey);
+  if (!Number.isFinite(tokenInPrice) || !Number.isFinite(tokenOutPrice) || tokenOutPrice <= 0) {
+    return null;
+  }
+
+  const tokenInAmount = baseUnitsToDecimal(amountInUnits, tokenDecimals(tokenIn));
+  const expectedOut = (tokenInAmount * tokenInPrice) / tokenOutPrice;
+  const slippageFactor = (10000 - DEFAULT_SLIPPAGE_BPS) / 10000;
+  const minAmountOutUnits = decimalToBaseUnits(
+    expectedOut * slippageFactor,
+    tokenDecimals(tokenOut),
+  );
+  if (minAmountOutUnits <= BigInt(0)) return null;
 
   return {
     strategy_id: `qa-stochastic-${config.bot_id || 'bot'}`,
@@ -268,7 +311,8 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
     token_in: tokenIn,
     token_out: tokenOut,
     amount_in: amountInUnits.toString(),
-    min_amount_out: '1',
+    min_amount_out: minAmountOutUnits.toString(),
+    amount_format: 'base_units',
     target_protocol: 'uniswap_v3',
     deadline_secs: 300,
   };
@@ -329,6 +373,30 @@ async function main() {
     return;
   }
 
+  const pricesResult = await apiCall(config, 'POST', '/market-data/prices', {
+    tokens: [qaConfig.pairTokens.weth, qaConfig.pairTokens.usdc],
+  });
+  if (pricesResult.status >= 400) {
+    const decision = appendDecision({
+      mode: 'qa_stochastic',
+      action: 'skip',
+      sampled_bucket: sampledBucket,
+      reason: 'QA stochastic mode could not fetch current pair pricing',
+      details: pricesResult.body,
+    });
+    writeMetrics({
+      mode: 'qa_stochastic',
+      sampled_bucket: sampledBucket,
+      portfolio_value_usd: Number(portfolio.total_value_usd || 0),
+      trades_executed: 0,
+      errors: ['pricing_unavailable'],
+    });
+    await recordMetricsSnapshot(config, portfolio);
+    console.log(JSON.stringify({ status: 'no_trade', decision }, null, 2));
+    return;
+  }
+  const prices = priceMap(pricesResult.body?.prices);
+
   const selected = sampleOne(feasible);
   const intent = buildIntent(
     config,
@@ -336,6 +404,7 @@ async function main() {
     selected.direction,
     sampledBucket,
     selected.availableUnits,
+    prices,
   );
   if (!intent) {
     const decision = appendDecision({
@@ -343,7 +412,7 @@ async function main() {
       action: 'skip',
       sampled_bucket: sampledBucket,
       sampled_direction: selected.direction,
-      reason: 'Sampled QA trade size was not feasible for current inventory',
+      reason: 'Sampled QA trade size was not feasible for current inventory or price data',
     });
     writeMetrics({
       mode: 'qa_stochastic',

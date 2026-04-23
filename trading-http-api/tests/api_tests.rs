@@ -723,7 +723,8 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
     Mock::given(method("GET"))
         .and(path("/api/v3/simple/price"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "ethereum": { "usd": 2320.69 }
+            "ethereum": { "usd": 2320.69 },
+            "usd-coin": { "usd": 1.0 }
         })))
         .mount(&mock)
         .await;
@@ -739,6 +740,7 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
             "token_out": "0x4200000000000000000000000000000000000006",
             "amount_in": "1000000000",
             "min_amount_out": "429000000000000000",
+            "amount_format": "base_units",
             "target_protocol": "uniswap_v3"
         },
         "validation": {
@@ -788,6 +790,88 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
     assert_eq!(portfolio_json["total_value_usd"], "995.57601");
     assert_eq!(portfolio_json["positions"][0]["amount"], "0.429");
     assert_eq!(portfolio_json["positions"][0]["value_usd"], "995.57601");
+}
+
+#[tokio::test]
+async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placeholder_floor() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/simple/price"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ethereum": { "usd": 2500.0 },
+            "usd-coin": { "usd": 1.0 }
+        })))
+        .mount(&mock)
+        .await;
+
+    let state = test_state_with_chain_id(&format!("{}/api/v3", mock.uri()), 84532).await;
+    let app = build_router(state);
+
+    let body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "qa-stochastic-test",
+            "action": "swap",
+            "token_in": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "token_out": "0x4200000000000000000000000000000000000006",
+            "amount_in": "1000000000",
+            "min_amount_out": "1",
+            "amount_format": "base_units",
+            "target_protocol": "uniswap_v3"
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 100,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": []
+        }
+    }))
+    .unwrap();
+
+    let exec_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exec_response.status(), 200);
+
+    let portfolio_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(portfolio_response.status(), 200);
+
+    let portfolio_body = portfolio_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
+
+    let amount = portfolio_json["positions"][0]["amount"]
+        .as_str()
+        .expect("position amount");
+    let value_usd = portfolio_json["positions"][0]["value_usd"]
+        .as_str()
+        .expect("position value");
+    assert_eq!(amount.parse::<f64>().unwrap(), 0.4);
+    assert_eq!(value_usd.parse::<f64>().unwrap(), 1000.0);
 }
 
 #[tokio::test]

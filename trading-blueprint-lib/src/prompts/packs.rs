@@ -1334,7 +1334,7 @@ fn strategy_iteration_protocol(strategy_type: &str) -> String {
         "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then call `api.validate(intent)` and `api.execute(intent, validation)`. Use raw base units for swap amounts (for example `2000000000` for 2,000 USDC), and include `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Log the outcome immediately. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then call `api.validate(intent)` and `api.execute(intent, validation)`. Use raw base units for swap amounts (for example `2000000000` for 2,000 USDC), include `amount_format: "base_units"`, and set a realistic `min_amount_out` instead of a placeholder. Also include `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
@@ -1379,7 +1379,7 @@ fn strategy_typical_iteration(strategy_type: &str) -> String {
         "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, raw base-unit `amount_in`, raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then call `api.validate(intent)` and `api.execute(intent, validation)`
+4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then call `api.validate(intent)` and `api.execute(intent, validation)`
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 

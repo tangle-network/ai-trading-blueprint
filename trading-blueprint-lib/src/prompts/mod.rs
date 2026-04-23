@@ -61,7 +61,8 @@ pub fn build_pack_loop_prompt(
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                      4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, then call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
                         Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
-                        Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, target_protocol:'uniswap_v3'}}`.\n\
+                        Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
+                        Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
                      5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
                      6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
@@ -245,7 +246,7 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
         "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
          1. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
          2. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         3. If actionable setup exists → build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
+         3. If actionable setup exists → build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
          Record the candle and log your decision. Report: price, action, reason (one line)."
     )
 }

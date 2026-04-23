@@ -79,6 +79,7 @@ function normalizeIntent(intent = {}) {
     token_out: resolveTokenAddress(intent.token_out || intent.tokenOut),
     amount_in: String(intent.amount_in || intent.amountIn || '0'),
     min_amount_out: String(intent.min_amount_out || intent.minAmountOut || '0'),
+    amount_format: intent.amount_format || intent.amountFormat,
     target_protocol:
       intent.target_protocol || intent.targetProtocol || intent.protocol || 'uniswap_v3',
     deadline_secs: intent.deadline_secs || intent.deadlineSecs || 300,
