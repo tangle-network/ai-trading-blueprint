@@ -17,7 +17,7 @@ set -euo pipefail
 
 ANVIL_PORT="${ANVIL_PORT:-8545}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
-CHAIN_ID="${CHAIN_ID:-31337}"
+CHAIN_ID="${CHAIN_ID:-31338}"
 OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
 INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 N_VALIDATOR_SERVICES="${N_VALIDATOR_SERVICES:-1}"
@@ -28,6 +28,7 @@ EXISTING_WETH_ADDRESS="${EXISTING_WETH_ADDRESS:-${WETH_ADDRESS:-}}"
 FORGE_SCRIPT_TIMEOUT_SECS="${FORGE_SCRIPT_TIMEOUT_SECS:-120}"
 TRADING_APPROVE_GAS_LIMIT="${TRADING_APPROVE_GAS_LIMIT:-25000000}"
 TRADING_APPROVE_GAS_PRICE_WEI="${TRADING_APPROVE_GAS_PRICE_WEI:-1}"
+OPERATOR_REGISTRATION_GAS_LIMIT="${OPERATOR_REGISTRATION_GAS_LIMIT:-3000000}"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 SERVICE_REQUEST_KEY="0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
@@ -412,14 +413,14 @@ for idx in "${!ALL_BLUEPRINT_IDS[@]}"; do
     send_with_retry "$TANGLE" \
     "registerOperator(uint64,bytes,string)" \
     "$BP_ID" "$OPERATOR1_PUBKEY" "$OPERATOR1_RPC" \
-    --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
     --rpc-url "$RPC_URL" --from "$OPERATOR1_ADDR" --unlocked 2>&1
   )"; then
     if ! PREF_OUTPUT="$(
       send_with_retry "$TANGLE" \
       "updateOperatorPreferences(uint64,bytes,string)" \
       "$BP_ID" 0x "$OPERATOR1_RPC" \
-      --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+      --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
       --rpc-url "$RPC_URL" --from "$OPERATOR1_ADDR" --unlocked 2>&1
     )"; then
       echo "ERROR: operator 1 registration/update failed for $BP_NAME blueprint $BP_ID"
@@ -434,14 +435,14 @@ for idx in "${!ALL_BLUEPRINT_IDS[@]}"; do
     send_with_retry "$TANGLE" \
     "registerOperator(uint64,bytes,string)" \
     "$BP_ID" "$OPERATOR2_PUBKEY" "$OPERATOR2_RPC" \
-    --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+    --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
     --rpc-url "$RPC_URL" --from "$OPERATOR2_ADDR" --unlocked 2>&1
   )"; then
     if ! PREF_OUTPUT="$(
       send_with_retry "$TANGLE" \
       "updateOperatorPreferences(uint64,bytes,string)" \
       "$BP_ID" 0x "$OPERATOR2_RPC" \
-      --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+      --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
       --rpc-url "$RPC_URL" --from "$OPERATOR2_ADDR" --unlocked 2>&1
     )"; then
       echo "ERROR: operator 2 registration/update failed for $BP_NAME blueprint $BP_ID"

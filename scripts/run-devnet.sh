@@ -201,7 +201,7 @@ ensure_release_binaries() {
 BLUEPRINT_ROOT="$(resolve_blueprint_root || true)"
 SNAPSHOT="$(resolve_anvil_snapshot || true)"
 ANVIL_PORT="${ANVIL_PORT:-8545}"
-CHAIN_ID="${CHAIN_ID:-31337}"
+CHAIN_ID="${CHAIN_ID:-31338}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
 WS_RPC_URL="${WS_RPC_URL:-ws://127.0.0.1:$ANVIL_PORT}"
 ARENA_PORT="${ARENA_PORT:-1337}"
@@ -315,12 +315,12 @@ echo "=== Starting pricing engines ==="
 
 PRICING_BIN="${PRICING_ENGINE_BIN:-$(command -v pricing-engine-server 2>/dev/null || echo "${BLUEPRINT_ROOT:-$ROOT_DIR/../blueprint}/target/release/pricing-engine-server")}"
 if [[ -x "$PRICING_BIN" ]]; then
-  HTTP_RPC_URL="$RPC_URL" WS_RPC_URL="$WS_RPC_URL" \
+  LOAD_BASE_SEPOLIA=false HTTP_RPC_URL="$RPC_URL" WS_RPC_URL="$WS_RPC_URL" \
     bash "$SCRIPT_DIR/run-pricing-engine.sh" --config "$SCRIPT_DIR/operator1.toml" &
   PIDS+=($!)
   sleep 1
 
-  HTTP_RPC_URL="$RPC_URL" WS_RPC_URL="$WS_RPC_URL" \
+  LOAD_BASE_SEPOLIA=false HTTP_RPC_URL="$RPC_URL" WS_RPC_URL="$WS_RPC_URL" \
     bash "$SCRIPT_DIR/run-pricing-engine.sh" --config "$SCRIPT_DIR/operator2.toml" &
   PIDS+=($!)
   sleep 1
@@ -475,10 +475,10 @@ if [[ "$START_UI" == "true" ]]; then
   if [[ -d "$ROOT_DIR/arena/.react-router" ]]; then
     mv "$ROOT_DIR/arena/.react-router" "$ROOT_DIR/arena/.react-router.bak.$(date +%s)"
   fi
-  PATH="${NVM_BIN:-$HOME/.nvm/versions/node/v24.13.1/bin}:$PATH" \
-    VITE_OPERATOR_PROXY_TARGET="$OPERATOR_PROXY_TARGET" \
+  PNPM_BIN="${PNPM_BIN:-$(command -v pnpm)}"
+  VITE_OPERATOR_PROXY_TARGET="$OPERATOR_PROXY_TARGET" \
     VITE_INSTANCE_OPERATOR_PROXY_TARGET="$INSTANCE_OPERATOR_PROXY_TARGET" \
-    pnpm -C "$ROOT_DIR/arena" dev --host 0.0.0.0 --port "$ARENA_PORT" &
+    "$PNPM_BIN" -C "$ROOT_DIR/arena" dev --host 0.0.0.0 --port "$ARENA_PORT" &
   PIDS+=($!)
   echo "  Frontend starting on http://localhost:$ARENA_PORT"
   wait_for_operator_meta "http://localhost:$ARENA_PORT/operator-api/api/meta" "fleet" "Frontend cloud operator proxy"
