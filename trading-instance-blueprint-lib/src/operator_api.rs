@@ -47,6 +47,7 @@ struct LiveTerminalSessionSummary {
 #[derive(Serialize)]
 pub struct BotDetailResponse {
     pub id: String,
+    pub name: String,
     pub operator_address: String,
     pub submitter_address: String,
     pub vault_address: String,
@@ -78,6 +79,7 @@ impl BotDetailResponse {
         let runtime = state::bot_runtime_status(&b);
         Self {
             id: b.id,
+            name: b.name,
             operator_address: b.operator_address,
             submitter_address: b.submitter_address,
             vault_address: b.vault_address,
@@ -1396,13 +1398,19 @@ async fn sidecar_terminal_method(
 }
 
 fn parse_terminal_session(v: &serde_json::Value) -> Option<LiveTerminalSessionSummary> {
-    let id = v
-        .get("id")
-        .or_else(|| v.get("session_id"))
+    let descriptor = v.get("data").unwrap_or(v);
+    let id = descriptor
+        .get("sessionId")
+        .or_else(|| descriptor.get("session_id"))
+        .or_else(|| descriptor.get("id"))
         .and_then(|v| v.as_str())?;
     Some(LiveTerminalSessionSummary {
         session_id: id.to_string(),
-        title: String::new(),
+        title: descriptor
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1418,6 +1426,7 @@ async fn list_terminal_sessions(
     let sessions: Vec<LiveTerminalSessionSummary> = parsed
         .get("data")
         .and_then(serde_json::Value::as_array)
+        .or_else(|| parsed.as_array())
         .map(|arr| arr.iter().filter_map(parse_terminal_session).collect())
         .unwrap_or_default();
     Ok(Json(serde_json::json!({ "sessions": sessions })))
@@ -1453,15 +1462,14 @@ async fn create_terminal_session(
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
-    let session_id = parsed
-        .get("id")
-        .or_else(|| parsed.get("session_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let summary = parse_terminal_session(&parsed).unwrap_or(LiveTerminalSessionSummary {
+        session_id: String::new(),
+        title: String::new(),
+    });
+    let session_id = summary.session_id;
     Ok(Json(LiveTerminalSessionSummary {
         session_id,
-        title: String::new(),
+        title: summary.title,
     }))
 }
 

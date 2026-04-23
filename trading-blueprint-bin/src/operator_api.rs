@@ -8,6 +8,8 @@ use sandbox_runtime::api_types::{
 };
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
@@ -63,9 +65,11 @@ pub struct BotListResponse {
 #[derive(Serialize)]
 pub struct BotSummary {
     pub id: String,
+    pub name: String,
     pub operator_address: String,
     pub vault_address: String,
     pub strategy_type: String,
+    pub strategy_config: serde_json::Value,
     pub chain_id: u64,
     pub trading_active: bool,
     pub paper_trade: bool,
@@ -86,9 +90,11 @@ impl BotSummary {
         let runtime = state::bot_runtime_status(&b);
         Self {
             id: b.id,
+            name: b.name,
             operator_address: b.operator_address,
             vault_address: b.vault_address,
             strategy_type: b.strategy_type,
+            strategy_config: b.strategy_config,
             chain_id: b.chain_id,
             trading_active: b.trading_active,
             paper_trade: b.paper_trade,
@@ -109,6 +115,7 @@ impl BotSummary {
 #[derive(Serialize)]
 pub struct BotDetailResponse {
     pub id: String,
+    pub name: String,
     pub operator_address: String,
     pub submitter_address: String,
     pub vault_address: String,
@@ -159,6 +166,7 @@ impl BotDetailResponse {
         });
         Self {
             id: b.id,
+            name: b.name,
             operator_address: b.operator_address,
             submitter_address: b.submitter_address,
             vault_address: b.vault_address,
@@ -423,10 +431,15 @@ fn api_error_response(error: ApiError) -> (StatusCode, Json<OperatorErrorRespons
 struct MetricsSnapshotResponse {
     timestamp: String,
     bot_id: String,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
     account_value_usd: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
     unrealized_pnl: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
     realized_pnl: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
     high_water_mark: f64,
+    #[serde(deserialize_with = "deserialize_f64_from_string_or_number")]
     drawdown_pct: f64,
     positions_count: u32,
     trade_count: u32,
@@ -477,7 +490,7 @@ struct PortfolioPosition {
     pnl_percent: Option<f64>,
     weight: Option<f64>,
     #[serde(default)]
-    valuation_status: trading_http_api::trade_store::TradeValuationStatus,
+    valuation_status: trading_runtime::types::ValuationStatus,
 }
 
 #[derive(Serialize)]
@@ -488,6 +501,8 @@ struct PortfolioStateResponse {
     warnings: Vec<String>,
     #[serde(default)]
     has_unpriced_positions: bool,
+    #[serde(default)]
+    has_value_only_positions: bool,
     positions: Vec<PortfolioPosition>,
 }
 
@@ -1658,13 +1673,19 @@ async fn sidecar_terminal_method(
 }
 
 fn parse_terminal_session(v: &serde_json::Value) -> Option<LiveTerminalSessionSummary> {
-    let id = v
-        .get("id")
-        .or_else(|| v.get("session_id"))
+    let descriptor = v.get("data").unwrap_or(v);
+    let id = descriptor
+        .get("sessionId")
+        .or_else(|| descriptor.get("session_id"))
+        .or_else(|| descriptor.get("id"))
         .and_then(|v| v.as_str())?;
     Some(LiveTerminalSessionSummary {
         session_id: id.to_string(),
-        title: String::new(),
+        title: descriptor
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1681,6 +1702,7 @@ async fn list_terminal_sessions(
     let sessions: Vec<LiveTerminalSessionSummary> = parsed
         .get("data")
         .and_then(serde_json::Value::as_array)
+        .or_else(|| parsed.as_array())
         .map(|arr| arr.iter().filter_map(parse_terminal_session).collect())
         .unwrap_or_default();
     Ok(Json(serde_json::json!({ "sessions": sessions })))
@@ -1717,15 +1739,14 @@ async fn create_terminal_session(
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
-    let session_id = parsed
-        .get("id")
-        .or_else(|| parsed.get("session_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let summary = parse_terminal_session(&parsed).unwrap_or(LiveTerminalSessionSummary {
+        session_id: String::new(),
+        title: String::new(),
+    });
+    let session_id = summary.session_id;
     Ok(Json(LiveTerminalSessionSummary {
         session_id,
-        title: String::new(),
+        title: summary.title,
     }))
 }
 
@@ -1950,7 +1971,7 @@ struct TradingApiPortfolioPosition {
     )]
     current_price: Option<f64>,
     #[serde(default)]
-    valuation_status: trading_http_api::trade_store::TradeValuationStatus,
+    valuation_status: trading_runtime::types::ValuationStatus,
 }
 
 #[derive(Deserialize)]
@@ -1971,6 +1992,57 @@ struct TradingApiPortfolioResponse {
     warnings: Vec<String>,
     #[serde(default)]
     has_unpriced_positions: bool,
+    #[serde(default)]
+    has_value_only_positions: bool,
+}
+
+#[derive(Clone)]
+struct FallbackDexPositionAccumulator {
+    token: String,
+    amount: rust_decimal::Decimal,
+    entry_price: Option<rust_decimal::Decimal>,
+}
+
+impl FallbackDexPositionAccumulator {
+    fn new(
+        token: String,
+        amount: rust_decimal::Decimal,
+        entry_price: Option<rust_decimal::Decimal>,
+    ) -> Self {
+        Self {
+            token,
+            amount,
+            entry_price,
+        }
+    }
+
+    fn credit(
+        &mut self,
+        amount: rust_decimal::Decimal,
+        entry_price: Option<rust_decimal::Decimal>,
+    ) {
+        if amount <= rust_decimal::Decimal::ZERO {
+            return;
+        }
+
+        self.entry_price = match (self.entry_price, entry_price) {
+            (Some(existing), Some(next)) if self.amount > rust_decimal::Decimal::ZERO => {
+                Some(((existing * self.amount) + (next * amount)) / (self.amount + amount))
+            }
+            (Some(existing), _) => Some(existing),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        };
+        self.amount += amount;
+    }
+
+    fn debit(&mut self, amount: rust_decimal::Decimal) {
+        if amount <= rust_decimal::Decimal::ZERO {
+            return;
+        }
+
+        self.amount = (self.amount - amount).max(rust_decimal::Decimal::ZERO);
+    }
 }
 
 fn parse_trade_number(value: &str) -> Option<f64> {
@@ -2087,48 +2159,356 @@ fn fallback_trade_value_usd(t: &serde_json::Value) -> Option<f64> {
     Some(quantity * price)
 }
 
-fn filter_metrics_history(
-    snapshots: Vec<MetricsSnapshotResponse>,
-    query: &MetricsHistoryQuery,
-) -> Vec<MetricsSnapshotResponse> {
-    let from = query
-        .from
-        .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| value.with_timezone(&chrono::Utc));
-    let to = query
-        .to
-        .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| value.with_timezone(&chrono::Utc));
+fn parse_decimal_number(value: &str) -> Option<rust_decimal::Decimal> {
+    rust_decimal::Decimal::from_str(value).ok()
+}
 
-    let mut filtered: Vec<MetricsSnapshotResponse> = snapshots
+fn decimal_to_f64(value: rust_decimal::Decimal) -> Option<f64> {
+    value
+        .to_string()
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+}
+
+fn token_is_zero_placeholder(token: &str) -> bool {
+    token
+        .trim()
+        .eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
+}
+
+fn normalize_fallback_token_key(token: &str) -> String {
+    let normalized = token.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "usdc"
+        | "usd-coin"
+        | "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        | "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        | "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+        | "0x7f5c764cbc14f9669b88837ca1490cca17c31607" => "usdc".to_string(),
+        _ => normalized,
+    }
+}
+
+fn default_reference_price_usd(token: &str) -> Option<rust_decimal::Decimal> {
+    match normalize_fallback_token_key(token).as_str() {
+        "usdc" | "usdt" => Some(rust_decimal::Decimal::ONE),
+        _ => None,
+    }
+}
+
+fn normalize_trade_amount(
+    chain_id: Option<u64>,
+    token: &str,
+    amount: rust_decimal::Decimal,
+) -> rust_decimal::Decimal {
+    if amount <= rust_decimal::Decimal::ZERO
+        || !amount.fract().is_zero()
+        || amount < rust_decimal::Decimal::new(100_000, 0)
+    {
+        return amount;
+    }
+
+    let Some(decimals) = trading_runtime::token_metadata::known_token_decimals(chain_id, token)
+    else {
+        return amount;
+    };
+    let scale = rust_decimal::Decimal::from(10u64.pow(decimals as u32));
+    amount / scale
+}
+
+fn configured_cash_token(bot: &TradingBotRecord) -> Option<String> {
+    let configured = bot
+        .strategy_config
+        .as_object()
+        .and_then(|strategy| {
+            strategy
+                .get("asset_token")
+                .or_else(|| strategy.get("cash_token"))
+                .and_then(|value| value.as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
+        .map(str::to_string);
+
+    configured.or_else(|| bot.paper_trade.then(|| "USDC".to_string()))
+}
+
+fn seed_initial_paper_cash_position(
+    positions: &mut HashMap<String, FallbackDexPositionAccumulator>,
+    bot: &TradingBotRecord,
+) {
+    if !bot.paper_trade {
+        return;
+    }
+
+    let strategy = match bot.strategy_config.as_object() {
+        Some(strategy) => strategy,
+        None => return,
+    };
+    let token = configured_cash_token(bot).unwrap_or_else(|| "USDC".to_string());
+    let capital = strategy
+        .get("initial_capital_usd")
+        .or_else(|| strategy.get("initial_capital"))
+        .or_else(|| strategy.get("cash_balance"))
+        .and_then(|value| match value {
+            serde_json::Value::String(value) => parse_decimal_number(value),
+            serde_json::Value::Number(value) => parse_decimal_number(&value.to_string()),
+            _ => None,
+        })
+        .unwrap_or(rust_decimal::Decimal::ZERO);
+
+    if capital <= rust_decimal::Decimal::ZERO {
+        return;
+    }
+
+    credit_fallback_position(
+        positions,
+        &token,
+        capital,
+        default_reference_price_usd(&token),
+    );
+}
+
+fn credit_fallback_position(
+    positions: &mut HashMap<String, FallbackDexPositionAccumulator>,
+    token: &str,
+    amount: rust_decimal::Decimal,
+    entry_price: Option<rust_decimal::Decimal>,
+) {
+    if amount <= rust_decimal::Decimal::ZERO {
+        return;
+    }
+
+    let key = normalize_fallback_token_key(token);
+    positions
+        .entry(key)
+        .and_modify(|position| position.credit(amount, entry_price))
+        .or_insert_with(|| {
+            FallbackDexPositionAccumulator::new(token.to_string(), amount, entry_price)
+        });
+}
+
+fn debit_fallback_position(
+    positions: &mut HashMap<String, FallbackDexPositionAccumulator>,
+    token: &str,
+    amount: rust_decimal::Decimal,
+) {
+    if amount <= rust_decimal::Decimal::ZERO {
+        return;
+    }
+
+    if let Some(position) = positions.get_mut(&normalize_fallback_token_key(token)) {
+        position.debit(amount);
+    }
+}
+
+fn protocol_supports_buy_to_open(protocol: &str) -> bool {
+    matches!(
+        protocol.trim().to_ascii_lowercase().as_str(),
+        "polymarket_clob" | "polymarket"
+    )
+}
+
+fn protocol_supports_dual_sided_opens(protocol: &str) -> bool {
+    matches!(protocol.trim().to_ascii_lowercase().as_str(), "hyperliquid")
+}
+
+fn protocol_uses_non_spot_buy_sell(protocol: &str) -> bool {
+    protocol_supports_buy_to_open(protocol) || protocol_supports_dual_sided_opens(protocol)
+}
+
+fn trade_represents_spot_swap(action: &str, protocol: &str) -> bool {
+    match action {
+        "swap" => true,
+        "buy" | "sell" => !protocol_uses_non_spot_buy_sell(protocol),
+        _ => false,
+    }
+}
+
+fn infer_swap_entry_price(
+    trade: &trading_http_api::trade_store::TradeRecord,
+    amount_in: rust_decimal::Decimal,
+    amount_out: rust_decimal::Decimal,
+) -> Option<rust_decimal::Decimal> {
+    if amount_out <= rust_decimal::Decimal::ZERO {
+        return None;
+    }
+
+    trade
+        .entry_price_usd
+        .as_deref()
+        .and_then(parse_decimal_number)
+        .or_else(|| {
+            trade
+                .notional_usd
+                .as_deref()
+                .and_then(parse_decimal_number)
+                .map(|notional| notional / amount_out)
+        })
+        .or_else(|| {
+            default_reference_price_usd(&trade.token_in)
+                .map(|input_price| (amount_in * input_price) / amount_out)
+        })
+}
+
+fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<PortfolioStateResponse> {
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot.id, 1000, 0)
+        .ok()
+        .map(|result| result.trades)
+        .unwrap_or_default();
+    let mut positions: HashMap<String, FallbackDexPositionAccumulator> = HashMap::new();
+    seed_initial_paper_cash_position(&mut positions, bot);
+
+    if trades.is_empty() && positions.is_empty() {
+        return None;
+    }
+
+    let mut trades = trades;
+    trades.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    for trade in &trades {
+        let action = trade.action.to_ascii_lowercase();
+        if !trade_represents_spot_swap(&action, &trade.target_protocol) {
+            continue;
+        }
+
+        let amount_in = parse_decimal_number(&trade.amount_in)
+            .map(|amount| normalize_trade_amount(Some(bot.chain_id), &trade.token_in, amount))
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let amount_out = trade
+            .amount_out
+            .as_deref()
+            .and_then(parse_decimal_number)
+            .map(|amount| normalize_trade_amount(Some(bot.chain_id), &trade.token_out, amount))
+            .or_else(|| {
+                parse_decimal_number(&trade.min_amount_out).map(|amount| {
+                    normalize_trade_amount(Some(bot.chain_id), &trade.token_out, amount)
+                })
+            })
+            .unwrap_or(amount_in);
+
+        debit_fallback_position(&mut positions, &trade.token_in, amount_in);
+        credit_fallback_position(
+            &mut positions,
+            &trade.token_out,
+            amount_out,
+            infer_swap_entry_price(trade, amount_in, amount_out),
+        );
+    }
+
+    let mut open_positions: Vec<FallbackDexPositionAccumulator> = positions
+        .into_values()
+        .filter(|position| position.amount > rust_decimal::Decimal::ZERO)
+        .collect();
+    if open_positions.is_empty() {
+        return Some(PortfolioStateResponse {
+            total_value_usd: Some(0.0),
+            cash_balance: configured_cash_token(bot).map(|_| 0.0),
+            warnings: Vec::new(),
+            has_unpriced_positions: false,
+            has_value_only_positions: false,
+            positions: Vec::new(),
+        });
+    }
+
+    open_positions.sort_by(|a, b| a.token.cmp(&b.token));
+    let cash_token = configured_cash_token(bot);
+    let mut cash_balance = None;
+    let mut total_value = rust_decimal::Decimal::ZERO;
+    let mut has_unpriced_positions = false;
+    let mut has_value_only_positions = false;
+    let mut portfolio_positions = Vec::with_capacity(open_positions.len());
+
+    for position in open_positions {
+        let current_price = default_reference_price_usd(&position.token);
+        let effective_price = current_price.or(position.entry_price);
+        let valuation_status = match (current_price, position.entry_price) {
+            (Some(_), Some(_)) => trading_runtime::types::ValuationStatus::Priced,
+            (Some(_), None) | (None, Some(_)) => trading_runtime::types::ValuationStatus::ValueOnly,
+            (None, None) => trading_runtime::types::ValuationStatus::Unpriced,
+        };
+        let value_usd = effective_price.map(|price| price * position.amount);
+        if let Some(value) = value_usd {
+            total_value += value;
+        }
+        has_unpriced_positions |=
+            valuation_status == trading_runtime::types::ValuationStatus::Unpriced;
+        has_value_only_positions |=
+            valuation_status == trading_runtime::types::ValuationStatus::ValueOnly;
+        if cash_token.as_ref().is_some_and(|token| {
+            normalize_fallback_token_key(token) == normalize_fallback_token_key(&position.token)
+        }) {
+            cash_balance = decimal_to_f64(position.amount);
+        }
+
+        let current_price_f64 = effective_price.and_then(decimal_to_f64);
+        let entry_price_f64 = if valuation_status == trading_runtime::types::ValuationStatus::Priced
+        {
+            position.entry_price.and_then(decimal_to_f64)
+        } else {
+            None
+        };
+        let value_usd_f64 = value_usd.and_then(decimal_to_f64);
+        let pnl_percent = match (current_price, position.entry_price) {
+            (Some(current), Some(entry)) if entry > rust_decimal::Decimal::ZERO => {
+                decimal_to_f64(((current - entry) / entry) * rust_decimal::Decimal::new(100, 0))
+            }
+            _ => None,
+        };
+
+        portfolio_positions.push(PortfolioPosition {
+            token: position.token.clone(),
+            symbol: position.token.clone(),
+            amount: decimal_to_f64(position.amount).unwrap_or(0.0),
+            value_usd: value_usd_f64,
+            entry_price: entry_price_f64,
+            current_price: current_price_f64,
+            pnl_percent,
+            weight: None,
+            valuation_status,
+        });
+    }
+
+    let total_value_usd = if has_unpriced_positions {
+        None
+    } else {
+        decimal_to_f64(total_value)
+    };
+    let positions = portfolio_positions
         .into_iter()
-        .filter(|snapshot| {
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&snapshot.timestamp)
-                .ok()
-                .map(|value| value.with_timezone(&chrono::Utc));
-            from.is_none_or(|from| timestamp.is_none_or(|ts| ts >= from))
-                && to.is_none_or(|to| timestamp.is_none_or(|ts| ts <= to))
+        .map(|mut position| {
+            position.weight = match (position.value_usd, total_value_usd) {
+                (Some(value_usd), Some(total_value_usd)) if total_value_usd > 0.0 => {
+                    Some((value_usd / total_value_usd) * 100.0)
+                }
+                _ => None,
+            };
+            position
         })
         .collect();
 
-    if let Some(limit) = query.limit {
-        filtered.truncate(limit);
+    let mut warnings = Vec::new();
+    if has_unpriced_positions {
+        warnings.push(
+            "Some portfolio values are unavailable because trade valuation data is missing."
+                .to_string(),
+        );
+    }
+    if has_value_only_positions {
+        warnings.push(
+            "Some positions have current market value, but entry price or PnL are unavailable."
+                .to_string(),
+        );
     }
 
-    filtered
-}
-
-fn fallback_metrics_history(
-    bot: &TradingBotRecord,
-    query: &MetricsHistoryQuery,
-) -> Vec<serde_json::Value> {
-    let trades = fallback_trade_dataset(bot);
-    filter_metrics_history(synthesize_metrics(bot, &trades), query)
-        .into_iter()
-        .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
-        .collect()
+    Some(PortfolioStateResponse {
+        total_value_usd,
+        cash_balance: cash_balance.or_else(|| cash_token.as_ref().map(|_| 0.0)),
+        warnings,
+        has_unpriced_positions,
+        has_value_only_positions,
+        positions,
+    })
 }
 
 fn parse_metrics_snapshots(
@@ -2141,7 +2521,7 @@ fn parse_metrics_snapshots(
 async fn resolve_metrics_history_for_bot(
     bot: &TradingBotRecord,
     query: &MetricsHistoryQuery,
-) -> Vec<MetricsSnapshotResponse> {
+) -> Result<Vec<MetricsSnapshotResponse>, String> {
     let mut remote_query = Vec::new();
     if let Some(from) = &query.from {
         remote_query.push(("from", from.clone()));
@@ -2155,20 +2535,10 @@ async fn resolve_metrics_history_for_bot(
 
     match fetch_trading_api_json(bot, "/metrics/history", &remote_query).await {
         Ok(Some(payload)) => {
-            match extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots) {
-                Ok(snapshots) if !snapshots.is_empty() => snapshots,
-                Ok(_) => Vec::new(),
-                Err(err) => {
-                    tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                    Vec::new()
-                }
-            }
+            extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots)
         }
-        Ok(None) => Vec::new(),
-        Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
-            Vec::new()
-        }
+        Ok(None) => Ok(Vec::new()),
+        Err(err) => Err(format!("trading api metrics request failed: {err}")),
     }
 }
 
@@ -2178,6 +2548,7 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
 
     let total_value = portfolio.total_value_usd;
     let has_unpriced_positions = portfolio.has_unpriced_positions;
+    let mut has_value_only_positions = portfolio.has_value_only_positions;
     let positions = portfolio
         .positions
         .into_iter()
@@ -2193,18 +2564,26 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                 }
                 _ => None,
             };
-            let valuation_status = if value_usd.is_some()
-                || position.current_price.is_some()
-                || (!has_unpriced_positions && total_value.unwrap_or(0.0) > 0.0)
-            {
-                trading_http_api::trade_store::TradeValuationStatus::Priced
-            } else {
-                position.valuation_status
+            let valuation_status = match position.valuation_status {
+                trading_runtime::types::ValuationStatus::Priced
+                | trading_runtime::types::ValuationStatus::ValueOnly => position.valuation_status,
+                trading_runtime::types::ValuationStatus::Unpriced => {
+                    match (position.current_price, position.entry_price, value_usd) {
+                        (Some(_), Some(_), _) => trading_runtime::types::ValuationStatus::Priced,
+                        (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => {
+                            trading_runtime::types::ValuationStatus::ValueOnly
+                        }
+                        (None, None, None) => trading_runtime::types::ValuationStatus::Unpriced,
+                    }
+                }
+            };
+            if valuation_status == trading_runtime::types::ValuationStatus::ValueOnly {
+                has_value_only_positions = true;
             };
 
             PortfolioPosition {
-                token: position.token.chars().take(10).collect(),
-                symbol: position.token.chars().take(30).collect(),
+                token: position.token.clone(),
+                symbol: position.token,
                 amount: position.amount,
                 value_usd,
                 entry_price: position.entry_price,
@@ -2226,11 +2605,18 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
         cash_balance: portfolio.cash_balance,
         warnings: portfolio.warnings,
         has_unpriced_positions,
+        has_value_only_positions,
         positions,
     })
 }
 
 fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
+    if bot.strategy_type.eq_ignore_ascii_case("dex") {
+        if let Some(portfolio) = synthesize_dex_fallback_portfolio(bot) {
+            return portfolio;
+        }
+    }
+
     let trades = fallback_trade_dataset(bot);
 
     let open_trades: Vec<&serde_json::Value> = trades
@@ -2239,6 +2625,7 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
         .collect();
 
     let mut has_unpriced_positions = false;
+    let mut has_value_only_positions = false;
     let position_value: f64 = open_trades
         .iter()
         .filter_map(|t| {
@@ -2273,11 +2660,15 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
                 }
                 _ => None,
             };
-            let valuation_status = if value_usd.is_some() && entry_price.is_some() {
-                trading_http_api::trade_store::TradeValuationStatus::Priced
-            } else {
-                trading_http_api::trade_store::TradeValuationStatus::Unpriced
+            let valuation_status = match (current_price, entry_price, value_usd) {
+                (Some(_), Some(_), _) => trading_runtime::types::ValuationStatus::Priced,
+                (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => {
+                    trading_runtime::types::ValuationStatus::ValueOnly
+                }
+                (None, None, None) => trading_runtime::types::ValuationStatus::Unpriced,
             };
+            has_value_only_positions |=
+                valuation_status == trading_runtime::types::ValuationStatus::ValueOnly;
 
             PortfolioPosition {
                 token: mid.chars().take(10).collect(),
@@ -2310,15 +2701,24 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
     PortfolioStateResponse {
         total_value_usd,
         cash_balance: None,
-        warnings: if has_unpriced_positions {
-            vec![
-                "Some portfolio values are unavailable because trade valuation data is missing."
-                    .to_string(),
-            ]
-        } else {
-            Vec::new()
+        warnings: {
+            let mut warnings = Vec::new();
+            if has_unpriced_positions {
+                warnings.push(
+                    "Some portfolio values are unavailable because trade valuation data is missing."
+                        .to_string(),
+                );
+            }
+            if has_value_only_positions {
+                warnings.push(
+                    "Some positions have current market value, but entry price or PnL are unavailable."
+                        .to_string(),
+                );
+            }
+            warnings
         },
         has_unpriced_positions,
+        has_value_only_positions,
         positions,
     }
 }
@@ -2475,115 +2875,6 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Synthesize metrics history from per-bot trade data.
-/// Returns a time series of account value snapshots.
-fn synthesize_metrics(
-    bot: &TradingBotRecord,
-    trades: &[serde_json::Value],
-) -> Vec<MetricsSnapshotResponse> {
-    const INITIAL_VALUE: f64 = 10_000.0;
-    let mut snapshots = Vec::new();
-
-    let start_ts = chrono::DateTime::from_timestamp(bot.created_at as i64, 0)
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-
-    // Initial snapshot
-    snapshots.push(MetricsSnapshotResponse {
-        timestamp: start_ts,
-        bot_id: bot.id.clone(),
-        account_value_usd: INITIAL_VALUE,
-        unrealized_pnl: 0.0,
-        realized_pnl: 0.0,
-        high_water_mark: INITIAL_VALUE,
-        drawdown_pct: 0.0,
-        positions_count: 0,
-        trade_count: 0,
-    });
-
-    if trades.is_empty() {
-        snapshots.push(MetricsSnapshotResponse {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            bot_id: bot.id.clone(),
-            account_value_usd: INITIAL_VALUE,
-            unrealized_pnl: 0.0,
-            realized_pnl: 0.0,
-            high_water_mark: INITIAL_VALUE,
-            drawdown_pct: 0.0,
-            positions_count: 0,
-            trade_count: 0,
-        });
-        return snapshots;
-    }
-
-    // Sort trades by created_at
-    let mut sorted: Vec<&serde_json::Value> = trades.iter().collect();
-    sorted.sort_by(|a, b| {
-        let ta = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
-        let tb = b.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
-        ta.cmp(tb)
-    });
-
-    let mut running_pnl = 0.0;
-    let mut hwm = INITIAL_VALUE;
-
-    for (i, trade) in sorted.iter().enumerate() {
-        let pnl = trade.get("pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        running_pnl += pnl;
-        let val = INITIAL_VALUE + running_pnl;
-        if val > hwm {
-            hwm = val;
-        }
-
-        let open_count = sorted[..=i]
-            .iter()
-            .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
-            .count() as u32;
-
-        let realized: f64 = sorted[..=i]
-            .iter()
-            .filter(|t| t.get("status").and_then(|v| v.as_str()) != Some("open"))
-            .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
-            .sum();
-
-        let unrealized: f64 = sorted[..=i]
-            .iter()
-            .filter(|t| t.get("status").and_then(|v| v.as_str()) == Some("open"))
-            .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
-            .sum();
-
-        let ts = trade
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let dd = if hwm > 0.0 {
-            ((hwm - val) / hwm) * 100.0
-        } else {
-            0.0
-        };
-
-        snapshots.push(MetricsSnapshotResponse {
-            timestamp: if ts.is_empty() {
-                chrono::Utc::now().to_rfc3339()
-            } else {
-                ts
-            },
-            bot_id: bot.id.clone(),
-            account_value_usd: val,
-            unrealized_pnl: unrealized,
-            realized_pnl: realized,
-            high_water_mark: hwm,
-            drawdown_pct: dd,
-            positions_count: open_count,
-            trade_count: (i + 1) as u32,
-        });
-    }
-
-    snapshots
-}
-
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
 async fn get_bot_metrics(
@@ -2591,7 +2882,7 @@ async fn get_bot_metrics(
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let metrics_history = resolve_metrics_history_for_bot(
+    let metrics_history = match resolve_metrics_history_for_bot(
         &bot,
         &MetricsHistoryQuery {
             from: None,
@@ -2599,7 +2890,14 @@ async fn get_bot_metrics(
             limit: Some(100),
         },
     )
-    .await;
+    .await
+    {
+        Ok(snapshots) => snapshots,
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "failed to resolve metrics history: {err}");
+            Vec::new()
+        }
+    };
     let latest_snapshot = metrics_history.last();
     let trades =
         match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
@@ -2662,16 +2960,18 @@ async fn get_bot_metrics_history(
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let snapshots = resolve_metrics_history_for_bot(&bot, &query).await;
-    if !snapshots.is_empty() {
-        let json_snapshots = snapshots
-            .into_iter()
-            .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
-            .collect();
-        return Ok(Json(json_snapshots));
-    }
+    let snapshots = resolve_metrics_history_for_bot(&bot, &query)
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "failed to load metrics history: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?;
+    let json_snapshots = snapshots
+        .into_iter()
+        .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
+        .collect();
 
-    Ok(Json(fallback_metrics_history(&bot, &query)))
+    Ok(Json(json_snapshots))
 }
 
 async fn get_bot_trades(
@@ -3529,6 +3829,7 @@ mod tests {
         let store = state::bots().unwrap();
         let bot = TradingBotRecord {
             id: "wd-bot".to_string(),
+            name: "Wind Down Bot".to_string(),
             sandbox_id: "sandbox-wd".to_string(),
             vault_address: "0x01".to_string(),
             share_token: String::new(),
@@ -3572,6 +3873,7 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["wind_down_started_at"], 5000);
+        assert_eq!(json["name"], "Wind Down Bot");
     }
 
     // ── Helpers for unhappy-path tests ──────────────────────────────────
@@ -3585,6 +3887,7 @@ mod tests {
     ) -> TradingBotRecord {
         let record = TradingBotRecord {
             id: id.to_string(),
+            name: format!("Bot {id}"),
             sandbox_id: sandbox_id.to_string(),
             vault_address: format!("0xVAULT-{id}"),
             share_token: String::new(),
@@ -4168,6 +4471,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_metrics_snapshots_accepts_numeric_strings() {
+        let snapshots = vec![serde_json::json!({
+            "timestamp": "2026-04-10T13:45:31.753572Z",
+            "bot_id": "bot-1",
+            "account_value_usd": "2212.61",
+            "unrealized_pnl": "12.61",
+            "realized_pnl": "0",
+            "high_water_mark": "2212.61",
+            "drawdown_pct": "0.0",
+            "positions_count": 1,
+            "trade_count": 2
+        })];
+
+        let parsed = parse_metrics_snapshots(snapshots).expect("metrics snapshots should parse");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].account_value_usd, 2212.61);
+        assert_eq!(parsed[0].unrealized_pnl, 12.61);
+        assert_eq!(parsed[0].trade_count, 2);
+    }
+
+    #[test]
+    fn parse_metrics_snapshots_rejects_non_numeric_values() {
+        let snapshots = vec![serde_json::json!({
+            "timestamp": "2026-04-10T13:45:31.753572Z",
+            "bot_id": "bot-1",
+            "account_value_usd": "not-a-number",
+            "unrealized_pnl": "12.61",
+            "realized_pnl": "0",
+            "high_water_mark": "2212.61",
+            "drawdown_pct": "0.0",
+            "positions_count": 1,
+            "trade_count": 2
+        })];
+
+        let result = parse_metrics_snapshots(snapshots);
+
+        assert!(result.is_err(), "invalid metrics should fail");
+        assert!(
+            result
+                .err()
+                .is_some_and(|err| err.contains("invalid metrics snapshot array"))
+        );
+    }
+
+    #[test]
     fn map_trading_api_portfolio_inferrs_priced_positions_when_status_is_missing() {
         let payload = serde_json::json!({
             "positions": [
@@ -4191,7 +4540,7 @@ mod tests {
         assert_eq!(portfolio.has_unpriced_positions, false);
         assert_eq!(
             portfolio.positions[0].valuation_status,
-            trading_http_api::trade_store::TradeValuationStatus::Priced
+            trading_runtime::types::ValuationStatus::Priced
         );
         assert_eq!(portfolio.positions[0].value_usd, Some(2220.1));
         assert_eq!(portfolio.positions[0].current_price, Some(2220.1));

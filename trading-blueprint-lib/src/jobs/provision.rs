@@ -415,6 +415,7 @@ pub async fn provision_core(
 
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
+        name: request.name.clone(),
         sandbox_id: record.id.clone(),
         vault_address: vault_address.clone(),
         share_token: String::new(),

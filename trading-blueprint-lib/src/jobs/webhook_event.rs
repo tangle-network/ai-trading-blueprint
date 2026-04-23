@@ -228,6 +228,7 @@ mod tests {
     fn test_bot(strategy_type: &str) -> TradingBotRecord {
         TradingBotRecord {
             id: "test-bot-1".to_string(),
+            name: format!("{strategy_type} bot"),
             sandbox_id: "sb".to_string(),
             vault_address: "0xVAULT".to_string(),
             share_token: String::new(),

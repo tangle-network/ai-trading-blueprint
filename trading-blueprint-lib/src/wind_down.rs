@@ -64,6 +64,7 @@ mod tests {
     fn make_bot(created_at: u64, max_lifetime_days: u64) -> TradingBotRecord {
         TradingBotRecord {
             id: "test".to_string(),
+            name: "Test Bot".to_string(),
             sandbox_id: "sb".to_string(),
             vault_address: "0xVAULT".to_string(),
             share_token: String::new(),

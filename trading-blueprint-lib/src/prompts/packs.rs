@@ -1774,6 +1774,7 @@ mod tests {
     fn test_config() -> crate::state::TradingBotRecord {
         crate::state::TradingBotRecord {
             id: "test".to_string(),
+            name: "Test Bot".to_string(),
             sandbox_id: "sb".to_string(),
             vault_address: "0xVAULT".to_string(),
             share_token: String::new(),

@@ -1,3 +1,4 @@
+use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
     self, StoredSimulation, StoredValidation, StoredValidatorResponse, TradeRecord,
 };
@@ -1251,7 +1252,18 @@ async fn execute_multi_bot(
         resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
 
     if bot.paper_trade {
-        return execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await;
+        let response =
+            execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after paper trade"
+            );
+        }
+        return Ok(response);
     }
 
     // CLOB trades bypass the vault executor entirely.
@@ -1269,13 +1281,35 @@ async fn execute_multi_bot(
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
-        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await;
+        let response =
+            execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after CLOB trade"
+            );
+        }
+        return Ok(response);
     }
 
     // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
     if req.intent.target_protocol == "hyperliquid" {
-        return execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
-            .await;
+        let response =
+            execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
+                .await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after Hyperliquid trade"
+            );
+        }
+        return Ok(response);
     }
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions
@@ -1310,7 +1344,7 @@ async fn execute_multi_bot(
         })?
     };
 
-    execute_real_trade(
+    let response = execute_real_trade(
         &bot.bot_id,
         &executor,
         &intent,
@@ -1318,7 +1352,16 @@ async fn execute_multi_bot(
         stored_validation,
         &valuation,
     )
-    .await
+    .await?;
+    if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
+        tracing::warn!(
+            bot_id = %bot.bot_id,
+            %error,
+            "failed to capture metrics snapshot after trade"
+        );
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]

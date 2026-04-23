@@ -183,6 +183,7 @@ fn seed_bot_with_identity(
 
     let record = TradingBotRecord {
         id: id.to_string(),
+        name: format!("Bot {id}"),
         sandbox_id,
         vault_address: format!("0xVAULT-{id}"),
         share_token: String::new(),
@@ -308,6 +309,72 @@ async fn spawn_mock_trading_api() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_trading_api_value_only() -> String {
+    let app = Router::new().route(
+        "/portfolio/state",
+        post(|| async {
+            Json(json!({
+                "positions": [{
+                    "token": "WETH",
+                    "amount": "0.5",
+                    "value_usd": "1050",
+                    "current_price": "2100",
+                    "valuation_status": "value_only"
+                }],
+                "total_value_usd": "1050",
+                "cash_balance": "9000",
+                "warnings": ["Some positions have current market value, but entry price or PnL are unavailable."],
+                "has_unpriced_positions": false,
+                "has_value_only_positions": true
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_trading_api_with_address_portfolio(token: &'static str) -> String {
+    let app = Router::new().route(
+        "/portfolio/state",
+        post(move || async move {
+            Json(json!({
+                "positions": [{
+                    "token": token,
+                    "amount": "647.24",
+                    "value_usd": "647.063",
+                    "entry_price": "1",
+                    "current_price": "1",
+                    "valuation_status": "priced"
+                }],
+                "total_value_usd": "647.063",
+                "cash_balance": null,
+                "warnings": [],
+                "has_unpriced_positions": false
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
 async fn spawn_mock_terminal_sidecar() -> String {
     let app = Router::new()
         .route(
@@ -393,17 +460,26 @@ async fn spawn_mock_terminal_sidecar() -> String {
 async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
     let workflow_session = format!("trading-{bot_id}");
     let tick_session = format!("trading-{bot_id}-1775823900");
+    let fast_session = format!("fast-{bot_id}");
+    let research_session = format!("research-{bot_id}");
+    let convo_session = format!("convo-{bot_id}");
     let app = Router::new()
         .route(
             "/agents/sessions",
             get(move || {
                 let workflow_session = workflow_session.clone();
                 let tick_session = tick_session.clone();
+                let fast_session = fast_session.clone();
+                let research_session = research_session.clone();
+                let convo_session = convo_session.clone();
                 async move {
                     Json(json!([
                         {"id": "manual-1", "title": "New Chat"},
                         {"id": workflow_session},
-                        {"id": tick_session}
+                        {"id": tick_session},
+                        {"id": fast_session},
+                        {"id": research_session},
+                        {"id": convo_session}
                     ]))
                 }
             }),
@@ -901,6 +977,22 @@ async fn test_chat_routes_only_expose_manual_sessions() {
         .await
         .unwrap();
     assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
+
+    for blocked_session in ["fast-test-bot", "research-test-bot", "convo-test-bot"] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/bots/test-bot/session/sessions/{blocked_session}"
+                    ))
+                    .header("authorization", &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,6 +1302,47 @@ async fn test_get_bot_portfolio_prefers_remote_trading_api_payload() {
 }
 
 #[tokio::test]
+async fn test_get_bot_portfolio_preserves_full_remote_token_addresses() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-remote-address", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url =
+        spawn_mock_trading_api_with_address_portfolio("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+            .await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["positions"][0]["token"],
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    );
+    assert_eq!(
+        json["positions"][0]["symbol"],
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    );
+}
+
+#[tokio::test]
 async fn test_get_bot_portfolio_prefers_remote_payload_even_when_stopped() {
     let _dir = init_test_env();
 
@@ -1244,7 +1377,42 @@ async fn test_get_bot_portfolio_prefers_remote_payload_even_when_stopped() {
 }
 
 #[tokio::test]
-async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
+async fn test_get_bot_portfolio_preserves_remote_value_only_positions() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-value-only-remote", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url = spawn_mock_trading_api_value_only().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["cash_balance"], 9000.0);
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(json["positions"][0]["valuation_status"], "value_only");
+    assert!(json["positions"][0]["entry_price"].is_null());
+}
+
+#[tokio::test]
+async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
     let _dir = init_test_env();
 
     let bot = seed_bot("portfolio-swap-fallback", "dex", true);
@@ -1313,34 +1481,16 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         .unwrap()
         .to_bytes();
     let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
-    assert_eq!(portfolio_json["positions"], json!([]));
-    assert!(portfolio_json["cash_balance"].is_null());
-
-    let metrics_response = app()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/bots/{}/metrics/history", bot.id))
-                .header("authorization", test_auth_header(SUBMITTER))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(metrics_response.status(), 200);
-    let metrics_body = metrics_response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
-    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
-    let latest = metrics_json
+    let positions = portfolio_json["positions"]
         .as_array()
-        .and_then(|snapshots| snapshots.last())
-        .expect("latest snapshot");
-    assert_eq!(latest["positions_count"], 0);
-    assert_eq!(latest["unrealized_pnl"], 0.0);
+        .expect("portfolio positions array");
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["token"], "WETH");
+    assert_eq!(positions[0]["amount"], 0.5);
+    assert_eq!(positions[0]["valuation_status"], "value_only");
+    assert_eq!(positions[0]["current_price"], 2000.0);
+    assert_eq!(portfolio_json["cash_balance"], 0.0);
+    assert_eq!(portfolio_json["has_value_only_positions"], true);
 }
 
 #[tokio::test]

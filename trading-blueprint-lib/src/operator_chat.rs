@@ -29,8 +29,12 @@ pub fn resolve_sidecar_chat_target(sandbox_id: &str) -> Result<SidecarChatTarget
 }
 
 pub fn is_autonomous_chat_session(bot_id: &str, session_id: &str) -> bool {
-    let workflow_prefix = format!("trading-{bot_id}");
-    session_id == workflow_prefix || session_id.starts_with(&format!("{workflow_prefix}-"))
+    ["trading", "fast", "research", "convo"]
+        .into_iter()
+        .map(|prefix| format!("{prefix}-{bot_id}"))
+        .any(|workflow_prefix| {
+            session_id == workflow_prefix || session_id.starts_with(&format!("{workflow_prefix}-"))
+        })
 }
 
 pub fn ensure_manual_chat_session(
@@ -408,6 +412,30 @@ mod tests {
     use super::*;
     use axum::{Json, Router, routing::get};
     use tempfile::tempdir;
+
+    #[test]
+    fn detects_legacy_and_current_autonomous_session_names() {
+        let bot_id = "bot-123";
+
+        for session_id in [
+            "trading-bot-123",
+            "trading-bot-123-1775823900",
+            "fast-bot-123",
+            "research-bot-123",
+            "convo-bot-123",
+        ] {
+            assert!(is_autonomous_chat_session(bot_id, session_id));
+        }
+    }
+
+    #[test]
+    fn allows_manual_sessions_through() {
+        let bot_id = "bot-123";
+
+        for session_id in ["manual-1", "session-abc", "conversation-with-owner"] {
+            assert!(!is_autonomous_chat_session(bot_id, session_id));
+        }
+    }
 
     fn init_test_env() -> tempfile::TempDir {
         let dir = tempdir().expect("create temp state dir");

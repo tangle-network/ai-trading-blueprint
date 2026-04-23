@@ -160,6 +160,13 @@ async fn get_state_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<crate::BotContext>,
 ) -> Json<PortfolioResponse> {
+    Json(build_multi_bot_portfolio_response(&bot, &state.market_data_base_url).await)
+}
+
+pub(crate) async fn build_multi_bot_portfolio_response(
+    bot: &crate::BotContext,
+    market_data_base_url: &str,
+) -> PortfolioResponse {
     let latest_snapshot = metrics_store::latest_snapshot_for_bot(&bot.bot_id)
         .ok()
         .flatten();
@@ -176,7 +183,7 @@ async fn get_state_multi_bot(
     let mut total_value_decimal = Decimal::ZERO;
     let mut vault_lookup_failed = false;
 
-    match read_vault_cash_position(&bot, &state.market_data_base_url).await {
+    match read_vault_cash_position(bot, market_data_base_url).await {
         Ok(Some(position)) => {
             cash_balance = Some(position.amount.clone());
             has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
@@ -196,11 +203,14 @@ async fn get_state_multi_bot(
         }
     }
 
-    if let Ok(synthetic) = synthesize_trade_positions(&bot, &state.market_data_base_url).await {
+    if let Ok(synthetic) = synthesize_trade_positions(bot, market_data_base_url).await {
         has_unpriced_positions |= synthetic.has_unpriced_positions;
         has_value_only_positions |= synthetic.has_value_only_positions;
         total_value_decimal += synthetic.total_value_usd;
         positions.extend(synthetic.positions);
+    }
+    if cash_balance.is_none() {
+        cash_balance = synthetic_cash_balance(bot, &positions);
     }
 
     let snapshot_total_value = latest_snapshot
@@ -227,7 +237,7 @@ async fn get_state_multi_bot(
         has_value_only_positions,
     ));
 
-    Json(PortfolioResponse {
+    PortfolioResponse {
         positions,
         total_value_usd,
         cash_balance,
@@ -242,7 +252,7 @@ async fn get_state_multi_bot(
         warnings,
         has_unpriced_positions,
         has_value_only_positions,
-    })
+    }
 }
 
 #[derive(Default)]
@@ -432,6 +442,27 @@ fn seed_initial_paper_cash(
         capital,
         default_reference_price_usd(token),
     );
+}
+
+fn synthetic_cash_balance(bot: &crate::BotContext, positions: &[PositionEntry]) -> Option<String> {
+    let token = bot
+        .strategy_config
+        .as_object()
+        .and_then(|strategy| {
+            strategy
+                .get("asset_token")
+                .or_else(|| strategy.get("cash_token"))
+                .and_then(|value| value.as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
+        .unwrap_or("USDC");
+
+    positions
+        .iter()
+        .find(|position| normalize_token_key(&position.token) == normalize_token_key(token))
+        .map(|position| position.amount.clone())
+        .or_else(|| bot.paper_trade.then(|| "0".to_string()))
 }
 
 fn apply_trade_to_synthetic_positions(

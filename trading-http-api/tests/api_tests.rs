@@ -1805,6 +1805,7 @@ async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
     let positions = json["positions"].as_array().unwrap();
 
     assert_eq!(json["total_value_usd"], "10000");
+    assert_eq!(json["cash_balance"], "10000");
     assert_eq!(json["warnings"], serde_json::json!([]));
     assert_eq!(json["has_unpriced_positions"], false);
     assert_eq!(positions.len(), 1);
@@ -1845,9 +1846,83 @@ async fn test_multi_bot_portfolio_state_ignores_zero_address_paper_asset_token()
     let positions = json["positions"].as_array().unwrap();
 
     assert_eq!(json["total_value_usd"], "10000");
+    assert_eq!(json["cash_balance"], "10000");
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0]["token"], "USDC");
     assert_eq!(positions[0]["value_usd"], "10000");
+}
+
+#[tokio::test]
+async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_positions() {
+    let bot_id = format!("bot-dex-cash-{}", uuid::Uuid::new_v4());
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: format!("trade-dex-cash-{}", uuid::Uuid::new_v4()),
+        bot_id: bot_id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "WETH".to_string(),
+        amount_in: "1000".to_string(),
+        min_amount_out: "0.5".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xsynthetic-cash".to_string(),
+        block_number: None,
+        gas_used: None,
+        paper_trade: true,
+        amount_out: Some("0.5".to_string()),
+        entry_price_usd: Some("2000".to_string()),
+        notional_usd: Some("1000".to_string()),
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-dex-cash".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+    })
+    .await
+    .expect("record trade");
+
+    let state = multi_bot_state_with_strategy_config_and_bot(
+        "http://localhost:1234",
+        "bot-token-dex-cash",
+        &bot_id,
+        31337,
+        serde_json::json!({
+            "asset_token": "USDC",
+            "initial_capital_usd": "10000"
+        }),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-dex-cash")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+    assert_eq!(json["cash_balance"], "9000");
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(positions.len(), 2);
 }
 
 #[tokio::test]

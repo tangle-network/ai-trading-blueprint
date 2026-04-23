@@ -635,6 +635,7 @@ async fn test_loop_prompt_per_strategy() {
 async fn test_system_prompt_includes_api_info() {
     let config = trading_blueprint_lib::state::TradingBotRecord {
         id: "test".to_string(),
+        name: "Test Bot".to_string(),
         sandbox_id: "sb".to_string(),
         vault_address: "0xVAULT".to_string(),
         share_token: String::new(),
@@ -879,6 +880,7 @@ async fn test_pack_profile_has_rich_content() {
     let pack = packs::get_pack("prediction").unwrap();
     let config = trading_blueprint_lib::state::TradingBotRecord {
         id: "test".to_string(),
+        name: "Test Bot".to_string(),
         sandbox_id: "sb".to_string(),
         vault_address: "0xVAULT".to_string(),
         share_token: String::new(),
@@ -937,6 +939,7 @@ async fn test_generic_strategy_gets_profile() {
     // Unknown strategy types still get a valid profile via the generic builder
     let config = trading_blueprint_lib::state::TradingBotRecord {
         id: "test".to_string(),
+        name: "Test Bot".to_string(),
         sandbox_id: "sb".to_string(),
         vault_address: "0xVAULT".to_string(),
         share_token: String::new(),
@@ -997,6 +1000,7 @@ async fn test_dex_profile_has_uniswap_content() {
     let pack = packs::get_pack("dex").unwrap();
     let config = trading_blueprint_lib::state::TradingBotRecord {
         id: "test".to_string(),
+        name: "Test Bot".to_string(),
         sandbox_id: "sb".to_string(),
         vault_address: "0xVAULT".to_string(),
         share_token: String::new(),
@@ -1044,6 +1048,7 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             packs::get_pack(strategy).unwrap_or_else(|| panic!("pack {strategy} should exist"));
         let config = trading_blueprint_lib::state::TradingBotRecord {
             id: "test".to_string(),
+            name: "Test Bot".to_string(),
             sandbox_id: "sb".to_string(),
             vault_address: "0xVAULT".to_string(),
             share_token: String::new(),
@@ -1087,6 +1092,7 @@ async fn test_build_pack_agent_profile_integration() {
     let pack = packs::get_pack("yield").unwrap();
     let config = trading_blueprint_lib::state::TradingBotRecord {
         id: "test".to_string(),
+        name: "Test Bot".to_string(),
         sandbox_id: "sb".to_string(),
         vault_address: "0xVAULT_YIELD".to_string(),
         share_token: String::new(),
