@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 LOAD_BASE_SEPOLIA="${LOAD_BASE_SEPOLIA:-auto}"
-MANIFEST_DEFAULT="$ROOT_DIR/../tnt-core/deployments/base-sepolia/latest.json"
+MANIFEST_DEFAULT="$ROOT_DIR/deploy/manifests/base-sepolia/tnt-core.latest.json"
 
 if [[ "$LOAD_BASE_SEPOLIA" != "0" && "$LOAD_BASE_SEPOLIA" != "false" ]]; then
   if [[ -n "${TNT_CORE_DEPLOYMENT_MANIFEST:-}" || -f "$MANIFEST_DEFAULT" ]]; then

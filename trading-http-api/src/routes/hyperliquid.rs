@@ -80,10 +80,10 @@ fn set_envelope(env: TradingEnvelope) {
     // Persist to disk
     let state_dir = sandbox_runtime::store::state_dir();
     let path = state_dir.join("trading-envelope.json");
-    if let Ok(json) = serde_json::to_string_pretty(&env) {
-        if let Err(e) = std::fs::write(&path, json) {
-            tracing::error!(error = %e, "Failed to persist trading envelope");
-        }
+    if let Ok(json) = serde_json::to_string_pretty(&env)
+        && let Err(e) = std::fs::write(&path, json)
+    {
+        tracing::error!(error = %e, "Failed to persist trading envelope");
     }
     *ENVELOPE.write().unwrap() = env;
 }

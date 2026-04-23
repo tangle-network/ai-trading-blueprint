@@ -3,8 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+COMMITTED_MANIFEST="$ROOT_DIR/deploy/manifests/base-sepolia/tnt-core.latest.json"
+SIBLING_MANIFEST="$ROOT_DIR/../tnt-core/deployments/base-sepolia/latest.json"
 
-MANIFEST_PATH="${1:-${TNT_CORE_DEPLOYMENT_MANIFEST:-$ROOT_DIR/../tnt-core/deployments/base-sepolia/latest.json}}"
+MANIFEST_PATH="${1:-${TNT_CORE_DEPLOYMENT_MANIFEST:-}}"
+if [[ -z "$MANIFEST_PATH" ]]; then
+  if [[ -f "$COMMITTED_MANIFEST" ]]; then
+    MANIFEST_PATH="$COMMITTED_MANIFEST"
+  else
+    MANIFEST_PATH="$SIBLING_MANIFEST"
+  fi
+fi
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq is required to load Base Sepolia deployment settings" >&2

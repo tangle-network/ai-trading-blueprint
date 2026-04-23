@@ -474,7 +474,11 @@ export default function ProvisionPage() {
   } = useWriteContract();
 
   // Secrets step state
-  const defaultProvider = (DEFAULT_AI_PROVIDER === 'zai' ? 'zai' : 'anthropic') as AiProvider;
+  const defaultProvider = (
+    DEFAULT_AI_PROVIDER === 'zai' || DEFAULT_AI_PROVIDER === 'tangle-router'
+      ? DEFAULT_AI_PROVIDER
+      : 'anthropic'
+  ) as AiProvider;
   const [aiProvider, setAiProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
   const [extraEnvs, setExtraEnvs] = useState<{ id: number; key: string; value: string }[]>([]);

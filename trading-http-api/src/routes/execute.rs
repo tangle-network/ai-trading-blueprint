@@ -541,20 +541,13 @@ fn normalize_trade_amount(
     amount: Decimal,
     amount_format: Option<AmountFormat>,
 ) -> Decimal {
-    if amount <= Decimal::ZERO || !amount.fract().is_zero() {
-        return amount;
-    }
-
-    let should_normalize = match amount_format {
-        Some(AmountFormat::Human) => false,
-        Some(AmountFormat::BaseUnits) => true,
-        None => {
-            token.starts_with("0x")
-                && amount >= Decimal::new(100_000, 0)
-                && known_token_decimals(chain_id, token).is_some()
-        }
+    match amount_format {
+        Some(AmountFormat::Human) => return amount,
+        Some(AmountFormat::BaseUnits) => {}
+        None => return crate::amounts::normalize_trade_amount(chain_id, token, amount),
     };
-    if !should_normalize {
+
+    if amount <= Decimal::ZERO || !amount.fract().is_zero() {
         return amount;
     }
 
@@ -1407,6 +1400,7 @@ mod tests {
 
     #[test]
     fn resolve_position_size_normalizes_known_base_raw_units() {
+        // Raw ERC-20 units: 1000 USDC in (1e9) + 0.429 WETH out (4.29e17).
         let intent = make_intent(
             "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
             "0x4200000000000000000000000000000000000006",

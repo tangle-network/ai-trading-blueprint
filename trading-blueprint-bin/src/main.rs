@@ -50,10 +50,7 @@ impl HeartbeatConsumer for TradingHeartbeatConsumer {
     }
 }
 
-fn derive_session_auth_secret() {
-    // Load .env before anything reads env vars (AI keys, config, etc.)
-    dotenvy::dotenv().ok();
-
+fn configure_runtime_env() {
     // Trading bots are meant to stay alive between ticks. The sandbox runtime
     // interprets a requested idle timeout of 0 as "use the default timeout",
     // so we override that default to 0 for this app unless the operator has
@@ -63,78 +60,16 @@ fn derive_session_auth_secret() {
         // any worker threads.
         unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
     }
-
-    fn derive_secret_from_seed(seed: &[u8]) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"tangle-trading-session-auth-v1:");
-        hasher.update(seed);
-        hex::encode(hasher.finalize())
-    }
-
-    fn normalize_keystore_path(path: String) -> std::path::PathBuf {
-        if let Some(stripped) = path.strip_prefix("file://") {
-            std::path::PathBuf::from(stripped)
-        } else {
-            std::path::PathBuf::from(path)
-        }
-    }
-
-    // Derive SESSION_AUTH_SECRET from keystore if not explicitly set.
-    // Must run before tokio spawns any threads to avoid set_var data races.
-    if std::env::var("SESSION_AUTH_SECRET").is_err() {
-        let keystore_path = std::env::var("KEYSTORE_URI")
-            .ok()
-            .or_else(|| std::env::var("KEYSTORE_PATH").ok())
-            .map(normalize_keystore_path);
-        if let Some(keystore_path) = keystore_path {
-            if keystore_path.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(keystore_path) {
-                    for entry in entries.flatten() {
-                        if let Ok(content) = std::fs::read(&entry.path()) {
-                            let secret = derive_secret_from_seed(&content);
-                            // SAFETY: single-threaded at this point — called before
-                            // tokio spawns any worker threads.
-                            unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Ok(private_key) = std::env::var("PRIVATE_KEY") {
-            let normalized = private_key.trim().trim_start_matches("0x");
-            if !normalized.is_empty() {
-                let secret = derive_secret_from_seed(normalized.as_bytes());
-                // SAFETY: single-threaded at this point — called before
-                // tokio spawns any worker threads.
-                unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                return;
-            }
-        }
-
-        let default_keystore_path = std::path::Path::new("/tmp/keystore");
-        if default_keystore_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(default_keystore_path) {
-                for entry in entries.flatten() {
-                    if let Ok(content) = std::fs::read(&entry.path()) {
-                        let secret = derive_secret_from_seed(&content);
-                        // SAFETY: single-threaded at this point — called before
-                        // tokio spawns any worker threads.
-                        unsafe { std::env::set_var("SESSION_AUTH_SECRET", &secret) };
-                        return;
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
-    derive_session_auth_secret();
+    // Load .env before anything reads env vars (AI keys, config, etc.).
+    dotenvy::dotenv().ok();
+    configure_runtime_env();
+    // Derive SESSION_AUTH_SECRET now — before any worker thread is spawned.
+    trading_blueprint_lib::session_auth::ensure_from_env();
 
     setup_log();
 

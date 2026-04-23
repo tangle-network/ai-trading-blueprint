@@ -123,28 +123,28 @@ async fn tick(
     }
 
     // Auto-execute if target_protocol is specified
-    if let Some(ref protocol) = req.target_protocol {
-        if !signals.is_empty() {
-            match protocol.as_str() {
-                "hyperliquid" => {
-                    if let Ok(client) = super::hyperliquid::get_hl_client(&state) {
-                        for entry in &signals.entries {
-                            let result = execute_hl_entry(client, entry, &req.candle.token).await;
-                            executions.push(result);
-                        }
-                        for exit in &signals.exits {
-                            let result = execute_hl_exit(client, exit).await;
-                            executions.push(result);
-                        }
+    if let Some(ref protocol) = req.target_protocol
+        && !signals.is_empty()
+    {
+        match protocol.as_str() {
+            "hyperliquid" => {
+                if let Ok(client) = super::hyperliquid::get_hl_client(&state) {
+                    for entry in &signals.entries {
+                        let result = execute_hl_entry(client, entry, &req.candle.token).await;
+                        executions.push(result);
+                    }
+                    for exit in &signals.exits {
+                        let result = execute_hl_exit(client, exit).await;
+                        executions.push(result);
                     }
                 }
-                _ => {
-                    // For other protocols, return signals as advisory —
-                    // the agent calls /execute with the appropriate target_protocol
-                    advisory.push(format!(
-                        "Auto-execution not implemented for {protocol}. Use /execute with target_protocol={protocol}."
-                    ));
-                }
+            }
+            _ => {
+                // For other protocols, return signals as advisory —
+                // the agent calls /execute with the appropriate target_protocol
+                advisory.push(format!(
+                    "Auto-execution not implemented for {protocol}. Use /execute with target_protocol={protocol}."
+                ));
             }
         }
     }

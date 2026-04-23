@@ -89,7 +89,7 @@ pub fn seed_bot_record(
         call_id: 0,
         service_id: 0,
         harness_json: serde_json::Value::default(),
-        validation_trust: trading_runtime::ValidationTrust::default(),
+        validation_trust: trading_blueprint_lib::state::ValidationTrust::default(),
     };
     bots()
         .expect("bots store")

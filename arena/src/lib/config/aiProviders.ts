@@ -1,7 +1,9 @@
-export type AiProvider = 'anthropic' | 'zai';
+export type AiProvider = 'anthropic' | 'zai' | 'tangle-router';
 
 export const DEFAULT_AI_PROVIDER = import.meta.env.VITE_DEFAULT_AI_PROVIDER ?? '';
 export const DEFAULT_AI_API_KEY = import.meta.env.VITE_DEFAULT_AI_API_KEY ?? '';
+export const DEFAULT_TANGLE_ROUTER_BASE_URL =
+  import.meta.env.VITE_TANGLE_ROUTER_BASE_URL ?? 'https://router.tangle.tools/v1';
 
 export const AI_PROVIDERS: {
   id: AiProvider;
@@ -25,7 +27,15 @@ export const AI_PROVIDERS: {
     placeholder: 'sk-ant-...',
     envKey: 'ANTHROPIC_API_KEY',
     modelProvider: 'anthropic',
-    modelName: 'claude-sonnet-4-20250514',
+    modelName: 'claude-sonnet-4-6',
+  },
+  {
+    id: 'tangle-router',
+    label: 'Tangle Router',
+    placeholder: 'your-tangle-router-key',
+    envKey: 'TANGLE_ROUTER_API_KEY',
+    modelProvider: 'openrouter',
+    modelName: 'anthropic/claude-sonnet-4-6',
   },
 ];
 
@@ -38,6 +48,10 @@ export function buildEnvForProvider(provider: AiProvider, key: string): Record<s
   };
   // Also set the provider-native key so inner session reads it
   env[config.envKey] = key;
+  if (provider === 'tangle-router') {
+    env.TANGLE_ROUTER_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;
+    env.OPENCODE_MODEL_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;
+  }
   return env;
 }
 

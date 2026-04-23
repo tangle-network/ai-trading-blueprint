@@ -1,3 +1,4 @@
+pub mod amounts;
 pub mod auth;
 pub mod candle_store;
 pub mod metrics_store;
