@@ -222,6 +222,60 @@
   --chat-send-ring: rgba(139, 92, 246, 0.28);
 }
 
+:root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] {
+  --hsl-background: 240 30% 4%;
+  --hsl-foreground: 240 10% 95%;
+  --hsl-card: 240 25% 7%;
+  --hsl-card-foreground: 240 10% 95%;
+  --hsl-muted: 240 15% 14%;
+  --hsl-muted-foreground: 240 10% 55%;
+  --hsl-border: 240 10% 16%;
+  --background: var(--hsl-background);
+  --foreground: var(--hsl-foreground);
+  --card: var(--hsl-card);
+  --card-foreground: var(--hsl-card-foreground);
+  --muted: var(--hsl-muted);
+  --muted-foreground: var(--hsl-muted-foreground);
+  --border: var(--hsl-border);
+
+  --depth-1: var(--arena-elements-bg-depth-1);
+  --depth-2: var(--arena-elements-bg-depth-2);
+  --depth-3: var(--arena-elements-bg-depth-3);
+  --depth-4: var(--arena-elements-bg-depth-4);
+
+  --glass-bg: rgba(18, 18, 26, 0.72);
+  --glass-bg-strong: rgba(18, 18, 26, 0.86);
+  --glass-border: var(--arena-elements-borderColor);
+  --glass-border-hover: var(--arena-elements-dividerColor);
+
+  --text-primary: var(--arena-elements-textPrimary);
+  --text-secondary: var(--arena-elements-textSecondary);
+  --text-muted: var(--arena-elements-textTertiary);
+  --text-dim: color-mix(in srgb, var(--arena-elements-textTertiary) 72%, transparent);
+
+  --border-subtle: var(--arena-elements-dividerColor);
+  --border-default: color-mix(in srgb, var(--arena-elements-dividerColor) 78%, transparent);
+  --border-accent: rgba(139, 92, 246, 0.24);
+  --accent-surface-soft: rgba(139, 92, 246, 0.12);
+  --accent-surface-strong: rgba(139, 92, 246, 0.2);
+  --accent-text: #c4b5fd;
+
+  --chat-input-bg: color-mix(in srgb, var(--arena-elements-bg-depth-3) 76%, transparent);
+  --chat-input-border: color-mix(in srgb, var(--arena-elements-dividerColor) 92%, transparent);
+  --chat-input-focus-border: rgba(167, 139, 250, 0.5);
+  --chat-input-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --chat-input-focus-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.16),
+    0 16px 36px rgba(0, 0, 0, 0.22);
+  --chat-send-border: rgba(167, 139, 250, 0.28);
+  --chat-send-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.24), rgba(91, 63, 214, 0.32));
+  --chat-send-hover-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.32), rgba(91, 63, 214, 0.42));
+  --chat-send-color: #ddd6fe;
+  --chat-send-ring: rgba(167, 139, 250, 0.36);
+}
+
 .arena-chat-shell[data-sandbox-ui='true'] .text-\[var\(--chat-label-size\,11px\)\] {
   font-size: var(--chat-label-size, 11px);
   line-height: 1rem;
@@ -233,14 +287,28 @@
   color: #2f354b;
 }
 
+:root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input'] {
+  color: var(--arena-elements-textPrimary);
+}
+
 .arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input']::placeholder {
   color: #8f96ab;
+}
+
+:root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input']::placeholder {
+  color: var(--arena-elements-textTertiary);
 }
 
 .arena-chat-shell[data-sandbox-ui='true'] kbd {
   background: rgba(255, 255, 255, 0.72);
   border-color: rgba(148, 163, 184, 0.32);
   box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.06);
+}
+
+:root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] kbd {
+  background: rgba(240, 240, 245, 0.06);
+  border-color: var(--arena-elements-dividerColor);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.18);
 }
 
 /*

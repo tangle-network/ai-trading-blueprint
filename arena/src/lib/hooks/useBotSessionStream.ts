@@ -188,6 +188,58 @@ function normalizeTimestamp(value: unknown): number {
   return Date.now();
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function textPartsFromContent(content: unknown, attachments?: unknown): TextPart[] {
+  const attachmentNames = (Array.isArray(attachments)
+    ? attachments
+        .map((attachment) => asRecord(attachment))
+        .filter((attachment): attachment is Record<string, unknown> => attachment !== undefined)
+        .map((attachment) => asString(attachment.name))
+        .filter((name): name is string => Boolean(name))
+    : []);
+  const attachmentText = attachmentNames.length > 0
+    ? `\n\nAttachments:\n${attachmentNames.map((name) => `- ${name}`).join('\n')}`
+    : '';
+  const text = `${asString(content) ?? ''}${attachmentText}`.trim();
+
+  return text ? [{ type: 'text', text }] : [];
+}
+
+function extractNormalizedParts(rawEntry: Record<string, unknown>): SessionPart[] {
+  const info = asRecord(rawEntry.info);
+  const rawParts = Array.isArray(rawEntry.parts)
+    ? rawEntry.parts
+    : Array.isArray(info?.parts)
+      ? info.parts
+      : [];
+  const parts = rawParts
+    .map((part) => mapSessionPart(asRecord(part) ?? {}))
+    .filter((part): part is SessionPart => part !== null);
+
+  if (parts.length > 0) {
+    return parts;
+  }
+
+  const content = asString(rawEntry.content)
+    ?? asString(info?.content)
+    ?? asString(rawEntry.text)
+    ?? asString(info?.text);
+  const attachments = rawEntry.attachments ?? info?.attachments;
+
+  return textPartsFromContent(content, attachments);
+}
+
 function makeOptimisticMessageId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `optimistic-${crypto.randomUUID()}`;
@@ -242,7 +294,7 @@ function mapSessionPart(rawPart: Record<string, unknown>): SessionPart | null {
     return {
       type: 'reasoning',
       ...(typeof rawPart.id === 'string' ? { id: rawPart.id } : {}),
-      text: typeof rawPart.text === 'string' ? rawPart.text : '',
+      text: typeof rawPart.text === 'string' ? rawPart.text : (typeof rawPart.content === 'string' ? rawPart.content : ''),
       time: rawPart.time as ReasoningPart['time'] | undefined,
     } satisfies ReasoningPart;
   }
@@ -250,7 +302,7 @@ function mapSessionPart(rawPart: Record<string, unknown>): SessionPart | null {
   if (type === 'text') {
     return {
       type: 'text',
-      text: typeof rawPart.text === 'string' ? rawPart.text : '',
+      text: typeof rawPart.text === 'string' ? rawPart.text : (typeof rawPart.content === 'string' ? rawPart.content : ''),
       ...(typeof rawPart.id === 'string' ? { id: rawPart.id } : {}),
     } satisfies TextPart;
   }
@@ -275,13 +327,7 @@ function mapHistoryEntry(
     ? time.created
     : normalizeTimestamp(info.timestamp);
   const completedAt = typeof time.completed === 'number' ? time.completed : undefined;
-  const rawParts = Array.isArray(rawEntry.parts)
-    ? rawEntry.parts as Array<Record<string, unknown>>
-    : [];
-
-  const parts = rawParts
-    .map((part) => mapSessionPart(part))
-    .filter((part): part is SessionPart => part !== null);
+  const parts = extractNormalizedParts(rawEntry);
 
   return {
     message: {

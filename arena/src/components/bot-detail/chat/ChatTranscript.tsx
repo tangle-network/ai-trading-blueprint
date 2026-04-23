@@ -8,7 +8,11 @@ import {
 import { cn } from '@tangle-network/sandbox-ui/utils';
 import type { AppSessionMessage } from '~/lib/hooks/useBotSessionStream';
 import { AppMarkdown, ReasoningRow, ToolRow, UserBubble } from './SessionChatParts';
-import { collectSessionTimelineParts, collectVisibleSessionTimelineParts } from './sessionChatTimeline';
+import {
+  collectSessionTimelineParts,
+  collectVisibleSessionTimelineParts,
+  filterLeadingPromptEcho,
+} from './sessionChatTimeline';
 
 function getSafeText(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -20,47 +24,6 @@ function getUserText(parts: SessionPart[]): string {
     .map((part) => getSafeText(part.text))
     .join('\n')
     .trim();
-}
-
-function filterLeadingPromptEcho(
-  entries: Array<{ part: SessionPart; msgId: string; index: number }>,
-  previousUserText: string | null,
-  isStreaming: boolean,
-) {
-  const normalizedUserText = previousUserText?.trim();
-  if (!normalizedUserText) {
-    return entries;
-  }
-
-  const firstTextIndex = entries.findIndex(({ part }) => part.type === 'text' && getSafeText(part.text).trim().length > 0);
-  if (firstTextIndex < 0) {
-    return entries;
-  }
-
-  const firstText = getSafeText(entries[firstTextIndex]?.part.type === 'text' ? entries[firstTextIndex].part.text : '').trim();
-  if (firstText !== normalizedUserText) {
-    return entries;
-  }
-
-  if (isStreaming) {
-    return entries.filter((_, index) => index !== firstTextIndex);
-  }
-
-  const hasMeaningfulFollowup = entries.some(({ part }, index) => {
-    if (index === firstTextIndex) {
-      return false;
-    }
-    if (part.type === 'tool' || part.type === 'reasoning') {
-      return true;
-    }
-    return part.type === 'text' && getSafeText(part.text).trim() !== '' && getSafeText(part.text).trim() !== normalizedUserText;
-  });
-
-  if (!hasMeaningfulFollowup) {
-    return entries;
-  }
-
-  return entries.filter((_, index) => index !== firstTextIndex);
 }
 
 function getRunFailureState(run: Run): { errorText: string | null } | null {
