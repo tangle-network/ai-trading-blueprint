@@ -7,6 +7,7 @@ import "../../src/TradingVault.sol";
 import "../../src/VaultShare.sol";
 import "../../src/VaultFactory.sol";
 import "../../src/VaultDeployer.sol";
+import "../../src/VaultShareDeployer.sol";
 import "../../src/PolicyEngine.sol";
 import "../../src/TradeValidator.sol";
 import "../../src/FeeDistributor.sol";
@@ -100,6 +101,7 @@ abstract contract Setup is Test {
 
     VaultFactory public vaultFactory;
     VaultDeployer public vaultDeployer;
+    VaultShareDeployer public vaultShareDeployer;
     PolicyEngine public policyEngine;
     TradeValidator public tradeValidator;
     FeeDistributor public feeDistributor;
@@ -135,7 +137,9 @@ abstract contract Setup is Test {
         tradeValidator = new TradeValidator();
         feeDistributor = new FeeDistributor(owner);
         vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        vaultDeployer = vaultFactory.deployer();
+        vaultDeployer = new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
+        vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
         // Transfer ownership of PolicyEngine, TradeValidator, and FeeDistributor to VaultFactory
         // (since factory calls their onlyOwner functions: configureVault, initializeVault, initializeVaultFees)

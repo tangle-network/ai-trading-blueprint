@@ -8,11 +8,12 @@ import "./TradeValidator.sol";
 import "./PolicyEngine.sol";
 import "./FeeDistributor.sol";
 import "./VaultDeployer.sol";
+import "./VaultShareDeployer.sol";
 
 /// @title VaultFactory
 /// @notice Deploys full ERC-7575 vault stacks via CREATE2
 /// @dev Creates VaultShare + TradingVault(s) + configures TradeValidator and PolicyEngine.
-///      Vault/share deployment is delegated to VaultDeployer to stay under the bytecode size limit.
+///      Vault/share deployment is delegated to deployer helpers to stay under the bytecode size limit.
 contract VaultFactory is Ownable2Step {
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -22,6 +23,8 @@ contract VaultFactory is Ownable2Step {
     error ServiceAlreadyInitialized(uint64 serviceId);
     error InvalidSignerConfig();
     error NotAuthorized();
+    error VaultDeployerAlreadySet();
+    error VaultDeployerNotSet();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -42,7 +45,6 @@ contract VaultFactory is Ownable2Step {
     // IMMUTABLES
     // ═══════════════════════════════════════════════════════════════════════════
 
-    VaultDeployer public immutable deployer;
     PolicyEngine public immutable policyEngine;
     TradeValidator public immutable tradeValidator;
     FeeDistributor public immutable feeDistributor;
@@ -62,6 +64,12 @@ contract VaultFactory is Ownable2Step {
 
     /// @notice Addresses authorized to call createVault/createBotVault
     mapping(address => bool) public authorizedCallers;
+
+    /// @notice Helper contract that deploys TradingVault instances.
+    VaultDeployer public deployer;
+
+    /// @notice Helper contract that deploys VaultShare instances.
+    VaultShareDeployer public shareDeployer;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -88,7 +96,6 @@ contract VaultFactory is Ownable2Step {
         policyEngine = _policyEngine;
         tradeValidator = _tradeValidator;
         feeDistributor = _feeDistributor;
-        deployer = new VaultDeployer(_policyEngine, _tradeValidator, _feeDistributor);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -100,6 +107,17 @@ contract VaultFactory is Ownable2Step {
         policyEngine.acceptOwnership();
         tradeValidator.acceptOwnership();
         feeDistributor.acceptOwnership();
+    }
+
+    /// @notice Wire deployment helpers once after all three contracts are deployed.
+    function setVaultDeployers(VaultDeployer _deployer, VaultShareDeployer _shareDeployer) external onlyOwner {
+        if (address(_deployer) == address(0)) revert ZeroAddress();
+        if (address(_shareDeployer) == address(0)) revert ZeroAddress();
+        if (address(deployer) != address(0) || address(shareDeployer) != address(0)) revert VaultDeployerAlreadySet();
+        if (_deployer.factory() != address(this)) revert NotAuthorized();
+        if (_shareDeployer.factory() != address(this)) revert NotAuthorized();
+        deployer = _deployer;
+        shareDeployer = _shareDeployer;
     }
 
     /// @notice Set or revoke authorized caller status for an address
@@ -190,18 +208,23 @@ contract VaultFactory is Ownable2Step {
         ) {
             revert InvalidSignerConfig();
         }
+        VaultDeployer vaultDeployer = deployer;
+        VaultShareDeployer vaultShareDeployer = shareDeployer;
+        if (address(vaultDeployer) == address(0) || address(vaultShareDeployer) == address(0)) {
+            revert VaultDeployerNotSet();
+        }
 
-        // Deploy VaultShare via VaultDeployer
+        // Deploy VaultShare via VaultShareDeployer
         bytes32 shareSalt = isBotVault
             ? keccak256(abi.encodePacked(serviceId, "bot-share", salt))
             : keccak256(abi.encodePacked(serviceId, "share", salt));
-        VaultShare shareToken = deployer.deployShare(shareSalt, name, symbol, address(this));
+        VaultShare shareToken = vaultShareDeployer.deployShare(shareSalt, name, symbol, address(this));
         shareAddr = address(shareToken);
         emit ShareTokenCreated(serviceId, shareAddr);
 
         // Deploy TradingVault via VaultDeployer
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
-        TradingVault v = deployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
+        TradingVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
         vault = address(v);
         serviceVaults[serviceId].push(vault);
         vaultServiceId[vault] = serviceId;
