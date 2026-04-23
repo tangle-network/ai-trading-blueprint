@@ -9,6 +9,7 @@ interface ExecutionTargetOption {
   id: string;
   label: string;
   description: string;
+  modeLabel?: string;
   enabled: boolean;
   chainId?: number;
   rpcUrl?: string;
@@ -190,13 +191,15 @@ export function AdvancedSettingsDialog({
                   ))}
                 </select>
                 <p className="text-xs text-arena-elements-textTertiary mt-1.5">
-                  Choose the execution target for this DEX bot. Right now this uses the local Ethereum fork for QA, not Ethereum mainnet.
+                  Choose where the DEX strategy runs. Base Sepolia cloud paper trading is the default, while Ethereum fork remains available for local QA.
                 </p>
                 {selectedExecutionTarget && (
                   <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
                     <div className="flex justify-between gap-3">
                       <span>Mode</span>
-                      <span className="text-arena-elements-textPrimary">Local execution fork</span>
+                      <span className="text-arena-elements-textPrimary">
+                        {selectedExecutionTarget.modeLabel ?? (selectedExecutionTarget.enabled ? 'Execution target' : 'Unavailable')}
+                      </span>
                     </div>
                     {selectedExecutionTarget.chainId != null && (
                       <div className="flex justify-between gap-3">
@@ -212,7 +215,7 @@ export function AdvancedSettingsDialog({
                     )}
                     {selectedExecutionTarget.vaultAddress && (
                       <div className="flex justify-between gap-3">
-                        <span>Vault</span>
+                        <span>Vault / Factory</span>
                         <span className="text-arena-elements-textPrimary truncate">{selectedExecutionTarget.vaultAddress}</span>
                       </div>
                     )}

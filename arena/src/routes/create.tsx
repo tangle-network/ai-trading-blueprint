@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { MetaFunction } from 'react-router'
 import { useNavigate } from 'react-router'
-import { useAccount } from 'wagmi'
 import { Button } from '@tangle-network/blueprint-ui/components'
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
 import {
@@ -38,8 +37,7 @@ export default function CreateAgent() {
   const [status, setStatus] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
-  const { address } = useAccount()
-  const { authHeaders } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
+  const { getToken } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -65,18 +63,44 @@ export default function CreateAgent() {
       setStatus('Provisioning your trading agent...')
 
       // Call the operator API to provision a bot with the user's prompt
+      if (!HAS_TRADING_OPERATOR_API || !ALL_TRADING_OPERATOR_API_URLS[0]) {
+        throw new Error('Trading operator API is not configured')
+      }
       const operatorUrl = ALL_TRADING_OPERATOR_API_URLS[0]
-      const res = await fetch(`${operatorUrl}/api/bots`, {
+      let token = await getToken()
+      if (!token) {
+        throw new Error('Wallet authentication is required before creating a bot')
+      }
+
+      let res = await fetch(`${operatorUrl}/api/bots`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...authHeaders,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           prompt,
           name: prompt.slice(0, 50),
         }),
       })
+
+      if (res.status === 401) {
+        token = await getToken(true)
+        if (!token) {
+          throw new Error('Authentication expired and refresh failed')
+        }
+        res = await fetch(`${operatorUrl}/api/bots`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            prompt,
+            name: prompt.slice(0, 50),
+          }),
+        })
+      }
 
       if (!res.ok) {
         const err = await res.text()
@@ -94,7 +118,7 @@ export default function CreateAgent() {
       setStatus(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setIsCreating(false)
     }
-  }, [prompt, isCreating, authHeaders, navigate])
+  }, [prompt, isCreating, getToken, navigate])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

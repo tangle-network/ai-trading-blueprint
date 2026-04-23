@@ -80,6 +80,31 @@ describe('summarizeBotLiveData', () => {
     expect(summary.winRate).toBeNull();
   });
 
+  it('derives pnl from a single snapshot when only one metrics point exists', () => {
+    const summary = summarizeBotLiveData(
+      [
+        {
+          account_value_usd: 10019.3551,
+          realized_pnl: 0,
+          unrealized_pnl: 19.3551,
+          drawdown_pct: 0,
+          trade_count: 1,
+        },
+      ],
+      10019.3551,
+      [100],
+      'priced',
+    );
+
+    expect(summary.pnlAbsolute).toBe(19.36);
+    expect(summary.pnlPercent).toBe(0.2);
+    expect(summary.maxDrawdown).toBe(0);
+    expect(summary.portfolioValue).toBe(10019.36);
+    expect(summary.avgValidatorScore).toBe(100);
+    expect(summary.sharpeRatio).toBeNull();
+    expect(summary.winRate).toBeNull();
+  });
+
   it('falls back to the latest account value when portfolio data is missing', () => {
     const summary = summarizeBotLiveData(
       [

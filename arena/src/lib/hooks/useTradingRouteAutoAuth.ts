@@ -5,6 +5,7 @@ import {
   CLOUD_OPERATOR_API_URL,
   INSTANCE_OPERATOR_API_URL,
   TEE_OPERATOR_API_URL,
+  useOperatorMeta,
 } from '~/lib/operator/meta';
 
 interface TradingRouteAutoAuthOptions {
@@ -20,6 +21,9 @@ export function useTradingRouteAutoAuth({
   const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
   const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
   const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
+  const cloudMeta = useOperatorMeta(CLOUD_OPERATOR_API_URL);
+  const instanceMeta = useOperatorMeta(INSTANCE_OPERATOR_API_URL);
+  const teeMeta = useOperatorMeta(TEE_OPERATOR_API_URL);
   const attemptedKeysRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -33,13 +37,25 @@ export function useTradingRouteAutoAuth({
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 
     const targets = [
-      { apiUrl: CLOUD_OPERATOR_API_URL, auth: cloudAuth },
-      { apiUrl: INSTANCE_OPERATOR_API_URL, auth: instanceAuth },
-      { apiUrl: TEE_OPERATOR_API_URL, auth: teeAuth },
+      {
+        apiUrl: CLOUD_OPERATOR_API_URL,
+        auth: cloudAuth,
+        isAvailable: Boolean(CLOUD_OPERATOR_API_URL) && !!cloudMeta.data,
+      },
+      {
+        apiUrl: INSTANCE_OPERATOR_API_URL,
+        auth: instanceAuth,
+        isAvailable: Boolean(INSTANCE_OPERATOR_API_URL) && !!instanceMeta.data,
+      },
+      {
+        apiUrl: TEE_OPERATOR_API_URL,
+        auth: teeAuth,
+        isAvailable: Boolean(TEE_OPERATOR_API_URL) && !!teeMeta.data,
+      },
     ];
 
     for (const target of targets) {
-      if (!target.apiUrl) continue;
+      if (!target.apiUrl || !target.isAvailable) continue;
       if (target.auth.token || target.auth.isAuthenticating) continue;
 
       const attemptKey = `${routeKey}:${address.toLowerCase()}:${target.apiUrl}`;
@@ -51,11 +67,14 @@ export function useTradingRouteAutoAuth({
   }, [
     address,
     cloudAuth,
+    cloudMeta.data,
     enabled,
     instanceAuth,
+    instanceMeta.data,
     isConnected,
     routeKey,
     teeAuth,
+    teeMeta.data,
   ]);
 
   useEffect(() => {

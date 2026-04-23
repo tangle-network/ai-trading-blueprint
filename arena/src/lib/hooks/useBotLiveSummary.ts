@@ -106,14 +106,18 @@ export function summarizeBotLiveData(
   const validSnapshots = getRenderableSnapshots(snapshots);
   const first = validSnapshots[0];
   const latest = validSnapshots[validSnapshots.length - 1];
-
   const pnlAbsolute = latest
     ? roundTo(latest.realized_pnl + latest.unrealized_pnl, 2)
     : null;
 
-  const pnlPercent = first && latest && first.account_value_usd > 0
-    ? roundTo(((latest.account_value_usd - first.account_value_usd) / first.account_value_usd) * 100, 1)
+  const inferredStartingValue = latest && pnlAbsolute != null
+    ? latest.account_value_usd - pnlAbsolute
     : null;
+  const pnlPercent = validSnapshots.length > 1 && first && latest && first.account_value_usd > 0
+    ? roundTo(((latest.account_value_usd - first.account_value_usd) / first.account_value_usd) * 100, 1)
+    : inferredStartingValue != null && inferredStartingValue > 0 && pnlAbsolute != null
+      ? roundTo((pnlAbsolute / inferredStartingValue) * 100, 1)
+      : null;
 
   const maxDrawdown = validSnapshots.length > 0
     ? roundTo(Math.max(...validSnapshots.map((snapshot) => snapshot.drawdown_pct)), 1)

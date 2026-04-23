@@ -10,6 +10,14 @@ import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { buildPerformanceChartPoints } from './performanceChart';
 
+function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
+  const raw = strategyConfig?.initial_capital_usd
+    ?? strategyConfig?.initial_capital
+    ?? strategyConfig?.cash_balance;
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : null;
+  return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 interface PerformanceTabProps {
   bot: Bot;
   isLive: boolean;
@@ -21,8 +29,11 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
 
-  // Try loading real metrics from bot API
-  const { data: apiMetrics, isLoading } = useBotMetrics(bot.id, 30, {
+  const {
+    data: apiMetrics,
+    isError: hasMetricsError,
+    isLoading,
+  } = useBotMetrics(bot.id, 30, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 15_000 : false,
@@ -33,9 +44,20 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     refetchInterval: isLive ? 15_000 : false,
   });
 
+  const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
+
   const chartPoints = useMemo(
-    () => buildPerformanceChartPoints(apiMetrics, bot.sparklineData),
-    [apiMetrics, bot.sparklineData],
+    () => buildPerformanceChartPoints(
+      apiMetrics,
+      [],
+      initialCapitalUsd == null
+        ? null
+        : {
+            value: initialCapitalUsd,
+            timestamp: new Date(bot.createdAt).toISOString(),
+          },
+    ),
+    [apiMetrics, bot.createdAt, initialCapitalUsd],
   );
 
   useEffect(() => {
@@ -58,6 +80,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       const firstPoint = values[0] ?? latestPoint;
       const positive = latestPoint >= firstPoint;
       const lineColor = positive ? chartTheme.positive : chartTheme.negative;
+      const singlePoint = values.length === 1;
 
       const gradient = ctx.createLinearGradient(0, 0, 0, 300);
       gradient.addColorStop(0, positive ? chartTheme.positiveGradientStart : chartTheme.negativeGradientStart);
@@ -75,8 +98,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               backgroundColor: gradient,
               borderWidth: 2,
               fill: true,
-              pointRadius: 0,
-              pointHoverRadius: 5,
+              pointRadius: singlePoint ? 5 : 0,
+              pointHoverRadius: singlePoint ? 6 : 5,
+              pointBackgroundColor: lineColor,
               pointHoverBackgroundColor: lineColor,
               pointHoverBorderColor: chartTheme.hoverBorderColor,
               pointHoverBorderWidth: 2,
@@ -153,9 +177,14 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   }, [apiMetrics]);
   const firstRenderableMetric = renderableMetrics[0] ?? null;
   const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
-  const totalReturnValue = latestRenderableMetric && firstRenderableMetric
-    ? latestRenderableMetric.account_value_usd - firstRenderableMetric.account_value_usd
-    : metricsSummary?.total_pnl ?? bot.pnlAbsolute;
+  const snapshotPnlValue = latestRenderableMetric
+    ? latestRenderableMetric.realized_pnl + latestRenderableMetric.unrealized_pnl
+    : null;
+  const totalReturnValue = latestRenderableMetric && initialCapitalUsd != null
+    ? latestRenderableMetric.account_value_usd - initialCapitalUsd
+    : latestRenderableMetric && firstRenderableMetric && renderableMetrics.length > 1
+      ? latestRenderableMetric.account_value_usd - firstRenderableMetric.account_value_usd
+      : snapshotPnlValue ?? metricsSummary?.total_pnl ?? bot.pnlAbsolute;
   const totalTradesValue = latestRenderableMetric?.trade_count ?? metricsSummary?.trade_count ?? bot.totalTrades;
 
   const summaryCards = [
@@ -208,6 +237,20 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
 
   if (!operatorAuth.isAuthenticated) {
     return <OperatorAccessCard apiUrl={bot.operatorApiUrl ?? ''} />;
+  }
+
+  if (hasMetricsError) {
+    return (
+      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+        <div className="i-ph:warning-circle text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+        <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
+          Live performance unavailable
+        </h3>
+        <p className="text-sm">
+          We couldn&apos;t load this bot&apos;s verified performance snapshots, so the chart is hidden instead of showing synthetic history.
+        </p>
+      </div>
+    );
   }
 
   return (

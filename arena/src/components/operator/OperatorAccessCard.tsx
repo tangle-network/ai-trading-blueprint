@@ -8,11 +8,13 @@ import {
   INSTANCE_OPERATOR_API_URL,
   OPERATOR_API_URL,
   TEE_OPERATOR_API_URL,
+  useOperatorMeta,
 } from '~/lib/operator/meta';
 
 interface AuthTarget {
   apiUrl: string;
   auth: ReturnType<typeof useOperatorAuth>;
+  isAvailable: boolean;
 }
 
 export function OperatorAccessCard({
@@ -30,22 +32,44 @@ export function OperatorAccessCard({
   const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
   const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
   const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
+  const cloudMeta = useOperatorMeta(CLOUD_OPERATOR_API_URL);
+  const instanceMeta = useOperatorMeta(INSTANCE_OPERATOR_API_URL);
+  const teeMeta = useOperatorMeta(TEE_OPERATOR_API_URL);
   const knownTargets: AuthTarget[] = [
-    { apiUrl: CLOUD_OPERATOR_API_URL, auth: cloudAuth },
-    { apiUrl: INSTANCE_OPERATOR_API_URL, auth: instanceAuth },
-    { apiUrl: TEE_OPERATOR_API_URL, auth: teeAuth },
+    {
+      apiUrl: CLOUD_OPERATOR_API_URL,
+      auth: cloudAuth,
+      isAvailable: Boolean(CLOUD_OPERATOR_API_URL) && !!cloudMeta.data,
+    },
+    {
+      apiUrl: INSTANCE_OPERATOR_API_URL,
+      auth: instanceAuth,
+      isAvailable: Boolean(INSTANCE_OPERATOR_API_URL) && !!instanceMeta.data,
+    },
+    {
+      apiUrl: TEE_OPERATOR_API_URL,
+      auth: teeAuth,
+      isAvailable: Boolean(TEE_OPERATOR_API_URL) && !!teeMeta.data,
+    },
   ].filter((target) => target.apiUrl);
 
   const selectedTargets = (() => {
     const dedupedApiUrls = Array.from(new Set((apiUrls ?? []).filter(Boolean)));
     if (dedupedApiUrls.length > 0) {
-      return dedupedApiUrls.map((url) => (
-        knownTargets.find((target) => target.apiUrl === url)
-        ?? { apiUrl: url, auth: operatorAuth }
-      ));
+      return dedupedApiUrls.flatMap((url) => {
+        const knownTarget = knownTargets.find((target) => target.apiUrl === url);
+        if (!knownTarget) {
+          return [{ apiUrl: url, auth: operatorAuth, isAvailable: true }];
+        }
+        return knownTarget.isAvailable ? [knownTarget] : [];
+      });
     }
     if (!apiUrl) return [];
-    return [knownTargets.find((target) => target.apiUrl === apiUrl) ?? { apiUrl, auth: operatorAuth }];
+    const knownTarget = knownTargets.find((target) => target.apiUrl === apiUrl);
+    if (!knownTarget) {
+      return [{ apiUrl, auth: operatorAuth, isAvailable: true }];
+    }
+    return knownTarget.isAvailable ? [knownTarget] : [];
   })();
   const isAuthenticating = selectedTargets.some((target) => target.auth.isAuthenticating);
   const error = selectedTargets.find((target) => target.auth.error)?.auth.error ?? null;
@@ -100,12 +124,27 @@ export function OperatorSessionBanner() {
   const cloudAuth = useOperatorAuth(CLOUD_OPERATOR_API_URL);
   const instanceAuth = useOperatorAuth(INSTANCE_OPERATOR_API_URL);
   const teeAuth = useOperatorAuth(TEE_OPERATOR_API_URL);
+  const cloudMeta = useOperatorMeta(CLOUD_OPERATOR_API_URL);
+  const instanceMeta = useOperatorMeta(INSTANCE_OPERATOR_API_URL);
+  const teeMeta = useOperatorMeta(TEE_OPERATOR_API_URL);
 
   const authTargets = [
-    { apiUrl: CLOUD_OPERATOR_API_URL, auth: cloudAuth },
-    { apiUrl: INSTANCE_OPERATOR_API_URL, auth: instanceAuth },
-    { apiUrl: TEE_OPERATOR_API_URL, auth: teeAuth },
-  ].filter((target) => target.apiUrl);
+    {
+      apiUrl: CLOUD_OPERATOR_API_URL,
+      auth: cloudAuth,
+      isAvailable: Boolean(CLOUD_OPERATOR_API_URL) && !!cloudMeta.data,
+    },
+    {
+      apiUrl: INSTANCE_OPERATOR_API_URL,
+      auth: instanceAuth,
+      isAvailable: Boolean(INSTANCE_OPERATOR_API_URL) && !!instanceMeta.data,
+    },
+    {
+      apiUrl: TEE_OPERATOR_API_URL,
+      auth: teeAuth,
+      isAvailable: Boolean(TEE_OPERATOR_API_URL) && !!teeMeta.data,
+    },
+  ].filter((target) => target.apiUrl && target.isAvailable);
 
   if (!HAS_TRADING_OPERATOR_API || syncState.operatorDataState === 'ready') {
     return null;
