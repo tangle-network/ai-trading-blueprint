@@ -5,19 +5,22 @@ import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import { botStatusLabel, isLiveBotStatus } from '~/lib/format';
+import { AssetDisplay } from './shared/AssetDisplay';
 
 interface PositionsTabProps {
   botId: string;
   status: BotStatus;
+  chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
 }
 
-export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, verificationState }: PositionsTabProps) {
+export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState }: PositionsTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const isLive = isLiveBotStatus(status);
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     enabled: true,
@@ -61,23 +64,6 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
     return `$${value.toLocaleString()}`;
   };
 
-  const formatTokenAmount = (value: number) => value.toLocaleString(undefined, {
-    minimumFractionDigits: value >= 1000 ? 0 : 0,
-    maximumFractionDigits: value >= 1000 ? 0 : 4,
-  });
-
-  const formatBalance = () => {
-    const cashBalance = portfolio.displayCashBalance;
-    if (cashBalance == null) return 'Unavailable';
-
-    const matchingPosition = portfolio.positions.find((pos) => Math.abs(pos.amount - cashBalance) <= 1e-9);
-    if (matchingPosition) {
-      return `${formatTokenAmount(cashBalance)} ${matchingPosition.symbol}`;
-    }
-
-    return formatCurrency(cashBalance);
-  };
-
   const formatPercent = (value: number | null) => {
     if (value == null) return 'Unavailable';
     return `${value.toFixed(1)}%`;
@@ -88,10 +74,15 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
     : portfolio.hasValueOnlyPositions
       ? 'Portfolio valuation partially available'
       : 'Portfolio warnings';
+  const displayWarnings = portfolio.warnings.map((warning) => (
+    warning.includes('entry price') || warning.includes('PnL')
+      ? 'Some positions only have current market value available.'
+      : warning
+  ));
 
   return (
     <div className="space-y-4">
-      {portfolio.warnings.length > 0 && (
+      {displayWarnings.length > 0 && (
         <div className="glass-card rounded-xl px-4 py-3 flex items-start gap-3 text-sm text-amber-700 dark:text-amber-400">
           <div className="i-ph:warning-circle text-lg shrink-0 mt-0.5" />
           <div>
@@ -99,7 +90,7 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
               {warningTitle}
             </div>
             <div className="space-y-1">
-              {portfolio.warnings.map((warning) => (
+              {displayWarnings.map((warning) => (
                 <p key={warning}>{warning}</p>
               ))}
             </div>
@@ -112,10 +103,6 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
           <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Total Value </span>
           <span className="font-display font-bold text-lg">{formatCurrency(portfolio.displayTotalValueUsd)}</span>
         </div>
-        <div className="glass-card rounded-lg px-4 py-2">
-          <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">Balance </span>
-          <span className="font-data font-medium">{formatBalance()}</span>
-        </div>
       </div>
 
       <Table>
@@ -124,18 +111,16 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
             <TableHead>Token</TableHead>
             <TableHead className="text-right">Amount</TableHead>
             <TableHead className="text-right">Value</TableHead>
-            <TableHead className="text-right">Entry</TableHead>
             <TableHead className="text-right">Current</TableHead>
-            <TableHead className="text-right">PnL</TableHead>
             <TableHead className="text-right">Weight</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {portfolio.positions.map((pos) => (
-            <TableRow key={pos.symbol}>
+            <TableRow key={pos.token}>
               <TableCell className="font-display font-semibold">
                 <div className="flex items-center justify-between gap-2">
-                  <span>{pos.symbol}</span>
+                  <AssetDisplay asset={pos.asset} />
                   {pos.valuationStatus !== 'priced' && (
                     <Badge
                       variant="amber"
@@ -151,22 +136,8 @@ export function PositionsTab({ botId, status, operatorApiUrl, operatorKind, veri
               <TableCell className={`text-right font-data text-sm ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
                 {formatCurrency(pos.displayValueUsd)}
               </TableCell>
-              <TableCell className={`text-right font-data text-sm ${pos.entryPrice == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
-                {formatCurrency(pos.entryPrice)}
-              </TableCell>
               <TableCell className={`text-right font-data text-sm ${pos.currentPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
                 {formatCurrency(pos.currentPrice)}
-              </TableCell>
-              <TableCell className={`text-right font-data text-sm font-bold ${
-                pos.displayPnlPercent == null
-                  ? 'text-arena-elements-textTertiary'
-                  : pos.displayPnlPercent >= 0
-                    ? 'text-arena-elements-icon-success'
-                    : 'text-arena-elements-icon-error'
-              }`}>
-                {pos.displayPnlPercent == null
-                  ? 'Unavailable'
-                  : `${pos.displayPnlPercent >= 0 ? '+' : ''}${pos.displayPnlPercent.toFixed(2)}%`}
               </TableCell>
               <TableCell className={`text-right font-data text-sm ${pos.displayWeight == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
                 {formatPercent(pos.displayWeight)}

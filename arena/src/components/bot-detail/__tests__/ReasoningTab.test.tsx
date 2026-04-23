@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { ReasoningTab } from '../ReasoningTab';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import type { Trade } from '~/lib/types/trade';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 mockBlueprintUi();
 mockFramerMotion();
@@ -32,7 +33,7 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
 }));
 
 function makeTrade(overrides: Partial<Trade> = {}): Trade {
-  return {
+  const trade = {
     id: 'trade-1',
     botId: 'bot-1',
     botName: 'Test Bot',
@@ -47,6 +48,12 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
     venue: 'dex',
     ...overrides,
   };
+
+  return {
+    ...trade,
+    assetIn: overrides.assetIn ?? resolveAssetDisplay(trade.rawTokenIn ?? trade.tokenIn),
+    assetOut: overrides.assetOut ?? resolveAssetDisplay(trade.rawTokenOut ?? trade.tokenOut),
+  } as Trade;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────

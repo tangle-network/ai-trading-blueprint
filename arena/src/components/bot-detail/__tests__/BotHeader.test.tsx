@@ -3,15 +3,17 @@ import { render, screen } from '@testing-library/react';
 import { BotHeader } from '../BotHeader';
 import type { Bot } from '~/lib/types/bot';
 
+let mockDetail: Record<string, unknown> = {
+  validator_endpoints: ['https://validator.example'],
+};
+
 vi.mock('react-router', () => ({
   Link: ({ children, to, ...props }: any) => <a href={to} {...props}>{children}</a>,
 }));
 
 vi.mock('~/lib/hooks/useBotDetail', () => ({
   useBotDetail: () => ({
-    data: {
-      validator_endpoints: ['https://validator.example'],
-    },
+    data: mockDetail,
   }),
 }));
 
@@ -57,7 +59,16 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
 }
 
 describe('BotHeader', () => {
+  it('shows a human strategy label instead of the fabricated strategy-agent fallback', () => {
+    mockDetail = { validator_endpoints: ['https://validator.example'] };
+
+    render(<BotHeader bot={makeBot()} />);
+
+    expect(screen.getByRole('heading', { name: 'DEX Spot Trading' })).toBeInTheDocument();
+  });
+
   it('renders live runtime values instead of stale bot summary values', () => {
+    mockDetail = { validator_endpoints: ['https://validator.example'] };
     render(<BotHeader bot={makeBot()} />);
 
     expect(screen.getByText('+1.7%')).toBeInTheDocument();
@@ -69,9 +80,32 @@ describe('BotHeader', () => {
   });
 
   it('shows a dash for unsupported metrics instead of fake zeroes', () => {
+    mockDetail = { validator_endpoints: ['https://validator.example'] };
     render(<BotHeader bot={makeBot()} />);
 
     expect(screen.getByText('Win Rate')).toBeInTheDocument();
     expect(screen.getByText('—')).toBeInTheDocument();
+  });
+
+  it('exposes metric explanations through info buttons', () => {
+    mockDetail = { validator_endpoints: ['https://validator.example'] };
+    render(<BotHeader bot={makeBot()} />);
+
+    expect(screen.getByRole('button', { name: /About PnL: Profit and loss/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /About Sharpe: Risk-adjusted return/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /About Max DD: Maximum drawdown/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /About Win Rate: Estimated win rate/i })).toBeInTheDocument();
+  });
+
+  it('prefers the authoritative detail name when available', () => {
+    mockDetail = {
+      validator_endpoints: ['https://validator.example'],
+      name: 'Base Sepolia Rollout Plan',
+      strategy_type: 'dex',
+    };
+
+    render(<BotHeader bot={makeBot()} />);
+
+    expect(screen.getByRole('heading', { name: 'Base Sepolia Rollout Plan' })).toBeInTheDocument();
   });
 });

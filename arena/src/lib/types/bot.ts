@@ -18,6 +18,7 @@ export interface Bot {
   strategyType: StrategyType;
   status: BotStatus;
   createdAt: number;
+  chainId?: number;
 
   // Performance
   pnlPercent: number;

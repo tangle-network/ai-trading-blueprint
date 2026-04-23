@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { TradeHistoryTab } from '../TradeHistoryTab';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import type { Trade } from '~/lib/types/trade';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 mockBlueprintUi();
 mockFramerMotion();
@@ -35,7 +36,7 @@ function setTrades(trades: Trade[]) {
 }
 
 function makeTrade(overrides: Partial<Trade> = {}): Trade {
-  return {
+  const trade = {
     id: 'trade-1',
     botId: 'bot-1',
     botName: 'Test Bot',
@@ -50,6 +51,12 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
     venue: 'dex',
     ...overrides,
   };
+
+  return {
+    ...trade,
+    assetIn: overrides.assetIn ?? resolveAssetDisplay(trade.rawTokenIn ?? trade.tokenIn),
+    assetOut: overrides.assetOut ?? resolveAssetDisplay(trade.rawTokenOut ?? trade.tokenOut),
+  } as Trade;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -78,7 +85,8 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('BUY')).toBeInTheDocument();
     expect(screen.getByText('USDC/WETH')).toBeInTheDocument();
     expect(screen.getByText('executed')).toBeInTheDocument();
-    expect(screen.getByText('1,000 USDC')).toBeInTheDocument();
+    expect(screen.getByText('1,000')).toBeInTheDocument();
+    expect(screen.getAllByText('USDC').length).toBeGreaterThan(0);
     expect(screen.getByText('$2,000')).toBeInTheDocument();
   });
 
@@ -209,7 +217,8 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('1.25 WETH')).toBeInTheDocument();
+    expect(screen.getByText('1.25')).toBeInTheDocument();
+    expect(screen.getAllByText('WETH').length).toBeGreaterThan(0);
     expect(screen.getByText('$2,560')).toBeInTheDocument();
     expect(screen.queryByText('3,200 USDC')).not.toBeInTheDocument();
   });

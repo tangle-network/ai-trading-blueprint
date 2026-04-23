@@ -3,6 +3,7 @@ import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
 import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -12,6 +13,7 @@ interface ReasoningTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
@@ -59,9 +61,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
                 {trade.paperTrade && (
                   <Badge variant="secondary" className="text-xs">PAPER</Badge>
                 )}
-                <span className="text-sm font-display font-medium">
-                  {trade.tokenIn}/{trade.tokenOut}
-                </span>
+                <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                 <span className="text-xs font-data text-arena-elements-textTertiary">
                   {timeLabel}
                 </span>
@@ -177,9 +177,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
                 {trade.paperTrade && (
                   <Badge variant="secondary">PAPER</Badge>
                 )}
-                <span className="text-sm font-display font-medium">
-                  {trade.tokenIn}/{trade.tokenOut}
-                </span>
+                <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                 <span className="text-xs font-data text-arena-elements-textTertiary">
                   {new Date(trade.timestamp).toLocaleString('en-US', {
                     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -251,17 +249,20 @@ export function ReasoningTab({
   botId,
   botName = '',
   isLive = true,
+  chainId,
   operatorApiUrl,
   operatorKind,
   verificationState,
 }: ReasoningTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     refetchInterval: isLive ? 15_000 : false,
   });
   const { data: recentTrades } = useBotRecentValidations(botId, botName, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     enabled: isLive,
@@ -348,10 +349,12 @@ export function usePendingValidationCount(
   botId: string,
   botName: string = '',
   enabled: boolean = true,
+  chainId?: number,
   operatorApiUrl?: string | null,
   operatorKind?: BotOperatorKind,
 ): number {
   const { data } = useBotRecentValidations(botId, botName, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     enabled,

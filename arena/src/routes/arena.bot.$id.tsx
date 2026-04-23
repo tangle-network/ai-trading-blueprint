@@ -34,6 +34,7 @@ import {
   buildInstanceFallbackBot,
   findMatchingInstanceRouteProvision,
 } from '~/lib/utils/instanceBotRoute';
+import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 export const meta: MetaFunction = () => [
   { title: 'Bot — AI Trading Arena' },
@@ -70,6 +71,11 @@ export default function BotDetailPage() {
     ?? bots.find((b) => id && b.vaultAddress.toLowerCase() === id.toLowerCase());
   const scopedOperatorApiUrl = storeBot?.operatorApiUrl ?? fallbackOperatorApiUrl;
   const routeOperatorApiUrl = scopedOperatorApiUrl ?? OPERATOR_API_URL;
+  const storeBotDetail = useBotDetail(
+    storeBot?.id,
+    storeBot?.operatorApiUrl ?? routeOperatorApiUrl,
+    storeBot?.operatorKind,
+  );
 
   useRouteOperatorAutoAuth({
     enabled: Boolean(routeOperatorApiUrl && isConnected && id),
@@ -102,7 +108,30 @@ export default function BotDetailPage() {
     storeBot,
   ]);
 
-  const bot = storeBot ?? fallbackBot;
+  const bot = useMemo<Bot | undefined>(() => {
+    if (!storeBot) return fallbackBot;
+    const detail = storeBotDetail.data;
+    if (!detail) return storeBot;
+
+    return {
+      ...storeBot,
+      name: resolveBotDisplayName({
+        primaryName: detail.name || storeBot.name,
+        strategyType: detail.strategy_type || storeBot.strategyType,
+      }),
+      strategyConfig: detail.strategy_config,
+      riskParams: detail.risk_params,
+      maxLifetimeDays: detail.max_lifetime_days,
+      windDownStartedAt: detail.wind_down_started_at ?? undefined,
+      workflowId: detail.workflow_id ?? storeBot.workflowId,
+    };
+  }, [fallbackBot, storeBot, storeBotDetail.data]);
+  const displayBotName = bot
+    ? resolveBotDisplayName({
+        fallbackName: bot.name,
+        strategyType: bot.strategyType,
+      })
+    : '';
   const { data: operatorMeta } = useOperatorMeta(bot?.operatorApiUrl ?? routeOperatorApiUrl);
   const detailApiUrl = bot?.operatorApiUrl ?? routeOperatorApiUrl;
 
@@ -120,8 +149,9 @@ export default function BotDetailPage() {
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? '',
-    bot?.name,
+    displayBotName,
     botIsLive,
+    bot?.chainId,
     bot?.operatorApiUrl,
     bot?.operatorKind,
   );
@@ -198,6 +228,7 @@ export default function BotDetailPage() {
             <PositionsTab
               botId={bot.id}
               status={bot.status}
+              chainId={bot.chainId}
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
@@ -207,8 +238,9 @@ export default function BotDetailPage() {
           <TabsContent value="trades" className="mt-6">
             <TradeHistoryTab
               botId={bot.id}
-              botName={bot.name}
+              botName={displayBotName}
               isLive={botIsLive}
+              chainId={bot.chainId}
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
@@ -218,8 +250,9 @@ export default function BotDetailPage() {
           <TabsContent value="reasoning" className="mt-6">
             <ReasoningTab
               botId={bot.id}
-              botName={bot.name}
+              botName={displayBotName}
               isLive={botIsLive}
+              chainId={bot.chainId}
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
@@ -231,7 +264,7 @@ export default function BotDetailPage() {
               <ErrorBoundary>
                 <ChatTab
                   botId={bot.id}
-                  botName={bot.name}
+                  botName={displayBotName}
                   operatorAddress={bot.operatorAddress}
                   operatorApiUrl={bot.operatorApiUrl}
                   operatorKind={bot.operatorKind}
@@ -258,7 +291,7 @@ export default function BotDetailPage() {
               <ErrorBoundary>
                 <TerminalTab
                   botId={bot.id}
-                  botName={bot.name}
+                  botName={displayBotName}
                   operatorApiUrl={bot.operatorApiUrl}
                   operatorKind={bot.operatorKind}
                   verificationState={bot.verificationState}

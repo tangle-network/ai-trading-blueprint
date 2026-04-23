@@ -1,11 +1,13 @@
 import { Link } from 'react-router';
 import { m } from 'framer-motion';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 interface BotHeaderProps {
   bot: Bot;
@@ -13,9 +15,14 @@ interface BotHeaderProps {
 
 export function BotHeader({ bot }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const displayName = resolveBotDisplayName({
+    primaryName: detail?.name,
+    fallbackName: bot.name,
+    strategyType: detail?.strategy_type ?? bot.strategyType,
+  });
   const summary = useBotLiveSummary({
     botId: bot.id,
-    botName: bot.name,
+    botName: displayName,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
   });
@@ -56,13 +63,14 @@ export function BotHeader({ bot }: BotHeaderProps) {
         : summary.pnlPercent >= 0
           ? 'glow-emerald'
           : 'glow-crimson',
+      title: 'Profit and loss as a percentage change in portfolio value over the sampled metrics history.',
     },
     {
       label: 'Sharpe',
       value: formatDecimal(summary.sharpeRatio),
       color: '',
       glow: '',
-      title: 'Risk-adjusted return based on the variability of portfolio returns over the sampled history.',
+      title: 'Risk-adjusted return based on snapshot-to-snapshot portfolio returns and their variability over the sampled history.',
     },
     {
       label: 'Max DD',
@@ -76,7 +84,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
       value: formatPercent(summary.winRate),
       color: '',
       glow: '',
-      title: 'Share of trade-count increases that coincided with a higher portfolio value at the next metrics snapshot.',
+      title: 'Estimated win rate: share of new trades between metrics snapshots where portfolio value increased by the next snapshot.',
     },
     { label: 'Portfolio Value', value: formatPortfolioValue(summary.portfolioValue), color: '', glow: '' },
     {
@@ -96,7 +104,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
   return (
     <div className="mb-8">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-2">
-        <h1 className="font-display font-bold text-3xl tracking-tight">{bot.name}</h1>
+        <h1 className="font-display font-bold text-3xl tracking-tight">{displayName}</h1>
         <div className="flex items-center gap-2">
           <Badge variant={botStatusBadgeVariant(bot.status)}>
             <div className={`w-1.5 h-1.5 rounded-full ${
@@ -138,27 +146,50 @@ export function BotHeader({ bot }: BotHeaderProps) {
         )}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {metrics.map((stat, i) => (
-          <m.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05, duration: 0.4 }}
-            className={`glass-card rounded-xl p-4 ${stat.glow}`}
-          >
-            <div
-              className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-1.5"
-              title={stat.title}
+      <Tooltip.Provider delayDuration={150}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {metrics.map((stat, i) => (
+            <m.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05, duration: 0.4 }}
+              className={`glass-card rounded-xl p-4 ${stat.glow}`}
             >
-              {stat.label}
-            </div>
-            <div className={`text-xl font-display font-bold ${stat.color}`}>
-              {stat.value}
-            </div>
-          </m.div>
-        ))}
-      </div>
+              <div className="flex items-center gap-1.5 text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-1.5">
+                <span>{stat.label}</span>
+                {stat.title && (
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`About ${stat.label}: ${stat.title}`}
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/70"
+                      >
+                        <span className="i-ph:info text-[13px]" aria-hidden="true" />
+                      </button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                        className="z-50 max-w-[260px] rounded-lg border border-[var(--arena-elements-borderColor)] bg-[var(--arena-elements-bg-depth-2)] px-3 py-2 text-xs normal-case leading-relaxed tracking-normal text-arena-elements-textSecondary shadow-xl"
+                      >
+                        {stat.title}
+                        <Tooltip.Arrow className="fill-[var(--arena-elements-bg-depth-2)]" />
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                )}
+              </div>
+              <div className={`text-xl font-display font-bold ${stat.color}`}>
+                {stat.value}
+              </div>
+            </m.div>
+          ))}
+        </div>
+      </Tooltip.Provider>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
+
 export type TradeAction = 'buy' | 'sell';
 export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 
@@ -35,6 +37,8 @@ export interface Trade {
   botId: string;
   botName: string;
   action: TradeAction;
+  assetIn: ResolvedAssetDisplay;
+  assetOut: ResolvedAssetDisplay;
   tokenIn: string;
   tokenOut: string;
   rawTokenIn?: string;

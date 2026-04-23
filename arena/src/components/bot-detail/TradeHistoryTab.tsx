@@ -3,6 +3,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
@@ -15,6 +16,7 @@ interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
@@ -95,12 +97,14 @@ export function TradeHistoryTab({
   botId,
   botName = '',
   isLive = false,
+  chainId,
   operatorApiUrl,
   operatorKind,
   verificationState,
 }: TradeHistoryTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     refetchInterval: isLive ? 15_000 : false,
@@ -188,9 +192,7 @@ export function TradeHistoryTab({
                         {trade.action.toUpperCase()}
                       </Badge>
                       <VenueBadge venue={trade.venue} />
-                      <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
-                        {trade.tokenIn}/{trade.tokenOut}
-                      </span>
+                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                       <span className="text-xs font-data text-arena-elements-textTertiary">
                         {new Date(trade.timestamp).toLocaleString('en-US', {
                           month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -273,10 +275,13 @@ export function TradeHistoryTab({
                     <VenueBadge venue={trade.venue} />
                   </TableCell>
                   <TableCell className="font-display font-medium text-sm">
-                    {trade.tokenIn}/{trade.tokenOut}
+                    <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
-                    {formatTradeAmount(trade.amountIn)} {trade.tokenIn}
+                    <span className="inline-flex items-center justify-end gap-2">
+                      <span>{formatTradeAmount(trade.amountIn)}</span>
+                      <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                    </span>
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
                     {renderTradePrice(trade)}
