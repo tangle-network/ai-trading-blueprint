@@ -72,6 +72,10 @@ function extractRunsErrorMessage(error: unknown): string | null {
   const raw = error instanceof Error ? error.message : String(error);
   if (!raw) return null;
 
+  if (/HTTP 404/i.test(raw)) {
+    return "Stored transcript could not be reloaded. Showing the saved run summary instead.";
+  }
+
   try {
     const parsed = JSON.parse(raw) as {
       error?: {
@@ -322,13 +326,34 @@ function RunsBanner({
   }
 
   if (error && !isStreaming) {
+    const transcriptReloadOnly =
+      run.status === "completed" || run.status === "interrupted";
+
     return (
-      <div className="border-b border-crimson-500/20 bg-crimson-500/5 px-3 py-2">
+      <div
+        className={
+          transcriptReloadOnly
+            ? "border-b border-amber-500/15 bg-amber-500/5 px-3 py-2"
+            : "border-b border-crimson-500/20 bg-crimson-500/5 px-3 py-2"
+        }
+      >
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-crimson-500/10 px-2 py-0.5 text-[11px] font-medium text-crimson-600 dark:text-crimson-300">
-            Failed
+          <span
+            className={
+              transcriptReloadOnly
+                ? "rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+                : "rounded-full bg-crimson-500/10 px-2 py-0.5 text-[11px] font-medium text-crimson-600 dark:text-crimson-300"
+            }
+          >
+            {transcriptReloadOnly ? "History" : "Failed"}
           </span>
-          <span className="truncate text-xs text-crimson-600/90 dark:text-crimson-300/90">
+          <span
+            className={
+              transcriptReloadOnly
+                ? "truncate text-xs text-amber-800 dark:text-amber-200"
+                : "truncate text-xs text-crimson-600/90 dark:text-crimson-300/90"
+            }
+          >
             {error}
           </span>
         </div>
@@ -440,13 +465,7 @@ function RunsSidebar({
   );
 }
 
-function RunMetric({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function RunMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-3">
       <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
@@ -506,17 +525,28 @@ function RunDetailPanel({ run }: { run: BotRun }) {
         )}
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <RunMetric label="Workflow" value={getWorkflowKindLabel(run.workflowKind)} />
-          <RunMetric label="Started" value={formatRunTimestamp(run.startedAt)} />
+          <RunMetric
+            label="Workflow"
+            value={getWorkflowKindLabel(run.workflowKind)}
+          />
+          <RunMetric
+            label="Started"
+            value={formatRunTimestamp(run.startedAt)}
+          />
           <RunMetric
             label="Completed"
             value={
-              run.completedAt ? formatRunTimestamp(run.completedAt) : "Still running"
+              run.completedAt
+                ? formatRunTimestamp(run.completedAt)
+                : "Still running"
             }
           />
           <RunMetric label="Duration" value={formatDuration(run.durationMs)} />
           <RunMetric label="Input Tokens" value={run.inputTokens.toString()} />
-          <RunMetric label="Output Tokens" value={run.outputTokens.toString()} />
+          <RunMetric
+            label="Output Tokens"
+            value={run.outputTokens.toString()}
+          />
           <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
           <RunMetric label="Run ID" value={run.runId} />
           <RunMetric
@@ -593,7 +623,9 @@ export function RunsTab({
     staleTime: 5_000,
     refetchInterval: (query) => {
       const payload = query.state.data as BotRunsResponse | undefined;
-      return payload?.runs.some((run) => run.status === "running") ? 5_000 : false;
+      return payload?.runs.some((run) => run.status === "running")
+        ? 5_000
+        : false;
     },
   });
 
@@ -612,7 +644,8 @@ export function RunsTab({
     }
   }, [activeRunId, runs]);
 
-  const activeRun = runs.find((run) => run.runId === activeRunId) ?? runs[0] ?? null;
+  const activeRun =
+    runs.find((run) => run.runId === activeRunId) ?? runs[0] ?? null;
   const transcriptSessionId = resolveTranscriptSessionId(botId, activeRun);
 
   const stream = useBotSessionStream({
@@ -773,7 +806,9 @@ export function RunsTab({
           </div>
 
           <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-            {activeRun?.transcriptAvailable && transcriptSessionId && !streamErrorMessage ? (
+            {activeRun?.transcriptAvailable &&
+            transcriptSessionId &&
+            !streamErrorMessage ? (
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}

@@ -1345,8 +1345,8 @@ async fn list_chat_messages(
     RawQuery(query): RawQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    let _ = bot;
-    trading_blueprint_lib::operator_chat::proxy_chat_request(
+    let transcript_query = parse_transcript_message_query(query.as_deref());
+    match trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
         &format!("/agents/sessions/{session_id}/messages"),
@@ -1354,6 +1354,26 @@ async fn list_chat_messages(
         query.as_deref(),
     )
     .await
+    {
+        Ok(response) => {
+            if response.status() == StatusCode::NOT_FOUND {
+                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
+                    return run_transcript_fallback_response(&run, &transcript_query);
+                }
+            }
+
+            Ok(response)
+        }
+        Err(error) => {
+            if error.0 == StatusCode::BAD_GATEWAY {
+                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
+                    return run_transcript_fallback_response(&run, &transcript_query);
+                }
+            }
+
+            Err(error)
+        }
+    }
 }
 
 async fn send_chat_message(
@@ -1916,6 +1936,178 @@ fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse
         result: run.result,
         error: run.error,
     }
+}
+
+#[derive(Default)]
+struct TranscriptMessageQuery {
+    cursor: Option<String>,
+    limit: usize,
+}
+
+fn default_transcript_message_limit() -> usize {
+    50
+}
+
+fn parse_transcript_message_query(query: Option<&str>) -> TranscriptMessageQuery {
+    let mut parsed = TranscriptMessageQuery {
+        cursor: None,
+        limit: default_transcript_message_limit(),
+    };
+
+    for pair in query.unwrap_or_default().split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or_default();
+        let value = percent_decode_query_value(parts.next().unwrap_or_default());
+        match key {
+            "cursor" if !value.is_empty() => parsed.cursor = Some(value),
+            "limit" => {
+                if let Ok(limit) = value.parse::<usize>() {
+                    parsed.limit = limit;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    parsed
+}
+
+fn percent_decode_query_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let maybe_hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                if let Some(hex) = maybe_hex {
+                    decoded.push(hex);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_string())
+}
+
+fn replayable_run_for_session(
+    bot: &TradingBotRecord,
+    session_id: &str,
+) -> Result<Option<WorkflowRunRecord>, (StatusCode, String)> {
+    let workflow_ids = workflow_ids_for_bot(bot);
+    if workflow_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let run =
+        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .into_iter()
+            .find(|run| run.session_id.as_deref() == Some(session_id));
+
+    let Some(run) = run else {
+        return Ok(None);
+    };
+
+    if run.status == WorkflowRunStatus::Running {
+        return Ok(None);
+    }
+
+    Ok(Some(run))
+}
+
+fn parse_transcript_cursor(cursor: &str) -> Option<usize> {
+    cursor.parse::<usize>().ok()
+}
+
+fn replay_transcript_messages_response(
+    messages: serde_json::Value,
+    query: &TranscriptMessageQuery,
+) -> Response {
+    let Some(messages) = messages.as_array() else {
+        return Json(messages).into_response();
+    };
+
+    let limit = query.limit;
+    let end = query
+        .cursor
+        .as_deref()
+        .and_then(parse_transcript_cursor)
+        .unwrap_or(messages.len())
+        .min(messages.len());
+    let start = end.saturating_sub(limit);
+    let page = messages[start..end].to_vec();
+    let next_cursor = (start > 0).then(|| start.to_string());
+
+    if query.cursor.is_some() || next_cursor.is_some() {
+        Json(serde_json::json!({
+            "messages": page,
+            "next_cursor": next_cursor,
+        }))
+        .into_response()
+    } else {
+        Json(page).into_response()
+    }
+}
+
+fn run_transcript_fallback_response(
+    run: &WorkflowRunRecord,
+    query: &TranscriptMessageQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let transcript =
+        ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run_transcript(&run.run_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let messages = match transcript {
+        Some(record) => record.messages,
+        None => synthesize_run_transcript_messages(run),
+    };
+
+    Ok(replay_transcript_messages_response(messages, query))
+}
+
+fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Value {
+    let timestamp = run.completed_at.unwrap_or(run.started_at);
+    let text = if let Some(result) = run.result.as_deref() {
+        format!(
+            "Stored transcript was unavailable, so this view is replaying the saved run summary.\n\n{result}"
+        )
+    } else if let Some(error) = run.error.as_deref() {
+        format!(
+            "Stored transcript was unavailable, so this view is replaying the saved run outcome.\n\n{error}"
+        )
+    } else {
+        "Stored transcript was unavailable for this run.".to_string()
+    };
+
+    serde_json::json!([
+        {
+            "info": {
+                "id": format!("run-summary-{}", run.run_id),
+                "role": "assistant",
+                "timestamp": timestamp,
+            },
+            "parts": [
+                {
+                    "type": "text",
+                    "text": text,
+                }
+            ]
+        }
+    ])
 }
 
 async fn list_bot_runs(

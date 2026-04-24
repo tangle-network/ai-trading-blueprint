@@ -287,6 +287,63 @@ async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_chat_sidecar_with_message_status(
+    bot_id: &str,
+    message_status: StatusCode,
+) -> String {
+    let workflow_session = format!("trading-{bot_id}");
+    let tick_session = format!("trading-{bot_id}-1775823900");
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let workflow_session = workflow_session.clone();
+                let tick_session = tick_session.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": workflow_session},
+                        {"id": tick_session}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(json!({
+                    "id": id,
+                    "title": "New Chat"
+                }))
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(move || async move {
+                (
+                    message_status,
+                    Json(json!({ "error": format!("mock status {}", message_status.as_u16()) })),
+                )
+            })
+            .post(|| async { Json(json!({"ok": true})) }),
+        )
+        .route(
+            "/agents/sessions/{id}/abort",
+            post(|| async { Json(json!({"ok": true})) }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
+    });
+    format!("http://{addr}")
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/bot (singleton resolution)
 // ---------------------------------------------------------------------------
@@ -749,6 +806,32 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
             },
         )
         .expect("insert failed run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "instance-run-success".to_string(),
+            session_id: "convo-instance-1775823500".to_string(),
+            captured_at: 1_775_823_560,
+            messages: json!([
+                {
+                    "info": {
+                        "id": "msg-user",
+                        "role": "user",
+                        "timestamp": "2026-04-24T07:00:00.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "Conversation tick" }]
+                },
+                {
+                    "info": {
+                        "id": "msg-assistant",
+                        "role": "assistant",
+                        "timestamp": "2026-04-24T07:00:10.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "Conversation loop completed" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
 
     let response = app()
         .oneshot(
@@ -771,6 +854,27 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
     assert_eq!(json["runs"][1]["workflow_kind"], "conversation");
     assert_eq!(json["runs"][1]["transcript_available"], true);
 
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions/convo-instance-1775823500/messages?limit=200")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let transcript_json: serde_json::Value = serde_json::from_slice(&transcript_body).unwrap();
+    assert_eq!(transcript_json[0]["info"]["id"], "msg-user");
+    assert_eq!(transcript_json[1]["info"]["id"], "msg-assistant");
+
     let detail_response = app()
         .oneshot(
             Request::builder()
@@ -792,6 +896,183 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
     assert_eq!(detail_json["run_id"], "instance-run-failed");
     assert_eq!(detail_json["transcript_available"], false);
     assert_eq!(detail_json["error"], "Provider credits exhausted");
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_running_autonomous_sessions_preserve_live_message_errors() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    let workflow_id = 9_200_101_u64;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.workflow_id = Some(workflow_id);
+        })
+        .unwrap();
+    let sidecar_url =
+        spawn_mock_chat_sidecar_with_message_status(&bot_id, StatusCode::INTERNAL_SERVER_ERROR)
+            .await;
+    set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "instance-run-live-error".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "instance-run-live-error".to_string(),
+                workflow_id,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Running,
+                started_at: 1_775_823_950,
+                completed_at: None,
+                session_id: Some("convo-instance-live-error".to_string()),
+                trace_id: Some("trace-instance-live-error".to_string()),
+                duration_ms: 15_000,
+                input_tokens: 42,
+                output_tokens: 21,
+                result: None,
+                error: None,
+            },
+        )
+        .expect("insert running run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "instance-run-live-error".to_string(),
+            session_id: "convo-instance-live-error".to_string(),
+            captured_at: 1_775_823_955,
+            messages: json!([
+                {
+                    "info": {
+                        "id": "stale-msg",
+                        "role": "assistant",
+                        "timestamp": "2026-04-24T07:05:00.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "stale transcript" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert stale transcript snapshot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions/convo-instance-live-error/messages?limit=200")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_archived_transcript_replay_honors_limit_and_cursor() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("dex");
+    let workflow_id = 9_200_201_u64;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.workflow_id = Some(workflow_id);
+        })
+        .unwrap();
+    let sidecar_url =
+        spawn_mock_chat_sidecar_with_message_status(&bot_id, StatusCode::NOT_FOUND).await;
+    set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
+    let auth = test_auth_header(SUBMITTER);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "instance-run-paged".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "instance-run-paged".to_string(),
+                workflow_id,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_000,
+                completed_at: Some(1_775_824_060),
+                session_id: Some("convo-instance-paged".to_string()),
+                trace_id: Some("trace-instance-paged".to_string()),
+                duration_ms: 60_000,
+                input_tokens: 30,
+                output_tokens: 18,
+                result: Some("Replay finished".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert completed run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "instance-run-paged".to_string(),
+            session_id: "convo-instance-paged".to_string(),
+            captured_at: 1_775_824_060,
+            messages: json!([
+                {
+                    "info": { "id": "msg-1", "role": "user", "timestamp": "2026-04-24T07:10:00.000Z" },
+                    "parts": [{ "type": "text", "text": "first" }]
+                },
+                {
+                    "info": { "id": "msg-2", "role": "assistant", "timestamp": "2026-04-24T07:10:05.000Z" },
+                    "parts": [{ "type": "text", "text": "second" }]
+                },
+                {
+                    "info": { "id": "msg-3", "role": "assistant", "timestamp": "2026-04-24T07:10:10.000Z" },
+                    "parts": [{ "type": "text", "text": "third" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions/convo-instance-paged/messages?limit=2")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["messages"][0]["info"]["id"], "msg-2");
+    assert_eq!(json["messages"][1]["info"]["id"], "msg-3");
+    assert_eq!(json["next_cursor"], "1");
+
+    let cursor_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions/convo-instance-paged/messages?limit=1&cursor=1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cursor_response.status(), StatusCode::OK);
+    let cursor_body = cursor_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let cursor_json: serde_json::Value = serde_json::from_slice(&cursor_body).unwrap();
+    assert_eq!(cursor_json["messages"][0]["info"]["id"], "msg-1");
+    assert!(cursor_json["next_cursor"].is_null());
 
     let _ = clear_instance_bot_id();
 }
