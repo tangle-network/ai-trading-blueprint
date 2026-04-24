@@ -1,9 +1,9 @@
+use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
 use sandbox_runtime::api_types::{
     CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
 };
@@ -1140,10 +1140,9 @@ async fn list_bot_runs(
     let limit = params.limit.unwrap_or(100).clamp(1, 500);
     let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
 
-    let mut runs = ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(
-        &workflow_ids,
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut runs =
+        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -1168,7 +1167,9 @@ async fn get_bot_run(
     Path((bot_id, run_id)): Path<(String, String)>,
 ) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let workflow_ids = workflow_ids_for_bot(&bot).into_iter().collect::<HashSet<_>>();
+    let workflow_ids = workflow_ids_for_bot(&bot)
+        .into_iter()
+        .collect::<HashSet<_>>();
     let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;

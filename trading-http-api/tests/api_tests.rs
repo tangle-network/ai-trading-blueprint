@@ -41,6 +41,7 @@ fn ensure_state_dir() {
 /// Create a test state with wiremock-backed market data client.
 async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
     ensure_state_dir();
+    let bot_id = format!("test-bot-{}", uuid::Uuid::new_v4());
 
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
@@ -57,7 +58,7 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
         vault_address: "0x0000000000000000000000000000000000000001".to_string(),
         validator_endpoints: vec![],
         validation_deadline_secs: 3600,
-        bot_id: "test-bot".to_string(),
+        bot_id,
         paper_trade: true,
         operator_address: String::new(),
         submitter_address: String::new(),
@@ -1038,6 +1039,7 @@ async fn test_metrics_snapshot_and_history() {
 async fn test_metrics_current() {
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;
+    let bot_id = state.bot_id.clone();
     let app = build_router(state);
 
     let response = app
@@ -1054,7 +1056,7 @@ async fn test_metrics_current() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["bot_id"], "test-bot");
+    assert_eq!(json["bot_id"], bot_id);
     assert_eq!(json["paper_trade"], true);
     assert_eq!(json["trading_active"], true);
 }
@@ -1062,21 +1064,24 @@ async fn test_metrics_current() {
 // ── Multi-bot trading API tests ─────────────────────────────────────────────
 
 fn multi_bot_state() -> Arc<MultiBotTradingState> {
-    multi_bot_state_with_market_and_bot("http://localhost:1234", "bot-token-abc", "bot-1", 31337)
+    let bot_id = format!("bot-{}", uuid::Uuid::new_v4());
+    multi_bot_state_with_market_and_bot("http://localhost:1234", "bot-token-abc", &bot_id, 31337)
 }
 
 fn multi_bot_state_with_market(market_data_base_url: &str) -> Arc<MultiBotTradingState> {
-    multi_bot_state_with_market_and_bot(market_data_base_url, "bot-token-abc", "bot-1", 31337)
+    let bot_id = format!("bot-{}", uuid::Uuid::new_v4());
+    multi_bot_state_with_market_and_bot(market_data_base_url, "bot-token-abc", &bot_id, 31337)
 }
 
 fn multi_bot_state_with_strategy_config(
     market_data_base_url: &str,
     strategy_config: serde_json::Value,
 ) -> Arc<MultiBotTradingState> {
+    let bot_id = format!("bot-{}", uuid::Uuid::new_v4());
     multi_bot_state_with_strategy_config_and_bot(
         market_data_base_url,
         "bot-token-abc",
-        "bot-1",
+        &bot_id,
         31337,
         strategy_config,
     )
@@ -3711,6 +3716,7 @@ async fn test_candle_store_rejects_empty_batch() {
 async fn test_evolution_status_returns_bot_info() {
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;
+    let bot_id = state.bot_id.clone();
     let app = build_router(state);
 
     let response = app
@@ -3728,7 +3734,7 @@ async fn test_evolution_status_returns_bot_info() {
     assert_eq!(response.status(), 200);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(json["bot_id"], "test-bot");
+    assert_eq!(json["bot_id"], bot_id);
 }
 
 #[tokio::test]
