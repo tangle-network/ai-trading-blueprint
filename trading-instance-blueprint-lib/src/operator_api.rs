@@ -3,11 +3,13 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
+use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
 use sandbox_runtime::api_types::{
     CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
 };
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
@@ -390,6 +392,42 @@ struct TradeListQuery {
     offset: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct RunListQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotRunListResponse {
+    runs: Vec<BotRunResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotRunResponse {
+    run_id: String,
+    workflow_id: u64,
+    workflow_kind: String,
+    status: WorkflowRunStatus,
+    started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    transcript_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
+    duration_ms: u64,
+    input_tokens: u32,
+    output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 #[derive(Serialize)]
 struct PortfolioPosition {
     token: String,
@@ -473,6 +511,8 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot/metrics/history", get(get_bot_metrics_history))
         .route("/api/bot/trades", get(get_bot_trades))
         .route("/api/bot/portfolio/state", get(get_bot_portfolio))
+        .route("/api/bot/runs", get(list_bot_runs))
+        .route("/api/bot/runs/{run_id}", get(get_bot_run))
         .route("/api/bot/activation-progress", get(get_activation_progress))
         .route(
             "/api/bot/live/terminal/sessions",
@@ -1221,9 +1261,18 @@ fn resolve_live_chat_target(
 
 async fn list_chat_sessions(
     SessionAuth(caller): SessionAuth,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::list_manual_chat_sessions(&target, &bot.id).await
+    let include_autonomous = params
+        .get("includeAutonomous")
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+    let scope = if include_autonomous {
+        trading_blueprint_lib::operator_chat::ChatSessionScope::All
+    } else {
+        trading_blueprint_lib::operator_chat::ChatSessionScope::ManualOnly
+    };
+    trading_blueprint_lib::operator_chat::list_chat_sessions(&target, &bot.id, scope).await
 }
 
 async fn create_chat_gateway_session(
@@ -1246,7 +1295,7 @@ async fn get_chat_session(
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
+    let _ = bot;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1296,7 +1345,7 @@ async fn list_chat_messages(
     RawQuery(query): RawQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
+    let _ = bot;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1346,9 +1395,7 @@ async fn stream_chat_events(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
     let session_id = params.get("sessionId").cloned();
-    if let Some(session_id) = session_id.as_deref() {
-        trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, session_id)?;
-    }
+    let _ = bot;
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
@@ -1817,6 +1864,114 @@ async fn get_bot(
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     Ok(Json(BotDetailResponse::from_record(bot)))
+}
+
+fn workflow_ids_for_bot(bot: &TradingBotRecord) -> Vec<u64> {
+    bot.workflow_id
+        .map(|workflow_id| vec![workflow_id, workflow_id + 1, workflow_id + 2])
+        .unwrap_or_default()
+}
+
+fn workflow_kind_for_bot(bot: &TradingBotRecord, workflow_id: u64) -> &'static str {
+    match bot.workflow_id {
+        Some(base) if workflow_id == base => "trading",
+        Some(base) if workflow_id == base + 1 => "research",
+        Some(base) if workflow_id == base + 2 => "conversation",
+        _ => "unknown",
+    }
+}
+
+fn encode_run_cursor(run: &WorkflowRunRecord) -> String {
+    format!("{}:{}", run.started_at, run.run_id)
+}
+
+fn parse_run_cursor(cursor: &str) -> Option<(u64, String)> {
+    let (started_at, run_id) = cursor.split_once(':')?;
+    Some((started_at.parse().ok()?, run_id.to_string()))
+}
+
+fn run_precedes_cursor(run: &WorkflowRunRecord, cursor: &(u64, String)) -> bool {
+    run.started_at < cursor.0 || (run.started_at == cursor.0 && run.run_id < cursor.1)
+}
+
+fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
+    let transcript_available = run
+        .session_id
+        .as_deref()
+        .is_some_and(|session_id| !session_id.is_empty());
+
+    BotRunResponse {
+        run_id: run.run_id,
+        workflow_id: run.workflow_id,
+        workflow_kind: workflow_kind_for_bot(bot, run.workflow_id).to_string(),
+        status: run.status,
+        started_at: run.started_at,
+        completed_at: run.completed_at,
+        session_id: run.session_id,
+        transcript_available,
+        trace_id: run.trace_id,
+        duration_ms: run.duration_ms,
+        input_tokens: run.input_tokens,
+        output_tokens: run.output_tokens,
+        result: run.result,
+        error: run.error,
+    }
+}
+
+async fn list_bot_runs(
+    SessionAuth(_caller): SessionAuth,
+    Query(params): Query<RunListQuery>,
+) -> Result<Json<BotRunListResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    let workflow_ids = workflow_ids_for_bot(&bot);
+    if workflow_ids.is_empty() {
+        return Ok(Json(BotRunListResponse {
+            runs: Vec::new(),
+            next_cursor: None,
+        }));
+    }
+
+    let limit = params.limit.unwrap_or(100).clamp(1, 500);
+    let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
+
+    let mut runs = ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(
+        &workflow_ids,
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if let Some(cursor) = cursor.as_ref() {
+        runs.retain(|run| run_precedes_cursor(run, cursor));
+    }
+
+    let has_more = runs.len() > limit;
+    runs.truncate(limit);
+    let next_cursor = if has_more {
+        runs.last().map(encode_run_cursor)
+    } else {
+        None
+    };
+
+    Ok(Json(BotRunListResponse {
+        runs: runs.into_iter().map(|run| map_bot_run(&bot, run)).collect(),
+        next_cursor,
+    }))
+}
+
+async fn get_bot_run(
+    SessionAuth(_caller): SessionAuth,
+    Path(run_id): Path<String>,
+) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    let workflow_ids = workflow_ids_for_bot(&bot).into_iter().collect::<HashSet<_>>();
+    let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
+
+    if !workflow_ids.contains(&run.workflow_id) {
+        return Err((StatusCode::NOT_FOUND, "Run not found".to_string()));
+    }
+
+    Ok(Json(map_bot_run(&bot, run)))
 }
 
 // ── Secrets handlers ────────────────────────────────────────────────────

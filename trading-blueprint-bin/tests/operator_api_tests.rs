@@ -964,7 +964,10 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json, json!([{ "id": "manual-1", "title": "New Chat" }]));
+    assert_eq!(
+        json,
+        json!([{ "id": "manual-1", "title": "New Chat", "session_type": "manual" }])
+    );
 
     let auto_response = app()
         .oneshot(
@@ -976,7 +979,7 @@ async fn test_chat_routes_only_expose_manual_sessions() {
         )
         .await
         .unwrap();
-    assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(auto_response.status(), StatusCode::OK);
 
     for blocked_session in ["fast-test-bot", "research-test-bot", "convo-test-bot"] {
         let response = app()
@@ -991,8 +994,138 @@ async fn test_chat_routes_only_expose_manual_sessions() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::OK);
     }
+
+    let all_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots/test-bot/session/sessions?includeAutonomous=1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all_response.status(), StatusCode::OK);
+    let all_body = all_response.into_body().collect().await.unwrap().to_bytes();
+    let all_json: serde_json::Value = serde_json::from_slice(&all_body).unwrap();
+    assert_eq!(
+        all_json,
+        json!([
+            { "id": "manual-1", "title": "New Chat", "session_type": "manual" },
+            { "id": "trading-test-bot", "session_type": "autonomous" },
+            { "id": "trading-test-bot-1775823900", "session_type": "autonomous" },
+            { "id": "fast-test-bot", "session_type": "autonomous" },
+            { "id": "research-test-bot", "session_type": "autonomous" },
+            { "id": "convo-test-bot", "session_type": "autonomous" }
+        ])
+    );
+
+    let auto_messages_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots/test-bot/session/sessions/fast-test-bot/messages")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auto_messages_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_runs_routes_expose_autonomous_history_without_transcript() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-bot", "dex", true, Some(9_100_001));
+    let auth = test_auth_header(SUBMITTER);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-success".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-success".to_string(),
+                workflow_id: 9_100_002,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                started_at: 1_775_823_700,
+                completed_at: Some(1_775_823_760),
+                session_id: Some("research-runs-bot-1775823700".to_string()),
+                trace_id: Some("trace-success".to_string()),
+                duration_ms: 60_000,
+                input_tokens: 120,
+                output_tokens: 48,
+                result: Some("No trade placed".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert successful run");
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-failed".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-failed".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Failed,
+                started_at: 1_775_823_900,
+                completed_at: Some(1_775_823_901),
+                session_id: None,
+                trace_id: None,
+                duration_ms: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: None,
+                error: Some("AGENT_EXECUTION_FAILED".to_string()),
+            },
+        )
+        .expect("insert failed run");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["runs"][0]["run_id"], "run-failed");
+    assert_eq!(json["runs"][0]["workflow_kind"], "trading");
+    assert_eq!(json["runs"][0]["status"], "failed");
+    assert_eq!(json["runs"][0]["transcript_available"], false);
+    assert_eq!(json["runs"][0]["error"], "AGENT_EXECUTION_FAILED");
+    assert_eq!(json["runs"][1]["run_id"], "run-success");
+    assert_eq!(json["runs"][1]["workflow_kind"], "research");
+    assert_eq!(json["runs"][1]["transcript_available"], true);
+    assert!(json["next_cursor"].is_null());
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs/run-failed", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(detail_json["run_id"], "run-failed");
+    assert_eq!(detail_json["transcript_available"], false);
+    assert_eq!(detail_json["error"], "AGENT_EXECUTION_FAILED");
 }
 
 // ---------------------------------------------------------------------------

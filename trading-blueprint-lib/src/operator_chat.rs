@@ -18,6 +18,12 @@ pub struct SidecarChatTarget {
     pub sidecar_token: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatSessionScope {
+    ManualOnly,
+    All,
+}
+
 pub fn resolve_sidecar_chat_target(sandbox_id: &str) -> Result<SidecarChatTarget, String> {
     let record = sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id)
         .map_err(|e| format!("Sandbox not found: {e}"))?;
@@ -47,26 +53,52 @@ pub fn ensure_manual_chat_session(
     Ok(())
 }
 
-fn filter_manual_session_entries(bot_id: &str, values: Vec<Value>) -> Vec<Value> {
+fn chat_session_type(bot_id: &str, session_id: &str) -> &'static str {
+    if is_autonomous_chat_session(bot_id, session_id) {
+        "autonomous"
+    } else {
+        "manual"
+    }
+}
+
+fn transform_session_entries(
+    bot_id: &str,
+    values: Vec<Value>,
+    scope: ChatSessionScope,
+) -> Vec<Value> {
     values
         .into_iter()
-        .filter(|entry| {
-            let Some(session_id) = entry.get("id").and_then(Value::as_str) else {
-                return true;
-            };
-            !is_autonomous_chat_session(bot_id, session_id)
+        .filter_map(|entry| match entry {
+            Value::Object(mut map) => {
+                let Some(session_id) = map.get("id").and_then(Value::as_str) else {
+                    return Some(Value::Object(map));
+                };
+
+                if scope == ChatSessionScope::ManualOnly
+                    && is_autonomous_chat_session(bot_id, session_id)
+                {
+                    return None;
+                }
+
+                map.insert(
+                    "session_type".to_string(),
+                    Value::String(chat_session_type(bot_id, session_id).to_string()),
+                );
+                Some(Value::Object(map))
+            }
+            other => Some(other),
         })
         .collect()
 }
 
-fn filter_manual_sessions_payload(bot_id: &str, payload: Value) -> Value {
+fn transform_sessions_payload(bot_id: &str, payload: Value, scope: ChatSessionScope) -> Value {
     match payload {
-        Value::Array(values) => Value::Array(filter_manual_session_entries(bot_id, values)),
+        Value::Array(values) => Value::Array(transform_session_entries(bot_id, values, scope)),
         Value::Object(mut map) => {
             if let Some(Value::Array(values)) = map.remove("sessions") {
                 map.insert(
                     "sessions".to_string(),
-                    Value::Array(filter_manual_session_entries(bot_id, values)),
+                    Value::Array(transform_session_entries(bot_id, values, scope)),
                 );
             }
             Value::Object(map)
@@ -235,9 +267,10 @@ pub async fn proxy_chat_request(
     into_axum_response(send_chat_request(target, method, path, body, query).await?).await
 }
 
-pub async fn list_manual_chat_sessions(
+pub async fn list_chat_sessions(
     target: &SidecarChatTarget,
     bot_id: &str,
+    scope: ChatSessionScope,
 ) -> Result<Response, (StatusCode, String)> {
     let resp =
         send_chat_request(target, reqwest::Method::GET, "/agents/sessions", None, None).await?;
@@ -260,7 +293,7 @@ pub async fn list_manual_chat_sessions(
             format!("Failed to decode sidecar session list: {e}"),
         )
     })?;
-    let filtered = filter_manual_sessions_payload(bot_id, payload);
+    let filtered = transform_sessions_payload(bot_id, payload, scope);
     let body = serde_json::to_vec(&filtered).map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
@@ -435,6 +468,44 @@ mod tests {
         for session_id in ["manual-1", "session-abc", "conversation-with-owner"] {
             assert!(!is_autonomous_chat_session(bot_id, session_id));
         }
+    }
+
+    #[test]
+    fn transforms_manual_sessions_with_session_type() {
+        let payload = serde_json::json!([
+            {"id": "manual-1", "title": "New Chat"},
+            {"id": "fast-bot-123", "title": "Fast"}
+        ]);
+
+        let transformed =
+            transform_sessions_payload("bot-123", payload, ChatSessionScope::ManualOnly);
+
+        assert_eq!(
+            transformed,
+            serde_json::json!([
+                {"id": "manual-1", "title": "New Chat", "session_type": "manual"}
+            ])
+        );
+    }
+
+    #[test]
+    fn includes_autonomous_sessions_when_scope_is_all() {
+        let payload = serde_json::json!([
+            {"id": "manual-1", "title": "New Chat"},
+            {"id": "fast-bot-123"},
+            {"id": "research-bot-123"}
+        ]);
+
+        let transformed = transform_sessions_payload("bot-123", payload, ChatSessionScope::All);
+
+        assert_eq!(
+            transformed,
+            serde_json::json!([
+                {"id": "manual-1", "title": "New Chat", "session_type": "manual"},
+                {"id": "fast-bot-123", "session_type": "autonomous"},
+                {"id": "research-bot-123", "session_type": "autonomous"}
+            ])
+        );
     }
 
     fn init_test_env() -> tempfile::TempDir {

@@ -637,7 +637,10 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json, json!([{ "id": "manual-1", "title": "New Chat" }]));
+    assert_eq!(
+        json,
+        json!([{ "id": "manual-1", "title": "New Chat", "session_type": "manual" }])
+    );
 
     let auto_response = app()
         .oneshot(
@@ -649,7 +652,146 @@ async fn test_chat_routes_only_expose_manual_sessions() {
         )
         .await
         .unwrap();
-    assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(auto_response.status(), StatusCode::OK);
+
+    let all_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/session/sessions?includeAutonomous=1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all_response.status(), StatusCode::OK);
+    let all_body = all_response.into_body().collect().await.unwrap().to_bytes();
+    let all_json: serde_json::Value = serde_json::from_slice(&all_body).unwrap();
+    assert_eq!(
+        all_json,
+        json!([
+            { "id": "manual-1", "title": "New Chat", "session_type": "manual" },
+            { "id": format!("trading-{bot_id}"), "session_type": "autonomous" },
+            { "id": format!("trading-{bot_id}-1775823900"), "session_type": "autonomous" }
+        ])
+    );
+
+    let auto_messages_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bot/session/sessions/trading-{bot_id}/messages"
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auto_messages_response.status(), StatusCode::OK);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_runs_routes_expose_autonomous_history_without_transcript() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
+    let workflow_id = 9_200_001_u64;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.workflow_id = Some(workflow_id);
+        })
+        .unwrap();
+    let auth = test_auth_header(SUBMITTER);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "instance-run-success".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "instance-run-success".to_string(),
+                workflow_id: workflow_id + 2,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                started_at: 1_775_823_500,
+                completed_at: Some(1_775_823_560),
+                session_id: Some("convo-instance-1775823500".to_string()),
+                trace_id: Some("trace-instance-success".to_string()),
+                duration_ms: 60_000,
+                input_tokens: 80,
+                output_tokens: 40,
+                result: Some("Conversation loop completed".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert successful run");
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "instance-run-failed".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "instance-run-failed".to_string(),
+                workflow_id,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Failed,
+                started_at: 1_775_823_800,
+                completed_at: Some(1_775_823_801),
+                session_id: None,
+                trace_id: None,
+                duration_ms: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: None,
+                error: Some("Provider credits exhausted".to_string()),
+            },
+        )
+        .expect("insert failed run");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/runs")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["runs"][0]["run_id"], "instance-run-failed");
+    assert_eq!(json["runs"][0]["workflow_kind"], "trading");
+    assert_eq!(json["runs"][0]["transcript_available"], false);
+    assert_eq!(json["runs"][0]["error"], "Provider credits exhausted");
+    assert_eq!(json["runs"][1]["run_id"], "instance-run-success");
+    assert_eq!(json["runs"][1]["workflow_kind"], "conversation");
+    assert_eq!(json["runs"][1]["transcript_available"], true);
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/runs/instance-run-failed")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(detail_json["run_id"], "instance-run-failed");
+    assert_eq!(detail_json["transcript_available"], false);
+    assert_eq!(detail_json["error"], "Provider credits exhausted");
 
     let _ = clear_instance_bot_id();
 }

@@ -104,6 +104,7 @@ dependencies = [
  "chrono",
  "cron",
  "once_cell",
+ "reqwest 0.12.28",
  "sandbox-runtime",
  "serde",
  "serde_json",
