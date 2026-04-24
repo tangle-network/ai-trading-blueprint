@@ -1,6 +1,6 @@
 import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
 
-export type TradeAction = 'buy' | 'sell';
+export type TradeAction = 'buy' | 'sell' | 'swap';
 export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 
 export interface ValidatorResponseDetail {

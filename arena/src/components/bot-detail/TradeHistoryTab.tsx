@@ -54,11 +54,11 @@ function TradeTableHead() {
         <TableHead>Time</TableHead>
         <TableHead>Action</TableHead>
         <TableHead className="hidden sm:table-cell">Venue</TableHead>
-        <TableHead>Pair</TableHead>
-        <TableHead className="text-right">Input</TableHead>
+        <TableHead>Trade</TableHead>
         <TableHead className="text-right">Price</TableHead>
         <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
         <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
+        <TableHead>Tx Hash</TableHead>
         <TableHead>Status</TableHead>
       </TableRow>
     </TableHeader>
@@ -91,6 +91,53 @@ function getStatusVariant(status: TradeStatus): 'success' | 'destructive' | 'sec
   if (status === 'rejected' || status === 'failed') return 'destructive';
   if (status === 'paper') return 'secondary';
   return 'outline';
+}
+
+function getActionLabel(action: Trade['action']): string {
+  return action.toUpperCase();
+}
+
+function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 'accent' {
+  if (action === 'buy') return 'success';
+  if (action === 'sell') return 'destructive';
+  return 'accent';
+}
+
+function renderTxHash(trade: Trade) {
+  if (!trade.txHash) {
+    return <span className="text-xs font-data text-arena-elements-textTertiary">—</span>;
+  }
+
+  if (trade.txHash.startsWith('0xpaper_')) {
+    return (
+      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+        {truncateHash(trade.txHash)}
+      </span>
+    );
+  }
+
+  const url = explorerUrl(trade.txHash, trade.chainId);
+  if (!url) {
+    return (
+      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+        {truncateHash(trade.txHash)}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
+      title={trade.txHash}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {truncateHash(trade.txHash)}
+      <span className="i-ph:arrow-square-out text-[10px]" />
+    </a>
+  );
 }
 
 export function TradeHistoryTab({
@@ -188,8 +235,8 @@ export function TradeHistoryTab({
                       >
                         <div className="i-ph:caret-up text-sm" />
                       </button>
-                      <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'} className="text-xs">
-                        {trade.action.toUpperCase()}
+                      <Badge variant={getActionVariant(trade.action)} className="text-xs">
+                        {getActionLabel(trade.action)}
                       </Badge>
                       <VenueBadge venue={trade.venue} />
                       <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
@@ -204,6 +251,29 @@ export function TradeHistoryTab({
                         </Badge>
                       )}
                     </div>
+
+                    <div className="mb-3 px-1 text-sm text-arena-elements-textSecondary">
+                      <span className="font-data">
+                        {formatTradeAmount(trade.amountIn)}
+                      </span>
+                      {' '}
+                      <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                      <span className="mx-2 text-arena-elements-textTertiary">→</span>
+                      <span className="font-data">
+                        {formatTradeAmount(trade.amountOut)}
+                      </span>
+                      {' '}
+                      <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                    </div>
+
+                    {trade.txHash && (
+                      <div className="flex items-center gap-2 mb-3 px-1">
+                        <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                          Tx Hash
+                        </span>
+                        {renderTxHash(trade)}
+                      </div>
+                    )}
 
                     {/* Intent hash */}
                     {trade.validation?.intentHash && (
@@ -267,21 +337,26 @@ export function TradeHistoryTab({
               {!isExpanded && (
                 <>
                   <TableCell>
-                    <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
-                      {trade.action.toUpperCase()}
+                    <Badge variant={getActionVariant(trade.action)}>
+                      {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <VenueBadge venue={trade.venue} />
                   </TableCell>
                   <TableCell className="font-display font-medium text-sm">
-                    <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
-                  </TableCell>
-                  <TableCell className="text-right font-data text-sm">
-                    <span className="inline-flex items-center justify-end gap-2">
-                      <span>{formatTradeAmount(trade.amountIn)}</span>
-                      <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
-                    </span>
+                    <div className="space-y-1">
+                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      <div className="text-xs font-data text-arena-elements-textSecondary">
+                        <span>{formatTradeAmount(trade.amountIn)}</span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                        <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
+                        <span>{formatTradeAmount(trade.amountOut)}</span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
                     {renderTradePrice(trade)}
@@ -324,6 +399,9 @@ export function TradeHistoryTab({
                     )}
                   </TableCell>
                   <TableCell>
+                    {renderTxHash(trade)}
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       <Badge
                         variant={getStatusVariant(trade.status)}
@@ -337,26 +415,6 @@ export function TradeHistoryTab({
                           getStatusLabel(trade.status)
                         )}
                       </Badge>
-                      {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (() => {
-                        const url = explorerUrl(trade.txHash!, trade.chainId);
-                        return url ? (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
-                            title={trade.txHash}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {truncateHash(trade.txHash!)}
-                            <span className="i-ph:arrow-square-out text-[10px]" />
-                          </a>
-                        ) : (
-                          <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
-                            {truncateHash(trade.txHash!)}
-                          </span>
-                        );
-                      })()}
                     </div>
                   </TableCell>
                 </>

@@ -275,4 +275,23 @@ describe('TradeHistoryTab', () => {
 
     expect(screen.getByText('No USD leg')).toBeInTheDocument();
   });
+
+  it('shows swap flow and tx hash directly in the compact table', () => {
+    setTrades([
+      makeTrade({
+        action: 'swap',
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        amountIn: 1157,
+        amountOut: 0.4975,
+        txHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('SWAP')).toBeInTheDocument();
+    expect(screen.getByText('0.4975')).toBeInTheDocument();
+    expect(screen.getByText('0x1234...cdef')).toBeInTheDocument();
+  });
 });
