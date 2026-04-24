@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { useAccount, useWriteContract } from 'wagmi';
 import { encodeAbiParameters, parseAbiParameters } from 'viem';
 import { toast } from 'sonner';
@@ -8,15 +9,30 @@ import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
-import { Badge, Button } from '@tangle-network/blueprint-ui/components';
+import {
+  Badge,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@tangle-network/blueprint-ui/components';
 import { ScoreRing } from './shared/ValidatorComponents';
+import { AssetDisplay } from './shared/AssetDisplay';
 import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 const JOB_EXTEND = 6;
+const usdFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return 'Expired';
@@ -30,6 +46,87 @@ function formatDuration(seconds: number): string {
 function formatTimestamp(ts: number): string {
   if (!ts) return 'N/A';
   return new Date(ts * 1000).toLocaleString();
+}
+
+function readConfigString(config: Record<string, unknown>, key: string): string {
+  const value = config[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function formatOptionalConfigValue(value: string, emptyLabel = 'Not set'): string {
+  const trimmed = value.trim();
+  return trimmed || emptyLabel;
+}
+
+function formatAddressPreview(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Not set';
+  if (trimmed.length <= 18) return trimmed;
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
+}
+
+function formatUsdValue(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Not set';
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return trimmed;
+  return usdFormatter.format(parsed);
+}
+
+function FieldTooltip({ label, description }: { label: string; description: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-arena-elements-textTertiary">{label}</span>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            aria-label={`${label} info`}
+            className="inline-flex h-4 w-4 items-center justify-center rounded-full text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textSecondary"
+          >
+            <span className="i-ph:info text-xs" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            sideOffset={8}
+            className="z-50 max-w-xs rounded-lg border border-arena-elements-borderColor/70 bg-arena-elements-background-depth-2 px-3 py-2 text-xs text-arena-elements-textSecondary shadow-xl"
+          >
+            {description}
+            <Tooltip.Arrow className="fill-[var(--arena-elements-background-depth-2)]" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </div>
+  );
+}
+
+function InstructionValue({
+  value,
+  emptyLabel,
+}: {
+  value: string;
+  emptyLabel: string;
+}) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return (
+      <div className="rounded-lg border border-dashed border-arena-elements-borderColor/70 bg-arena-elements-background-depth-1/70 px-3 py-2 text-sm text-arena-elements-textTertiary">
+        <span className="inline-flex items-center gap-2">
+          <span className="i-ph:sparkle text-xs" />
+          {emptyLabel}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-sm whitespace-pre-wrap">
+      {trimmed}
+    </div>
+  );
 }
 
 interface ControlsTabProps {
@@ -108,6 +205,15 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         runNow={runNow}
         onConfigureSecrets={onConfigureSecrets}
       />
+      {isOwner && (
+        <ProvisionedSettingsCard detail={detail} />
+      )}
+      {isOwner && (
+        <StrategyCard
+          detail={detail}
+          updateConfig={updateConfig}
+        />
+      )}
       <ValidatorInfoCard bot={bot} detail={detail} avgValidatorScore={liveSummary.avgValidatorScore} />
       <LifetimeCard
         bot={bot}
@@ -115,12 +221,6 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         service={service}
         serviceRemainingSeconds={serviceRemainingSeconds}
       />
-      {isOwner && (
-        <StrategyCard
-          detail={detail}
-          updateConfig={updateConfig}
-        />
-      )}
       {isOwner && (
         <AdvancedCard detail={detail} />
       )}
@@ -316,12 +416,23 @@ function LifetimeCard({
       parseAbiParameters('string, uint64'),
       [detail.sandbox_id, BigInt(extendDays)],
     );
-    writeContract({
-      address: addresses.tangle,
-      abi: tangleJobsAbi,
-      functionName: 'submitJob',
-      args: [BigInt(bot.serviceId), JOB_EXTEND, inputs],
-    });
+    writeContract(
+      {
+        address: addresses.tangle,
+        abi: tangleJobsAbi,
+        functionName: 'submitJob',
+        args: [BigInt(bot.serviceId), JOB_EXTEND, inputs],
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Bot lifetime extension submitted for ${extendDays} day${extendDays === 1 ? '' : 's'}.`);
+        },
+        onError: (err) => {
+          const msg = err.message || 'Unknown error';
+          toast.error(`Bot lifetime extension failed: ${msg.slice(0, 120)}`);
+        },
+      },
+    );
   };
 
   return (
@@ -433,108 +544,290 @@ function StrategyCard({
   detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
   updateConfig: ReturnType<typeof useBotControl>['updateConfig'];
 }) {
-  const [editing, setEditing] = useState(false);
-  const [strategyJson, setStrategyJson] = useState(() =>
-    JSON.stringify(detail.strategy_config, null, 2),
-  );
-  const [riskJson, setRiskJson] = useState(() =>
-    JSON.stringify(detail.risk_params, null, 2),
-  );
+  const strategyConfig = detail.strategy_config ?? {};
+  const savedExpertKnowledge = readConfigString(strategyConfig, 'expert_knowledge_override');
+  const savedCustomInstructions = readConfigString(strategyConfig, 'custom_instructions');
+
+  const [paperTrade, setPaperTrade] = useState(detail.paper_trade);
+  const [expertKnowledgeOverride, setExpertKnowledgeOverride] = useState(savedExpertKnowledge);
+  const [customInstructions, setCustomInstructions] = useState(savedCustomInstructions);
+  const [draftExpertKnowledge, setDraftExpertKnowledge] = useState(savedExpertKnowledge);
+  const [draftCustomInstructions, setDraftCustomInstructions] = useState(savedCustomInstructions);
+  const [isInstructionsModalOpen, setIsInstructionsModalOpen] = useState(false);
+
+  useEffect(() => {
+    setPaperTrade(detail.paper_trade);
+    setExpertKnowledgeOverride(savedExpertKnowledge);
+    setCustomInstructions(savedCustomInstructions);
+    setDraftExpertKnowledge(savedExpertKnowledge);
+    setDraftCustomInstructions(savedCustomInstructions);
+    setIsInstructionsModalOpen(false);
+  }, [detail.id, detail.paper_trade, savedCustomInstructions, savedExpertKnowledge]);
+
+  const hasUnsavedChanges = paperTrade !== detail.paper_trade
+    || expertKnowledgeOverride !== savedExpertKnowledge
+    || customInstructions !== savedCustomInstructions;
+
+  const handlePaperTradeChange = (nextValue: boolean) => {
+    if (!nextValue) {
+      const confirmed = window.confirm(
+        'Switch this bot to live trading mode? Future trades may execute on-chain.',
+      );
+      if (!confirmed) return;
+    }
+    setPaperTrade(nextValue);
+  };
+
+  const openInstructionsModal = () => {
+    setDraftExpertKnowledge(expertKnowledgeOverride);
+    setDraftCustomInstructions(customInstructions);
+    setIsInstructionsModalOpen(true);
+  };
+
+  const closeInstructionsModal = () => {
+    setDraftExpertKnowledge(expertKnowledgeOverride);
+    setDraftCustomInstructions(customInstructions);
+    setIsInstructionsModalOpen(false);
+  };
+
+  const applyInstructionDrafts = () => {
+    setExpertKnowledgeOverride(draftExpertKnowledge);
+    setCustomInstructions(draftCustomInstructions);
+    setIsInstructionsModalOpen(false);
+  };
 
   const handleSave = () => {
-    try { JSON.parse(strategyJson); } catch {
-      toast.error('Strategy config is not valid JSON');
-      return;
+    const nextStrategyConfig: Record<string, unknown> = { ...strategyConfig };
+
+    nextStrategyConfig.paper_trade = paperTrade;
+
+    const trimmedExpertKnowledge = expertKnowledgeOverride.trim();
+    if (trimmedExpertKnowledge) {
+      nextStrategyConfig.expert_knowledge_override = trimmedExpertKnowledge;
+    } else {
+      delete nextStrategyConfig.expert_knowledge_override;
     }
-    try { JSON.parse(riskJson); } catch {
-      toast.error('Risk params is not valid JSON');
-      return;
+
+    const trimmedCustomInstructions = customInstructions.trim();
+    if (trimmedCustomInstructions) {
+      nextStrategyConfig.custom_instructions = trimmedCustomInstructions;
+    } else {
+      delete nextStrategyConfig.custom_instructions;
     }
-    updateConfig.mutate(
-      { strategyConfigJson: strategyJson, riskParamsJson: riskJson },
-      {
-        onSuccess: () => setEditing(false),
-      },
-    );
+
+    updateConfig.mutate({
+      strategyConfigJson: JSON.stringify(nextStrategyConfig),
+      riskParamsJson: JSON.stringify(detail.risk_params ?? {}),
+    });
   };
 
   return (
     <div className="glass-card rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="font-display font-bold text-lg">Strategy Configuration</h3>
-        {!editing && (
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-            <span className="i-ph:pencil text-xs mr-1" />
-            Edit
-          </Button>
-        )}
       </div>
 
-      <div className="space-y-3 text-sm">
-        <div className="flex justify-between">
-          <span className="text-arena-elements-textTertiary">Type</span>
-          <span className="font-data">{detail.strategy_type}</span>
-        </div>
-      </div>
+      <Tooltip.Provider delayDuration={150}>
+        <div className="space-y-5 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <FieldTooltip
+              label="Trading Mode"
+              description="Controls whether the bot simulates trades or executes them on-chain."
+            />
+            <div className="flex items-center gap-3">
+              <span className={`text-xs font-medium ${paperTrade ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
+                Live
+              </span>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  aria-label="Paper trading"
+                  checked={paperTrade}
+                  className="peer sr-only"
+                  onChange={(e) => handlePaperTradeChange(e.target.checked)}
+                  type="checkbox"
+                />
+                <span className="h-6 w-11 rounded-full bg-arena-elements-borderColor/80 transition-colors peer-checked:bg-violet-500" />
+                <span className="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
+              </label>
+              <span className={`text-xs font-medium ${paperTrade ? 'text-arena-elements-textSecondary' : 'text-arena-elements-textTertiary'}`}>
+                Paper
+              </span>
+            </div>
+          </div>
 
-      {editing ? (
-        <div className="mt-3 space-y-3">
-          <div>
-            <label htmlFor="strategy-config" className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
-              Strategy Config
-            </label>
-            <textarea
-              id="strategy-config"
-              value={strategyJson}
-              onChange={(e) => setStrategyJson(e.target.value)}
-              rows={5}
-              className="w-full px-3 py-2 rounded-lg border border-arena-elements-borderColor bg-transparent text-sm font-mono resize-y"
-            />
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="text-arena-elements-textTertiary">
+              {paperTrade
+                ? 'Paper mode validates and simulates trades without on-chain execution.'
+                : 'Live mode may execute trades on-chain using the bot vault.'}
+            </span>
+            <Badge variant={paperTrade ? 'outline' : 'accent'}>
+              {paperTrade ? 'Paper' : 'Live'}
+            </Badge>
           </div>
-          <div>
-            <label htmlFor="risk-params" className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
-              Risk Params
-            </label>
-            <textarea
-              id="risk-params"
-              value={riskJson}
-              onChange={(e) => setRiskJson(e.target.value)}
-              rows={4}
-              className="w-full px-3 py-2 rounded-lg border border-arena-elements-borderColor bg-transparent text-sm font-mono resize-y"
-            />
+
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1 space-y-3">
+              <FieldTooltip
+                label="Bot Instructions"
+                description="Fine-tune the bot's strategy context and behavior without editing raw JSON."
+              />
+
+              <div>
+                <span className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
+                  Expert Knowledge
+                </span>
+                <InstructionValue
+                  value={expertKnowledgeOverride}
+                  emptyLabel="No extra domain guidance yet."
+                />
+              </div>
+
+              <div>
+                <span className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
+                  Custom Instructions
+                </span>
+                <InstructionValue
+                  value={customInstructions}
+                  emptyLabel="No custom behavior instructions yet."
+                />
+              </div>
+            </div>
+
+            <Button size="sm" variant="ghost" onClick={openInstructionsModal}>
+              <span className="i-ph:pencil text-xs mr-1" />
+              Edit
+            </Button>
           </div>
-          <div className="flex gap-2">
-            <Button size="sm" disabled={updateConfig.isPending} onClick={handleSave}>
+
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-arena-elements-textTertiary">
+              {hasUnsavedChanges ? 'You have unsaved configuration changes.' : 'No unsaved changes.'}
+            </p>
+            <Button size="sm" disabled={!hasUnsavedChanges || updateConfig.isPending} onClick={handleSave}>
               {updateConfig.isPending ? 'Saving...' : 'Save'}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
           </div>
+
           {updateConfig.error && (
             <p className="text-xs text-crimson-500">{(updateConfig.error as Error).message}</p>
           )}
         </div>
-      ) : (
-        <div className="mt-3 space-y-3">
-          <div>
-            <span className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
-              Strategy Config
-            </span>
-            <pre className="text-xs font-mono bg-arena-elements-background-depth-2 rounded-lg p-3 overflow-x-auto max-h-40">
-              {JSON.stringify(detail.strategy_config, null, 2)}
-            </pre>
+      </Tooltip.Provider>
+
+      <Dialog open={isInstructionsModalOpen} onOpenChange={(open: boolean) => !open && closeInstructionsModal()}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 dark:bg-arena-elements-background-depth-4 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Bot Instructions</DialogTitle>
+            <DialogDescription>
+              Update the guidance that shapes how this bot reasons about markets and trading behavior.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto px-1 py-1">
+            <div className="space-y-4 pb-1">
+              <div>
+                <label
+                  htmlFor="expert-knowledge-override"
+                  className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1"
+                >
+                  Expert Knowledge
+                </label>
+                <textarea
+                  id="expert-knowledge-override"
+                  value={draftExpertKnowledge}
+                  onChange={(e) => setDraftExpertKnowledge(e.target.value)}
+                  rows={5}
+                  className="w-full min-w-0 px-3 py-2 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 text-sm resize-y focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                  placeholder="Add domain context or market expertise you want the bot to prioritize."
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="custom-instructions"
+                  className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1"
+                >
+                  Custom Instructions
+                </label>
+                <textarea
+                  id="custom-instructions"
+                  value={draftCustomInstructions}
+                  onChange={(e) => setDraftCustomInstructions(e.target.value)}
+                  rows={5}
+                  className="w-full min-w-0 px-3 py-2 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 text-sm resize-y focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                  placeholder="Add plain-English rules, preferences, or operating guidance for this bot."
+                />
+              </div>
+            </div>
           </div>
-          <div>
-            <span className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
-              Risk Params
-            </span>
-            <pre className="text-xs font-mono bg-arena-elements-background-depth-2 rounded-lg p-3 overflow-x-auto max-h-40">
-              {JSON.stringify(detail.risk_params, null, 2)}
-            </pre>
+
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-arena-elements-borderColor/40 pt-4">
+            <p className="text-xs text-arena-elements-textTertiary">
+              Changes apply after you save from the Strategy Configuration card.
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={closeInstructionsModal}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={applyInstructionDrafts}>
+                Done
+              </Button>
+            </div>
           </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function ProvisionedSettingsCard({
+  detail,
+}: {
+  detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
+}) {
+  const strategyConfig = detail.strategy_config ?? {};
+  const runtimeBackend = readConfigString(strategyConfig, 'runtime_backend');
+  const assetToken = readConfigString(strategyConfig, 'asset_token');
+  const initialCapitalUsd = readConfigString(strategyConfig, 'initial_capital_usd');
+  const assetDisplay = assetToken ? resolveAssetDisplay(assetToken, detail.chain_id) : null;
+
+  return (
+    <div className="glass-card rounded-xl p-5">
+      <div className="mb-4">
+        <h3 className="font-display font-bold text-lg">Provisioned Settings</h3>
+      </div>
+
+      <p className="text-sm text-arena-elements-textTertiary">
+        Deployment-time settings shown here for reference.
+      </p>
+
+      <div className="mt-4 space-y-3 text-sm">
+        <div className="flex justify-between gap-4">
+          <span className="text-arena-elements-textTertiary">Type</span>
+          <span className="font-data">{detail.strategy_type}</span>
         </div>
-      )}
+        <div className="flex justify-between gap-4">
+          <span className="text-arena-elements-textTertiary">Runtime</span>
+          <span className="font-data">{formatOptionalConfigValue(runtimeBackend)}</span>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <span className="text-arena-elements-textTertiary">Asset Token</span>
+          {assetDisplay ? (
+            <AssetDisplay
+              asset={assetDisplay}
+              className="max-w-[220px] justify-end text-right"
+              showSecondary
+            />
+          ) : (
+            <span className="font-data text-xs">{formatAddressPreview(assetToken)}</span>
+          )}
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-arena-elements-textTertiary">Initial Capital</span>
+          <span className="font-data">{formatUsdValue(initialCapitalUsd)}</span>
+        </div>
+      </div>
     </div>
   );
 }

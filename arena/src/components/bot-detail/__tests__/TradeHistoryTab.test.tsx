@@ -147,9 +147,9 @@ describe('TradeHistoryTab', () => {
     const row = screen.getByText('BUY').closest('tr')!;
     await user.click(row);
 
-    // Expanded view shows the APPROVED badge and intent hash
+    // Expanded view shows the APPROVED badge and validator details
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
-    expect(screen.getByText('Intent Hash')).toBeInTheDocument();
+    expect(screen.getByText('Solid trade rationale')).toBeInTheDocument();
   });
 
   it('shows simulation detail in expanded view', async () => {

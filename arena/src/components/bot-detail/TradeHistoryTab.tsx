@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
-import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { ValidatorCard, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
@@ -272,19 +272,6 @@ export function TradeHistoryTab({
                           Tx Hash
                         </span>
                         {renderTxHash(trade)}
-                      </div>
-                    )}
-
-                    {/* Intent hash */}
-                    {trade.validation?.intentHash && (
-                      <div className="flex items-center gap-2 mb-3 px-1">
-                        <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          Intent Hash
-                        </span>
-                        <code className="text-xs font-data text-arena-elements-textSecondary">
-                          {truncateAddress(trade.validation.intentHash)}
-                        </code>
-                        <CopyButton text={trade.validation.intentHash} label="Copy" />
                       </div>
                     )}
 

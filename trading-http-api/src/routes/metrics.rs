@@ -331,7 +331,11 @@ mod tests {
         assert_eq!(snapshot.unrealized_pnl, "25");
         assert_eq!(snapshot.realized_pnl, "0");
         assert_eq!(snapshot.high_water_mark, "10050");
-        assert!(snapshot.drawdown_pct.starts_with("0.248756218905472636815920"));
+        assert!(
+            snapshot
+                .drawdown_pct
+                .starts_with("0.248756218905472636815920")
+        );
         assert_eq!(snapshot.trade_count, 2);
     }
 }
