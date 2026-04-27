@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
-import { ValidatorCard, CopyButton, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { ValidatorCard, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
@@ -15,6 +16,7 @@ interface TradeHistoryTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
@@ -52,11 +54,11 @@ function TradeTableHead() {
         <TableHead>Time</TableHead>
         <TableHead>Action</TableHead>
         <TableHead className="hidden sm:table-cell">Venue</TableHead>
-        <TableHead>Pair</TableHead>
-        <TableHead className="text-right">Input</TableHead>
+        <TableHead>Trade</TableHead>
         <TableHead className="text-right">Price</TableHead>
         <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
         <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
+        <TableHead>Tx Hash</TableHead>
         <TableHead>Status</TableHead>
       </TableRow>
     </TableHeader>
@@ -91,16 +93,65 @@ function getStatusVariant(status: TradeStatus): 'success' | 'destructive' | 'sec
   return 'outline';
 }
 
+function getActionLabel(action: Trade['action']): string {
+  return action.toUpperCase();
+}
+
+function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 'accent' {
+  if (action === 'buy') return 'success';
+  if (action === 'sell') return 'destructive';
+  return 'accent';
+}
+
+function renderTxHash(trade: Trade) {
+  if (!trade.txHash) {
+    return <span className="text-xs font-data text-arena-elements-textTertiary">—</span>;
+  }
+
+  if (trade.txHash.startsWith('0xpaper_')) {
+    return (
+      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+        {truncateHash(trade.txHash)}
+      </span>
+    );
+  }
+
+  const url = explorerUrl(trade.txHash, trade.chainId);
+  if (!url) {
+    return (
+      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+        {truncateHash(trade.txHash)}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
+      title={trade.txHash}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {truncateHash(trade.txHash)}
+      <span className="i-ph:arrow-square-out text-[10px]" />
+    </a>
+  );
+}
+
 export function TradeHistoryTab({
   botId,
   botName = '',
   isLive = false,
+  chainId,
   operatorApiUrl,
   operatorKind,
   verificationState,
 }: TradeHistoryTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     refetchInterval: isLive ? 15_000 : false,
@@ -184,13 +235,11 @@ export function TradeHistoryTab({
                       >
                         <div className="i-ph:caret-up text-sm" />
                       </button>
-                      <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'} className="text-xs">
-                        {trade.action.toUpperCase()}
+                      <Badge variant={getActionVariant(trade.action)} className="text-xs">
+                        {getActionLabel(trade.action)}
                       </Badge>
                       <VenueBadge venue={trade.venue} />
-                      <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
-                        {trade.tokenIn}/{trade.tokenOut}
-                      </span>
+                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                       <span className="text-xs font-data text-arena-elements-textTertiary">
                         {new Date(trade.timestamp).toLocaleString('en-US', {
                           month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -203,16 +252,26 @@ export function TradeHistoryTab({
                       )}
                     </div>
 
-                    {/* Intent hash */}
-                    {trade.validation?.intentHash && (
+                    <div className="mb-3 px-1 text-sm text-arena-elements-textSecondary">
+                      <span className="font-data">
+                        {formatTradeAmount(trade.amountIn)}
+                      </span>
+                      {' '}
+                      <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                      <span className="mx-2 text-arena-elements-textTertiary">→</span>
+                      <span className="font-data">
+                        {formatTradeAmount(trade.amountOut)}
+                      </span>
+                      {' '}
+                      <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                    </div>
+
+                    {trade.txHash && (
                       <div className="flex items-center gap-2 mb-3 px-1">
                         <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          Intent Hash
+                          Tx Hash
                         </span>
-                        <code className="text-xs font-data text-arena-elements-textSecondary">
-                          {truncateAddress(trade.validation.intentHash)}
-                        </code>
-                        <CopyButton text={trade.validation.intentHash} label="Copy" />
+                        {renderTxHash(trade)}
                       </div>
                     )}
 
@@ -265,18 +324,26 @@ export function TradeHistoryTab({
               {!isExpanded && (
                 <>
                   <TableCell>
-                    <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
-                      {trade.action.toUpperCase()}
+                    <Badge variant={getActionVariant(trade.action)}>
+                      {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <VenueBadge venue={trade.venue} />
                   </TableCell>
                   <TableCell className="font-display font-medium text-sm">
-                    {trade.tokenIn}/{trade.tokenOut}
-                  </TableCell>
-                  <TableCell className="text-right font-data text-sm">
-                    {formatTradeAmount(trade.amountIn)} {trade.tokenIn}
+                    <div className="space-y-1">
+                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      <div className="text-xs font-data text-arena-elements-textSecondary">
+                        <span>{formatTradeAmount(trade.amountIn)}</span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                        <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
+                        <span>{formatTradeAmount(trade.amountOut)}</span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="text-right font-data text-sm">
                     {renderTradePrice(trade)}
@@ -319,6 +386,9 @@ export function TradeHistoryTab({
                     )}
                   </TableCell>
                   <TableCell>
+                    {renderTxHash(trade)}
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
                       <Badge
                         variant={getStatusVariant(trade.status)}
@@ -332,26 +402,6 @@ export function TradeHistoryTab({
                           getStatusLabel(trade.status)
                         )}
                       </Badge>
-                      {trade.txHash && !trade.txHash.startsWith('0xpaper_') && (() => {
-                        const url = explorerUrl(trade.txHash!, trade.chainId);
-                        return url ? (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
-                            title={trade.txHash}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {truncateHash(trade.txHash!)}
-                            <span className="i-ph:arrow-square-out text-[10px]" />
-                          </a>
-                        ) : (
-                          <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
-                            {truncateHash(trade.txHash!)}
-                          </span>
-                        );
-                      })()}
                     </div>
                   </TableCell>
                 </>

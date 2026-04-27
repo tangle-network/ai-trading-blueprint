@@ -1,23 +1,26 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   useSessions,
   useCreateSession,
   useDeleteSession,
   useRenameSession,
-} from '@tangle-network/sandbox-ui/hooks';
-import type { AgentBranding, Session } from '@tangle-network/sandbox-ui/types';
-import { Button } from '@tangle-network/blueprint-ui/components';
-import { AuthBanner } from '~/components/bot-detail/AuthBanner';
-import { ChatTranscript } from '~/components/bot-detail/chat/ChatTranscript';
-import { useBotSessionStream } from '~/lib/hooks/useBotSessionStream';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+} from "@tangle-network/sandbox-ui/hooks";
+import type { AgentBranding, Session } from "@tangle-network/sandbox-ui/types";
+import { Button } from "@tangle-network/blueprint-ui/components";
+import { AuthBanner } from "~/components/bot-detail/AuthBanner";
+import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
+import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
+import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
   useOperatorMeta,
-} from '~/lib/operator/meta';
-import { OperatorAccessCard, UnsupportedFeatureCard } from '~/components/operator/OperatorAccessCard';
-import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
+} from "~/lib/operator/meta";
+import {
+  OperatorAccessCard,
+  UnsupportedFeatureCard,
+} from "~/components/operator/OperatorAccessCard";
+import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 
 interface ChatTabProps {
   botId: string;
@@ -49,22 +52,22 @@ function extractChatErrorMessage(error: unknown): string | null {
   }
 }
 
-// ── Branding ────────────────────────────────────────────────────────────
-
 const TRADING_BRANDING: AgentBranding = {
-  label: 'Trading Agent',
-  accentClass: 'text-violet-700 dark:text-violet-300',
-  bgClass: 'bg-violet-500/8',
-  containerBgClass: 'bg-arena-elements-background-depth-2/30',
-  borderClass: 'border-violet-500/20',
-  iconClass: 'i-ph:chart-line-up',
-  textClass: 'text-violet-700 dark:text-violet-300',
+  label: "Trading Agent",
+  accentClass: "text-violet-700 dark:text-violet-300",
+  bgClass: "bg-violet-500/8",
+  containerBgClass: "bg-arena-elements-background-depth-2/30",
+  borderClass: "border-violet-500/20",
+  iconClass: "i-ph:chart-line-up",
+  textClass: "text-violet-700 dark:text-violet-300",
 };
 
-// ── Agent Status ────────────────────────────────────────────────────────
-
-function AgentStatus({ status, onAbort, isAborting }: {
-  status: 'idle' | 'running' | 'error';
+function AgentStatus({
+  status,
+  onAbort,
+  isAborting,
+}: {
+  status: "idle" | "running" | "error";
   onAbort: () => void;
   isAborting: boolean;
 }) {
@@ -73,11 +76,21 @@ function AgentStatus({ status, onAbort, isAborting }: {
 
   return (
     <div className="flex items-center gap-2">
-      <span className={`w-2 h-2 rounded-full ${
-        status === 'running' ? 'bg-amber-400 animate-pulse' : status === 'error' ? 'bg-crimson-400' : 'bg-emerald-700 dark:bg-emerald-400'
-      }`} />
+      <span
+        className={`w-2 h-2 rounded-full ${
+          status === "running"
+            ? "bg-amber-400 animate-pulse"
+            : status === "error"
+              ? "bg-crimson-400"
+              : "bg-emerald-700 dark:bg-emerald-400"
+        }`}
+      />
       <span className="text-xs font-data text-arena-elements-textSecondary">
-        {status === 'running' ? 'Agent working...' : status === 'error' ? 'Agent error' : 'Agent idle'}
+        {status === "running"
+          ? "Agent working..."
+          : status === "error"
+            ? "Agent error"
+            : "Agent idle"}
       </span>
     </div>
   );
@@ -130,14 +143,12 @@ function ChatRunBanner({
           className="ml-auto text-xs h-6 px-2"
         >
           <span className="i-ph:stop-circle text-sm mr-1" />
-          {isAborting ? 'Stopping...' : 'Stop'}
+          {isAborting ? "Stopping..." : "Stop"}
         </Button>
       </div>
     </div>
   );
 }
-
-// ── Session Selector ────────────────────────────────────────────────────
 
 interface SessionItem {
   id: string;
@@ -147,19 +158,22 @@ interface SessionItem {
 }
 
 function normalizeSessionTitle(value: unknown): string {
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
 }
 
 function buildAutoSessionTitle(text: string): string {
   return text.length > 40 ? `${text.slice(0, 40)}...` : text;
 }
 
-function shouldAutoTitleSession(session: Session | null | undefined, messageCount: number): boolean {
+function shouldAutoTitleSession(
+  session: Session | null | undefined,
+  messageCount: number,
+): boolean {
   if (!session || messageCount > 0) {
     return false;
   }
 
-  return normalizeSessionTitle(session.title).trim() === 'New Chat';
+  return normalizeSessionTitle(session.title).trim() === "New Chat";
 }
 
 function truncateMiddle(value: string, start = 16, end = 8): string {
@@ -176,7 +190,7 @@ function getSessionDisplayTitle(
   primarySessionId: string,
 ): string {
   if (session.id === primarySessionId) {
-    return 'Main Chat';
+    return "Main Chat";
   }
 
   const cleaned = normalizeSessionTitle(session.rawTitle).trim();
@@ -209,14 +223,14 @@ function SessionWorkspaceSidebar({
   onCreate: () => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
+  const [editTitle, setEditTitle] = useState("");
 
   return (
     <aside
       className={
         stacked
-          ? 'w-full shrink-0 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40'
-          : 'w-[280px] basis-[280px] shrink-0 border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40'
+          ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : "flex min-h-0 w-[280px] basis-[280px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
       }
     >
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-arena-elements-dividerColor/50">
@@ -232,9 +246,19 @@ function SessionWorkspaceSidebar({
         </button>
       </div>
 
-      <div className={stacked ? 'max-h-56 overflow-y-auto py-1' : 'h-full min-h-0 overflow-y-auto py-1'}>
+      <div
+        className={
+          stacked
+            ? "max-h-56 overflow-y-auto py-1"
+            : "min-h-0 flex-1 overflow-y-auto py-1"
+        }
+      >
         {sessions.map((session, index) => {
-          const displayTitle = getSessionDisplayTitle(session, index, primarySessionId);
+          const displayTitle = getSessionDisplayTitle(
+            session,
+            index,
+            primarySessionId,
+          );
           const isActive = session.id === activeSessionId;
           const isPrimary = session.id === primarySessionId;
           const showStreamingDot = isActive && isStreaming;
@@ -243,15 +267,21 @@ function SessionWorkspaceSidebar({
             <div
               key={session.id}
               className={`group flex items-center gap-2 px-3 py-2 transition-colors ${
-                isActive ? 'bg-arena-elements-item-backgroundActive' : 'hover:bg-arena-elements-item-backgroundHover'
+                isActive
+                  ? "bg-arena-elements-item-backgroundActive"
+                  : "hover:bg-arena-elements-item-backgroundHover"
               }`}
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  isActive
-                    ? (showStreamingDot ? 'bg-emerald-400 animate-pulse' : 'bg-violet-500')
-                    : 'bg-arena-elements-textTertiary/35'
-                }`} />
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    isActive
+                      ? showStreamingDot
+                        ? "bg-emerald-400 animate-pulse"
+                        : "bg-violet-500"
+                      : "bg-arena-elements-textTertiary/35"
+                  }`}
+                />
                 <div className="min-w-0 flex-1">
                   {editingId === session.id ? (
                     <input
@@ -259,10 +289,10 @@ function SessionWorkspaceSidebar({
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
+                        if (e.key === "Enter") {
                           onRename(session.id, editTitle);
                           setEditingId(null);
-                        } else if (e.key === 'Escape') {
+                        } else if (e.key === "Escape") {
                           setEditingId(null);
                         }
                       }}
@@ -324,8 +354,6 @@ function SessionWorkspaceSidebar({
   );
 }
 
-// ── Main Chat Tab ───────────────────────────────────────────────────────
-
 export function ChatTab({
   botId,
   botName,
@@ -336,34 +364,44 @@ export function ChatTab({
   requiresSecrets = false,
   onConfigureSecrets,
 }: ChatTabProps) {
-  const baseApiUrl = operatorApiUrl ?? '';
+  const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
-  const apiUrl = operatorMeta && baseApiUrl
-    ? `${baseApiUrl}${buildBotScopedPathForDeploymentKind(deploymentKind, botId)}`
-    : '';
-  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useOperatorAuth(baseApiUrl);
+  const apiUrl =
+    operatorMeta && baseApiUrl
+      ? `${baseApiUrl}${buildBotScopedPathForDeploymentKind(deploymentKind, botId)}`
+      : "";
+  const {
+    token,
+    isAuthenticated,
+    isAuthenticating,
+    authenticate,
+    error: authError,
+  } = useOperatorAuth(baseApiUrl);
 
   const primarySessionId = `trading-${botId}`;
-  const [activeSessionId, setActiveSessionId] = useState(() => primarySessionId);
+  const [activeSessionId, setActiveSessionId] = useState(
+    () => primarySessionId,
+  );
   const [isAborting, setIsAborting] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [isStackedLayout, setIsStackedLayout] = useState(() => (
-    typeof window === 'undefined' ? false : window.innerWidth < 1100
-  ));
+  const [isStackedLayout, setIsStackedLayout] = useState(() =>
+    typeof window === "undefined" ? false : window.innerWidth < 1100,
+  );
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
-  // Session CRUD hooks
   const { data: sessions = [] } = useSessions(apiUrl, token);
   const deleteMutation = useDeleteSession(apiUrl, token);
   const renameMutation = useRenameSession(apiUrl, token);
   const createMutation = useCreateSession(apiUrl, token);
-  const hasKnownActiveSession = sessions.some((session) => session.id === activeSessionId);
+  const hasKnownActiveSession = sessions.some(
+    (session) => session.id === activeSessionId,
+  );
   const streamSessionId = hasKnownActiveSession
     ? activeSessionId
     : activeSessionId === primarySessionId
       ? (sessions[0]?.id ?? null)
-      : (activeSessionId || sessions[0]?.id || null);
+      : activeSessionId || sessions[0]?.id || null;
 
   useEffect(() => {
     if (hasKnownActiveSession || sessions.length === 0) return;
@@ -373,95 +411,135 @@ export function ChatTab({
   }, [activeSessionId, hasKnownActiveSession, primarySessionId, sessions]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return undefined;
     }
 
-    const mediaQuery = window.matchMedia('(max-width: 1099px)');
+    const mediaQuery = window.matchMedia("(max-width: 1099px)");
     const syncLayout = () => setIsStackedLayout(mediaQuery.matches);
 
     syncLayout();
-    mediaQuery.addEventListener('change', syncLayout);
+    mediaQuery.addEventListener("change", syncLayout);
     return () => {
-      mediaQuery.removeEventListener('change', syncLayout);
+      mediaQuery.removeEventListener("change", syncLayout);
     };
   }, []);
 
-  // agent-ui streaming hook — replaces manual SSE + message state
   const stream = useBotSessionStream({
     apiUrl,
     token,
-    sessionId: streamSessionId ?? '',
+    sessionId: streamSessionId ?? "",
     enabled: isAuthenticated && !!apiUrl && !!streamSessionId,
     cacheKey: chatCacheKey,
   });
   const chatErrorMessage = extractChatErrorMessage(sendError ?? stream.error);
-  const activeSession = sessions.find((session) => session.id === streamSessionId) ?? null;
+  const activeSession =
+    sessions.find((session) => session.id === streamSessionId) ?? null;
 
-  const agentStatus = stream.isStreaming ? 'running' : chatErrorMessage ? 'error' : 'idle';
+  const agentStatus = stream.isStreaming
+    ? "running"
+    : chatErrorMessage
+      ? "error"
+      : "idle";
 
-  const createSession = useCallback(async (title: string): Promise<Session> => {
-    setSendError(null);
-    const session = await createMutation.mutateAsync(title);
-    setActiveSessionId(session.id);
-    return session;
-  }, [createMutation]);
+  const createSession = useCallback(
+    async (title: string): Promise<Session> => {
+      setSendError(null);
+      const session = await createMutation.mutateAsync(title);
+      setActiveSessionId(session.id);
+      return session;
+    },
+    [createMutation],
+  );
 
-  const renameSessionTitle = useCallback(async (sessionId: string, title: string): Promise<void> => {
-    const nextTitle = normalizeSessionTitle(title).trim();
-    if (!nextTitle) {
-      return;
-    }
-
-    try {
-      await renameMutation.mutateAsync({ sessionId, title: nextTitle });
-    } catch (error) {
-      console.warn('Failed to auto-rename chat session', { sessionId, error });
-    }
-  }, [renameMutation]);
-
-  const sendToSession = useCallback(async (sessionId: string, text: string): Promise<void> => {
-    if (!token || !apiUrl) {
-      throw new Error('Chat is not authenticated');
-    }
-
-    const response = await fetch(`${apiUrl}/session/sessions/${encodeURIComponent(sessionId)}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ parts: [{ type: 'text', text }] }),
-    });
-
-    if (!response.ok) {
-      throw new Error((await response.text()) || `Failed to send message: ${response.status}`);
-    }
-  }, [apiUrl, token]);
-
-  const handleSend = useCallback(async (text: string): Promise<void> => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    setSendError(null);
-
-    try {
-      if (streamSessionId) {
-        const targetSession = sessions.find((session) => session.id === streamSessionId) ?? activeSession;
-        if (shouldAutoTitleSession(targetSession, stream.messages.length)) {
-          await renameSessionTitle(streamSessionId, buildAutoSessionTitle(trimmed));
-        }
-        await stream.send(trimmed);
+  const renameSessionTitle = useCallback(
+    async (sessionId: string, title: string): Promise<void> => {
+      const nextTitle = normalizeSessionTitle(title).trim();
+      if (!nextTitle) {
         return;
       }
 
-      const created = await createSession('New Chat');
-      await renameSessionTitle(created.id, buildAutoSessionTitle(trimmed));
-      await sendToSession(created.id, trimmed);
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : 'Failed to send message');
-    }
-  }, [activeSession, createSession, renameSessionTitle, sendToSession, sessions, stream, streamSessionId]);
+      try {
+        await renameMutation.mutateAsync({ sessionId, title: nextTitle });
+      } catch (error) {
+        console.warn("Failed to auto-rename chat session", {
+          sessionId,
+          error,
+        });
+      }
+    },
+    [renameMutation],
+  );
+
+  const sendToSession = useCallback(
+    async (sessionId: string, text: string): Promise<void> => {
+      if (!token || !apiUrl) {
+        throw new Error("Chat is not authenticated");
+      }
+
+      const response = await fetch(
+        `${apiUrl}/session/sessions/${encodeURIComponent(sessionId)}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ parts: [{ type: "text", text }] }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          (await response.text()) ||
+            `Failed to send message: ${response.status}`,
+        );
+      }
+    },
+    [apiUrl, token],
+  );
+
+  const handleSend = useCallback(
+    async (text: string): Promise<void> => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      setSendError(null);
+
+      try {
+        if (streamSessionId) {
+          const targetSession =
+            sessions.find((session) => session.id === streamSessionId) ??
+            activeSession;
+          if (shouldAutoTitleSession(targetSession, stream.messages.length)) {
+            await renameSessionTitle(
+              streamSessionId,
+              buildAutoSessionTitle(trimmed),
+            );
+          }
+          await stream.send(trimmed);
+          return;
+        }
+
+        const created = await createSession("New Chat");
+        await renameSessionTitle(created.id, buildAutoSessionTitle(trimmed));
+        await sendToSession(created.id, trimmed);
+      } catch (error) {
+        setSendError(
+          error instanceof Error ? error.message : "Failed to send message",
+        );
+      }
+    },
+    [
+      activeSession,
+      createSession,
+      renameSessionTitle,
+      sendToSession,
+      sessions,
+      stream,
+      streamSessionId,
+    ],
+  );
 
   const handleAbort = useCallback(async () => {
     setIsAborting(true);
@@ -469,22 +547,25 @@ export function ChatTab({
     setIsAborting(false);
   }, [stream]);
 
-  // Map session data to simple items for the selector
-  const sessionItems: SessionItem[] = useMemo(() => (
-    sessions.length > 0
-      ? sessions.map((session: Session) => ({
-        id: session.id,
-        title: normalizeSessionTitle(session.title),
-        rawTitle: normalizeSessionTitle(session.title),
-        subtitle: truncateMiddle(session.id, 18, 8),
-      }))
-      : [{
-        id: primarySessionId,
-        title: 'Main Chat',
-        rawTitle: 'Main Chat',
-        subtitle: 'Start a new conversation',
-      }]
-  ), [primarySessionId, sessions]);
+  const sessionItems: SessionItem[] = useMemo(
+    () =>
+      sessions.length > 0
+        ? sessions.map((session: Session) => ({
+            id: session.id,
+            title: normalizeSessionTitle(session.title),
+            rawTitle: normalizeSessionTitle(session.title),
+            subtitle: truncateMiddle(session.id, 18, 8),
+          }))
+        : [
+            {
+              id: primarySessionId,
+              title: "Main Chat",
+              rawTitle: "Main Chat",
+              subtitle: "Start a new conversation",
+            },
+          ],
+    [primarySessionId, sessions],
+  );
 
   void operatorAddress;
 
@@ -501,7 +582,7 @@ export function ChatTab({
     );
   }
 
-  if (verificationState === 'unverified') {
+  if (verificationState === "unverified") {
     return (
       <OperatorAccessCard
         title="Chat unavailable"
@@ -529,7 +610,8 @@ export function ChatTab({
           Configure API keys first
         </h3>
         <p className="text-sm text-arena-elements-textSecondary max-w-xl mx-auto">
-          This bot&apos;s sidecar is provisioned, but chat stays unavailable until the bot has an AI provider key.
+          This bot&apos;s sidecar is provisioned, but chat stays unavailable
+          until the bot has an AI provider key.
         </p>
         {onConfigureSecrets && (
           <Button className="mt-4" onClick={onConfigureSecrets}>
@@ -545,9 +627,11 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card rounded-xl overflow-hidden"
-      style={{ minHeight: '560px' }}
+      style={{ minHeight: "560px" }}
     >
-      <div className={`flex h-[min(640px,68vh)] min-h-[560px] min-w-0 ${isStackedLayout ? 'flex-col' : 'flex-row'}`}>
+      <div
+        className={`flex h-[min(640px,68vh)] min-h-[560px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+      >
         <SessionWorkspaceSidebar
           sessions={sessionItems}
           activeSessionId={activeSessionId}
@@ -556,14 +640,16 @@ export function ChatTab({
           stacked={isStackedLayout}
           onSelect={setActiveSessionId}
           onDelete={(id) => {
-            if (confirm('Delete this session?')) {
+            if (confirm("Delete this session?")) {
               deleteMutation.mutate(id);
               if (id === activeSessionId) setActiveSessionId(primarySessionId);
             }
           }}
-          onRename={(id, title) => renameMutation.mutate({ sessionId: id, title })}
+          onRename={(id, title) =>
+            renameMutation.mutate({ sessionId: id, title })
+          }
           onCreate={() => {
-            void createSession('New Chat');
+            void createSession("New Chat");
           }}
         />
 
@@ -575,16 +661,18 @@ export function ChatTab({
                 <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
                   {activeSession
                     ? getSessionDisplayTitle(
-                      {
-                        id: activeSession.id,
-                        title: normalizeSessionTitle(activeSession.title),
-                        rawTitle: normalizeSessionTitle(activeSession.title),
-                        subtitle: activeSession.id,
-                      },
-                      sessions.findIndex((session) => session.id === activeSession.id),
-                      primarySessionId,
-                    )
-                    : 'Trading Agent'}
+                        {
+                          id: activeSession.id,
+                          title: normalizeSessionTitle(activeSession.title),
+                          rawTitle: normalizeSessionTitle(activeSession.title),
+                          subtitle: activeSession.id,
+                        },
+                        sessions.findIndex(
+                          (session) => session.id === activeSession.id,
+                        ),
+                        primarySessionId,
+                      )
+                    : "Trading Agent"}
                 </div>
                 {activeSession && (
                   <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
@@ -612,7 +700,11 @@ export function ChatTab({
               isStreaming={stream.isStreaming}
               onSend={handleSend}
               branding={TRADING_BRANDING}
-              placeholder={stream.isStreaming ? 'Agent is working...' : `Ask ${botName} anything...`}
+              placeholder={
+                stream.isStreaming
+                  ? "Agent is working..."
+                  : `Ask ${botName} anything...`
+              }
             />
           </div>
 

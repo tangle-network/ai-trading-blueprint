@@ -54,6 +54,8 @@ export function mockBlueprintUi() {
     Badge: ({ children, ...props }: any) => <span data-testid="badge" {...props}>{children}</span>,
     Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
     Card: ({ children, ...props }: any) => <div data-testid="card" {...props}>{children}</div>,
+    CardHeader: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+    CardTitle: ({ children, ...props }: any) => <h3 {...props}>{children}</h3>,
     CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
     Input: (props: any) => <input {...props} />,
     Table: ({ children, ...props }: any) => <table {...props}>{children}</table>,

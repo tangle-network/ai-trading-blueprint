@@ -1,3 +1,4 @@
+use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
     self, StoredSimulation, StoredValidation, StoredValidatorResponse, TradeRecord,
 };
@@ -16,6 +17,9 @@ use tokio::sync::RwLock;
 use trading_runtime::executor::TradeExecutor;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient};
+use trading_runtime::token_metadata::{
+    address_chain_mismatch, chain_display_name, known_token_decimals,
+};
 use trading_runtime::{
     PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
     ValidatorResponse, ValuationStatus,
@@ -38,9 +42,21 @@ pub struct IntentPayload {
     pub amount_in: String,
     pub min_amount_out: String,
     pub target_protocol: String,
+    /// Explicitly marks DEX amounts as raw token base units instead of
+    /// human-readable decimals. When omitted, the server falls back to a
+    /// conservative address-only heuristic for backward compatibility.
+    #[serde(default)]
+    pub amount_format: Option<AmountFormat>,
     /// Extra protocol-specific parameters (e.g., token_id and price for CLOB orders).
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AmountFormat {
+    Human,
+    BaseUnits,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -391,15 +407,25 @@ fn resolve_position_size(
     chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<(Decimal, Option<Decimal>), (StatusCode, String)> {
-    let raw_in: Decimal = intent.amount_in.parse().map_err(|e| {
+    let raw_amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             format!("Invalid amount_in '{}': {e}", intent.amount_in),
         )
     })?;
-    let raw_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
-    let amount_in = crate::amounts::normalize_trade_amount(chain_id, &intent.token_in, raw_in);
-    let amount_out = crate::amounts::normalize_trade_amount(chain_id, &intent.token_out, raw_out);
+    let raw_amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let amount_in = normalize_trade_amount(
+        chain_id,
+        &intent.token_in,
+        raw_amount_in,
+        intent.amount_format,
+    );
+    let amount_out = normalize_trade_amount(
+        chain_id,
+        &intent.token_out,
+        raw_amount_out,
+        intent.amount_format,
+    );
     let size = if amount_out > Decimal::ZERO {
         amount_out
     } else {
@@ -413,6 +439,10 @@ async fn resolve_market_valuation(
     chain_id: Option<u64>,
     intent: &IntentPayload,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    if intent.action.eq_ignore_ascii_case("swap") && intent.token_in != intent.token_out {
+        return resolve_swap_valuation(market_client, chain_id, intent).await;
+    }
+
     let (position_size, amount_out) = resolve_position_size(chain_id, intent)?;
     if position_size <= Decimal::ZERO {
         return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
@@ -436,6 +466,121 @@ async fn resolve_market_valuation(
             Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
         }
     }
+}
+
+async fn resolve_swap_valuation(
+    market_client: &MarketDataClient,
+    chain_id: Option<u64>,
+    intent: &IntentPayload,
+) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    let raw_amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in '{}': {e}", intent.amount_in),
+        )
+    })?;
+    let raw_amount_out: Decimal = intent.min_amount_out.parse().unwrap_or(Decimal::ZERO);
+    let amount_in = normalize_trade_amount(
+        chain_id,
+        &intent.token_in,
+        raw_amount_in,
+        intent.amount_format,
+    );
+    let min_amount_out = normalize_trade_amount(
+        chain_id,
+        &intent.token_out,
+        raw_amount_out,
+        intent.amount_format,
+    );
+
+    let token_out_price = market_client
+        .get_price_for_chain(chain_id, &intent.token_out)
+        .await
+        .ok();
+    let estimated_amount_out = match (
+        market_client
+            .get_price_for_chain(chain_id, &intent.token_in)
+            .await
+            .ok(),
+        token_out_price.as_ref(),
+    ) {
+        (Some(token_in_price), Some(token_out_price))
+            if amount_in > Decimal::ZERO && token_out_price.price_usd > Decimal::ZERO =>
+        {
+            Some((amount_in * token_in_price.price_usd) / token_out_price.price_usd)
+        }
+        _ => None,
+    };
+
+    let amount_out =
+        estimated_amount_out.or_else(|| (min_amount_out > Decimal::ZERO).then_some(min_amount_out));
+    let position_size = amount_out.unwrap_or_else(|| amount_in.max(Decimal::ZERO));
+    if position_size <= Decimal::ZERO {
+        return Ok(TradeValuationSnapshot::unpriced(position_size, amount_out));
+    }
+
+    match token_out_price {
+        Some(token_out_price) => Ok(TradeValuationSnapshot::priced(
+            position_size,
+            amount_out,
+            token_out_price.price_usd,
+        )),
+        None => {
+            tracing::warn!(
+                token = %intent.token_out,
+                "Trade valuation unavailable; recording unpriced swap"
+            );
+            Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
+        }
+    }
+}
+
+fn normalize_trade_amount(
+    chain_id: Option<u64>,
+    token: &str,
+    amount: Decimal,
+    amount_format: Option<AmountFormat>,
+) -> Decimal {
+    match amount_format {
+        Some(AmountFormat::Human) => return amount,
+        Some(AmountFormat::BaseUnits) => {}
+        None => return crate::amounts::normalize_trade_amount(chain_id, token, amount),
+    };
+
+    if amount <= Decimal::ZERO || !amount.fract().is_zero() {
+        return amount;
+    }
+
+    let Some(decimals) = known_token_decimals(chain_id, token) else {
+        return amount;
+    };
+    let scale = Decimal::from(10u64.pow(decimals as u32));
+    amount / scale
+}
+
+fn validate_chain_tokens(
+    chain_id: Option<u64>,
+    token_in: &str,
+    token_out: &str,
+) -> Result<(), (StatusCode, String)> {
+    let Some(chain_id) = chain_id else {
+        return Ok(());
+    };
+
+    for token in [token_in, token_out] {
+        if let Some(other_chain_id) = address_chain_mismatch(chain_id, token) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Token {token} belongs to {}, but this bot is configured for {}. Use the correct token address for the configured chain.",
+                    chain_display_name(other_chain_id),
+                    chain_display_name(chain_id),
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapshot {
@@ -946,6 +1091,11 @@ async fn execute(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    validate_chain_tokens(
+        state.chain_id,
+        &request.intent.token_in,
+        &request.intent.token_out,
+    )?;
     // Dedup check FIRST — before any validation or execution work.
     // Prevents race window where parallel requests both pass validation
     // before either inserts into the dedup store.
@@ -1047,6 +1197,11 @@ async fn execute_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Body read failed: {e}")))?;
     let req: ExecuteRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
+    validate_chain_tokens(
+        Some(bot.chain_id),
+        &req.intent.token_in,
+        &req.intent.token_out,
+    )?;
 
     // Dedup check FIRST — before any validation or execution work.
     if !req.validation.intent_hash.is_empty()
@@ -1090,7 +1245,18 @@ async fn execute_multi_bot(
         resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
 
     if bot.paper_trade {
-        return execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await;
+        let response =
+            execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after paper trade"
+            );
+        }
+        return Ok(response);
     }
 
     // CLOB trades bypass the vault executor entirely.
@@ -1108,13 +1274,35 @@ async fn execute_multi_bot(
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
-        return execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await;
+        let response =
+            execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after CLOB trade"
+            );
+        }
+        return Ok(response);
     }
 
     // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
     if req.intent.target_protocol == "hyperliquid" {
-        return execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
-            .await;
+        let response =
+            execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
+                .await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after Hyperliquid trade"
+            );
+        }
+        return Ok(response);
     }
 
     // Use shared ChainClient for nonce serialization (prevents nonce collisions
@@ -1149,7 +1337,7 @@ async fn execute_multi_bot(
         })?
     };
 
-    execute_real_trade(
+    let response = execute_real_trade(
         &bot.bot_id,
         &executor,
         &intent,
@@ -1157,7 +1345,16 @@ async fn execute_multi_bot(
         stored_validation,
         &valuation,
     )
-    .await
+    .await?;
+    if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
+        tracing::warn!(
+            bot_id = %bot.bot_id,
+            %error,
+            "failed to capture metrics snapshot after trade"
+        );
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -1178,6 +1375,7 @@ mod tests {
             amount_in: amount_in.to_string(),
             min_amount_out: min_amount_out.to_string(),
             target_protocol: "uniswap_v3".to_string(),
+            amount_format: None,
             metadata: serde_json::Value::Null,
         }
     }
@@ -1212,7 +1410,57 @@ mod tests {
 
         let (size, amount_out) = resolve_position_size(Some(84532), &intent).expect("size");
         assert_eq!(size.to_string(), "0.429");
-        assert_eq!(amount_out.map(|v| v.to_string()), Some("0.429".to_string()));
+        assert_eq!(
+            amount_out.map(|value| value.to_string()),
+            Some("0.429".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_position_size_normalizes_base_sepolia_usdc_raw_units() {
+        let intent = make_intent(
+            "0x4200000000000000000000000000000000000006",
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "1500000000000000000",
+            "3575000000",
+        );
+
+        let (size, amount_out) = resolve_position_size(Some(84532), &intent).expect("size");
+        assert_eq!(size.to_string(), "3575");
+        assert_eq!(
+            amount_out.map(|value| value.to_string()),
+            Some("3575".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_chain_tokens_rejects_mainnet_address_on_base_sepolia() {
+        let err = validate_chain_tokens(
+            Some(84532),
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        )
+        .expect_err("should reject mainnet token");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("Ethereum mainnet"));
+        assert!(err.1.contains("Base Sepolia"));
+    }
+
+    #[test]
+    fn normalize_trade_amount_keeps_large_human_readable_symbol_amounts() {
+        let amount = normalize_trade_amount(Some(84532), "USDC", Decimal::new(200_000, 0), None);
+        assert_eq!(amount.to_string(), "200000");
+    }
+
+    #[test]
+    fn normalize_trade_amount_respects_explicit_base_units() {
+        let amount = normalize_trade_amount(
+            Some(84532),
+            "USDC",
+            Decimal::new(2_000_000_000, 0),
+            Some(AmountFormat::BaseUnits),
+        );
+        assert_eq!(amount.to_string(), "2000");
     }
 
     fn make_execute_request(deadline: Option<u64>) -> ExecuteRequest {
@@ -1225,6 +1473,7 @@ mod tests {
                 amount_in: "10000000000000000".to_string(),
                 min_amount_out: "1000000".to_string(),
                 target_protocol: "uniswap_v3".to_string(),
+                amount_format: None,
                 metadata: serde_json::Value::Null,
             },
             validation: ValidationPayload {

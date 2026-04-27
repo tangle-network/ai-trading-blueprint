@@ -1,4 +1,7 @@
+import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
+
 export interface Position {
+  asset: ResolvedAssetDisplay;
   token: string;
   symbol: string;
   amount: number;

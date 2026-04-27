@@ -183,6 +183,7 @@ fn seed_bot_with_identity(
 
     let record = TradingBotRecord {
         id: id.to_string(),
+        name: format!("Bot {id}"),
         sandbox_id,
         vault_address: format!("0xVAULT-{id}"),
         share_token: String::new(),
@@ -205,7 +206,7 @@ fn seed_bot_with_identity(
         trading_loop_cron: "0 */5 * * * *".to_string(),
         call_id,
         service_id,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
     };
     state::bots()
@@ -308,6 +309,72 @@ async fn spawn_mock_trading_api() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_trading_api_value_only() -> String {
+    let app = Router::new().route(
+        "/portfolio/state",
+        post(|| async {
+            Json(json!({
+                "positions": [{
+                    "token": "WETH",
+                    "amount": "0.5",
+                    "value_usd": "1050",
+                    "current_price": "2100",
+                    "valuation_status": "value_only"
+                }],
+                "total_value_usd": "1050",
+                "cash_balance": "9000",
+                "warnings": ["Some positions have current market value, but entry price or PnL are unavailable."],
+                "has_unpriced_positions": false,
+                "has_value_only_positions": true
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_trading_api_with_address_portfolio(token: &'static str) -> String {
+    let app = Router::new().route(
+        "/portfolio/state",
+        post(move || async move {
+            Json(json!({
+                "positions": [{
+                    "token": token,
+                    "amount": "647.24",
+                    "value_usd": "647.063",
+                    "entry_price": "1",
+                    "current_price": "1",
+                    "valuation_status": "priced"
+                }],
+                "total_value_usd": "647.063",
+                "cash_balance": null,
+                "warnings": [],
+                "has_unpriced_positions": false
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
 async fn spawn_mock_terminal_sidecar() -> String {
     let app = Router::new()
         .route(
@@ -393,17 +460,26 @@ async fn spawn_mock_terminal_sidecar() -> String {
 async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
     let workflow_session = format!("trading-{bot_id}");
     let tick_session = format!("trading-{bot_id}-1775823900");
+    let fast_session = format!("fast-{bot_id}");
+    let research_session = format!("research-{bot_id}");
+    let convo_session = format!("convo-{bot_id}");
     let app = Router::new()
         .route(
             "/agents/sessions",
             get(move || {
                 let workflow_session = workflow_session.clone();
                 let tick_session = tick_session.clone();
+                let fast_session = fast_session.clone();
+                let research_session = research_session.clone();
+                let convo_session = convo_session.clone();
                 async move {
                     Json(json!([
                         {"id": "manual-1", "title": "New Chat"},
                         {"id": workflow_session},
-                        {"id": tick_session}
+                        {"id": tick_session},
+                        {"id": fast_session},
+                        {"id": research_session},
+                        {"id": convo_session}
                     ]))
                 }
             }),
@@ -420,6 +496,72 @@ async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
         .route(
             "/agents/sessions/{id}/messages",
             get(|| async { Json(json!([])) }).post(|| async { Json(json!({"ok": true})) }),
+        )
+        .route(
+            "/agents/sessions/{id}/abort",
+            post(|| async { Json(json!({"ok": true})) }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_chat_sidecar_with_message_status(
+    bot_id: &str,
+    message_status: StatusCode,
+) -> String {
+    let workflow_session = format!("trading-{bot_id}");
+    let tick_session = format!("trading-{bot_id}-1775823900");
+    let fast_session = format!("fast-{bot_id}");
+    let research_session = format!("research-{bot_id}");
+    let convo_session = format!("convo-{bot_id}");
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let workflow_session = workflow_session.clone();
+                let tick_session = tick_session.clone();
+                let fast_session = fast_session.clone();
+                let research_session = research_session.clone();
+                let convo_session = convo_session.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": workflow_session},
+                        {"id": tick_session},
+                        {"id": fast_session},
+                        {"id": research_session},
+                        {"id": convo_session}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(json!({
+                    "id": id,
+                    "title": "New Chat"
+                }))
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(move || async move {
+                (
+                    message_status,
+                    Json(json!({ "error": format!("mock status {}", message_status.as_u16()) })),
+                )
+            })
+            .post(|| async { Json(json!({"ok": true})) }),
         )
         .route(
             "/agents/sessions/{id}/abort",
@@ -888,7 +1030,10 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json, json!([{ "id": "manual-1", "title": "New Chat" }]));
+    assert_eq!(
+        json,
+        json!([{ "id": "manual-1", "title": "New Chat", "session_type": "manual" }])
+    );
 
     let auto_response = app()
         .oneshot(
@@ -900,7 +1045,365 @@ async fn test_chat_routes_only_expose_manual_sessions() {
         )
         .await
         .unwrap();
-    assert_eq!(auto_response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(auto_response.status(), StatusCode::OK);
+
+    for blocked_session in ["fast-test-bot", "research-test-bot", "convo-test-bot"] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/bots/test-bot/session/sessions/{blocked_session}"
+                    ))
+                    .header("authorization", &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let all_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots/test-bot/session/sessions?includeAutonomous=1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all_response.status(), StatusCode::OK);
+    let all_body = all_response.into_body().collect().await.unwrap().to_bytes();
+    let all_json: serde_json::Value = serde_json::from_slice(&all_body).unwrap();
+    assert_eq!(
+        all_json,
+        json!([
+            { "id": "manual-1", "title": "New Chat", "session_type": "manual" },
+            { "id": "trading-test-bot", "session_type": "autonomous" },
+            { "id": "trading-test-bot-1775823900", "session_type": "autonomous" },
+            { "id": "fast-test-bot", "session_type": "autonomous" },
+            { "id": "research-test-bot", "session_type": "autonomous" },
+            { "id": "convo-test-bot", "session_type": "autonomous" }
+        ])
+    );
+
+    let auto_messages_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots/test-bot/session/sessions/fast-test-bot/messages")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(auto_messages_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_runs_routes_expose_autonomous_history_without_transcript() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-bot", "dex", true, Some(9_100_001));
+    let auth = test_auth_header(SUBMITTER);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-success".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-success".to_string(),
+                workflow_id: 9_100_002,
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                started_at: 1_775_823_700,
+                completed_at: Some(1_775_823_760),
+                session_id: Some("research-runs-bot-1775823700".to_string()),
+                trace_id: Some("trace-success".to_string()),
+                duration_ms: 60_000,
+                input_tokens: 120,
+                output_tokens: 48,
+                result: Some("No trade placed".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert successful run");
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-failed".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-failed".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Failed,
+                started_at: 1_775_823_900,
+                completed_at: Some(1_775_823_901),
+                session_id: None,
+                trace_id: None,
+                duration_ms: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: None,
+                error: Some("AGENT_EXECUTION_FAILED".to_string()),
+            },
+        )
+        .expect("insert failed run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "run-success".to_string(),
+            session_id: "research-runs-bot-1775823700".to_string(),
+            captured_at: 1_775_823_760,
+            messages: json!([
+                {
+                    "info": {
+                        "id": "msg-user",
+                        "role": "user",
+                        "timestamp": "2026-04-24T07:00:00.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "Research tick" }]
+                },
+                {
+                    "info": {
+                        "id": "msg-assistant",
+                        "role": "assistant",
+                        "timestamp": "2026-04-24T07:00:10.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "Conversation loop completed" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["runs"][0]["run_id"], "run-failed");
+    assert_eq!(json["runs"][0]["workflow_kind"], "trading");
+    assert_eq!(json["runs"][0]["status"], "failed");
+    assert_eq!(json["runs"][0]["transcript_available"], false);
+    assert_eq!(json["runs"][0]["error"], "AGENT_EXECUTION_FAILED");
+    assert_eq!(json["runs"][1]["run_id"], "run-success");
+    assert_eq!(json["runs"][1]["workflow_kind"], "research");
+    assert_eq!(json["runs"][1]["transcript_available"], true);
+    assert!(json["next_cursor"].is_null());
+
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/research-runs-bot-1775823700/messages?limit=200",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let transcript_json: serde_json::Value = serde_json::from_slice(&transcript_body).unwrap();
+    assert_eq!(transcript_json[0]["info"]["id"], "msg-user");
+    assert_eq!(transcript_json[1]["info"]["id"], "msg-assistant");
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs/run-failed", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(detail_json["run_id"], "run-failed");
+    assert_eq!(detail_json["transcript_available"], false);
+    assert_eq!(detail_json["error"], "AGENT_EXECUTION_FAILED");
+}
+
+#[tokio::test]
+async fn test_running_autonomous_sessions_preserve_live_message_errors() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-live-error-bot", "dex", true, Some(9_100_101));
+    let auth = test_auth_header(SUBMITTER);
+    let sidecar_url =
+        spawn_mock_chat_sidecar_with_message_status(&bot.id, StatusCode::INTERNAL_SERVER_ERROR)
+            .await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-live-error".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-live-error".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Running,
+                started_at: 1_775_823_950,
+                completed_at: None,
+                session_id: Some("research-runs-live-error-bot".to_string()),
+                trace_id: Some("trace-live-error".to_string()),
+                duration_ms: 15_000,
+                input_tokens: 42,
+                output_tokens: 21,
+                result: None,
+                error: None,
+            },
+        )
+        .expect("insert running run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "run-live-error".to_string(),
+            session_id: "research-runs-live-error-bot".to_string(),
+            captured_at: 1_775_823_955,
+            messages: json!([
+                {
+                    "info": {
+                        "id": "stale-msg",
+                        "role": "assistant",
+                        "timestamp": "2026-04-24T07:05:00.000Z"
+                    },
+                    "parts": [{ "type": "text", "text": "stale transcript" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert stale transcript snapshot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/research-runs-live-error-bot/messages?limit=200",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn test_archived_transcript_replay_honors_limit_and_cursor() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-paged-bot", "dex", true, Some(9_100_201));
+    let auth = test_auth_header(SUBMITTER);
+    let sidecar_url =
+        spawn_mock_chat_sidecar_with_message_status(&bot.id, StatusCode::NOT_FOUND).await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-paged".to_string(),
+            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+                run_id: "run-paged".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_000,
+                completed_at: Some(1_775_824_060),
+                session_id: Some("research-runs-paged-bot".to_string()),
+                trace_id: Some("trace-paged".to_string()),
+                duration_ms: 60_000,
+                input_tokens: 30,
+                output_tokens: 18,
+                result: Some("Replay finished".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert completed run");
+    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+            run_id: "run-paged".to_string(),
+            session_id: "research-runs-paged-bot".to_string(),
+            captured_at: 1_775_824_060,
+            messages: json!([
+                {
+                    "info": { "id": "msg-1", "role": "user", "timestamp": "2026-04-24T07:10:00.000Z" },
+                    "parts": [{ "type": "text", "text": "first" }]
+                },
+                {
+                    "info": { "id": "msg-2", "role": "assistant", "timestamp": "2026-04-24T07:10:05.000Z" },
+                    "parts": [{ "type": "text", "text": "second" }]
+                },
+                {
+                    "info": { "id": "msg-3", "role": "assistant", "timestamp": "2026-04-24T07:10:10.000Z" },
+                    "parts": [{ "type": "text", "text": "third" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/research-runs-paged-bot/messages?limit=2",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["messages"][0]["info"]["id"], "msg-2");
+    assert_eq!(json["messages"][1]["info"]["id"], "msg-3");
+    assert_eq!(json["next_cursor"], "1");
+
+    let cursor_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/research-runs-paged-bot/messages?limit=1&cursor=1",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cursor_response.status(), StatusCode::OK);
+    let cursor_body = cursor_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let cursor_json: serde_json::Value = serde_json::from_slice(&cursor_body).unwrap();
+    assert_eq!(cursor_json["messages"][0]["info"]["id"], "msg-1");
+    assert!(cursor_json["next_cursor"].is_null());
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,6 +1713,47 @@ async fn test_get_bot_portfolio_prefers_remote_trading_api_payload() {
 }
 
 #[tokio::test]
+async fn test_get_bot_portfolio_preserves_full_remote_token_addresses() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-remote-address", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url =
+        spawn_mock_trading_api_with_address_portfolio("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+            .await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["positions"][0]["token"],
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    );
+    assert_eq!(
+        json["positions"][0]["symbol"],
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    );
+}
+
+#[tokio::test]
 async fn test_get_bot_portfolio_prefers_remote_payload_even_when_stopped() {
     let _dir = init_test_env();
 
@@ -1244,7 +1788,42 @@ async fn test_get_bot_portfolio_prefers_remote_payload_even_when_stopped() {
 }
 
 #[tokio::test]
-async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
+async fn test_get_bot_portfolio_preserves_remote_value_only_positions() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("portfolio-bot-value-only-remote", "dex", true);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let trading_api_url = spawn_mock_trading_api_value_only().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/portfolio/state", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["cash_balance"], 9000.0);
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(json["positions"][0]["valuation_status"], "value_only");
+    assert!(json["positions"][0]["entry_price"].is_null());
+}
+
+#[tokio::test]
+async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
     let _dir = init_test_env();
 
     let bot = seed_bot("portfolio-swap-fallback", "dex", true);
@@ -1313,34 +1892,16 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         .unwrap()
         .to_bytes();
     let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
-    assert_eq!(portfolio_json["positions"], json!([]));
-    assert!(portfolio_json["cash_balance"].is_null());
-
-    let metrics_response = app()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/bots/{}/metrics/history", bot.id))
-                .header("authorization", test_auth_header(SUBMITTER))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(metrics_response.status(), 200);
-    let metrics_body = metrics_response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
-    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
-    let latest = metrics_json
+    let positions = portfolio_json["positions"]
         .as_array()
-        .and_then(|snapshots| snapshots.last())
-        .expect("latest snapshot");
-    assert_eq!(latest["positions_count"], 0);
-    assert_eq!(latest["unrealized_pnl"], 0.0);
+        .expect("portfolio positions array");
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["token"], "WETH");
+    assert_eq!(positions[0]["amount"], 0.5);
+    assert_eq!(positions[0]["valuation_status"], "value_only");
+    assert_eq!(positions[0]["current_price"], 2000.0);
+    assert_eq!(portfolio_json["cash_balance"], 0.0);
+    assert_eq!(portfolio_json["has_value_only_positions"], true);
 }
 
 #[tokio::test]
@@ -1482,6 +2043,89 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
     );
     let latest = snapshots.last().expect("latest snapshot");
     assert_eq!(latest["trade_count"], 1);
+}
+
+#[tokio::test]
+async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("history-bot-empty-remote-limit", "dex", true);
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: "executed-trade-limit-1".to_string(),
+        bot_id: bot.id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "WETH".to_string(),
+        token_out: "USDC".to_string(),
+        amount_in: "0.05".to_string(),
+        min_amount_out: "100".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: "0xremote-empty-limit".to_string(),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: false,
+        amount_out: Some("105".to_string()),
+        entry_price_usd: Some("2100".to_string()),
+        notional_usd: Some("105".to_string()),
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-empty-remote-limit".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        slippage_bps: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+    })
+    .await
+    .expect("record trade");
+
+    let mock_app = Router::new().route(
+        "/metrics/history",
+        get(|| async { Json(json!({ "snapshots": [], "total": 0 })) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, mock_app)
+            .await
+            .expect("serve mock trading api");
+    });
+
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = format!("http://{addr}");
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics/history?limit=1", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let snapshots = json.as_array().expect("metrics history should be an array");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["trade_count"], 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     error: string | null;
     authenticate: ReturnType<typeof vi.fn>;
   }>();
+  const metaByUrl = new Map<string, { data?: { deployment_kind: 'fleet' | 'instance' } }>();
   const syncState = {
     operatorDataState: 'locked',
   };
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => {
   return {
     authStateByUrl,
     getAuthState,
+    metaByUrl,
     syncState,
   };
 });
@@ -58,15 +60,20 @@ vi.mock('~/lib/operator/meta', () => ({
   TEE_OPERATOR_API_URL: '/tee-operator-api',
   OPERATOR_API_URL: '',
   HAS_TRADING_OPERATOR_API: true,
+  useOperatorMeta: (apiUrl: string) => mocks.metaByUrl.get(apiUrl) ?? { data: undefined },
 }));
 
 describe('OperatorAccessCard', () => {
   beforeEach(() => {
     mocks.authStateByUrl.clear();
+    mocks.metaByUrl.clear();
     mocks.syncState.operatorDataState = 'locked';
   });
 
   it('authenticates every configured trading target when apiUrls are provided', async () => {
+    mocks.metaByUrl.set('/instance-operator-api', { data: { deployment_kind: 'instance' } });
+    mocks.metaByUrl.set('/tee-operator-api', { data: { deployment_kind: 'instance' } });
+
     render(
       <OperatorAccessCard
         apiUrls={['/instance-operator-api', '/tee-operator-api']}
@@ -79,6 +86,21 @@ describe('OperatorAccessCard', () => {
       expect(mocks.getAuthState('/instance-operator-api').authenticate).toHaveBeenCalledTimes(1);
       expect(mocks.getAuthState('/tee-operator-api').authenticate).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('skips unavailable operators when authenticating', async () => {
+    mocks.metaByUrl.set('/instance-operator-api', { data: { deployment_kind: 'instance' } });
+
+    render(
+      <OperatorSessionBanner />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Authenticate' }));
+
+    await waitFor(() => {
+      expect(mocks.getAuthState('/instance-operator-api').authenticate).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.getAuthState('/tee-operator-api').authenticate).not.toHaveBeenCalled();
   });
 
   it('renders the session banner when any trading operator exists, even without a cloud operator URL', () => {

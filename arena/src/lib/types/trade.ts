@@ -1,4 +1,6 @@
-export type TradeAction = 'buy' | 'sell';
+import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
+
+export type TradeAction = 'buy' | 'sell' | 'swap';
 export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 
 export interface ValidatorResponseDetail {
@@ -35,6 +37,8 @@ export interface Trade {
   botId: string;
   botName: string;
   action: TradeAction;
+  assetIn: ResolvedAssetDisplay;
+  assetOut: ResolvedAssetDisplay;
   tokenIn: string;
   tokenOut: string;
   rawTokenIn?: string;

@@ -50,11 +50,24 @@ impl HeartbeatConsumer for TradingHeartbeatConsumer {
     }
 }
 
+fn configure_runtime_env() {
+    // Trading bots are meant to stay alive between ticks. The sandbox runtime
+    // interprets a requested idle timeout of 0 as "use the default timeout",
+    // so we override that default to 0 for this app unless the operator has
+    // explicitly chosen something else.
+    if std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").is_err() {
+        // SAFETY: single-threaded at this point — called before tokio spawns
+        // any worker threads.
+        unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
+    }
+}
+
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
     // Load .env before anything reads env vars (AI keys, config, etc.).
     dotenvy::dotenv().ok();
+    configure_runtime_env();
     // Derive SESSION_AUTH_SECRET now — before any worker thread is spawned.
     trading_blueprint_lib::session_auth::ensure_from_env();
 

@@ -70,4 +70,20 @@ describe('buildPerformanceChartPoints', () => {
     expect(points[0]?.value).toBe(2212.61);
     expect(points[1]?.value).toBe(2223.61);
   });
+
+  it('prepends trusted initial capital before real snapshots', () => {
+    const points = buildPerformanceChartPoints(
+      [
+        { account_value_usd: 9994.04, timestamp: '2026-04-23T10:40:51.844085Z' },
+        { account_value_usd: 9992.13, timestamp: '2026-04-23T11:02:02.514536Z' },
+      ],
+      [],
+      { value: 10000, timestamp: '2026-04-23T10:34:39.000Z' },
+    );
+
+    expect(points).toHaveLength(3);
+    expect(points[0]?.value).toBe(10000);
+    expect(points[1]?.value).toBe(9994.04);
+    expect(points[2]?.value).toBe(9992.13);
+  });
 });

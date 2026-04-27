@@ -7,6 +7,7 @@ import "../../src/TradingVault.sol";
 import "../../src/VaultShare.sol";
 import "../../src/VaultFactory.sol";
 import "../../src/VaultDeployer.sol";
+import "../../src/VaultShareDeployer.sol";
 import "../../src/PolicyEngine.sol";
 import "../../src/TradeValidator.sol";
 import "../../src/FeeDistributor.sol";
@@ -73,6 +74,10 @@ contract FullE2EForkTest is Test {
 
         // VaultFactory takes ownership of PE + TV + FD
         factory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer =
+            new VaultDeployer(address(factory), policyEngine, tradeValidator, feeDistributor);
+        VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(factory));
+        factory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
         policyEngine.transferOwnership(address(factory));
         vm.prank(address(factory));

@@ -12,11 +12,29 @@ const CONFIG_FILE = '/home/agent/config/api.json';
 const LOG_FILE = '/home/agent/logs/decisions.jsonl';
 const METRICS_FILE = '/home/agent/metrics/latest.json';
 
-const DEFAULT_WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
-const DEFAULT_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const DEFAULT_TOKENS_BY_CHAIN = {
+  1: {
+    weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  },
+  8453: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  },
+  84532: {
+    weth: '0x4200000000000000000000000000000000000006',
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  },
+};
+const DEFAULT_WETH = DEFAULT_TOKENS_BY_CHAIN[1].weth;
+const DEFAULT_USDC = DEFAULT_TOKENS_BY_CHAIN[1].usdc;
 const TOKEN_DECIMALS = {
   [DEFAULT_WETH.toLowerCase()]: 18,
   [DEFAULT_USDC.toLowerCase()]: 6,
+  [DEFAULT_TOKENS_BY_CHAIN[8453].weth.toLowerCase()]: 18,
+  [DEFAULT_TOKENS_BY_CHAIN[8453].usdc.toLowerCase()]: 6,
+  [DEFAULT_TOKENS_BY_CHAIN[84532].weth.toLowerCase()]: 18,
+  [DEFAULT_TOKENS_BY_CHAIN[84532].usdc.toLowerCase()]: 6,
   weth: 18,
   usdc: 6,
 };
@@ -24,6 +42,7 @@ const MIN_BASE_UNITS = {
   buy: BigInt('5000000'),
   sell: BigInt('5000000000000000'),
 };
+const DEFAULT_SLIPPAGE_BPS = 200;
 
 function loadConfig() {
   try {
@@ -154,7 +173,10 @@ function normalizeWeights(rawWeights) {
   };
 }
 
-function normalizeQaConfig(strategyConfig) {
+function normalizeQaConfig(config) {
+  const strategyConfig = config?.strategy_config || {};
+  const chainId = Number(config?.chain_id || strategyConfig?.chain_id || 0);
+  const chainDefaults = DEFAULT_TOKENS_BY_CHAIN[chainId] || DEFAULT_TOKENS_BY_CHAIN[1];
   const allowedDirections = Array.isArray(strategyConfig?.qa_allowed_directions)
     ? strategyConfig.qa_allowed_directions
         .map((value) => String(value).trim().toLowerCase())
@@ -174,11 +196,11 @@ function normalizeQaConfig(strategyConfig) {
       weth:
         strategyConfig?.qa_pair_tokens?.weth ||
         strategyConfig?.qa_pair_tokens?.base ||
-        DEFAULT_WETH,
+        chainDefaults.weth,
       usdc:
         strategyConfig?.qa_pair_tokens?.usdc ||
         strategyConfig?.qa_pair_tokens?.quote ||
-        DEFAULT_USDC,
+        chainDefaults.usdc,
     },
   };
 }
@@ -202,6 +224,32 @@ function decimalToBaseUnits(value, decimals) {
   const normalized = whole + fraction.padEnd(decimals, '0').slice(0, decimals);
   const sanitized = normalized.replace(/^0+(?=\d)/, '') || '0';
   return BigInt(sanitized);
+}
+
+function tokenDecimals(token) {
+  const key = String(token || '').trim().toLowerCase();
+  return TOKEN_DECIMALS[key] || 18;
+}
+
+function baseUnitsToDecimal(units, decimals) {
+  if (units <= BigInt(0)) return 0;
+  const raw = units.toString();
+  if (decimals === 0) return Number(raw);
+  const padded = raw.padStart(decimals + 1, '0');
+  const whole = padded.slice(0, -decimals);
+  const fraction = padded.slice(-decimals).replace(/0+$/, '');
+  return Number(fraction ? `${whole}.${fraction}` : whole);
+}
+
+function priceMap(entries) {
+  const map = new Map();
+  for (const entry of entries || []) {
+    const key = String(entry?.token || '').toLowerCase();
+    const price = Number(entry?.price_usd || 0);
+    if (!key || !Number.isFinite(price) || price <= 0) continue;
+    map.set(key, price);
+  }
+  return map;
 }
 
 function findPosition(portfolio, symbol, address) {
@@ -230,7 +278,7 @@ function buildFeasibleDirections(portfolio, qaConfig) {
   return feasible;
 }
 
-function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
+function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits, prices) {
   const pct = sizeBucket === 'big_trade' ? qaConfig.sizes.bigPct : qaConfig.sizes.smallPct;
   const basisPoints = BigInt(Math.max(1, Math.round(pct * 10000)));
   const proposedUnits = (availableUnits * basisPoints) / BigInt(10000);
@@ -240,6 +288,22 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
 
   const tokenIn = direction === 'buy' ? qaConfig.pairTokens.usdc : qaConfig.pairTokens.weth;
   const tokenOut = direction === 'buy' ? qaConfig.pairTokens.weth : qaConfig.pairTokens.usdc;
+  const tokenInKey = tokenIn.toLowerCase();
+  const tokenOutKey = tokenOut.toLowerCase();
+  const tokenInPrice = prices.get(tokenInKey);
+  const tokenOutPrice = prices.get(tokenOutKey);
+  if (!Number.isFinite(tokenInPrice) || !Number.isFinite(tokenOutPrice) || tokenOutPrice <= 0) {
+    return null;
+  }
+
+  const tokenInAmount = baseUnitsToDecimal(amountInUnits, tokenDecimals(tokenIn));
+  const expectedOut = (tokenInAmount * tokenInPrice) / tokenOutPrice;
+  const slippageFactor = (10000 - DEFAULT_SLIPPAGE_BPS) / 10000;
+  const minAmountOutUnits = decimalToBaseUnits(
+    expectedOut * slippageFactor,
+    tokenDecimals(tokenOut),
+  );
+  if (minAmountOutUnits <= BigInt(0)) return null;
 
   return {
     strategy_id: `qa-stochastic-${config.bot_id || 'bot'}`,
@@ -247,7 +311,8 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
     token_in: tokenIn,
     token_out: tokenOut,
     amount_in: amountInUnits.toString(),
-    min_amount_out: '1',
+    min_amount_out: minAmountOutUnits.toString(),
+    amount_format: 'base_units',
     target_protocol: 'uniswap_v3',
     deadline_secs: 300,
   };
@@ -255,7 +320,7 @@ function buildIntent(config, qaConfig, direction, sizeBucket, availableUnits) {
 
 async function main() {
   const config = loadConfig();
-  const qaConfig = normalizeQaConfig(config.strategy_config || {});
+  const qaConfig = normalizeQaConfig(config);
 
   if (qaConfig.mode !== 'stochastic') {
     const result = { status: 'disabled', reason: 'qa_mode is not stochastic' };
@@ -308,6 +373,30 @@ async function main() {
     return;
   }
 
+  const pricesResult = await apiCall(config, 'POST', '/market-data/prices', {
+    tokens: [qaConfig.pairTokens.weth, qaConfig.pairTokens.usdc],
+  });
+  if (pricesResult.status >= 400) {
+    const decision = appendDecision({
+      mode: 'qa_stochastic',
+      action: 'skip',
+      sampled_bucket: sampledBucket,
+      reason: 'QA stochastic mode could not fetch current pair pricing',
+      details: pricesResult.body,
+    });
+    writeMetrics({
+      mode: 'qa_stochastic',
+      sampled_bucket: sampledBucket,
+      portfolio_value_usd: Number(portfolio.total_value_usd || 0),
+      trades_executed: 0,
+      errors: ['pricing_unavailable'],
+    });
+    await recordMetricsSnapshot(config, portfolio);
+    console.log(JSON.stringify({ status: 'no_trade', decision }, null, 2));
+    return;
+  }
+  const prices = priceMap(pricesResult.body?.prices);
+
   const selected = sampleOne(feasible);
   const intent = buildIntent(
     config,
@@ -315,6 +404,7 @@ async function main() {
     selected.direction,
     sampledBucket,
     selected.availableUnits,
+    prices,
   );
   if (!intent) {
     const decision = appendDecision({
@@ -322,7 +412,7 @@ async function main() {
       action: 'skip',
       sampled_bucket: sampledBucket,
       sampled_direction: selected.direction,
-      reason: 'Sampled QA trade size was not feasible for current inventory',
+      reason: 'Sampled QA trade size was not feasible for current inventory or price data',
     });
     writeMetrics({
       mode: 'qa_stochastic',

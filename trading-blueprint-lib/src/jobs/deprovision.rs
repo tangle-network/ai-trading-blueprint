@@ -42,8 +42,7 @@ pub async fn deprovision_core(
 
     // Remove workflow
     if let Some(wf_id) = workflow_id {
-        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.remove(&key);
+        super::activate::remove_bot_workflows(&bot_id, wf_id)?;
     }
 
     // Remove bot record

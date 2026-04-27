@@ -41,14 +41,23 @@ pub async fn configure_core(
             rebuild_workflow_profile(&updated_bot, workflow_id);
         }
         if let Ok(record) = sandbox_runtime::runtime::get_sandbox_by_id(&updated_bot.sandbox_id) {
-            let sidecar_trading_api_url =
-                super::activate::resolve_sidecar_trading_api_url(&updated_bot.trading_api_url);
+            let sidecar_bot = super::activate::build_sidecar_bot_config(&updated_bot);
+            if let Err(err) =
+                super::activate::ensure_sidecar_runtime_dirs(&record.sidecar_url, &record.token)
+                    .await
+            {
+                tracing::warn!(
+                    "Failed to refresh sidecar runtime directories for bot {} after configure: {err}",
+                    updated_bot.id
+                );
+            }
             if let Err(err) = super::activate::write_prebuilt_tools(
                 &record.sidecar_url,
                 &record.token,
                 &updated_bot.id,
+                updated_bot.chain_id,
                 &updated_bot.strategy_type,
-                &sidecar_trading_api_url,
+                &sidecar_bot.trading_api_url,
                 &updated_bot.trading_api_token,
                 &updated_bot.operator_address,
                 &updated_bot.strategy_config,
@@ -57,6 +66,18 @@ pub async fn configure_core(
             {
                 tracing::warn!(
                     "Failed to refresh sidecar tools/config for bot {} after configure: {err}",
+                    updated_bot.id
+                );
+            }
+            if let Err(err) = super::activate::sync_profile_instructions(
+                &record.sidecar_url,
+                &record.token,
+                &sidecar_bot,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to refresh OpenCode instructions for bot {} after configure: {err}",
                     updated_bot.id
                 );
             }

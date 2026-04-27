@@ -93,6 +93,7 @@ interface DexExecutionTargetOption {
   id: DexExecutionTargetId;
   label: string;
   description: string;
+  modeLabel?: string;
   enabled: boolean;
   chainId?: number;
   rpcUrl?: string;
@@ -101,16 +102,65 @@ interface DexExecutionTargetOption {
   paperTrade?: boolean;
 }
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+
+function resolveEnvBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function resolveEnvPositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'base',
+  label: 'Base Sepolia (Cloud)',
+  description: 'Uses Base Sepolia for cloud paper-trading execution.',
+  modeLabel: 'Cloud execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_ENABLED, true),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_BASE_CHAIN_ID, 84532),
+  rpcUrl: import.meta.env.VITE_DEX_BASE_RPC_URL ?? 'https://sepolia.base.org',
+  vaultAddress:
+    import.meta.env.VITE_DEX_BASE_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_BASE_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_BASE_ASSET_TOKEN ?? BASE_SEPOLIA_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_PAPER_TRADE, true),
+};
+
 const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'ethereum',
   label: 'Ethereum Fork (Local QA)',
   description: 'Uses the local fork of Ethereum for QA. This is not Ethereum mainnet.',
-  enabled: true,
-  chainId: Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?? 31339),
+  modeLabel: 'Local execution fork',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_ENABLED, true),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID, 31339),
   rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? 'http://127.0.0.1:42545',
   vaultAddress: import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS ?? '0x19ba547192222d3480665d4af454270b3fbe6749',
   assetToken: import.meta.env.VITE_DEX_ETHEREUM_ASSET_TOKEN ?? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  paperTrade: false,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_PAPER_TRADE, false),
+};
+
+const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'arbitrum',
+  label: 'Arbitrum Sepolia',
+  description: 'Optional execution target for Arbitrum Sepolia.',
+  modeLabel: 'Cloud execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_CHAIN_ID, 421614),
+  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc',
+  vaultAddress:
+    import.meta.env.VITE_DEX_ARBITRUM_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_ARBITRUM_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_ARBITRUM_ASSET_TOKEN ?? ZERO_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_PAPER_TRADE, true),
 };
 
 export function resolveSelectedProvisionNetwork(selectedChainId: number | undefined | null) {
@@ -271,23 +321,13 @@ export default function ProvisionPage() {
   const localChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 31337);
   const executionTargets = useMemo<DexExecutionTargetOption[]>(() => {
     return [
+      DEFAULT_BASE_EXECUTION_TARGET,
       DEFAULT_ETHEREUM_EXECUTION_TARGET,
-      {
-        id: 'arbitrum',
-        label: 'Arbitrum',
-        description: 'Temporarily disabled until the DEX execution path is fully wired.',
-        enabled: false,
-      },
-      {
-        id: 'base',
-        label: 'Base',
-        description: 'Temporarily disabled until the DEX execution path is fully wired.',
-        enabled: false,
-      },
+      DEFAULT_ARBITRUM_EXECUTION_TARGET,
     ];
   }, []);
   const [executionTargetId, setExecutionTargetId] = useState<DexExecutionTargetId>(
-    'ethereum',
+    'base',
   );
   const selectedExecutionTarget = useMemo(
     () =>
@@ -1067,7 +1107,7 @@ export default function ProvisionPage() {
     const requiresExecutionTarget = strategyType === 'dex';
     const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
     if (requiresExecutionTarget && !executionConfig) {
-      toast.error('Execution target is incomplete — select a valid local fork target in Advanced Settings');
+      toast.error('Execution target is incomplete — select a valid execution target in Advanced Settings');
       return;
     }
 

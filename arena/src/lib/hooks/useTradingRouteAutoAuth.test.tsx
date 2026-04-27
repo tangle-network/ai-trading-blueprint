@@ -13,6 +13,12 @@ const mocks = vi.hoisted(() => {
     error: string | null;
     authenticate: ReturnType<typeof vi.fn>;
   }>();
+  const metaByUrl = new Map<string, { data?: { deployment_kind: 'fleet' | 'instance' } }>();
+  const operatorApiConfig = {
+    cloud: '',
+    instance: '',
+    tee: '',
+  };
 
   const getAuthState = (apiUrl: string) => {
     let state = authStateByUrl.get(apiUrl);
@@ -33,6 +39,8 @@ const mocks = vi.hoisted(() => {
     accountState,
     authStateByUrl,
     getAuthState,
+    metaByUrl,
+    operatorApiConfig,
   };
 });
 
@@ -44,13 +52,23 @@ vi.mock('./useOperatorAuth', () => ({
   useOperatorAuth: (apiUrl: string) => mocks.getAuthState(apiUrl),
 }));
 
+vi.mock('~/lib/operator/meta', () => ({
+  CLOUD_OPERATOR_API_URL: mocks.operatorApiConfig.cloud,
+  INSTANCE_OPERATOR_API_URL: mocks.operatorApiConfig.instance,
+  TEE_OPERATOR_API_URL: mocks.operatorApiConfig.tee,
+  useOperatorMeta: (apiUrl: string) => mocks.metaByUrl.get(apiUrl) ?? { data: undefined },
+}));
+
 describe('useTradingRouteAutoAuth', () => {
   beforeEach(() => {
     mocks.accountState.address = '0x1234';
     mocks.accountState.isConnected = true;
     mocks.authStateByUrl.clear();
+    mocks.metaByUrl.clear();
+    mocks.operatorApiConfig.cloud = '';
+    mocks.operatorApiConfig.instance = '';
+    mocks.operatorApiConfig.tee = '';
     vi.resetModules();
-    vi.unstubAllEnvs();
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       value: 'visible',
@@ -58,10 +76,12 @@ describe('useTradingRouteAutoAuth', () => {
   });
 
   it('attempts auth for each configured trading operator URL', async () => {
-    vi.stubEnv('VITE_OPERATOR_API_URL', '/cloud');
-    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '/cloud');
-    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '/instance');
-    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '/tee');
+    mocks.operatorApiConfig.cloud = '/cloud';
+    mocks.operatorApiConfig.instance = '/instance';
+    mocks.operatorApiConfig.tee = '/tee';
+    mocks.metaByUrl.set('/cloud', { data: { deployment_kind: 'fleet' } });
+    mocks.metaByUrl.set('/instance', { data: { deployment_kind: 'instance' } });
+    mocks.metaByUrl.set('/tee', { data: { deployment_kind: 'instance' } });
 
     const { useTradingRouteAutoAuth } = await import('./useTradingRouteAutoAuth');
     renderHook(() => useTradingRouteAutoAuth({ enabled: true, routeKey: 'dashboard' }));
@@ -74,10 +94,8 @@ describe('useTradingRouteAutoAuth', () => {
   });
 
   it('still authenticates in instance-only deployments', async () => {
-    vi.stubEnv('VITE_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '/instance');
-    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '');
+    mocks.operatorApiConfig.instance = '/instance';
+    mocks.metaByUrl.set('/instance', { data: { deployment_kind: 'instance' } });
 
     const { useTradingRouteAutoAuth } = await import('./useTradingRouteAutoAuth');
     renderHook(() => useTradingRouteAutoAuth({ enabled: true, routeKey: 'leaderboard' }));
@@ -85,14 +103,11 @@ describe('useTradingRouteAutoAuth', () => {
     await waitFor(() => {
       expect(mocks.getAuthState('/instance').authenticate).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.authStateByUrl.has('/cloud')).toBe(false);
   });
 
   it('still authenticates in TEE-only deployments', async () => {
-    vi.stubEnv('VITE_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '/tee');
+    mocks.operatorApiConfig.tee = '/tee';
+    mocks.metaByUrl.set('/tee', { data: { deployment_kind: 'instance' } });
 
     const { useTradingRouteAutoAuth } = await import('./useTradingRouteAutoAuth');
     renderHook(() => useTradingRouteAutoAuth({ enabled: true, routeKey: 'leaderboard' }));
@@ -100,20 +115,21 @@ describe('useTradingRouteAutoAuth', () => {
     await waitFor(() => {
       expect(mocks.getAuthState('/tee').authenticate).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.authStateByUrl.has('/instance')).toBe(false);
   });
 
-  it('deduplicates duplicate operator URLs', async () => {
-    vi.stubEnv('VITE_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '');
-    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '/shared');
-    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '/shared');
+  it('skips operators whose metadata is unavailable', async () => {
+    mocks.operatorApiConfig.cloud = '/cloud';
+    mocks.operatorApiConfig.instance = '/instance';
+    mocks.operatorApiConfig.tee = '/tee';
+    mocks.metaByUrl.set('/cloud', { data: { deployment_kind: 'fleet' } });
 
     const { useTradingRouteAutoAuth } = await import('./useTradingRouteAutoAuth');
     renderHook(() => useTradingRouteAutoAuth({ enabled: true, routeKey: 'dashboard' }));
 
     await waitFor(() => {
-      expect(mocks.getAuthState('/shared').authenticate).toHaveBeenCalledTimes(1);
+      expect(mocks.getAuthState('/cloud').authenticate).toHaveBeenCalledTimes(1);
     });
+    expect(mocks.getAuthState('/instance').authenticate).not.toHaveBeenCalled();
+    expect(mocks.getAuthState('/tee').authenticate).not.toHaveBeenCalled();
   });
 });

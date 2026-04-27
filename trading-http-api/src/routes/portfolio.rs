@@ -14,6 +14,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use trading_runtime::contracts::ITradingVault;
 use trading_runtime::market_data::MarketDataClient;
+use trading_runtime::token_metadata::known_token_decimals;
 use trading_runtime::types::{PositionType, PriceData, ValuationStatus};
 
 #[derive(Serialize)]
@@ -159,6 +160,13 @@ async fn get_state_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<crate::BotContext>,
 ) -> Json<PortfolioResponse> {
+    Json(build_multi_bot_portfolio_response(&bot, &state.market_data_base_url).await)
+}
+
+pub(crate) async fn build_multi_bot_portfolio_response(
+    bot: &crate::BotContext,
+    market_data_base_url: &str,
+) -> PortfolioResponse {
     let latest_snapshot = metrics_store::latest_snapshot_for_bot(&bot.bot_id)
         .ok()
         .flatten();
@@ -173,8 +181,9 @@ async fn get_state_multi_bot(
     let mut has_unpriced_positions = false;
     let mut has_value_only_positions = false;
     let mut total_value_decimal = Decimal::ZERO;
+    let mut vault_lookup_failed = false;
 
-    match read_vault_cash_position(&bot, &state.market_data_base_url).await {
+    match read_vault_cash_position(bot, market_data_base_url).await {
         Ok(Some(position)) => {
             cash_balance = Some(position.amount.clone());
             has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
@@ -187,25 +196,32 @@ async fn get_state_multi_bot(
         }
         Ok(None) => {}
         Err(e) => {
+            vault_lookup_failed = true;
             warnings.push(format!(
                 "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
             ));
         }
     }
 
-    if let Ok(synthetic) = synthesize_trade_positions(&bot, &state.market_data_base_url).await {
+    if let Ok(synthetic) = synthesize_trade_positions(bot, market_data_base_url).await {
         has_unpriced_positions |= synthetic.has_unpriced_positions;
         has_value_only_positions |= synthetic.has_value_only_positions;
         total_value_decimal += synthetic.total_value_usd;
         positions.extend(synthetic.positions);
     }
+    if cash_balance.is_none() {
+        cash_balance = synthetic_cash_balance(bot, &positions);
+    }
 
-    let total_value_usd = if positions.is_empty() {
-        latest_snapshot
-            .as_ref()
-            .and_then(|snapshot| parse_decimal_maybe(&snapshot.account_value_usd))
-            .unwrap_or(Decimal::ZERO)
+    let snapshot_total_value = latest_snapshot
+        .as_ref()
+        .and_then(|snapshot| parse_decimal_maybe(&snapshot.account_value_usd));
+    let total_value_usd = if vault_lookup_failed {
+        snapshot_total_value
+            .unwrap_or(total_value_decimal)
             .to_string()
+    } else if positions.is_empty() {
+        snapshot_total_value.unwrap_or(Decimal::ZERO).to_string()
     } else {
         total_value_decimal.to_string()
     };
@@ -221,7 +237,7 @@ async fn get_state_multi_bot(
         has_value_only_positions,
     ));
 
-    Json(PortfolioResponse {
+    PortfolioResponse {
         positions,
         total_value_usd,
         cash_balance,
@@ -236,7 +252,7 @@ async fn get_state_multi_bot(
         warnings,
         has_unpriced_positions,
         has_value_only_positions,
-    })
+    }
 }
 
 #[derive(Default)]
@@ -402,7 +418,7 @@ fn seed_initial_paper_cash(
         .get("asset_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
         .unwrap_or("USDC");
     let capital = strategy
         .get("initial_capital_usd")
@@ -428,6 +444,27 @@ fn seed_initial_paper_cash(
     );
 }
 
+fn synthetic_cash_balance(bot: &crate::BotContext, positions: &[PositionEntry]) -> Option<String> {
+    let token = bot
+        .strategy_config
+        .as_object()
+        .and_then(|strategy| {
+            strategy
+                .get("asset_token")
+                .or_else(|| strategy.get("cash_token"))
+                .and_then(|value| value.as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
+        .unwrap_or("USDC");
+
+    positions
+        .iter()
+        .find(|position| normalize_token_key(&position.token) == normalize_token_key(token))
+        .map(|position| position.amount.clone())
+        .or_else(|| bot.paper_trade.then(|| "0".to_string()))
+}
+
 fn apply_trade_to_synthetic_positions(
     positions: &mut HashMap<String, SyntheticPositionAccumulator>,
     chain_id: u64,
@@ -435,23 +472,18 @@ fn apply_trade_to_synthetic_positions(
 ) {
     let action = trade.action.to_ascii_lowercase();
 
-    if trade_represents_spot_swap(&action) {
+    if trade_represents_spot_swap(&action, &trade.target_protocol) {
         let amount_in = parse_decimal_maybe(&trade.amount_in)
-            .map(|amount| {
-                crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_in, amount)
-            })
+            .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
             .unwrap_or(Decimal::ZERO);
         let amount_out = trade
             .amount_out
             .as_deref()
             .and_then(parse_decimal_maybe)
-            .map(|amount| {
-                crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_out, amount)
-            })
+            .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
             .or_else(|| {
-                parse_decimal_maybe(&trade.min_amount_out).map(|amount| {
-                    crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_out, amount)
-                })
+                parse_decimal_maybe(&trade.min_amount_out)
+                    .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
             })
             .unwrap_or(amount_in);
         debit_spot_position(
@@ -478,23 +510,18 @@ fn apply_trade_to_synthetic_positions(
         .amount_out
         .as_deref()
         .and_then(parse_decimal_maybe)
-        .map(|amount| {
-            crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_out, amount)
-        })
+        .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
         .or_else(|| {
-            parse_decimal_maybe(&trade.min_amount_out).map(|amount| {
-                crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_out, amount)
-            })
+            parse_decimal_maybe(&trade.min_amount_out)
+                .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_out, amount))
         })
         .unwrap_or_else(|| {
             parse_decimal_maybe(&trade.amount_in)
-                .map(|amount| {
-                    crate::amounts::normalize_trade_amount(Some(chain_id), &trade.token_in, amount)
-                })
+                .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
                 .unwrap_or(Decimal::ZERO)
         });
 
-    if trade_opens_position(&action) {
+    if trade_opens_position(&action, &trade.target_protocol) {
         credit_position(
             positions,
             &trade.token_out,
@@ -506,7 +533,7 @@ fn apply_trade_to_synthetic_positions(
                 .as_deref()
                 .and_then(parse_decimal_maybe),
         );
-    } else if trade_closes_position(&action) {
+    } else if trade_closes_position(&action, &trade.target_protocol) {
         debit_position(
             positions,
             &trade.token_out,
@@ -517,15 +544,30 @@ fn apply_trade_to_synthetic_positions(
     }
 }
 
-fn trade_represents_spot_swap(action: &str) -> bool {
-    matches!(action, "swap" | "buy" | "sell")
+fn trade_represents_spot_swap(action: &str, protocol: &str) -> bool {
+    match action {
+        "swap" => true,
+        "buy" | "sell" => !protocol_uses_non_spot_buy_sell(protocol),
+        _ => false,
+    }
 }
 
-fn trade_opens_position(action: &str) -> bool {
+fn trade_opens_position(action: &str, protocol: &str) -> bool {
+    if protocol_supports_buy_to_open(protocol) && action == "buy" {
+        return true;
+    }
+    if protocol_supports_dual_sided_opens(protocol) && matches!(action, "buy" | "sell") {
+        return true;
+    }
+
     matches!(action, "open_long" | "open_short" | "supply" | "borrow")
 }
 
-fn trade_closes_position(action: &str) -> bool {
+fn trade_closes_position(action: &str, protocol: &str) -> bool {
+    if protocol_supports_buy_to_open(protocol) && action == "sell" {
+        return true;
+    }
+
     matches!(
         action,
         "close_long" | "close_short" | "withdraw" | "repay" | "redeem"
@@ -533,14 +575,36 @@ fn trade_closes_position(action: &str) -> bool {
 }
 
 fn trade_position_type(action: &str, protocol: &str) -> PositionType {
-    match (protocol, action) {
+    match (protocol.to_ascii_lowercase().as_str(), action) {
         ("polymarket_clob", _) | ("polymarket", _) => PositionType::ConditionalToken,
+        ("hyperliquid", "buy") => PositionType::LongPerp,
+        ("hyperliquid", "sell") => PositionType::ShortPerp,
         (_, "open_long") => PositionType::LongPerp,
         (_, "open_short") => PositionType::ShortPerp,
         (_, "supply") => PositionType::Lending,
         (_, "borrow") => PositionType::Borrowing,
         _ => PositionType::Spot,
     }
+}
+
+fn protocol_uses_non_spot_buy_sell(protocol: &str) -> bool {
+    protocol_supports_buy_to_open(protocol) || protocol_supports_dual_sided_opens(protocol)
+}
+
+fn protocol_supports_buy_to_open(protocol: &str) -> bool {
+    matches!(
+        protocol.trim().to_ascii_lowercase().as_str(),
+        "polymarket_clob" | "polymarket"
+    )
+}
+
+fn protocol_supports_dual_sided_opens(protocol: &str) -> bool {
+    matches!(protocol.trim().to_ascii_lowercase().as_str(), "hyperliquid")
+}
+
+fn token_is_zero_placeholder(token: &str) -> bool {
+    let normalized = token.trim().to_ascii_lowercase();
+    normalized == "0x0000000000000000000000000000000000000000"
 }
 
 fn credit_spot_position(
@@ -643,6 +707,18 @@ fn parse_decimal_maybe(value: &str) -> Option<Decimal> {
     Decimal::from_str(value).ok()
 }
 
+fn normalize_trade_amount(chain_id: Option<u64>, token: &str, amount: Decimal) -> Decimal {
+    if amount <= Decimal::ZERO || !amount.fract().is_zero() || amount < Decimal::new(100_000, 0) {
+        return amount;
+    }
+
+    let Some(decimals) = known_token_decimals(chain_id, token) else {
+        return amount;
+    };
+    let scale = Decimal::from(10u64.pow(decimals as u32));
+    amount / scale
+}
+
 fn default_reference_price_usd(token: &str) -> Option<Decimal> {
     let normalized = normalize_token_key(token);
     match normalized.as_str() {
@@ -713,13 +789,15 @@ async fn read_vault_cash_position(
     if let Ok(price_rows) = market_client
         .get_prices(std::slice::from_ref(&token_symbol))
         .await
-        && let Some(row) = price_rows
+    {
+        if let Some(row) = price_rows
             .iter()
             .find(|row| row.token.eq_ignore_ascii_case(&token_symbol))
-    {
-        current_price = Some(row.price_usd.to_string());
-        let amount_decimal = Decimal::from_str(&amount_display).unwrap_or(Decimal::ZERO);
-        value_usd = Some((amount_decimal * row.price_usd).to_string());
+        {
+            current_price = Some(row.price_usd.to_string());
+            let amount_decimal = Decimal::from_str(&amount_display).unwrap_or(Decimal::ZERO);
+            value_usd = Some((amount_decimal * row.price_usd).to_string());
+        }
     }
 
     Ok(Some(PositionEntry {

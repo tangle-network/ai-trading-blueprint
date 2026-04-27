@@ -105,6 +105,6 @@ exec "$PRICING_BIN" \
   --ws-rpc-endpoint "$WS_RPC_URL" \
   --blueprint-id "$BLUEPRINT_ID" \
   --tangle-contract "$TANGLE_CONTRACT" \
-  --staking-contract "$STAKING_CONTRACT" \
+  --restaking-contract "$STAKING_CONTRACT" \
   --status-registry-contract "$STATUS_REGISTRY_CONTRACT" \
   "$@"

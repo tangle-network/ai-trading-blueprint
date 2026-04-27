@@ -1,4 +1,5 @@
 import type { Portfolio, Position } from '~/lib/types/portfolio';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 export interface RawPortfolioPosition {
   token: string;
@@ -44,9 +45,13 @@ function inferValuationStatus(pos: RawPortfolioPosition): Position['valuationSta
   return hasPricedFields ? 'priced' : 'unpriced';
 }
 
-function mapApiPosition(pos: RawPortfolioPosition): Position {
+function mapApiPosition(pos: RawPortfolioPosition, chainId?: number): Position {
   const valuationStatus = inferValuationStatus(pos);
   const amount = toFiniteNumber(pos.amount) ?? 0;
+  const resolvedFromToken = resolveAssetDisplay(pos.token, chainId);
+  const asset = (!resolvedFromToken.isKnown && pos.symbol && pos.symbol !== pos.token)
+    ? resolveAssetDisplay(pos.symbol, chainId)
+    : resolvedFromToken;
   const isValueVisible = valuationStatus === 'priced' || valuationStatus === 'value_only';
   const valueUsd = isValueVisible ? toFiniteNumber(pos.value_usd) : null;
   const entryPrice = valuationStatus === 'priced' ? toFiniteNumber(pos.entry_price) : null;
@@ -76,8 +81,9 @@ function mapApiPosition(pos: RawPortfolioPosition): Position {
   }
 
   return {
+    asset,
     token: pos.token,
-    symbol: pos.symbol ?? pos.token,
+    symbol: asset.symbol,
     amount,
     valueUsd,
     entryPrice,
@@ -92,8 +98,8 @@ function mapApiPosition(pos: RawPortfolioPosition): Position {
   };
 }
 
-export function mapApiPortfolioState(p: RawPortfolioState, botId: string): Portfolio {
-  const positions = p.positions.map((pos) => mapApiPosition(pos));
+export function mapApiPortfolioState(p: RawPortfolioState, botId: string, chainId?: number): Portfolio {
+  const positions = p.positions.map((pos) => mapApiPosition(pos, chainId));
   const hasUnpricedPositions = p.has_unpriced_positions ?? positions.some((pos) => pos.valuationStatus === 'unpriced');
   const hasValueOnlyPositions = p.has_value_only_positions ?? positions.some((pos) => pos.valuationStatus === 'value_only');
   const totalValueUsd = hasUnpricedPositions ? null : toFiniteNumber(p.total_value_usd);

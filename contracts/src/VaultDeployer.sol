@@ -8,8 +8,8 @@ import "./TradeValidator.sol";
 import "./FeeDistributor.sol";
 
 /// @title VaultDeployer
-/// @notice Holds creation bytecodes for TradingVault and VaultShare, keeping VaultFactory under size limit.
-/// @dev Called exclusively by VaultFactory to deploy vaults and share tokens via CREATE2.
+/// @notice Holds TradingVault creation bytecode, keeping VaultFactory under size limit.
+/// @dev Called exclusively by VaultFactory to deploy vaults via CREATE2.
 contract VaultDeployer {
     error NotAuthorized();
 
@@ -23,20 +23,12 @@ contract VaultDeployer {
         _;
     }
 
-    constructor(PolicyEngine _pe, TradeValidator _tv, FeeDistributor _fd) {
-        factory = msg.sender; // VaultFactory deploys this in its constructor
+    constructor(address _factory, PolicyEngine _pe, TradeValidator _tv, FeeDistributor _fd) {
+        if (_factory == address(0)) revert NotAuthorized();
+        factory = _factory;
         policyEngine = _pe;
         tradeValidator = _tv;
         feeDistributor = _fd;
-    }
-
-    /// @notice Deploy a VaultShare token via CREATE2
-    function deployShare(bytes32 salt, string calldata name, string calldata symbol, address admin)
-        external
-        onlyFactory
-        returns (VaultShare)
-    {
-        return new VaultShare{salt: salt}(name, symbol, admin);
     }
 
     /// @notice Deploy a TradingVault via CREATE2

@@ -15,6 +15,8 @@ pub use trading_runtime::ValidationTrust;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TradingBotRecord {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
     pub sandbox_id: String,
     pub vault_address: String,
     pub share_token: String,
@@ -556,6 +558,7 @@ mod tests {
     fn make_bot(id: &str, operator: &str, strategy: &str, created_at: u64) -> TradingBotRecord {
         TradingBotRecord {
             id: id.to_string(),
+            name: format!("{strategy} bot"),
             sandbox_id: format!("sandbox-{id}"),
             vault_address: "0x0000000000000000000000000000000000000001".to_string(),
             share_token: "0x0000000000000000000000000000000000000002".to_string(),

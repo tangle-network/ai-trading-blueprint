@@ -153,7 +153,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Ignore known transitive advisories from blueprint-sdk → substrate deps.
-      # These come through libp2p, ring, aws-lc-sys — tracked upstream.
+      # These come through libp2p, ring, aws-lc-sys, and legacy rustls stacks
+      # pulled in via sibling Blueprint dependencies — tracked upstream.
       - name: Run audit
         run: |
           cargo audit \
@@ -177,4 +178,5 @@ jobs:
             --ignore RUSTSEC-2026-0068 \
             --ignore RUSTSEC-2026-0097 \
             --ignore RUSTSEC-2026-0098 \
-            --ignore RUSTSEC-2026-0099
+            --ignore RUSTSEC-2026-0099 \
+            --ignore RUSTSEC-2026-0104

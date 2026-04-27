@@ -70,6 +70,7 @@ export function buildInstanceFallbackBot({
     strategyType: (detail?.strategy_type ?? provision.strategyType ?? 'dex') as StrategyType,
     status: mapLifecycleStatusToBotStatus(lifecycleStatus, tradingActive),
     createdAt: detail?.created_at ?? provision.createdAt ?? Date.now(),
+    chainId: detail?.chain_id ?? provision.chainId,
     pnlPercent: 0,
     pnlAbsolute: 0,
     sharpeRatio: 0,

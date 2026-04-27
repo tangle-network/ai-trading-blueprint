@@ -1,16 +1,58 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ControlsTab } from '../ControlsTab';
 import type { Bot } from '~/lib/types/bot';
 import type { Trade } from '~/lib/types/trade';
 
+const mocks = vi.hoisted(() => ({
+  writeContract: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+  updateConfigMutate: vi.fn(),
+  detail: {
+    id: 'bot-1',
+    operator_address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+    submitter_address: '0x2222222222222222222222222222222222222222',
+    vault_address: '0x0000000000000000000000000000000000000000',
+    strategy_type: 'dex',
+    strategy_config: {
+      runtime_backend: 'docker',
+      paper_trade: true,
+      asset_token: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      initial_capital_usd: '10000',
+    },
+    risk_params: {},
+    chain_id: 31338,
+    trading_active: true,
+    paper_trade: true,
+    created_at: 1712125717,
+    max_lifetime_days: 30,
+    trading_api_url: 'http://localhost:9101',
+    trading_api_token: 'token',
+    sandbox_id: 'sandbox-1',
+    workflow_id: '177571563657601274',
+    secrets_configured: true,
+    sandbox_exists: true,
+    sandbox_state: 'Running',
+    lifecycle_status: 'active',
+    archived: false,
+    control_available: true,
+    wind_down_started_at: null,
+    validator_service_ids: [],
+    validator_endpoints: [],
+    call_id: 1,
+    service_id: 1,
+  },
+}));
+
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }),
-  useWriteContract: () => ({ writeContract: vi.fn(), isPending: false }),
+  useWriteContract: () => ({ writeContract: mocks.writeContract, isPending: false }),
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  toast: { success: mocks.toastSuccess, error: mocks.toastError, info: vi.fn() },
 }));
 
 vi.mock('../shared/ValidatorComponents', () => ({
@@ -22,35 +64,7 @@ let avgValidatorScore: number | null = 88;
 
 vi.mock('~/lib/hooks/useBotDetail', () => ({
   useBotDetail: () => ({
-    data: {
-      id: 'bot-1',
-      operator_address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
-      submitter_address: '0x2222222222222222222222222222222222222222',
-      vault_address: '0x0000000000000000000000000000000000000000',
-      strategy_type: 'dex',
-      strategy_config: {},
-      risk_params: {},
-      chain_id: 31338,
-      trading_active: true,
-      paper_trade: true,
-      created_at: 1712125717,
-      max_lifetime_days: 30,
-      trading_api_url: 'http://localhost:9101',
-      trading_api_token: 'token',
-      sandbox_id: 'sandbox-1',
-      workflow_id: '177571563657601274',
-      secrets_configured: true,
-      sandbox_exists: true,
-      sandbox_state: 'Running',
-      lifecycle_status: 'active',
-      archived: false,
-      control_available: true,
-      wind_down_started_at: null,
-      validator_service_ids: [],
-      validator_endpoints: [],
-      call_id: 1,
-      service_id: 1,
-    },
+    data: mocks.detail,
     isLoading: false,
   }),
 }));
@@ -60,7 +74,7 @@ vi.mock('~/lib/hooks/useBotControl', () => ({
     startBot: { mutate: vi.fn(), isPending: false, error: null },
     stopBot: { mutate: vi.fn(), isPending: false, error: null },
     runNow: { mutate: vi.fn(), isPending: false, error: null, isSuccess: false },
-    updateConfig: { mutate: vi.fn(), isPending: false, error: null },
+    updateConfig: { mutate: mocks.updateConfigMutate, isPending: false, error: null },
     isAuthenticated: true,
     authenticate: vi.fn(),
   }),
@@ -114,6 +128,21 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
 }
 
 describe('ControlsTab', () => {
+  beforeEach(() => {
+    mocks.writeContract.mockReset();
+    mocks.toastSuccess.mockReset();
+    mocks.toastError.mockReset();
+    mocks.updateConfigMutate.mockReset();
+    mocks.detail.paper_trade = true;
+    mocks.detail.strategy_config = {
+      runtime_backend: 'docker',
+      paper_trade: true,
+      asset_token: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      initial_capital_usd: '10000',
+    };
+    mocks.detail.risk_params = {};
+  });
+
   it('renders the live average validator score instead of the stale bot field', () => {
     avgValidatorScore = 88;
     trades.splice(0, trades.length);
@@ -136,5 +165,68 @@ describe('ControlsTab', () => {
     render(<ControlsTab bot={makeBot()} />);
 
     expect(screen.getByText('177571563657601274')).toBeInTheDocument();
+  });
+
+  it('shows a success toast when bot lifetime extension is submitted', async () => {
+    mocks.writeContract.mockImplementation((_config, callbacks) => {
+      callbacks?.onSuccess?.('0x123');
+    });
+    const user = userEvent.setup();
+
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Extend' }));
+    await user.click(screen.getByRole('button', { name: 'Submit Extension' }));
+
+    expect(mocks.writeContract).toHaveBeenCalledTimes(1);
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('Bot lifetime extension submitted for 7 days.');
+  });
+
+  it('shows an error toast when bot lifetime extension submission fails', async () => {
+    mocks.writeContract.mockImplementation((_config, callbacks) => {
+      callbacks?.onError?.(new Error('wallet rejected'));
+    });
+    const user = userEvent.setup();
+
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Extend' }));
+    await user.click(screen.getByRole('button', { name: 'Submit Extension' }));
+
+    expect(mocks.writeContract).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).toHaveBeenCalledWith('Bot lifetime extension failed: wallet rejected');
+  });
+
+  it('saves paper trading and instruction changes without dropping provisioned settings', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Edit Instructions' }));
+    await user.clear(screen.getByLabelText('Expert Knowledge'));
+    await user.type(screen.getByLabelText('Expert Knowledge'), 'Focus on ETH momentum setups.');
+    await user.clear(screen.getByLabelText('Custom Instructions'));
+    await user.type(screen.getByLabelText('Custom Instructions'), 'Prefer liquid pairs only.');
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+
+    await user.click(screen.getByRole('checkbox', { name: 'Paper trading' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(mocks.updateConfigMutate).toHaveBeenCalledTimes(1);
+
+    const [payload] = mocks.updateConfigMutate.mock.calls[0];
+    expect(JSON.parse(payload.strategyConfigJson)).toEqual({
+      runtime_backend: 'docker',
+      paper_trade: false,
+      asset_token: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      initial_capital_usd: '10000',
+      expert_knowledge_override: 'Focus on ETH momentum setups.',
+      custom_instructions: 'Prefer liquid pairs only.',
+    });
+    expect(JSON.parse(payload.riskParamsJson)).toEqual({});
+
+    confirmSpy.mockRestore();
   });
 });

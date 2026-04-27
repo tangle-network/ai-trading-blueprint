@@ -3,7 +3,7 @@ import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail }
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
-import { getTradeTokenDisplaySymbol, parseTradeDisplayAmount } from '~/lib/tradeTokenMetadata';
+import { parseTradeDisplayAmount, resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
@@ -167,22 +167,25 @@ function getTradePriceUsd(trade: ApiTrade): number | null {
   return Number.isFinite(priceUsd) && priceUsd > 0 ? priceUsd : null;
 }
 
-export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
+export function mapApiTrade(trade: ApiTrade, botName: string, fallbackChainId?: number): Trade {
   const validation = mapApiValidation(trade);
   const amountOut = deriveTradeAmountOut(trade);
-  const tokenIn = getTradeTokenDisplaySymbol(trade.token_in);
-  const tokenOut = getTradeTokenDisplaySymbol(trade.token_out);
+  const chainId = trade.validation?.responses?.[0]?.chain_id ?? fallbackChainId;
+  const assetIn = resolveAssetDisplay(trade.token_in, chainId);
+  const assetOut = resolveAssetDisplay(trade.token_out, chainId);
 
   return {
     id: trade.id,
     botId: trade.bot_id,
     botName,
     action: trade.action,
-    tokenIn,
-    tokenOut,
+    assetIn,
+    assetOut,
+    tokenIn: assetIn.symbol,
+    tokenOut: assetOut.symbol,
     rawTokenIn: trade.token_in,
     rawTokenOut: trade.token_out,
-    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in),
+    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in, chainId),
     amountOut,
     priceUsd: getTradePriceUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
@@ -191,7 +194,7 @@ export function mapApiTrade(trade: ApiTrade, botName: string): Trade {
     paperTrade: trade.paper_trade,
     targetProtocol: trade.target_protocol || undefined,
     venue: protocolToVenue(trade.target_protocol, trade.paper_trade),
-    chainId: trade.validation?.responses?.[0]?.chain_id,
+    chainId,
     blockNumber: trade.block_number,
     gasUsed: trade.gas_used,
     validatorScore: trade.validation?.aggregate_score,
@@ -223,6 +226,7 @@ interface BotApiQueryOptions {
   refetchInterval?: number | false;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
+  chainId?: number;
 }
 
 export function useBotTrades(
@@ -237,11 +241,11 @@ export function useBotTrades(
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, auth.authCacheKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
-      return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
     },
     staleTime: 15_000,
     refetchOnMount: false,
@@ -261,11 +265,11 @@ export function useBotRecentValidations(
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, options.chainId, auth.authCacheKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=5`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
-      return normalizeTrades(data).map((t) => mapApiTrade(t, botName));
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
@@ -283,11 +287,11 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
   const enabled = options.enabled ?? true;
 
   return useQuery<Portfolio | null>({
-    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, options.chainId, auth.authCacheKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/portfolio/state');
       const data = await fetchOperatorBotApi<RawPortfolioState>(apiUrl, auth, path);
-      return mapApiPortfolioState(data, botId);
+      return mapApiPortfolioState(data, botId, options.chainId);
     },
     staleTime: 10_000,
     gcTime: 60_000,

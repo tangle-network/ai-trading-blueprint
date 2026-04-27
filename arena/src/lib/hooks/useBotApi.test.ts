@@ -21,6 +21,8 @@ describe('useBotApi trade mapping helpers', () => {
 
     expect(trade.amountOut).toBe(0.5);
     expect(trade.priceUsd).toBe(2000);
+    expect(trade.assetIn.symbol).toBe('USDC');
+    expect(trade.assetOut.symbol).toBe('WETH');
   });
 
   it('returns null for trade USD price when valuation is unavailable', () => {
@@ -60,8 +62,33 @@ describe('useBotApi trade mapping helpers', () => {
 
     expect(trade.tokenIn).toBe('WETH');
     expect(trade.tokenOut).toBe('USDC');
+    expect(trade.assetIn.name).toBe('Wrapped Ether');
+    expect(trade.assetOut.name).toBe('USD Coin');
     expect(trade.amountIn).toBeCloseTo(0.1607578125, 10);
     expect(trade.rawTokenIn).toBe('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2');
+  });
+
+  it('uses the bot chain id as a fallback when trade validation omits chain metadata', () => {
+    const trade = mapApiTrade({
+      id: 'trade-4',
+      bot_id: 'bot-1',
+      timestamp: '2026-04-07T00:00:00Z',
+      action: 'buy',
+      token_in: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      token_out: '0x4200000000000000000000000000000000000006',
+      amount_in: '1000000',
+      amount_out: '0.0005',
+      min_amount_out: '0.0005',
+      target_protocol: 'uniswap_v3',
+      paper_trade: false,
+      valuation_status: 'unpriced',
+    }, 'Bot', 84532);
+
+    expect(trade.chainId).toBe(84532);
+    expect(trade.tokenIn).toBe('USDC');
+    expect(trade.tokenOut).toBe('WETH');
+    expect(trade.assetIn.name).toBe('USD Coin');
+    expect(trade.assetOut.name).toBe('Wrapped Ether');
   });
 
   it('prefers persisted amount_out over simulation output and minimum output', () => {

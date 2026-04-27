@@ -7,6 +7,7 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const api = require('./api-client');
 
 const CONFIG_FILE = '/home/agent/config/api.json';
 const LOG_FILE = '/home/agent/logs/decisions.jsonl';
@@ -68,8 +69,19 @@ async function main() {
   try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
 
   // Compact output
+  const positions = ((portfolio && portfolio.positions) || []).map((position) => {
+    const tokenSymbol = api.knownTokenSymbol(position.token);
+    return {
+      ...position,
+      token_symbol: tokenSymbol,
+      token_display: tokenSymbol ? `${tokenSymbol} (${position.token})` : position.token,
+    };
+  });
+
   const output = {
-    portfolio: portfolio || { positions: [], note: 'No portfolio data from API (paper trade mode)' },
+    portfolio: portfolio
+      ? { ...portfolio, positions }
+      : { positions: [], note: 'No portfolio data from API (paper trade mode)' },
     recent_trades: recentDecisions.map(d => ({
       action: d.action,
       condition_id: d.condition_id || d.trade?.condition_id,
@@ -83,6 +95,11 @@ async function main() {
       last_scan: state.last_scan || 'never',
       watchlist_size: (state.watchlist || []).length,
       insights_count: (state.insights || []).length,
+    },
+    config: {
+      chain_id: config.chain_id || null,
+      asset_token: config.strategy_config?.asset_token || null,
+      asset_token_symbol: api.knownTokenSymbol(config.strategy_config?.asset_token) || null,
     },
   };
 

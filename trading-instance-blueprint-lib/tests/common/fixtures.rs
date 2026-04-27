@@ -65,6 +65,7 @@ pub fn seed_bot_record(
 ) -> TradingBotRecord {
     let record = TradingBotRecord {
         id: bot_id.to_string(),
+        name: format!("Bot {bot_id}"),
         sandbox_id: sandbox_id.to_string(),
         vault_address: vault_address.to_string(),
         share_token: String::new(),
@@ -87,7 +88,7 @@ pub fn seed_bot_record(
         trading_loop_cron: String::new(),
         call_id: 0,
         service_id: 0,
-        harness_json: serde_json::Value::Null,
+        harness_json: serde_json::Value::default(),
         validation_trust: trading_blueprint_lib::state::ValidationTrust::default(),
     };
     bots()

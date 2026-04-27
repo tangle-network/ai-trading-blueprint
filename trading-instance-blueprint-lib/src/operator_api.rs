@@ -1,3 +1,4 @@
+use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -8,6 +9,7 @@ use sandbox_runtime::api_types::{
 };
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
@@ -47,6 +49,7 @@ struct LiveTerminalSessionSummary {
 #[derive(Serialize)]
 pub struct BotDetailResponse {
     pub id: String,
+    pub name: String,
     pub operator_address: String,
     pub submitter_address: String,
     pub vault_address: String,
@@ -78,6 +81,7 @@ impl BotDetailResponse {
         let runtime = state::bot_runtime_status(&b);
         Self {
             id: b.id,
+            name: b.name,
             operator_address: b.operator_address,
             submitter_address: b.submitter_address,
             vault_address: b.vault_address,
@@ -388,6 +392,42 @@ struct TradeListQuery {
     offset: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct RunListQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotRunListResponse {
+    runs: Vec<BotRunResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotRunResponse {
+    run_id: String,
+    workflow_id: u64,
+    workflow_kind: String,
+    status: WorkflowRunStatus,
+    started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    transcript_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
+    duration_ms: u64,
+    input_tokens: u32,
+    output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 #[derive(Serialize)]
 struct PortfolioPosition {
     token: String,
@@ -471,6 +511,8 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot/metrics/history", get(get_bot_metrics_history))
         .route("/api/bot/trades", get(get_bot_trades))
         .route("/api/bot/portfolio/state", get(get_bot_portfolio))
+        .route("/api/bot/runs", get(list_bot_runs))
+        .route("/api/bot/runs/{run_id}", get(get_bot_run))
         .route("/api/bot/activation-progress", get(get_activation_progress))
         .route(
             "/api/bot/live/terminal/sessions",
@@ -1219,9 +1261,18 @@ fn resolve_live_chat_target(
 
 async fn list_chat_sessions(
     SessionAuth(caller): SessionAuth,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::list_manual_chat_sessions(&target, &bot.id).await
+    let include_autonomous = params
+        .get("includeAutonomous")
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+    let scope = if include_autonomous {
+        trading_blueprint_lib::operator_chat::ChatSessionScope::All
+    } else {
+        trading_blueprint_lib::operator_chat::ChatSessionScope::ManualOnly
+    };
+    trading_blueprint_lib::operator_chat::list_chat_sessions(&target, &bot.id, scope).await
 }
 
 async fn create_chat_gateway_session(
@@ -1244,7 +1295,7 @@ async fn get_chat_session(
     Path(session_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
+    let _ = bot;
     trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
@@ -1294,8 +1345,8 @@ async fn list_chat_messages(
     RawQuery(query): RawQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
-    trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, &session_id)?;
-    trading_blueprint_lib::operator_chat::proxy_chat_request(
+    let transcript_query = parse_transcript_message_query(query.as_deref());
+    match trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,
         &format!("/agents/sessions/{session_id}/messages"),
@@ -1303,6 +1354,26 @@ async fn list_chat_messages(
         query.as_deref(),
     )
     .await
+    {
+        Ok(response) => {
+            if response.status() == StatusCode::NOT_FOUND {
+                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
+                    return run_transcript_fallback_response(&run, &transcript_query);
+                }
+            }
+
+            Ok(response)
+        }
+        Err(error) => {
+            if error.0 == StatusCode::BAD_GATEWAY {
+                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
+                    return run_transcript_fallback_response(&run, &transcript_query);
+                }
+            }
+
+            Err(error)
+        }
+    }
 }
 
 async fn send_chat_message(
@@ -1344,9 +1415,7 @@ async fn stream_chat_events(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
     let session_id = params.get("sessionId").cloned();
-    if let Some(session_id) = session_id.as_deref() {
-        trading_blueprint_lib::operator_chat::ensure_manual_chat_session(&bot.id, session_id)?;
-    }
+    let _ = bot;
     trading_blueprint_lib::operator_chat::proxy_chat_events(target, session_id).await
 }
 
@@ -1396,13 +1465,19 @@ async fn sidecar_terminal_method(
 }
 
 fn parse_terminal_session(v: &serde_json::Value) -> Option<LiveTerminalSessionSummary> {
-    let id = v
-        .get("id")
-        .or_else(|| v.get("session_id"))
+    let descriptor = v.get("data").unwrap_or(v);
+    let id = descriptor
+        .get("sessionId")
+        .or_else(|| descriptor.get("session_id"))
+        .or_else(|| descriptor.get("id"))
         .and_then(|v| v.as_str())?;
     Some(LiveTerminalSessionSummary {
         session_id: id.to_string(),
-        title: String::new(),
+        title: descriptor
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1418,6 +1493,7 @@ async fn list_terminal_sessions(
     let sessions: Vec<LiveTerminalSessionSummary> = parsed
         .get("data")
         .and_then(serde_json::Value::as_array)
+        .or_else(|| parsed.as_array())
         .map(|arr| arr.iter().filter_map(parse_terminal_session).collect())
         .unwrap_or_default();
     Ok(Json(serde_json::json!({ "sessions": sessions })))
@@ -1453,15 +1529,14 @@ async fn create_terminal_session(
     )
     .await
     .map_err(|err| terminal_error_response(err, &target.bot))?;
-    let session_id = parsed
-        .get("id")
-        .or_else(|| parsed.get("session_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let summary = parse_terminal_session(&parsed).unwrap_or(LiveTerminalSessionSummary {
+        session_id: String::new(),
+        title: String::new(),
+    });
+    let session_id = summary.session_id;
     Ok(Json(LiveTerminalSessionSummary {
         session_id,
-        title: String::new(),
+        title: summary.title,
     }))
 }
 
@@ -1809,6 +1884,287 @@ async fn get_bot(
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
     Ok(Json(BotDetailResponse::from_record(bot)))
+}
+
+fn workflow_ids_for_bot(bot: &TradingBotRecord) -> Vec<u64> {
+    bot.workflow_id
+        .map(|workflow_id| vec![workflow_id, workflow_id + 1, workflow_id + 2])
+        .unwrap_or_default()
+}
+
+fn workflow_kind_for_bot(bot: &TradingBotRecord, workflow_id: u64) -> &'static str {
+    match bot.workflow_id {
+        Some(base) if workflow_id == base => "trading",
+        Some(base) if workflow_id == base + 1 => "research",
+        Some(base) if workflow_id == base + 2 => "conversation",
+        _ => "unknown",
+    }
+}
+
+fn encode_run_cursor(run: &WorkflowRunRecord) -> String {
+    format!("{}:{}", run.started_at, run.run_id)
+}
+
+fn parse_run_cursor(cursor: &str) -> Option<(u64, String)> {
+    let (started_at, run_id) = cursor.split_once(':')?;
+    Some((started_at.parse().ok()?, run_id.to_string()))
+}
+
+fn run_precedes_cursor(run: &WorkflowRunRecord, cursor: &(u64, String)) -> bool {
+    run.started_at < cursor.0 || (run.started_at == cursor.0 && run.run_id < cursor.1)
+}
+
+fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
+    let transcript_available = run
+        .session_id
+        .as_deref()
+        .is_some_and(|session_id| !session_id.is_empty());
+
+    BotRunResponse {
+        run_id: run.run_id,
+        workflow_id: run.workflow_id,
+        workflow_kind: workflow_kind_for_bot(bot, run.workflow_id).to_string(),
+        status: run.status,
+        started_at: run.started_at,
+        completed_at: run.completed_at,
+        session_id: run.session_id,
+        transcript_available,
+        trace_id: run.trace_id,
+        duration_ms: run.duration_ms,
+        input_tokens: run.input_tokens,
+        output_tokens: run.output_tokens,
+        result: run.result,
+        error: run.error,
+    }
+}
+
+#[derive(Default)]
+struct TranscriptMessageQuery {
+    cursor: Option<String>,
+    limit: usize,
+}
+
+fn default_transcript_message_limit() -> usize {
+    50
+}
+
+fn parse_transcript_message_query(query: Option<&str>) -> TranscriptMessageQuery {
+    let mut parsed = TranscriptMessageQuery {
+        cursor: None,
+        limit: default_transcript_message_limit(),
+    };
+
+    for pair in query.unwrap_or_default().split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or_default();
+        let value = percent_decode_query_value(parts.next().unwrap_or_default());
+        match key {
+            "cursor" if !value.is_empty() => parsed.cursor = Some(value),
+            "limit" => {
+                if let Ok(limit) = value.parse::<usize>() {
+                    parsed.limit = limit;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    parsed
+}
+
+fn percent_decode_query_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let maybe_hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                if let Some(hex) = maybe_hex {
+                    decoded.push(hex);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_string())
+}
+
+fn replayable_run_for_session(
+    bot: &TradingBotRecord,
+    session_id: &str,
+) -> Result<Option<WorkflowRunRecord>, (StatusCode, String)> {
+    let workflow_ids = workflow_ids_for_bot(bot);
+    if workflow_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let run =
+        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .into_iter()
+            .find(|run| run.session_id.as_deref() == Some(session_id));
+
+    let Some(run) = run else {
+        return Ok(None);
+    };
+
+    if run.status == WorkflowRunStatus::Running {
+        return Ok(None);
+    }
+
+    Ok(Some(run))
+}
+
+fn parse_transcript_cursor(cursor: &str) -> Option<usize> {
+    cursor.parse::<usize>().ok()
+}
+
+fn replay_transcript_messages_response(
+    messages: serde_json::Value,
+    query: &TranscriptMessageQuery,
+) -> Response {
+    let Some(messages) = messages.as_array() else {
+        return Json(messages).into_response();
+    };
+
+    let limit = query.limit;
+    let end = query
+        .cursor
+        .as_deref()
+        .and_then(parse_transcript_cursor)
+        .unwrap_or(messages.len())
+        .min(messages.len());
+    let start = end.saturating_sub(limit);
+    let page = messages[start..end].to_vec();
+    let next_cursor = (start > 0).then(|| start.to_string());
+
+    if query.cursor.is_some() || next_cursor.is_some() {
+        Json(serde_json::json!({
+            "messages": page,
+            "next_cursor": next_cursor,
+        }))
+        .into_response()
+    } else {
+        Json(page).into_response()
+    }
+}
+
+fn run_transcript_fallback_response(
+    run: &WorkflowRunRecord,
+    query: &TranscriptMessageQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let transcript =
+        ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run_transcript(&run.run_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let messages = match transcript {
+        Some(record) => record.messages,
+        None => synthesize_run_transcript_messages(run),
+    };
+
+    Ok(replay_transcript_messages_response(messages, query))
+}
+
+fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Value {
+    let timestamp = run.completed_at.unwrap_or(run.started_at);
+    let text = if let Some(result) = run.result.as_deref() {
+        format!(
+            "Stored transcript was unavailable, so this view is replaying the saved run summary.\n\n{result}"
+        )
+    } else if let Some(error) = run.error.as_deref() {
+        format!(
+            "Stored transcript was unavailable, so this view is replaying the saved run outcome.\n\n{error}"
+        )
+    } else {
+        "Stored transcript was unavailable for this run.".to_string()
+    };
+
+    serde_json::json!([
+        {
+            "info": {
+                "id": format!("run-summary-{}", run.run_id),
+                "role": "assistant",
+                "timestamp": timestamp,
+            },
+            "parts": [
+                {
+                    "type": "text",
+                    "text": text,
+                }
+            ]
+        }
+    ])
+}
+
+async fn list_bot_runs(
+    SessionAuth(_caller): SessionAuth,
+    Query(params): Query<RunListQuery>,
+) -> Result<Json<BotRunListResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    let workflow_ids = workflow_ids_for_bot(&bot);
+    if workflow_ids.is_empty() {
+        return Ok(Json(BotRunListResponse {
+            runs: Vec::new(),
+            next_cursor: None,
+        }));
+    }
+
+    let limit = params.limit.unwrap_or(100).clamp(1, 500);
+    let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
+
+    let mut runs =
+        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if let Some(cursor) = cursor.as_ref() {
+        runs.retain(|run| run_precedes_cursor(run, cursor));
+    }
+
+    let has_more = runs.len() > limit;
+    runs.truncate(limit);
+    let next_cursor = if has_more {
+        runs.last().map(encode_run_cursor)
+    } else {
+        None
+    };
+
+    Ok(Json(BotRunListResponse {
+        runs: runs.into_iter().map(|run| map_bot_run(&bot, run)).collect(),
+        next_cursor,
+    }))
+}
+
+async fn get_bot_run(
+    SessionAuth(_caller): SessionAuth,
+    Path(run_id): Path<String>,
+) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    let workflow_ids = workflow_ids_for_bot(&bot)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
+
+    if !workflow_ids.contains(&run.workflow_id) {
+        return Err((StatusCode::NOT_FOUND, "Run not found".to_string()));
+    }
+
+    Ok(Json(map_bot_run(&bot, run)))
 }
 
 // ── Secrets handlers ────────────────────────────────────────────────────

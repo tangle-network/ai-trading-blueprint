@@ -10,6 +10,7 @@ import { normalizeOptionalWorkflowId } from '~/lib/utils/workflowId';
 
 export interface BotDetail {
   id: string;
+  name?: string | null;
   operator_address: string;
   submitter_address: string;
   vault_address: string;

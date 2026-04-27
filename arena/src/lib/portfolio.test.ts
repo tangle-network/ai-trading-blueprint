@@ -122,4 +122,28 @@ describe('mapApiPortfolioState', () => {
     expect(portfolio.positions[0]?.entryPrice).toBeNull();
     expect(portfolio.positions[0]?.displayPnlPercent).toBeNull();
   });
+
+  it('resolves position token addresses against the bot chain id', () => {
+    const portfolio = mapApiPortfolioState({
+      total_value_usd: 1000,
+      cash_balance: 1000,
+      has_unpriced_positions: false,
+      positions: [
+        {
+          token: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+          amount: 1000,
+          value_usd: 1000,
+          entry_price: 1,
+          current_price: 1,
+          pnl_percent: 0,
+          weight: 100,
+          valuation_status: 'priced',
+        },
+      ],
+    }, 'bot-1', 84532);
+
+    expect(portfolio.positions[0]?.asset.symbol).toBe('USDC');
+    expect(portfolio.positions[0]?.asset.name).toBe('USD Coin');
+    expect(portfolio.positions[0]?.symbol).toBe('USDC');
+  });
 });

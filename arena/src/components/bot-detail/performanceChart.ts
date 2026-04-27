@@ -3,6 +3,11 @@ interface PerformanceMetricSnapshotLike {
   timestamp?: string;
 }
 
+export interface PerformanceInitialPoint {
+  value: number;
+  timestamp?: string;
+}
+
 export interface PerformanceChartPoint {
   label: string;
   tooltipLabel: string;
@@ -61,6 +66,7 @@ function pickTickFormatter(dates: Date[]): Intl.DateTimeFormat {
 export function buildPerformanceChartPoints(
   apiMetrics: PerformanceMetricSnapshotLike[] | undefined,
   fallbackValues: number[],
+  initialPoint?: PerformanceInitialPoint | null,
 ): PerformanceChartPoint[] {
   const normalizedApiMetrics = (apiMetrics ?? [])
     .map((metric) => ({
@@ -82,12 +88,25 @@ export function buildPerformanceChartPoints(
   const renderableMetrics = positiveApiMetrics.length < normalizedApiMetrics.length
     ? positiveApiMetrics
     : normalizedApiMetrics;
+  const shouldPrependInitialPoint = initialPoint
+    && Number.isFinite(initialPoint.value)
+    && initialPoint.value > 0
+    && renderableMetrics.length > 0;
+  const chartMetrics = shouldPrependInitialPoint
+    ? [
+        {
+          timestamp: initialPoint.timestamp,
+          account_value_usd: initialPoint.value,
+        },
+        ...renderableMetrics,
+      ]
+    : renderableMetrics;
 
-  const parsedDates = renderableMetrics.map((metric) => parseTimestamp(metric.timestamp));
+  const parsedDates = chartMetrics.map((metric) => parseTimestamp(metric.timestamp));
   const validDates = parsedDates.filter((date): date is Date => date !== null);
   const tickFormatter = pickTickFormatter(validDates);
 
-  return renderableMetrics.map((metric, index) => {
+  return chartMetrics.map((metric, index) => {
     const date = parsedDates[index];
     if (!date) {
       return {

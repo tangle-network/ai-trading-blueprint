@@ -14,10 +14,22 @@ use trading_blueprint_lib::context::TradingOperatorContext;
 use trading_blueprint_lib::graceful_consumer::GracefulConsumer;
 use trading_instance_blueprint_lib::JOB_WORKFLOW_TICK;
 
+fn configure_runtime_env() {
+    // Trading bots are meant to stay alive between ticks. The sandbox runtime
+    // interprets a requested idle timeout of 0 as "use the default timeout",
+    // so we override that default to 0 for this app unless the operator has
+    // explicitly chosen something else.
+    if std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").is_err() {
+        // SAFETY: called before tokio worker threads are spawned.
+        unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
+    }
+}
+
 #[tokio::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), blueprint_sdk::Error> {
     dotenvy::dotenv().ok();
+    configure_runtime_env();
     trading_blueprint_lib::session_auth::ensure_from_env();
     setup_log();
 

@@ -6,6 +6,8 @@ import "tnt-core/libraries/Types.sol";
 import "../src/blueprints/TradingBlueprint.sol";
 import "../src/blueprints/ValidatorBlueprint.sol";
 import "../src/VaultFactory.sol";
+import "../src/VaultDeployer.sol";
+import "../src/VaultShareDeployer.sol";
 import "../src/PolicyEngine.sol";
 import "../src/TradeValidator.sol";
 import "../src/FeeDistributor.sol";
@@ -80,6 +82,9 @@ contract RegisterBlueprint is Script {
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
+        vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
         // ── Deploy BSMs ───────────────────────────────────────────────
         // Each variant needs its own BSM instance because onBlueprintCreated

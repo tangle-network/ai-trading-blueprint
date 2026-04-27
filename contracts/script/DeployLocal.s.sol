@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/VaultFactory.sol";
+import "../src/VaultDeployer.sol";
+import "../src/VaultShareDeployer.sol";
 import "../src/PolicyEngine.sol";
 import "../src/TradeValidator.sol";
 import "../src/FeeDistributor.sol";
@@ -40,11 +42,16 @@ contract DeployLocal is Script {
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
+        vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
         console.log("PolicyEngine:", address(policyEngine));
         console.log("TradeValidator:", address(tradeValidator));
         console.log("FeeDistributor:", address(feeDistributor));
         console.log("VaultFactory:", address(vaultFactory));
+        console.log("VaultDeployer:", address(vaultDeployer));
+        console.log("VaultShareDeployer:", address(vaultShareDeployer));
 
         // ── Transfer ownership to VaultFactory ──────────────────────────
         policyEngine.transferOwnership(address(vaultFactory));

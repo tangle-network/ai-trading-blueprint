@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { PositionsTab } from '../PositionsTab';
 import { mockBlueprintUi } from '~/test/mocks';
 import type { Portfolio } from '~/lib/types/portfolio';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 mockBlueprintUi();
 
@@ -38,6 +39,7 @@ function makePortfolio(overrides: Partial<Portfolio> = {}): Portfolio {
     hasValueOnlyPositions: false,
     positions: [
       {
+        asset: resolveAssetDisplay('WETH'),
         token: 'WETH',
         symbol: 'WETH',
         amount: 0.5,
@@ -67,10 +69,11 @@ describe('PositionsTab', () => {
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
     expect(screen.getByText('$10,000')).toBeInTheDocument();
-    expect(screen.getByText('$9,000')).toBeInTheDocument();
     expect(screen.getByText('$1,000')).toBeInTheDocument();
-    expect(screen.getByText('+0.00%')).toBeInTheDocument();
     expect(screen.getByText('10.0%')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Entry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'PnL' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Balance')).not.toBeInTheDocument();
   });
 
   it('warns and masks unpriced portfolio values', () => {
@@ -84,6 +87,7 @@ describe('PositionsTab', () => {
       hasValueOnlyPositions: false,
       positions: [
         {
+          asset: resolveAssetDisplay('USDC'),
           token: 'USDC',
           symbol: 'USDC',
           amount: 3200,
@@ -105,12 +109,12 @@ describe('PositionsTab', () => {
 
     expect(screen.getByText('Portfolio valuation unavailable')).toBeInTheDocument();
     expect(screen.getByText('Unpriced')).toBeInTheDocument();
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(5);
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(4);
     expect(screen.getByText('USDC')).toBeInTheDocument();
     expect(screen.getByText('3,200')).toBeInTheDocument();
   });
 
-  it('shows recovered value-only positions without inventing entry or pnl', () => {
+  it('shows recovered value-only positions using current market value only', () => {
     mockPortfolio = makePortfolio({
       totalValueUsd: 4200,
       cashBalance: 1000,
@@ -121,6 +125,7 @@ describe('PositionsTab', () => {
       hasValueOnlyPositions: true,
       positions: [
         {
+          asset: resolveAssetDisplay('WETH'),
           token: 'WETH',
           symbol: 'WETH',
           amount: 2,
@@ -141,10 +146,12 @@ describe('PositionsTab', () => {
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
     expect(screen.getByText('Portfolio valuation partially available')).toBeInTheDocument();
+    expect(screen.getByText('Some positions only have current market value available.')).toBeInTheDocument();
     expect(screen.getByText('Value only')).toBeInTheDocument();
     expect(screen.getAllByText('$4,200').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('$2,100')).toBeInTheDocument();
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Entry price and PnL are unavailable for this position.')).not.toBeInTheDocument();
   });
 
   it('still renders the last known portfolio when the bot is stopped', () => {
@@ -156,6 +163,7 @@ describe('PositionsTab', () => {
       hasValueOnlyPositions: false,
       positions: [
         {
+          asset: resolveAssetDisplay('WETH'),
           token: 'WETH',
           symbol: 'WETH',
           amount: 0.4822734375,
@@ -177,7 +185,7 @@ describe('PositionsTab', () => {
 
     expect(screen.getAllByText('$1,042.68').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('$2,162.02')).toBeInTheDocument();
-    expect(screen.getByText('0.4823 WETH')).toBeInTheDocument();
+    expect(screen.queryByText('Balance')).not.toBeInTheDocument();
     expect(screen.queryByText(/Live portfolio is unavailable while this bot is stopped/i)).not.toBeInTheDocument();
   });
 });

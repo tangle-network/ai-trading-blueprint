@@ -33,7 +33,7 @@ contract CreateSingletonVault is Script {
             admin,
             address(0),
             signers,
-            1,
+            2,
             vaultName,
             vaultSymbol,
             keccak256(abi.encodePacked(serviceId, uint64(0), "manual-singleton")),

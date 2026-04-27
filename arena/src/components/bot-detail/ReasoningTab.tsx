@@ -2,7 +2,8 @@ import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
-import { ScoreRing, ValidatorCard, CopyButton, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -12,6 +13,7 @@ interface ReasoningTabProps {
   botId: string;
   botName?: string;
   isLive?: boolean;
+  chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
@@ -59,9 +61,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
                 {trade.paperTrade && (
                   <Badge variant="secondary" className="text-xs">PAPER</Badge>
                 )}
-                <span className="text-sm font-display font-medium">
-                  {trade.tokenIn}/{trade.tokenOut}
-                </span>
+                <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                 <span className="text-xs font-data text-arena-elements-textTertiary">
                   {timeLabel}
                 </span>
@@ -133,15 +133,6 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
                 Aggregate: <span className="font-bold text-arena-elements-textPrimary">{trade.validatorScore}</span>
               </span>
             )}
-            {trade.validation?.intentHash && (
-              <div className="flex items-center gap-1">
-                <span className="font-data text-arena-elements-textTertiary">Intent:</span>
-                <code className="font-data text-arena-elements-textTertiary">
-                  {truncateAddress(trade.validation.intentHash)}
-                </code>
-                <CopyButton text={trade.validation.intentHash} label="Copy" />
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -177,9 +168,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
                 {trade.paperTrade && (
                   <Badge variant="secondary">PAPER</Badge>
                 )}
-                <span className="text-sm font-display font-medium">
-                  {trade.tokenIn}/{trade.tokenOut}
-                </span>
+                <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                 <span className="text-xs font-data text-arena-elements-textTertiary">
                   {new Date(trade.timestamp).toLocaleString('en-US', {
                     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -197,17 +186,6 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
                     {signedCount}/{responses.length} signed
                   </Badge>
                 </div>
-                {trade.validation?.intentHash && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                      Intent
-                    </span>
-                    <code className="text-xs font-data text-arena-elements-textTertiary">
-                      {truncateAddress(trade.validation.intentHash)}
-                    </code>
-                    <CopyButton text={trade.validation.intentHash} label="Copy" />
-                  </div>
-                )}
                 {trade.validation && (
                   <Badge variant={trade.validation.approved ? 'success' : 'destructive'}>
                     {trade.validation.approved ? 'APPROVED' : 'REJECTED'}
@@ -251,17 +229,20 @@ export function ReasoningTab({
   botId,
   botName = '',
   isLive = true,
+  chainId,
   operatorApiUrl,
   operatorKind,
   verificationState,
 }: ReasoningTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     refetchInterval: isLive ? 15_000 : false,
   });
   const { data: recentTrades } = useBotRecentValidations(botId, botName, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     enabled: isLive,
@@ -294,8 +275,8 @@ export function ReasoningTab({
   if (verificationState === 'unverified') {
     return (
       <OperatorAccessCard
-        title="Validator reasoning unavailable"
-        description="Reasoning is hidden until this bot has been verified against the operator and live trade data is fresh."
+        title="Validation details unavailable"
+        description="Validation details are hidden until this bot has been verified against the operator and live trade data is fresh."
         apiUrl={operatorApiUrl ?? ''}
       />
     );
@@ -309,7 +290,7 @@ export function ReasoningTab({
     return (
       <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
         <div className="i-ph:brain text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No validator reasoning available for this bot's trades.
+        No validation details available for this bot's trades.
       </div>
     );
   }
@@ -342,16 +323,18 @@ export function ReasoningTab({
 
 /**
  * Returns the count of pending validations for a bot.
- * Used by the parent page to show a badge on the Reasoning tab.
+ * Used by the parent page to show a badge on the Validation tab.
  */
 export function usePendingValidationCount(
   botId: string,
   botName: string = '',
   enabled: boolean = true,
+  chainId?: number,
   operatorApiUrl?: string | null,
   operatorKind?: BotOperatorKind,
 ): number {
   const { data } = useBotRecentValidations(botId, botName, {
+    chainId,
     operatorApiUrl,
     operatorKind,
     enabled,

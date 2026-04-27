@@ -51,6 +51,7 @@ arena/build/
 # Local env overrides
 .env.local
 arena/.env.local
+settings.env
 
 # Keystore data (test keys)
 data/

@@ -34,6 +34,7 @@ import {
 } from '~/lib/operator/meta';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { subscribeBotsRefresh } from '~/lib/events/bots';
+import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -50,9 +51,11 @@ type VaultEntry = {
 
 type OperatorBotRecord = {
   id: string;
+  name?: string | null;
   operator_address: string;
   vault_address: string;
   strategy_type: string;
+  strategy_config?: Record<string, unknown>;
   chain_id: number;
   trading_active: boolean;
   paper_trade: boolean;
@@ -156,9 +159,11 @@ async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotRes
   const bots: OperatorBotRecord[] = source.deploymentKind === 'instance'
     ? [{
         id: data.id,
+        name: data.name,
         operator_address: data.operator_address,
         vault_address: data.vault_address,
         strategy_type: data.strategy_type,
+        strategy_config: data.strategy_config,
         chain_id: data.chain_id,
         trading_active: data.trading_active,
         paper_trade: data.paper_trade,
@@ -192,6 +197,7 @@ function makeBaseBot(partial: Partial<Bot>, authoritative: boolean): Bot {
     strategyType: (partial.strategyType ?? 'momentum') as StrategyType,
     status: partial.status ?? 'unknown',
     createdAt: partial.createdAt ?? Date.now(),
+    chainId: partial.chainId,
     pnlPercent: partial.pnlPercent ?? 0,
     pnlAbsolute: partial.pnlAbsolute ?? 0,
     sharpeRatio: partial.sharpeRatio ?? 0,
@@ -238,33 +244,33 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
 
   const operatorSources = useMemo<OperatorSource[]>(() => {
     const sources: OperatorSource[] = [];
-    if (CLOUD_OPERATOR_API_URL) {
+    if (CLOUD_OPERATOR_API_URL && cloudMeta.data) {
       sources.push({
         kind: 'cloud',
         apiUrl: CLOUD_OPERATOR_API_URL,
-        deploymentKind: cloudMeta.data?.deployment_kind ?? 'fleet',
+        deploymentKind: cloudMeta.data.deployment_kind,
         token: cloudAuth.getCachedToken(),
         isAuthenticating: cloudAuth.isAuthenticating,
         getCachedToken: cloudAuth.getCachedToken,
         getToken: cloudAuth.getToken,
       });
     }
-    if (INSTANCE_OPERATOR_API_URL) {
+    if (INSTANCE_OPERATOR_API_URL && instanceMeta.data) {
       sources.push({
         kind: 'instance',
         apiUrl: INSTANCE_OPERATOR_API_URL,
-        deploymentKind: instanceMeta.data?.deployment_kind ?? 'instance',
+        deploymentKind: instanceMeta.data.deployment_kind,
         token: instanceAuth.getCachedToken(),
         isAuthenticating: instanceAuth.isAuthenticating,
         getCachedToken: instanceAuth.getCachedToken,
         getToken: instanceAuth.getToken,
       });
     }
-    if (TEE_OPERATOR_API_URL) {
+    if (TEE_OPERATOR_API_URL && teeMeta.data) {
       sources.push({
         kind: 'tee',
         apiUrl: TEE_OPERATOR_API_URL,
-        deploymentKind: teeMeta.data?.deployment_kind ?? 'instance',
+        deploymentKind: teeMeta.data.deployment_kind,
         token: teeAuth.getCachedToken(),
         isAuthenticating: teeAuth.isAuthenticating,
         getCachedToken: teeAuth.getCachedToken,
@@ -648,12 +654,17 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         const authoritativeBot = makeBaseBot({
           id: botId,
           serviceId: operatorBot.service_id || matchingProvision?.serviceId || vaultEntry?.serviceId || 0,
-          name: matchingProvision?.name ?? `${operatorBot.strategy_type} Agent`,
+          name: resolveBotDisplayName({
+            primaryName: matchingProvision?.name || operatorBot.name,
+            strategyType: operatorBot.strategy_type,
+          }),
           operatorAddress: operatorBot.operator_address || (vaultEntry?.operators[0] ?? zeroAddress),
           vaultAddress,
           strategyType: (operatorBot.strategy_type || 'momentum') as StrategyType,
+          strategyConfig: operatorBot.strategy_config,
           status: botStatus,
           createdAt: operatorBot.created_at * 1000,
+          chainId: operatorBot.chain_id,
           tvl: vaultEntry?.tvl ?? 0,
           sandboxId: operatorBot.sandbox_id,
           sandboxState: operatorBot.sandbox_state ?? null,

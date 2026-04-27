@@ -92,14 +92,20 @@ fn default_paper_initial_capital_value() -> Value {
     Value::String(configured)
 }
 
+fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
+    asset_token != alloy::primitives::Address::ZERO
+}
+
 fn apply_strategy_defaults(
     strategy_config: &mut Map<String, Value>,
     request: &TradingProvisionRequest,
     paper_trade: bool,
 ) {
-    strategy_config
-        .entry("asset_token".to_string())
-        .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+    if has_configured_asset_token(request.asset_token) {
+        strategy_config
+            .entry("asset_token".to_string())
+            .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+    }
 
     if paper_trade {
         strategy_config
@@ -302,7 +308,6 @@ pub async fn provision_core(
         "SUBMITTER_ADDRESS".into(),
         serde_json::Value::String(caller.clone()),
     );
-
     // Pass discovered validator endpoints to sidecar
     if !validator_endpoints.is_empty() {
         env.insert(
@@ -404,6 +409,7 @@ pub async fn provision_core(
 
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
+        name: request.name.clone(),
         sandbox_id: record.id.clone(),
         vault_address: vault_address.clone(),
         share_token: String::new(),
