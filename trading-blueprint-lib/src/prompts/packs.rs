@@ -1334,8 +1334,18 @@ fn strategy_iteration_protocol(strategy_type: &str) -> String {
         "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then call `api.validate(intent)` and `api.execute(intent, validation)`. Use raw base units for swap amounts (for example `2000000000` for 2,000 USDC), include `amount_format: "base_units"`, and set a realistic `min_amount_out` instead of a placeholder. Also include `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Log the outcome immediately. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, a realistic `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
+
+After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
+
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
+            .to_string(),
+        "yield" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+
+- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Run `node tools/aave-reserve-status.js` to inspect live Aave asset availability on the execution RPC, then fetch current price context with `api-client.js`. Compare only executable Aave/Morpho opportunities and only form a thesis if the expected yield improvement is meaningful after gas and risk.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3` or `morpho`, validate it through the Trading HTTP API, then execute if approved. Use `aave-reserve-status.js` as a hard gate for Aave assets: do not trade assets marked unavailable or frozen. Safe pattern: `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Then proceed to reflect.
+- **reflect**: Review whether the action improved capital placement, whether risk stayed acceptable, and whether the result matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
@@ -1363,6 +1373,14 @@ fn strategy_core_workflow_tools(strategy_type: &str) -> String {
 | `log-decision.js` | `node tools/log-decision.js '{"action":"trade-or-skip","reason":"..."}'` | Append your trade thesis or skip reason to the decision log. |
 | `write-metrics.js` | `node tools/write-metrics.js '{"portfolio_value_usd":10000}'` | Write iteration metrics. |"#
             .to_string(),
+        "yield" => r#"| Tool | Usage | What It Does |
+|------|-------|--------------|
+| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, and iteration state. |
+| `aave-reserve-status.js` | `node tools/aave-reserve-status.js` | Reads live Aave reserve status from the execution RPC so you know which assets are actually available on the current fork. |
+| `api-client.js` | `node -e "const api=require('./tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))"` | Trading API wrapper for prices, circuit breaker, validate, execute, adapters, and metrics. |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"yield-trade-or-skip","reason":"..."}'` | Append your yield thesis or skip reason to the decision log. |
+| `write-metrics.js` | `node tools/write-metrics.js '{"portfolio_value_usd":10000}'` | Write iteration metrics. |"#
+            .to_string(),
         _ => r#"| Tool | Usage | What It Does |
 |------|-------|--------------|
 | `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
@@ -1379,11 +1397,21 @@ fn strategy_typical_iteration(strategy_type: &str) -> String {
         "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then call `api.validate(intent)` and `api.execute(intent, validation)`
+4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 
 Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for DEX swaps — those are prediction-market tools."#
+            .to_string(),
+        "yield" => r#"1. Run `get-portfolio.js` — check current positions and recent changes
+2. Run `aave-reserve-status.js` — treat assets with `available_for_supply: false` as blocked on this fork
+3. Fetch current price context via `api-client.js` and compare only executable Aave vs Morpho opportunities
+4. Run the circuit breaker check before any trade
+5. If the setup is actionable, build a `supply`, `withdraw`, `borrow`, or `repay` intent with `target_protocol: "aave_v3"` or `"morpho"`, validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+6. Run `log-decision.js` with the thesis or skip reason
+7. Run `write-metrics.js` to update state
+
+Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for yield actions — those are prediction-market tools."#
             .to_string(),
         _ => r#"1. Run `analyze-opportunities.js` — read the opportunities list
 2. Run `get-portfolio.js` — check current positions
@@ -1401,6 +1429,15 @@ fn strategy_utility_tools(strategy_type: &str) -> String {
 | `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
 | `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (prices, circuit breaker, validate, execute) |
 | `log-decision.js` | `node tools/log-decision.js '{"action":"skip","reason":"no clean setup"}'` | Log decisions |
+| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Optional broad market scan if you need extra context |
+| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Optional raw price helper for additional context |"#
+            .to_string(),
+        "yield" => r#"| Tool | Usage | Purpose |
+|------|-------|---------|
+| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
+| `aave-reserve-status.js` | `node tools/aave-reserve-status.js` | Live Aave reserve availability on the execution RPC. Use it before any Aave action. |
+| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (prices, circuit breaker, validate, execute) |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"skip","reason":"yield spread not worth gas"}'` | Log decisions |
 | `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Optional broad market scan if you need extra context |
 | `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Optional raw price helper for additional context |"#
             .to_string(),
@@ -2274,6 +2311,24 @@ mod tests {
         assert!(
             content.contains("Custom Instructions"),
             "custom instructions section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_yield_pack_mentions_aave_reserve_status_tool() {
+        let pack = get_pack("yield").unwrap();
+        let profile = pack.build_agent_profile(&test_config());
+        let content = profile["resources"]["instructions"]["content"]
+            .as_str()
+            .unwrap();
+
+        assert!(
+            content.contains("aave-reserve-status.js"),
+            "yield profile should instruct the agent to inspect live Aave reserve status"
+        );
+        assert!(
+            content.contains("available_for_supply"),
+            "yield profile should treat unavailable reserves as blocked"
         );
     }
 

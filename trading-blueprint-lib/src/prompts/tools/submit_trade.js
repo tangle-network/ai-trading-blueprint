@@ -31,6 +31,54 @@ function loadConfig() {
   catch { return { api_url: process.env.TRADING_API_URL || 'http://localhost:9100', token: '' }; }
 }
 
+function loadTradingDb() {
+  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
+  catch { return { markets: [] }; }
+}
+
+function normalizeOutcomeKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function getMarketOutcomes(market) {
+  if (!market) return [];
+  if (Array.isArray(market.outcomes)) return market.outcomes;
+  if (typeof market.outcomes === 'string') {
+    try {
+      const parsed = JSON.parse(market.outcomes);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function resolveOutcomeMetadata(market, side) {
+  const outcomes = getMarketOutcomes(market).map((outcome) => String(outcome || '').trim()).filter(Boolean);
+  const normalizedSide = normalizeOutcomeKey(side);
+  const matchingIndex = outcomes.findIndex((outcome) => normalizeOutcomeKey(outcome) === normalizedSide);
+
+  if (matchingIndex >= 0) {
+    return {
+      outcome_label: outcomes[matchingIndex],
+      outcome_index: matchingIndex,
+    };
+  }
+
+  if (normalizedSide === 'YES' || normalizedSide === 'NO') {
+    return {
+      outcome_label: side,
+      outcome_index: outcomes.length === 0 || outcomes.length <= 2 ? (normalizedSide === 'YES' ? 0 : 1) : undefined,
+    };
+  }
+
+  return {
+    outcome_label: side,
+    outcome_index: undefined,
+  };
+}
+
 function apiCall(config, method, path, body) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, config.api_url);
@@ -77,20 +125,21 @@ async function main() {
   if (!conditionId) { console.log(JSON.stringify({ error: 'Missing --condition-id' })); process.exit(1); }
   if (amount <= 0) { console.log(JSON.stringify({ error: 'Missing or invalid --amount' })); process.exit(1); }
 
+  const db = loadTradingDb();
+  const market = (db.markets || []).find(m => m.condition_id === conditionId) || null;
+
   // Look up token ID from trading.json if not provided
   if (!tokenId) {
-    try {
-      const db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      const market = (db.markets || []).find(m => m.condition_id === conditionId);
-      if (market && market.clob_token_ids) {
-        tokenId = side === 'YES' ? market.clob_token_ids[0] : market.clob_token_ids[1];
-      }
-    } catch {}
+    if (market && market.clob_token_ids) {
+      tokenId = side === 'YES' ? market.clob_token_ids[0] : market.clob_token_ids[1];
+    }
     if (!tokenId) {
       console.log(JSON.stringify({ error: 'Could not find CLOB token ID for condition ' + conditionId + '. Provide --token-id.' }));
       process.exit(1);
     }
   }
+
+  const outcomeMetadata = resolveOutcomeMetadata(market, side);
 
   const config = loadConfig();
   const USDC = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'; // Polygon USDC
@@ -154,6 +203,10 @@ async function main() {
       order_type: orderType,
       condition_id: conditionId,
       outcome: side,
+      outcome_label: outcomeMetadata.outcome_label,
+      ...(outcomeMetadata.outcome_index !== undefined ? { outcome_index: outcomeMetadata.outcome_index } : {}),
+      ...(market && market.question ? { market_question: market.question } : {}),
+      ...(market && (market.slug || market.market_slug) ? { market_slug: market.slug || market.market_slug } : {}),
       reason,
     },
   };

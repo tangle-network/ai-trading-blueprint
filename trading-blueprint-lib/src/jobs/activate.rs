@@ -81,7 +81,39 @@ pub(crate) fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
 pub(crate) fn build_sidecar_bot_config(bot: &TradingBotRecord) -> TradingBotRecord {
     let mut sidecar_bot = bot.clone();
     sidecar_bot.trading_api_url = resolve_sidecar_trading_api_url(&bot.trading_api_url);
+    sidecar_bot.rpc_url = resolve_sidecar_rpc_url(&bot.rpc_url);
     sidecar_bot
+}
+
+pub(crate) fn resolve_sidecar_rpc_url(rpc_url: &str) -> String {
+    if let Ok(explicit) = std::env::var("SIDECAR_RPC_URL") {
+        if !explicit.trim().is_empty() {
+            return explicit;
+        }
+    }
+
+    let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
+    if host_network {
+        return rpc_url.to_string();
+    }
+
+    let Ok(mut parsed) = reqwest::Url::parse(rpc_url) else {
+        return rpc_url.to_string();
+    };
+
+    match parsed.host_str() {
+        Some("127.0.0.1") | Some("localhost") | Some("0.0.0.0") => {
+            let replacement_host = std::env::var("SIDECAR_INTERNAL_RPC_HOST")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "host.docker.internal".to_string());
+            if parsed.set_host(Some(&replacement_host)).is_ok() {
+                return parsed.to_string();
+            }
+            rpc_url.to_string()
+        }
+        _ => rpc_url.to_string(),
+    }
 }
 
 /// Activate a bot that is awaiting secrets.
@@ -141,6 +173,14 @@ pub async fn activate_bot_with_secrets(
                             b.vault_address = addr.clone();
                         });
                     }
+                }
+                // Chat-first paper bots can be provisioned before any on-chain vault
+                // exists. Keep activation moving even when factory lookup fails.
+                Err(e) if bot.paper_trade => {
+                    tracing::warn!(
+                        "Factory vault unresolved for paper-trade bot {bot_id}; continuing with placeholder {}: {e}",
+                        bot.vault_address
+                    );
                 }
                 Err(e) => {
                     return Err(format!(
@@ -228,6 +268,8 @@ pub async fn activate_bot_with_secrets(
             bot.chain_id,
             &bot.strategy_type,
             &sidecar_trading_api_url,
+            &resolve_sidecar_rpc_url(&bot.rpc_url),
+            &bot.vault_address,
             &bot.trading_api_token,
             &bot.operator_address,
             &bot.strategy_config,
@@ -562,6 +604,8 @@ pub(crate) async fn write_prebuilt_tools(
     chain_id: u64,
     strategy_type: &str,
     api_url: &str,
+    rpc_url: &str,
+    vault_address: &str,
     api_token: &str,
     operator_address: &str,
     strategy_config: &serde_json::Value,
@@ -580,6 +624,8 @@ pub(crate) async fn write_prebuilt_tools(
         "bot_id": bot_id,
         "chain_id": chain_id,
         "api_url": api_url,
+        "rpc_url": rpc_url,
+        "vault_address": vault_address,
         "token": api_token,
         "operator_address": operator_address,
         "strategy_config": strategy_config,
@@ -639,6 +685,13 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/get-portfolio.js",
         include_str!("../prompts/tools/get_portfolio.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/aave-reserve-status.js",
+        include_str!("../prompts/tools/aave_reserve_status.js"),
     )
     .await?;
 

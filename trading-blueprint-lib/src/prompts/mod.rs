@@ -63,6 +63,8 @@ pub fn build_pack_loop_prompt(
                         Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
                         Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
+                        Do not manually rebuild the validation payload or validator signatures.\n\
+                        Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
                      5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
                      6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
@@ -71,6 +73,25 @@ pub fn build_pack_loop_prompt(
                 )
             }
         }
+        "yield" => format!(
+            "Trading tick ({name}). Run these steps:\n\n\
+             1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
+             2. `node /home/agent/tools/aave-reserve-status.js` — inspect live Aave reserve availability on the execution RPC. Only consider Aave assets where `available_for_supply` is true.\n\
+             3. Fetch market context and reference pricing with the Trading API client:\n\
+                `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+             4. Check the circuit breaker before any action:\n\
+                `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+             5. If there is a clear yield action, build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3` or `morpho`, validate it, then execute it with `api-client.js`.\n\
+                For Aave, use the reserve status tool output as a hard gate: do not attempt assets that are frozen or unavailable on the current fork.\n\
+                Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
+                Do not manually rebuild the validation payload or validator signatures.\n\
+                Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
+             6. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
+             7. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+             Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
+            name = pack.name,
+            max_turns = pack.max_turns,
+        ),
         _ => format!(
             "Trading tick ({name}). Run these steps:\n\n\
              1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
@@ -112,6 +133,14 @@ Authorization: Bearer {token}
   - "limit_price": "2500" (for limit orders, omit for market)
   - "trigger_price": "2400" + "tpsl": "sl" (for stop-loss)
   - "trigger_price": "3000" + "tpsl": "tp" (for take-profit)
+  When using `/home/agent/tools/api-client.js`, call `validate(intent)` first and pass the returned object directly into `execute(intent, validationResult)`.
+  Do not hand-assemble `validation.approved`, `validator_responses`, or signatures.
+
+## Execution Context
+- Vault address: {vault}
+- Execution chain ID: {chain_id}
+- Execution RPC: {rpc_url}
+- For Aave decisions, use `/home/agent/tools/aave-reserve-status.js` before trading so you only consider assets available on the live fork.
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
@@ -166,6 +195,7 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         token = config.trading_api_token,
         vault = config.vault_address,
         chain_id = config.chain_id,
+        rpc_url = config.rpc_url,
         risk_params = serde_json::to_string_pretty(&config.risk_params).unwrap_or_default(),
     );
 
@@ -622,5 +652,18 @@ mod tests {
         let prompt = build_system_prompt("mm", &test_config());
         assert!(prompt.contains("market making"), "must include mm fragment");
         assert!(prompt.contains("inventory"), "must mention inventory");
+    }
+
+    #[test]
+    fn test_build_system_prompt_yield_mentions_aave_reserve_status() {
+        let prompt = build_system_prompt("yield", &test_config());
+        assert!(
+            prompt.contains("aave-reserve-status.js"),
+            "yield system prompt should mention live Aave reserve status tool"
+        );
+        assert!(
+            prompt.contains("Execution RPC"),
+            "yield system prompt should surface execution RPC context"
+        );
     }
 }

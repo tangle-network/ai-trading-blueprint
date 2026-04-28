@@ -241,9 +241,14 @@ pub async fn provision_core(
     let rpc_url = if request.rpc_url.is_empty() {
         std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string())
     } else {
+        let allow_loopback =
+            std::env::var("ALLOW_LOOPBACK_RPC_URLS").is_ok_and(|v| v == "true" || v == "1");
         // Validate user-supplied RPC URL to block SSRF (internal IPs, metadata endpoints)
-        trading_runtime::url_validation::validate_rpc_url(&request.rpc_url)
-            .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
+        trading_runtime::url_validation::validate_rpc_url_with_options(
+            &request.rpc_url,
+            trading_runtime::url_validation::RpcUrlValidationOptions { allow_loopback },
+        )
+        .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
     };
 
     // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().

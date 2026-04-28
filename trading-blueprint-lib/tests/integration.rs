@@ -675,6 +675,10 @@ async fn test_system_prompt_includes_api_info() {
     assert!(prompt.contains("0xVAULT"), "Should contain vault address");
     assert!(prompt.contains("31337"), "Should contain chain ID");
     assert!(
+        prompt.contains("http://localhost:8545"),
+        "Should contain execution RPC"
+    );
+    assert!(
         prompt.contains("Uniswap V3"),
         "DEX strategy should mention Uniswap"
     );
