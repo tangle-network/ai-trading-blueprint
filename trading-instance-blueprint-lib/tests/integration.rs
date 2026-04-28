@@ -16,7 +16,8 @@ use trading_blueprint_lib::jobs::{
 };
 use trading_blueprint_lib::state::{bot_key, bots, find_bot_by_sandbox, get_bot};
 use trading_instance_blueprint_lib::{
-    TradingProvisionRequest, clear_instance_bot_id, get_instance_bot_id, require_instance_bot,
+    TradingProvisionRequest, clear_instance_bot_id, get_instance_bot_id,
+    operator_api::persist_instance_singleton_vault_address, require_instance_bot,
     set_instance_bot_id,
 };
 
@@ -37,7 +38,7 @@ fn make_provision_request(name: &str, strategy: &str) -> TradingProvisionRequest
         signers: vec![Address::from([0x01; 20]), Address::from([0x02; 20])],
         required_signatures: U256::from(2),
         chain_id: U256::from(31337),
-        rpc_url: "http://localhost:8545".to_string(),
+        rpc_url: "https://rpc.example.com".to_string(),
         trading_loop_cron: "0 */5 * * * *".to_string(),
         cpu_cores: 2,
         memory_mb: 4096,
@@ -126,6 +127,42 @@ async fn test_instance_provision_creates_singleton() {
     let resolved = require_instance_bot().unwrap();
     assert_eq!(resolved.id, bot.id);
     assert_eq!(resolved.sandbox_id, sandbox_id);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_instance_singleton_vault_address_is_rewritten_to_raw_address() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+
+    let _ = clear_instance_bot_id();
+
+    let sandbox = mock_sandbox("inst-sb-provision-vault-rewrite");
+    let sandbox_id = sandbox.id.clone();
+    let vault_address = Address::from([0xDD; 20]);
+
+    let mut request = make_provision_request("instance-bot-vault-rewrite", "yield");
+    request.factory_address = vault_address;
+
+    provision_core(
+        request,
+        Some(sandbox),
+        101,
+        0,
+        "0xINSTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert_eq!(bot.vault_address, format!("factory:{vault_address:#x}"));
+
+    persist_instance_singleton_vault_address(&bot.id, vault_address).unwrap();
+
+    let updated = get_bot(&bot.id).unwrap().unwrap();
+    assert_eq!(updated.vault_address, format!("{vault_address:#x}"));
 
     let _ = clear_instance_bot_id();
 }

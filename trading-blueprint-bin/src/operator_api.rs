@@ -893,49 +893,13 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
             )
         })?;
 
-    // 2. Auto-activate with AI provider from env (first non-empty wins).
-    let mut user_env = serde_json::Map::new();
-    struct Provider {
-        env_key: &'static str,
-        opencode_provider: &'static str,
-        opencode_model: &'static str,
-    }
-    const PROVIDERS: &[Provider] = &[
-        Provider {
-            env_key: "ANTHROPIC_API_KEY",
-            opencode_provider: "anthropic",
-            opencode_model: "claude-sonnet-4-6",
-        },
-        Provider {
-            env_key: "ZAI_API_KEY",
-            opencode_provider: "zai-coding-plan",
-            opencode_model: "glm-4.7",
-        },
-        Provider {
-            env_key: "TANGLE_ROUTER_API_KEY",
-            opencode_provider: "openrouter",
-            opencode_model: "anthropic/claude-sonnet-4-6",
-        },
-    ];
-    for p in PROVIDERS {
-        let Ok(key) = std::env::var(p.env_key) else {
-            continue;
-        };
-        if key.is_empty() {
-            continue;
-        }
-        user_env.insert("OPENCODE_MODEL_PROVIDER".into(), p.opencode_provider.into());
-        user_env.insert("OPENCODE_MODEL_NAME".into(), p.opencode_model.into());
-        user_env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-        if p.env_key == "TANGLE_ROUTER_API_KEY" {
-            let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
-                .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
-            user_env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
-            user_env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
-        }
-        user_env.insert(p.env_key.into(), key.into());
-        break;
-    }
+    // 2. Auto-activate with AI provider from env
+    let mut user_env = operator_ai_env().map_err(|message| {
+        ApiError::message(
+            StatusCode::BAD_REQUEST,
+            format!("Activation failed: {message}"),
+        )
+    })?;
     // Pass the user's prompt as an env var so the agent can read it
     user_env.insert(
         "USER_STRATEGY_PROMPT".into(),
@@ -1355,6 +1319,50 @@ async fn get_bot_run(
 
 // ── Secrets handlers ─────────────────────────────────────────────────────
 
+fn operator_ai_env() -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let mut env = serde_json::Map::new();
+    let providers: &[(&str, &str, &str, &str)] = &[
+        (
+            "ANTHROPIC_API_KEY",
+            "anthropic",
+            "claude-sonnet-4-6",
+            "ANTHROPIC_API_KEY",
+        ),
+        ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
+        (
+            "TANGLE_ROUTER_API_KEY",
+            "openrouter",
+            "anthropic/claude-sonnet-4-6",
+            "TANGLE_ROUTER_API_KEY",
+        ),
+    ];
+
+    for &(env_var, model_provider, model_name, native_key) in providers {
+        if let Ok(key) = std::env::var(env_var) {
+            if key.is_empty() {
+                continue;
+            }
+            env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
+            env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
+            env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
+            if env_var == "TANGLE_ROUTER_API_KEY" {
+                let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
+                    .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
+                env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
+                env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
+            }
+            env.insert(native_key.into(), key.into());
+            return Ok(env);
+        }
+    }
+
+    Err(
+        "No API keys provided and operator has no pre-configured AI keys. \
+         Set ANTHROPIC_API_KEY, ZAI_API_KEY, or TANGLE_ROUTER_API_KEY in the operator environment."
+            .to_string(),
+    )
+}
+
 async fn configure_secrets(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
@@ -1375,49 +1383,13 @@ async fn configure_secrets(
     // When env_json is empty, use operator-provided AI keys from the binary's environment.
     // This supports the "use operator provided keys" frontend option.
     let env_json = if body.env_json.is_empty() {
-        let mut env = serde_json::Map::new();
-        // Try each supported AI provider in order of preference
-        let providers: &[(&str, &str, &str, &str)] = &[
-            (
-                "ANTHROPIC_API_KEY",
-                "anthropic",
-                "claude-sonnet-4-6",
-                "ANTHROPIC_API_KEY",
-            ),
-            ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
-            (
-                "TANGLE_ROUTER_API_KEY",
-                "openrouter",
-                "anthropic/claude-sonnet-4-6",
-                "TANGLE_ROUTER_API_KEY",
-            ),
-        ];
-        let mut found = false;
-        for &(env_var, model_provider, model_name, native_key) in providers {
-            if let Ok(key) = std::env::var(env_var) {
-                if !key.is_empty() {
-                    env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
-                    env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
-                    env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-                    if env_var == "TANGLE_ROUTER_API_KEY" {
-                        let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
-                            .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
-                        env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
-                        env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
-                    }
-                    env.insert(native_key.into(), key.into());
-                    found = true;
-                    tracing::info!("Using operator-provided {env_var} for bot {bot_id}");
-                    break;
-                }
-            }
-        }
-        if !found {
-            return Err(ApiError::message(
-                StatusCode::BAD_REQUEST,
-                "No API keys provided and operator has no pre-configured AI keys. \
-                 Set ANTHROPIC_API_KEY, ZAI_API_KEY, or TANGLE_ROUTER_API_KEY in the operator environment.",
-            ));
+        let env = operator_ai_env()
+            .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
+        if let Some(provider) = env
+            .get("OPENCODE_MODEL_PROVIDER")
+            .and_then(serde_json::Value::as_str)
+        {
+            tracing::info!("Using operator-provided {provider} credentials for bot {bot_id}");
         }
         env
     } else {
@@ -1550,7 +1522,7 @@ async fn run_now(
 
     let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
         workflow_id,
-        Some(bot.sandbox_id.as_str()),
+        Some(entry.target_sandbox_id.as_str()),
     )
     .map_err(map_run_now_error)?;
 
@@ -1586,10 +1558,25 @@ async fn run_now(
             }
             Err(err) => {
                 tracing::error!("Workflow {workflow_id} execution failed: {err}");
+                let failed_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
                     workflow_id,
                     err,
                 );
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                    .ok()
+                    .and_then(|store| {
+                        store
+                            .update(&wf_key_bg, |e| {
+                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
+                                    e, failed_at,
+                                );
+                            })
+                            .ok()
+                    });
             }
         }
     });
@@ -3622,7 +3609,7 @@ async fn debug_run_now(
 
     let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
         workflow_id,
-        Some(bot.sandbox_id.as_str()),
+        Some(entry.target_sandbox_id.as_str()),
     )
     .map_err(map_run_now_error)?;
 
@@ -3656,10 +3643,25 @@ async fn debug_run_now(
             }
             Err(err) => {
                 tracing::error!("Debug workflow {workflow_id} execution failed: {err}");
+                let failed_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
                     workflow_id,
                     err,
                 );
+                let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                    .ok()
+                    .and_then(|store| {
+                        store
+                            .update(&wf_key_bg, |e| {
+                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
+                                    e, failed_at,
+                                );
+                            })
+                            .ok()
+                    });
             }
         }
     });

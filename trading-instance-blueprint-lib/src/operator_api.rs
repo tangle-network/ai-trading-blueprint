@@ -587,6 +587,23 @@ fn resolve_singleton_live() -> Result<TradingBotRecord, ApiError> {
     ensure_live_sandbox(bot)
 }
 
+/// Instance mode provisions against a pre-existing singleton vault, but the
+/// shared cloud provision flow persists `factory:{address}` placeholders until
+/// a factory-created vault can be resolved later. Normalize the stored record
+/// back to the actual singleton vault address so validator signing and
+/// activation both see a plain EVM address.
+pub fn persist_instance_singleton_vault_address(
+    bot_id: &str,
+    vault_address: blueprint_sdk::alloy::primitives::Address,
+) -> Result<(), String> {
+    state::bots()?
+        .update(&state::bot_key(bot_id), |bot| {
+            bot.vault_address = format!("{vault_address:#x}");
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiError> {
     if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_err() {
         return Err(ApiError::stale_bot(&bot));
@@ -1861,6 +1878,8 @@ async fn provision_bot(
 
     // Resolve bot_id and store singleton reference
     let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&output.sandbox_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    persist_instance_singleton_vault_address(&bot.id, vault_address)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     set_instance_bot_id(bot.id.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
