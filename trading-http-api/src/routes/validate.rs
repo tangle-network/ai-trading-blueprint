@@ -9,11 +9,16 @@ use trading_runtime::calldata_decoder;
 use trading_runtime::executor::get_adapter;
 use trading_runtime::intent::hash_intent;
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
+use trading_runtime::types::ValidationResult;
 use trading_runtime::validator_client::ValidatorClient;
 use trading_runtime::validator_client::{
     BalanceChangeSummary, ExecutionContext, SimulationSummary,
 };
 use trading_runtime::{Action, TradeIntent, TradeIntentBuilder};
+
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+const MAINNET_WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+pub(crate) const PAPER_MODE_VALIDATOR: &str = "paper-mode";
 
 #[derive(Deserialize)]
 pub struct ValidateRequest {
@@ -30,6 +35,22 @@ pub struct ValidateRequest {
 
 fn default_deadline() -> u64 {
     300
+}
+
+pub(crate) fn normalize_protocol_token(
+    protocol: &str,
+    chain_id: Option<u64>,
+    token: &str,
+) -> String {
+    let zero = token.trim().eq_ignore_ascii_case(ZERO_ADDRESS);
+    let ethereum_like = matches!(chain_id, Some(1 | 31339));
+    let yield_protocol = matches!(protocol, "aave_v3" | "morpho");
+
+    if zero && ethereum_like && yield_protocol {
+        MAINNET_WETH_ADDRESS.to_string()
+    } else {
+        token.to_string()
+    }
 }
 
 #[derive(Serialize)]
@@ -54,6 +75,49 @@ pub struct ValidatorResponseEntry {
     pub verifying_contract: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validated_at: Option<String>,
+}
+
+pub(crate) fn zero_signature() -> String {
+    format!("0x{}", "00".repeat(65))
+}
+
+pub(crate) fn has_usable_validator_signature(signature: &str) -> bool {
+    let Some(body) = signature.strip_prefix("0x") else {
+        return false;
+    };
+
+    body.len() == 130
+        && body.as_bytes().iter().any(|byte| *byte != b'0')
+        && body.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn effective_validation_approval(result: &ValidationResult, paper_trade: bool) -> bool {
+    if !paper_trade || !result.approved || result.validator_responses.is_empty() {
+        return result.approved;
+    }
+
+    result
+        .validator_responses
+        .iter()
+        .any(|response| has_usable_validator_signature(&response.signature))
+}
+
+fn paper_mode_bypass_response(intent_hash: String, deadline: u64) -> ValidateResponse {
+    ValidateResponse {
+        approved: true,
+        aggregate_score: 100,
+        intent_hash,
+        deadline,
+        validator_responses: vec![ValidatorResponseEntry {
+            validator: PAPER_MODE_VALIDATOR.into(),
+            score: 100,
+            reasoning: "Paper trade mode — validation bypassed".into(),
+            signature: zero_signature(),
+            chain_id: None,
+            verifying_contract: None,
+            validated_at: Some(chrono::Utc::now().to_rfc3339()),
+        }],
+    }
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
@@ -97,6 +161,7 @@ struct ParsedValidateRequest {
 /// Parse and validate a ValidateRequest into typed fields.
 fn parse_validate_request(
     req: &ValidateRequest,
+    chain_id: Option<u64>,
 ) -> Result<ParsedValidateRequest, (StatusCode, String)> {
     let action = parse_action(&req.action).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
@@ -111,11 +176,14 @@ fn parse_validate_request(
         )
     })?;
 
+    let token_in = normalize_protocol_token(&req.target_protocol, chain_id, &req.token_in);
+    let token_out = normalize_protocol_token(&req.target_protocol, chain_id, &req.token_out);
+
     let intent = TradeIntentBuilder::new()
         .strategy_id(&req.strategy_id)
         .action(action.clone())
-        .token_in(&req.token_in)
-        .token_out(&req.token_out)
+        .token_in(&token_in)
+        .token_out(&token_out)
         .amount_in(amount_in)
         .min_amount_out(min_amount_out)
         .target_protocol(&req.target_protocol)
@@ -139,8 +207,9 @@ fn parse_validate_request(
 
 /// Build a ValidateResponse from a ValidationResult.
 fn build_validate_response(
-    result: &trading_runtime::types::ValidationResult,
+    result: &ValidationResult,
     deadline: u64,
+    paper_trade: bool,
 ) -> ValidateResponse {
     let responses = result
         .validator_responses
@@ -157,7 +226,7 @@ fn build_validate_response(
         .collect();
 
     ValidateResponse {
-        approved: result.approved,
+        approved: effective_validation_approval(result, paper_trade),
         aggregate_score: result.aggregate_score,
         intent_hash: result.intent_hash.clone(),
         deadline,
@@ -169,16 +238,28 @@ async fn validate(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, (StatusCode, String)> {
-    validate_chain_tokens(state.chain_id, &request.token_in, &request.token_out)?;
-    let parsed = parse_validate_request(&request)?;
+    let parsed = parse_validate_request(&request, state.chain_id)?;
+    let token_in =
+        normalize_protocol_token(&request.target_protocol, state.chain_id, &request.token_in);
+    let token_out =
+        normalize_protocol_token(&request.target_protocol, state.chain_id, &request.token_out);
+    validate_chain_tokens(state.chain_id, &token_in, &token_out)?;
+
+    if state.paper_trade && state.validator_endpoints.is_empty() {
+        let intent_hash = hash_intent(&parsed.intent);
+        return Ok(Json(paper_mode_bypass_response(
+            intent_hash,
+            parsed.deadline,
+        )));
+    }
 
     let execution_context = build_execution_context(
         &request.target_protocol,
         parsed.action,
         parsed.amount_in,
         parsed.min_amount_out,
-        &request.token_in,
-        &request.token_out,
+        &token_in,
+        &token_out,
         &state.vault_address,
         state.rpc_url.as_deref(),
         state.chain_id,
@@ -196,7 +277,11 @@ async fn validate(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    Ok(Json(build_validate_response(&result, parsed.deadline)))
+    Ok(Json(build_validate_response(
+        &result,
+        parsed.deadline,
+        state.paper_trade,
+    )))
 }
 
 /// Build execution context by encoding the action via the protocol adapter.
@@ -218,7 +303,7 @@ async fn build_execution_context(
     rpc_url: Option<&str>,
     chain_id: Option<u64>,
 ) -> Option<ExecutionContext> {
-    let adapter = get_adapter(protocol).ok()?;
+    let adapter = get_adapter(protocol, chain_id).ok()?;
 
     let token_in_addr: alloy::primitives::Address = token_in.parse().ok()?;
     let token_out_addr: alloy::primitives::Address = token_out.parse().ok()?;
@@ -381,8 +466,12 @@ async fn validate_multi_bot(
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
-    validate_chain_tokens(Some(bot.chain_id), &req.token_in, &req.token_out)?;
-    let parsed = parse_validate_request(&req)?;
+    let parsed = parse_validate_request(&req, Some(bot.chain_id))?;
+    let token_in =
+        normalize_protocol_token(&req.target_protocol, Some(bot.chain_id), &req.token_in);
+    let token_out =
+        normalize_protocol_token(&req.target_protocol, Some(bot.chain_id), &req.token_out);
+    validate_chain_tokens(Some(bot.chain_id), &token_in, &token_out)?;
 
     // Use validator endpoints from the bot context
     let validator_endpoints = bot.validator_endpoints.clone();
@@ -391,21 +480,10 @@ async fn validate_multi_bot(
     // return synthetic approval so the trading loop can proceed.
     if bot.paper_trade && validator_endpoints.is_empty() {
         let intent_hash = hash_intent(&parsed.intent);
-        return Ok(Json(ValidateResponse {
-            approved: true,
-            aggregate_score: 100,
+        return Ok(Json(paper_mode_bypass_response(
             intent_hash,
-            deadline: parsed.deadline,
-            validator_responses: vec![ValidatorResponseEntry {
-                validator: "paper-mode".into(),
-                score: 100,
-                reasoning: "Paper trade mode — validation bypassed".into(),
-                signature: format!("0x{}", "00".repeat(65)),
-                chain_id: None,
-                verifying_contract: None,
-                validated_at: Some(chrono::Utc::now().to_rfc3339()),
-            }],
-        }));
+            parsed.deadline,
+        )));
     }
 
     // Build execution context for validators (with simulation if RPC available)
@@ -414,8 +492,8 @@ async fn validate_multi_bot(
         parsed.action,
         parsed.amount_in,
         parsed.min_amount_out,
-        &req.token_in,
-        &req.token_out,
+        &token_in,
+        &token_out,
         &bot.vault_address,
         Some(&bot.rpc_url),
         Some(bot.chain_id),
@@ -434,7 +512,11 @@ async fn validate_multi_bot(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    Ok(Json(build_validate_response(&result, parsed.deadline)))
+    Ok(Json(build_validate_response(
+        &result,
+        parsed.deadline,
+        bot.paper_trade,
+    )))
 }
 
 fn validate_chain_tokens(
@@ -558,6 +640,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_build_execution_context_aave_local_eth_fork_uses_ethereum_pool() {
+        let result = build_execution_context(
+            "aave_v3",
+            Action::Supply,
+            rust_decimal::Decimal::new(1_000_000, 0),
+            rust_decimal::Decimal::new(1_000_000, 0),
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "0x0000000000000000000000000000000000000001",
+            None,
+            Some(31339),
+        )
+        .await;
+
+        let ctx = result.expect("should build Aave context on local ethereum fork");
+        assert_eq!(
+            ctx.target.parse::<alloy::primitives::Address>().unwrap(),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                .parse::<alloy::primitives::Address>()
+                .unwrap()
+        );
+        assert!(ctx.simulation_result.is_none());
+    }
+
+    #[tokio::test]
     async fn test_build_execution_context_invalid_addresses() {
         let result = build_execution_context(
             "uniswap_v3",
@@ -586,7 +693,7 @@ mod tests {
             target_protocol: "uniswap_v3".into(),
             deadline_secs: 300,
         };
-        let parsed = parse_validate_request(&req).unwrap();
+        let parsed = parse_validate_request(&req, Some(1)).unwrap();
         assert!(matches!(parsed.action, Action::Swap));
         assert!(parsed.deadline > 0);
     }
@@ -603,7 +710,7 @@ mod tests {
             target_protocol: "uniswap_v3".into(),
             deadline_secs: 300,
         };
-        let err = parse_validate_request(&req).unwrap_err();
+        let err = parse_validate_request(&req, Some(1)).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 
@@ -619,7 +726,23 @@ mod tests {
             target_protocol: "uniswap_v3".into(),
             deadline_secs: 300,
         };
-        let err = parse_validate_request(&req).unwrap_err();
+        let err = parse_validate_request(&req, Some(1)).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn normalize_protocol_token_maps_zero_address_to_weth_for_ethereum_yield() {
+        assert_eq!(
+            normalize_protocol_token("aave_v3", Some(31339), ZERO_ADDRESS),
+            MAINNET_WETH_ADDRESS
+        );
+        assert_eq!(
+            normalize_protocol_token("morpho", Some(1), ZERO_ADDRESS),
+            MAINNET_WETH_ADDRESS
+        );
+        assert_eq!(
+            normalize_protocol_token("uniswap_v3", Some(31339), ZERO_ADDRESS),
+            ZERO_ADDRESS
+        );
     }
 }

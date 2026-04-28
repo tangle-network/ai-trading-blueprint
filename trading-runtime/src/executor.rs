@@ -23,6 +23,7 @@ use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
 const DEFAULT_EXECUTION_GAS_LIMIT: u64 = 3_000_000;
+const LOCAL_ETHEREUM_FORK_CHAIN_ID: u64 = 31_339;
 
 fn gas_limit_from_env(var: &str, default: u64) -> u64 {
     std::env::var(var)
@@ -131,7 +132,7 @@ impl TradeExecutor {
         validation: &ValidationResult,
     ) -> Result<TransactionOutcome, TradingError> {
         // 1. Get the right adapter
-        let adapter = get_adapter(&intent.target_protocol)?;
+        let adapter = get_adapter(&intent.target_protocol, Some(self.vault_client.chain_id))?;
 
         // 2. Build ActionParams from the intent
         let token_in: Address =
@@ -335,11 +336,25 @@ fn parse_tx_value(value: &str) -> U256 {
     U256::from_str_radix(value.trim_start_matches("0x"), 10).unwrap_or_default()
 }
 
+fn canonicalize_adapter_chain_id(protocol: &str, chain_id: Option<u64>) -> Option<u64> {
+    match (protocol, chain_id) {
+        // Keep the synthetic fork id for signing/execution, but resolve Aave
+        // protocol addresses against canonical Ethereum deployments.
+        ("aave_v3", Some(LOCAL_ETHEREUM_FORK_CHAIN_ID)) => Some(1),
+        _ => chain_id,
+    }
+}
+
 /// Registry: map protocol name → adapter instance.
-pub fn get_adapter(protocol: &str) -> Result<Box<dyn ProtocolAdapter + Send>, TradingError> {
+pub fn get_adapter(
+    protocol: &str,
+    chain_id: Option<u64>,
+) -> Result<Box<dyn ProtocolAdapter + Send>, TradingError> {
+    let chain_id = canonicalize_adapter_chain_id(protocol, chain_id);
+
     match protocol {
         "uniswap_v3" => Ok(Box::new(UniswapV3Adapter::new())),
-        "aave_v3" => Ok(Box::new(AaveV3Adapter::new())),
+        "aave_v3" => Ok(Box::new(AaveV3Adapter::for_chain(chain_id.unwrap_or(1))?)),
         "gmx_v2" => Ok(Box::new(GmxV2Adapter::new())),
         "morpho" => Ok(Box::new(MorphoAdapter::new())),
         "vertex" => Ok(Box::new(VertexAdapter::new())),
@@ -439,21 +454,63 @@ mod tests {
 
     #[test]
     fn test_get_adapter_known() {
-        assert!(get_adapter("uniswap_v3").is_ok());
-        assert!(get_adapter("aave_v3").is_ok());
-        assert!(get_adapter("gmx_v2").is_ok());
-        assert!(get_adapter("twap_uniswap_v3").is_ok());
+        assert!(get_adapter("uniswap_v3", None).is_ok());
+        assert!(get_adapter("aave_v3", Some(1)).is_ok());
+        assert!(get_adapter("aave_v3", Some(31339)).is_ok());
+        assert!(get_adapter("aave_v3", Some(42161)).is_ok());
+        assert!(get_adapter("gmx_v2", None).is_ok());
+        assert!(get_adapter("twap_uniswap_v3", None).is_ok());
+    }
+
+    #[test]
+    fn test_canonicalize_adapter_chain_id_maps_local_ethereum_fork_for_aave() {
+        assert_eq!(
+            canonicalize_adapter_chain_id("aave_v3", Some(31339)),
+            Some(1)
+        );
+        assert_eq!(
+            canonicalize_adapter_chain_id("aave_v3", Some(42161)),
+            Some(42161)
+        );
+        assert_eq!(
+            canonicalize_adapter_chain_id("uniswap_v3", Some(31339)),
+            Some(31339)
+        );
     }
 
     #[test]
     fn test_get_adapter_clob_rejected() {
-        let err = get_adapter("polymarket_clob").err().expect("should error");
+        let err = get_adapter("polymarket_clob", None)
+            .err()
+            .expect("should error");
         assert!(err.to_string().contains("bypass"), "{err}");
     }
 
     #[test]
     fn test_get_adapter_unknown() {
-        assert!(get_adapter("does_not_exist").is_err());
+        assert!(get_adapter("does_not_exist", None).is_err());
+    }
+
+    #[test]
+    fn test_get_adapter_rejects_unsupported_aave_chain() {
+        let err = get_adapter("aave_v3", Some(31337))
+            .err()
+            .expect("should reject unsupported chain");
+        assert!(err.to_string().contains("Unsupported chain_id"), "{err}");
+    }
+
+    #[test]
+    fn test_get_adapter_uses_ethereum_pool_for_local_aave_fork() {
+        let adapter = get_adapter("aave_v3", Some(31339)).expect("local fork should resolve");
+
+        assert_eq!(
+            adapter.known_addresses(),
+            vec![
+                "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                    .parse::<Address>()
+                    .unwrap()
+            ]
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
-    self, StoredSimulation, StoredValidation, StoredValidatorResponse, TradeRecord,
+    self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
+    TradeExecutionStatus, TradeRecord,
 };
 use crate::{MultiBotTradingState, TradingApiState};
 use axum::extract::Request;
@@ -25,7 +26,9 @@ use trading_runtime::{
     ValidatorResponse, ValuationStatus,
 };
 
-use super::validate::parse_action;
+use super::validate::{
+    PAPER_MODE_VALIDATOR, has_usable_validator_signature, normalize_protocol_token, parse_action,
+};
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ExecuteRequest {
@@ -232,6 +235,35 @@ fn build_stored_validation(v: &ValidationPayload) -> StoredValidation {
     }
 }
 
+fn is_explicit_paper_validation_bypass(validation: &ValidationPayload) -> bool {
+    matches!(
+        validation.validator_responses.as_slice(),
+        [response] if response.validator == PAPER_MODE_VALIDATOR
+    )
+}
+
+fn ensure_paper_validation_consistency(
+    validation: &ValidationPayload,
+) -> Result<(), (StatusCode, String)> {
+    if !validation.approved || is_explicit_paper_validation_bypass(validation) {
+        return Ok(());
+    }
+
+    let has_usable_signature = validation
+        .validator_responses
+        .iter()
+        .any(|response| has_usable_validator_signature(&response.signature));
+
+    if has_usable_signature {
+        return Ok(());
+    }
+
+    Err((
+        StatusCode::BAD_REQUEST,
+        "Paper trade approval requires at least one usable validator signature or explicit paper-mode bypass".into(),
+    ))
+}
+
 /// Build a `ValidationResult` (runtime type) from a `ValidationPayload`.
 fn build_validation_result(v: &ValidationPayload) -> ValidationResult {
     ValidationResult {
@@ -318,7 +350,10 @@ fn verify_signatures_offchain(
 /// Parse and validate the common fields of an `ExecuteRequest`.
 ///
 /// Returns the built `TradeIntent` or an HTTP error.
-fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCode, String)> {
+fn parse_execute_request(
+    req: &ExecuteRequest,
+    chain_id: Option<u64>,
+) -> Result<TradeIntent, (StatusCode, String)> {
     if !req.validation.approved {
         return Err((StatusCode::BAD_REQUEST, "Validation not approved".into()));
     }
@@ -337,11 +372,16 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
         )
     })?;
 
+    let token_in =
+        normalize_protocol_token(&req.intent.target_protocol, chain_id, &req.intent.token_in);
+    let token_out =
+        normalize_protocol_token(&req.intent.target_protocol, chain_id, &req.intent.token_out);
+
     let mut intent = TradeIntentBuilder::new()
         .strategy_id(&req.intent.strategy_id)
         .action(action)
-        .token_in(&req.intent.token_in)
-        .token_out(&req.intent.token_out)
+        .token_in(&token_in)
+        .token_out(&token_out)
         .amount_in(amount_in)
         .min_amount_out(min_amount_out)
         .target_protocol(&req.intent.target_protocol)
@@ -359,6 +399,13 @@ fn parse_execute_request(req: &ExecuteRequest) -> Result<TradeIntent, (StatusCod
     }
 
     Ok(intent)
+}
+
+fn normalize_intent_payload(mut intent: IntentPayload, chain_id: Option<u64>) -> IntentPayload {
+    intent.token_in = normalize_protocol_token(&intent.target_protocol, chain_id, &intent.token_in);
+    intent.token_out =
+        normalize_protocol_token(&intent.target_protocol, chain_id, &intent.token_out);
+    intent
 }
 
 #[derive(Clone, Debug)]
@@ -590,6 +637,67 @@ fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapsh
     TradeValuationSnapshot::priced(size, None, price)
 }
 
+fn metadata_decimal_string(metadata: &serde_json::Value, key: &str) -> Option<String> {
+    match metadata.get(key) {
+        Some(serde_json::Value::Number(value)) => Some(value.to_string()),
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn metadata_string(metadata: &serde_json::Value, key: &str) -> Option<String> {
+    match metadata.get(key) {
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn metadata_u8(metadata: &serde_json::Value, key: &str) -> Option<u8> {
+    match metadata.get(key) {
+        Some(serde_json::Value::Number(value)) => {
+            value.as_u64().and_then(|value| u8::try_from(value).ok())
+        }
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+            value.parse::<u8>().ok()
+        }
+        _ => None,
+    }
+}
+
+fn extract_prediction_metadata(intent: &IntentPayload) -> Option<PredictionTradeMetadata> {
+    if intent.target_protocol != "polymarket_clob" {
+        return None;
+    }
+
+    let condition_id = metadata_string(&intent.metadata, "condition_id");
+    let token_id = metadata_string(&intent.metadata, "token_id")
+        .or_else(|| (!intent.token_out.trim().is_empty()).then_some(intent.token_out.clone()));
+    let market_question = metadata_string(&intent.metadata, "market_question");
+    let outcome_label = metadata_string(&intent.metadata, "outcome_label")
+        .or_else(|| metadata_string(&intent.metadata, "outcome"));
+    let outcome_index = metadata_u8(&intent.metadata, "outcome_index");
+    let market_slug = metadata_string(&intent.metadata, "market_slug");
+
+    if condition_id.is_none()
+        && token_id.is_none()
+        && market_question.is_none()
+        && outcome_label.is_none()
+        && outcome_index.is_none()
+        && market_slug.is_none()
+    {
+        return None;
+    }
+
+    Some(PredictionTradeMetadata {
+        condition_id,
+        token_id,
+        market_question,
+        outcome_label,
+        outcome_index,
+        market_slug,
+    })
+}
+
 /// Check if the portfolio circuit breaker should block this trade.
 ///
 /// Reads the current portfolio state and checks max drawdown against the
@@ -711,14 +819,23 @@ async fn execute_paper_trade(
         block_number: Some(0),
         gas_used: Some("0".to_string()),
         paper_trade: true,
+        execution_status: Some(TradeExecutionStatus::Paper),
+        clob_order_id: None,
         amount_out: valuation.amount_out.map(|value| value.to_string()),
         entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        requested_price_usd: metadata_decimal_string(&req.intent.metadata, "price"),
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: Some(
+            "Paper trade recorded without live execution reconciliation".to_string(),
+        ),
+        prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -776,14 +893,21 @@ async fn execute_real_trade(
         block_number: outcome.block_number,
         gas_used: outcome.gas_used.map(|g| g.to_string()),
         paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Confirmed),
+        clob_order_id: None,
         amount_out: valuation.amount_out.map(|value| value.to_string()),
         entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -859,14 +983,23 @@ async fn execute_clob_trade(
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Submitted),
+        clob_order_id: Some(response.order_id.clone()),
         amount_out: valuation.amount_out.map(|value| value.to_string()),
         entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        requested_price_usd: Some(clob_params.price.to_string()),
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: Some(
+            "Order submitted to Polymarket CLOB; fill details pending reconciliation".to_string(),
+        ),
+        prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1055,14 +1188,21 @@ async fn execute_hyperliquid_trade(
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Submitted),
+        clob_order_id: None,
         amount_out: valuation.amount_out.map(|v| v.to_string()),
         entry_price_usd: valuation.entry_price_usd.map(|v| v.to_string()),
         notional_usd: valuation.notional_usd.map(|v| v.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1111,12 +1251,23 @@ async fn execute(
         ));
     }
 
-    let intent = parse_execute_request(&request)?;
+    let normalized_intent = normalize_intent_payload(request.intent.clone(), state.chain_id);
+    let mut normalized_request = request.clone();
+    normalized_request.intent = normalized_intent;
+
+    if state.paper_trade {
+        ensure_paper_validation_consistency(&request.validation)?;
+    }
+
+    let intent = parse_execute_request(&normalized_request, state.chain_id)?;
     let stored_validation = build_stored_validation(&request.validation);
 
+    let is_clob_trade = normalized_request.intent.target_protocol == "polymarket_clob";
+
     // Off-chain signature verification — prevents fabricated validator signatures
-    // from reaching any execution path. Paper trades are exempt (no real money).
-    if !state.paper_trade {
+    // from reaching any vault-backed execution path. Paper trades are exempt,
+    // and CLOB trades bypass the vault executor entirely.
+    if !state.paper_trade && !is_clob_trade {
         verify_signatures_offchain(&request.validation, &state.vault_address)?;
     }
 
@@ -1125,18 +1276,27 @@ async fn execute(
     let max_drawdown = Decimal::new(10, 0);
     check_circuit_breaker(&state.portfolio, max_drawdown).await?;
 
-    let valuation =
-        resolve_market_valuation(&state.market_client, state.chain_id, &request.intent).await?;
+    let valuation = resolve_market_valuation(
+        &state.market_client,
+        state.chain_id,
+        &normalized_request.intent,
+    )
+    .await?;
 
     if state.paper_trade {
-        let result =
-            execute_paper_trade(&state.bot_id, &request, stored_validation, &valuation).await?;
-        update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
+        let result = execute_paper_trade(
+            &state.bot_id,
+            &normalized_request,
+            stored_validation,
+            &valuation,
+        )
+        .await?;
+        update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
         return Ok(result);
     }
 
     // CLOB trades bypass the vault executor entirely.
-    if request.intent.target_protocol == "polymarket_clob" {
+    if is_clob_trade {
         let clob = state.clob_client.as_ref().ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1144,21 +1304,21 @@ async fn execute(
             )
         })?;
         let clob_params = polymarket_clob::extract_clob_params(
-            &request.intent.action,
-            &request.intent.amount_in,
-            &request.intent.metadata,
+            &normalized_request.intent.action,
+            &normalized_request.intent.amount_in,
+            &normalized_request.intent.metadata,
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let clob_valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
         let result = execute_clob_trade(
             &state.bot_id,
             clob,
-            &request,
+            &normalized_request,
             stored_validation,
             &clob_valuation,
         )
         .await?;
-        update_portfolio_after_trade(&state.portfolio, &request, &clob_valuation).await;
+        update_portfolio_after_trade(&state.portfolio, &normalized_request, &clob_valuation).await;
         return Ok(result);
     }
 
@@ -1166,13 +1326,13 @@ async fn execute(
         &state.bot_id,
         &state.executor,
         &intent,
-        &request,
+        &normalized_request,
         stored_validation,
         &valuation,
     )
     .await?;
 
-    update_portfolio_after_trade(&state.portfolio, &request, &valuation).await;
+    update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
     Ok(result)
 }
 
@@ -1216,8 +1376,18 @@ async fn execute_multi_bot(
         ));
     }
 
-    let intent = parse_execute_request(&req)?;
+    let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(bot.chain_id));
+    let mut normalized_req = req.clone();
+    normalized_req.intent = normalized_intent;
+
+    if bot.paper_trade {
+        ensure_paper_validation_consistency(&req.validation)?;
+    }
+
+    let intent = parse_execute_request(&normalized_req, Some(bot.chain_id))?;
     let stored_validation = build_stored_validation(&req.validation);
+
+    let is_clob_trade = normalized_req.intent.target_protocol == "polymarket_clob";
 
     // Validation trust level determines which authorization path fires:
     // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
@@ -1227,7 +1397,10 @@ async fn execute_multi_bot(
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
-                verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+                // CLOB trades bypass the vault executor entirely.
+                if !is_clob_trade {
+                    verify_signatures_offchain(&req.validation, &bot.vault_address)?;
+                }
             }
             ValidationTrust::Envelope => {
                 // Envelope check happens in execute_hyperliquid_trade or is
@@ -1242,11 +1415,13 @@ async fn execute_multi_bot(
 
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());
     let valuation =
-        resolve_market_valuation(&market_client, Some(bot.chain_id), &req.intent).await?;
+        resolve_market_valuation(&market_client, Some(bot.chain_id), &normalized_req.intent)
+            .await?;
 
     if bot.paper_trade {
         let response =
-            execute_paper_trade(&bot.bot_id, &req, stored_validation, &valuation).await?;
+            execute_paper_trade(&bot.bot_id, &normalized_req, stored_validation, &valuation)
+                .await?;
         if let Err(error) =
             capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
         {
@@ -1260,7 +1435,7 @@ async fn execute_multi_bot(
     }
 
     // CLOB trades bypass the vault executor entirely.
-    if req.intent.target_protocol == "polymarket_clob" {
+    if is_clob_trade {
         let clob = state.clob_client.as_ref().ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1268,14 +1443,20 @@ async fn execute_multi_bot(
             )
         })?;
         let clob_params = polymarket_clob::extract_clob_params(
-            &req.intent.action,
-            &req.intent.amount_in,
-            &req.intent.metadata,
+            &normalized_req.intent.action,
+            &normalized_req.intent.amount_in,
+            &normalized_req.intent.metadata,
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
-        let response =
-            execute_clob_trade(&bot.bot_id, clob, &req, stored_validation, &valuation).await?;
+        let response = execute_clob_trade(
+            &bot.bot_id,
+            clob,
+            &normalized_req,
+            stored_validation,
+            &valuation,
+        )
+        .await?;
         if let Err(error) =
             capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
         {
@@ -1289,10 +1470,15 @@ async fn execute_multi_bot(
     }
 
     // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
-    if req.intent.target_protocol == "hyperliquid" {
-        let response =
-            execute_hyperliquid_trade(&bot.bot_id, &state, &req, stored_validation, &valuation)
-                .await?;
+    if normalized_req.intent.target_protocol == "hyperliquid" {
+        let response = execute_hyperliquid_trade(
+            &bot.bot_id,
+            &state,
+            &normalized_req,
+            stored_validation,
+            &valuation,
+        )
+        .await?;
         if let Err(error) =
             capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
         {
@@ -1341,7 +1527,7 @@ async fn execute_multi_bot(
         &bot.bot_id,
         &executor,
         &intent,
-        &req,
+        &normalized_req,
         stored_validation,
         &valuation,
     )
@@ -1490,7 +1676,7 @@ mod tests {
     #[test]
     fn parse_execute_request_uses_validation_deadline_when_present() {
         let req = make_execute_request(Some(1_777_777_777));
-        let intent = parse_execute_request(&req).expect("intent");
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
         assert_eq!(intent.deadline.timestamp(), 1_777_777_777);
     }
 
@@ -1498,10 +1684,29 @@ mod tests {
     fn parse_execute_request_uses_default_deadline_when_missing() {
         let req = make_execute_request(None);
         let before = chrono::Utc::now().timestamp();
-        let intent = parse_execute_request(&req).expect("intent");
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
         let after = chrono::Utc::now().timestamp();
         let ts = intent.deadline.timestamp();
         assert!(ts >= before + 290);
         assert!(ts <= after + 310);
+    }
+
+    #[test]
+    fn parse_execute_request_normalizes_zero_address_for_aave_on_local_eth_fork() {
+        let mut req = make_execute_request(Some(1_777_777_777));
+        req.intent.action = "supply".to_string();
+        req.intent.target_protocol = "aave_v3".to_string();
+        req.intent.token_in = "0x0000000000000000000000000000000000000000".to_string();
+        req.intent.token_out = "0x0000000000000000000000000000000000000000".to_string();
+
+        let intent = parse_execute_request(&req, Some(31339)).expect("intent");
+        assert_eq!(
+            intent.token_in,
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        );
+        assert_eq!(
+            intent.token_out,
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        );
     }
 }

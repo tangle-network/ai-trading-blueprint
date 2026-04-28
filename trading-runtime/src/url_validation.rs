@@ -1,9 +1,22 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use url::Url;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RpcUrlValidationOptions {
+    pub allow_loopback: bool,
+}
+
 /// Validates that a URL is safe to use as an RPC endpoint.
 /// Blocks internal/metadata addresses, non-HTTP schemes, and private networks.
 pub fn validate_rpc_url(raw: &str) -> Result<String, String> {
+    validate_rpc_url_with_options(raw, RpcUrlValidationOptions::default())
+}
+
+/// Variant of `validate_rpc_url` with narrow opt-ins for trusted local flows.
+pub fn validate_rpc_url_with_options(
+    raw: &str,
+    options: RpcUrlValidationOptions,
+) -> Result<String, String> {
     let parsed = Url::parse(raw).map_err(|e| format!("invalid URL: {e}"))?;
 
     // Scheme must be http or https
@@ -28,14 +41,14 @@ pub fn validate_rpc_url(raw: &str) -> Result<String, String> {
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
     if let Ok(ip) = bare_host.parse::<IpAddr>()
-        && is_blocked_ip(ip)
+        && is_blocked_ip(ip, options)
     {
         return Err(format!("blocked internal IP: {host}"));
     }
 
     // Block well-known internal hostnames
     let lower = host.to_lowercase();
-    if is_blocked_hostname(&lower) {
+    if is_blocked_hostname(&lower, options) {
         return Err(format!("blocked internal hostname: {host}"));
     }
 
@@ -49,15 +62,15 @@ fn is_metadata_host(host: &str) -> bool {
     )
 }
 
-fn is_blocked_ip(ip: IpAddr) -> bool {
+fn is_blocked_ip(ip: IpAddr, options: RpcUrlValidationOptions) -> bool {
     match ip {
-        IpAddr::V4(v4) => is_blocked_ipv4(v4),
-        IpAddr::V6(v6) => is_blocked_ipv6(v6),
+        IpAddr::V4(v4) => is_blocked_ipv4(v4, options),
+        IpAddr::V6(v6) => is_blocked_ipv6(v6, options),
     }
 }
 
-fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
-    ip.is_loopback()
+fn is_blocked_ipv4(ip: Ipv4Addr, options: RpcUrlValidationOptions) -> bool {
+    (ip.is_loopback() && !options.allow_loopback)
         || ip.is_link_local()          // 169.254.0.0/16
         || ip.is_broadcast()
         || ip.is_unspecified()
@@ -76,15 +89,15 @@ fn is_private_v4(ip: Ipv4Addr) -> bool {
     || (octets[0] == 100 && (64..=127).contains(&octets[1]))
 }
 
-fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
-    ip.is_loopback()
+fn is_blocked_ipv6(ip: Ipv6Addr, options: RpcUrlValidationOptions) -> bool {
+    (ip.is_loopback() && !options.allow_loopback)
         || ip.is_unspecified()
         // IPv4-mapped IPv6 (::ffff:x.x.x.x)
-        || ip.to_ipv4_mapped().is_some_and(is_blocked_ipv4)
+        || ip.to_ipv4_mapped().is_some_and(|mapped| is_blocked_ipv4(mapped, options))
 }
 
-fn is_blocked_hostname(host: &str) -> bool {
-    host == "localhost"
+fn is_blocked_hostname(host: &str, options: RpcUrlValidationOptions) -> bool {
+    (host == "localhost" && !options.allow_loopback)
         || host.ends_with(".local")
         || host.ends_with(".internal")
         || host == "host.docker.internal"
@@ -115,6 +128,29 @@ mod tests {
         assert!(validate_rpc_url("http://127.0.0.1:8545").is_err());
         assert!(validate_rpc_url("http://[::1]:8545").is_err());
         assert!(validate_rpc_url("http://localhost:8545").is_err());
+    }
+
+    #[test]
+    fn allows_loopback_when_opted_in() {
+        let options = RpcUrlValidationOptions {
+            allow_loopback: true,
+        };
+        assert!(validate_rpc_url_with_options("http://127.0.0.1:8545", options).is_ok());
+        assert!(validate_rpc_url_with_options("http://[::1]:8545", options).is_ok());
+        assert!(validate_rpc_url_with_options("http://localhost:8545", options).is_ok());
+    }
+
+    #[test]
+    fn still_blocks_private_networks_when_loopback_is_allowed() {
+        let options = RpcUrlValidationOptions {
+            allow_loopback: true,
+        };
+        assert!(validate_rpc_url_with_options("http://10.0.0.1:8545", options).is_err());
+        assert!(validate_rpc_url_with_options("http://172.16.0.1:8545", options).is_err());
+        assert!(validate_rpc_url_with_options("http://192.168.1.1:8545", options).is_err());
+        assert!(
+            validate_rpc_url_with_options("http://host.docker.internal:8545", options).is_err()
+        );
     }
 
     #[test]

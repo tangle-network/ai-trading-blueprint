@@ -29,11 +29,27 @@ pub struct TradeRecord {
     pub gas_used: Option<String>,
     pub paper_trade: bool,
     #[serde(default)]
+    pub execution_status: Option<TradeExecutionStatus>,
+    #[serde(default)]
+    pub clob_order_id: Option<String>,
+    #[serde(default)]
     pub amount_out: Option<String>,
     #[serde(default)]
     pub entry_price_usd: Option<String>,
     #[serde(default)]
     pub notional_usd: Option<String>,
+    #[serde(default)]
+    pub requested_price_usd: Option<String>,
+    #[serde(default)]
+    pub filled_price_usd: Option<String>,
+    #[serde(default)]
+    pub filled_amount: Option<String>,
+    #[serde(default)]
+    pub slippage_bps: Option<String>,
+    #[serde(default)]
+    pub execution_reason: Option<String>,
+    #[serde(default)]
+    pub prediction_metadata: Option<PredictionTradeMetadata>,
     #[serde(default)]
     pub valuation_status: TradeValuationStatus,
     pub validation: StoredValidation,
@@ -45,9 +61,6 @@ pub struct TradeRecord {
     /// Actual fill price from the exchange
     #[serde(default)]
     pub fill_price: Option<String>,
-    /// Slippage in basis points: (fill - signal) / signal * 10000
-    #[serde(default)]
-    pub slippage_bps: Option<f64>,
     /// Time from signal generation to fill confirmation (milliseconds)
     #[serde(default)]
     pub signal_to_fill_ms: Option<u64>,
@@ -65,6 +78,33 @@ pub struct TradeRecord {
     /// Harness config version that was active when this trade was made
     #[serde(default)]
     pub harness_version: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct PredictionTradeMetadata {
+    #[serde(default)]
+    pub condition_id: Option<String>,
+    #[serde(default)]
+    pub token_id: Option<String>,
+    #[serde(default)]
+    pub market_question: Option<String>,
+    #[serde(default)]
+    pub outcome_label: Option<String>,
+    #[serde(default)]
+    pub outcome_index: Option<u8>,
+    #[serde(default)]
+    pub market_slug: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeExecutionStatus {
+    Paper,
+    Submitted,
+    Confirmed,
+    Filled,
+    Partial,
+    NoFill,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]

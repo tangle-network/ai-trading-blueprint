@@ -183,23 +183,26 @@ pub(crate) async fn build_multi_bot_portfolio_response(
     let mut total_value_decimal = Decimal::ZERO;
     let mut vault_lookup_failed = false;
 
-    match read_vault_cash_position(bot, market_data_base_url).await {
-        Ok(Some(position)) => {
-            cash_balance = Some(position.amount.clone());
-            has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
-            has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
-            if let Some(onchain_value) = position.value_usd.as_deref().and_then(parse_decimal_maybe)
-            {
-                total_value_decimal += onchain_value;
+    if !should_skip_onchain_vault_lookup(bot) {
+        match read_vault_cash_position(bot, market_data_base_url).await {
+            Ok(Some(position)) => {
+                cash_balance = Some(position.amount.clone());
+                has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
+                has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
+                if let Some(onchain_value) =
+                    position.value_usd.as_deref().and_then(parse_decimal_maybe)
+                {
+                    total_value_decimal += onchain_value;
+                }
+                positions.push(position);
             }
-            positions.push(position);
-        }
-        Ok(None) => {}
-        Err(e) => {
-            vault_lookup_failed = true;
-            warnings.push(format!(
-                "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
-            ));
+            Ok(None) => {}
+            Err(e) => {
+                vault_lookup_failed = true;
+                warnings.push(format!(
+                    "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
+                ));
+            }
         }
     }
 
@@ -733,6 +736,10 @@ fn default_reference_price_usd(token: &str) -> Option<Decimal> {
     }
 }
 
+fn should_skip_onchain_vault_lookup(bot: &crate::BotContext) -> bool {
+    bot.paper_trade && bot.vault_address.starts_with("factory:")
+}
+
 async fn read_vault_cash_position(
     bot: &crate::BotContext,
     market_data_base_url: &str,
@@ -940,5 +947,55 @@ fn format_units(amount: U256, decimals: u8) -> String {
         "0".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_onchain_lookup_for_paper_bot_factory_placeholder() {
+        let bot = crate::BotContext {
+            bot_id: "bot-1".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: true,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+
+        assert!(should_skip_onchain_vault_lookup(&bot));
+    }
+
+    #[test]
+    fn does_not_skip_lookup_for_non_placeholder_or_live_bots() {
+        let live_bot = crate::BotContext {
+            bot_id: "bot-2".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: false,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let paper_bot_with_real_vault = crate::BotContext {
+            bot_id: "bot-3".to_string(),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            paper_trade: true,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+
+        assert!(!should_skip_onchain_vault_lookup(&live_bot));
+        assert!(!should_skip_onchain_vault_lookup(
+            &paper_bot_with_real_vault
+        ));
     }
 }
