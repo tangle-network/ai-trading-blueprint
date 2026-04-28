@@ -2,6 +2,7 @@ import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 export type TradeAction = 'buy' | 'sell' | 'swap';
 export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
+export type TradeExecutionStatus = 'paper' | 'submitted' | 'confirmed' | 'filled' | 'partial' | 'no_fill';
 
 export interface ValidatorResponseDetail {
   validator: string;
@@ -27,6 +28,25 @@ export interface TradeValidation {
   intentHash: string;
   responses: ValidatorResponseDetail[];
   simulation?: TradeSimulation;
+}
+
+export interface TradeExecutionDetails {
+  status: TradeExecutionStatus;
+  clobOrderId?: string;
+  requestedPriceUsd?: number | null;
+  filledPriceUsd?: number | null;
+  filledAmount?: number | null;
+  slippageBps?: number | null;
+  reason?: string;
+}
+
+export interface PredictionTradeMetadata {
+  conditionId?: string;
+  tokenId?: string;
+  marketQuestion?: string;
+  outcomeLabel?: string;
+  outcomeIndex?: number;
+  marketSlug?: string;
 }
 
 /** Trade venue derived from target_protocol. */
@@ -66,6 +86,10 @@ export interface Trade {
   validatorReasoning?: string;
   /** Full per-validator breakdown with signatures and EIP-712 domain metadata */
   validation?: TradeValidation;
+  /** Execution metadata for QA and replay/debugging. */
+  execution?: TradeExecutionDetails;
+  /** Persisted Polymarket metadata for human-readable trade history labels. */
+  predictionMetadata?: PredictionTradeMetadata;
 }
 
 /** Map target_protocol string to a display venue. */
@@ -93,3 +117,20 @@ export const VENUE_CONFIG: Record<TradeVenue, { label: string; icon: string; col
   paper: { label: 'PAPER', icon: 'i-ph:notepad', color: 'text-arena-elements-textTertiary' },
   unknown: { label: '?', icon: 'i-ph:question', color: 'text-arena-elements-textTertiary' },
 };
+
+export function getTradePairLabel(trade: Pick<Trade, 'targetProtocol' | 'predictionMetadata' | 'tokenIn' | 'tokenOut'>): string {
+  if (trade.targetProtocol !== 'polymarket_clob') {
+    return `${trade.tokenIn}/${trade.tokenOut}`;
+  }
+
+  const parts = [
+    trade.predictionMetadata?.marketQuestion?.trim(),
+    trade.predictionMetadata?.outcomeLabel?.trim(),
+  ].filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0) {
+    return parts.join(' - ');
+  }
+
+  return `${trade.tokenIn}/${trade.tokenOut}`;
+}

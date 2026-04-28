@@ -9,6 +9,11 @@ import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { buildPerformanceChartPoints } from './performanceChart';
+import {
+  PERFORMANCE_RETURN_FALLBACK_COPY,
+  PERFORMANCE_RETURN_WINDOW_COPY,
+  PERFORMANCE_SECTION_COPY,
+} from './metricCopy';
 
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
   const raw = strategyConfig?.initial_capital_usd
@@ -177,21 +182,28 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   }, [apiMetrics]);
   const firstRenderableMetric = renderableMetrics[0] ?? null;
   const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
+  const hasWindowedReturn = latestRenderableMetric != null
+    && firstRenderableMetric != null
+    && renderableMetrics.length > 1;
   const snapshotPnlValue = latestRenderableMetric
     ? latestRenderableMetric.realized_pnl + latestRenderableMetric.unrealized_pnl
     : null;
   const totalReturnValue = latestRenderableMetric && initialCapitalUsd != null
     ? latestRenderableMetric.account_value_usd - initialCapitalUsd
-    : latestRenderableMetric && firstRenderableMetric && renderableMetrics.length > 1
+    : latestRenderableMetric && firstRenderableMetric && hasWindowedReturn
       ? latestRenderableMetric.account_value_usd - firstRenderableMetric.account_value_usd
       : snapshotPnlValue ?? metricsSummary?.total_pnl ?? bot.pnlAbsolute;
   const totalTradesValue = latestRenderableMetric?.trade_count ?? metricsSummary?.trade_count ?? bot.totalTrades;
+  const returnMetricCopy = hasWindowedReturn
+    ? PERFORMANCE_RETURN_WINDOW_COPY
+    : PERFORMANCE_RETURN_FALLBACK_COPY;
 
   const summaryCards = [
     {
-      label: 'Total Return',
+      label: returnMetricCopy.label,
       value: `$${totalReturnValue.toLocaleString()}`,
       color: totalReturnValue >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
+      title: returnMetricCopy.title,
     },
     {
       label: 'Total Trades',
@@ -210,7 +222,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       <div className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Performance (30D)</CardTitle>
+            <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
           </CardHeader>
           <CardContent>
             <Skeleton className="h-[320px] w-full" />
@@ -257,7 +269,10 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Performance (30D)</CardTitle>
+          <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
+          <p className="text-sm text-arena-elements-textSecondary">
+            {PERFORMANCE_SECTION_COPY.description}
+          </p>
         </CardHeader>
         <CardContent>
           {chartPoints.length > 0 ? (
@@ -286,7 +301,10 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
             transition={{ delay: 0.2 + i * 0.06 }}
           >
             <Card className="p-5">
-              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-2">
+              <div
+                className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-2"
+                title={card.title}
+              >
                 {card.label}
               </div>
               <div className={`text-2xl font-display font-bold ${card.color}`}>

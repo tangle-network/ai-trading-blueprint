@@ -62,6 +62,19 @@ vi.mock('../shared/ValidatorComponents', () => ({
 const trades: Trade[] = [];
 let avgValidatorScore: number | null = 88;
 
+function makeAssetDisplay(symbol: string) {
+  return {
+    rawToken: symbol,
+    symbol,
+    name: symbol,
+    primaryLabel: symbol,
+    secondaryLabel: symbol,
+    isKnown: true,
+    accentClassName: '',
+    iconText: symbol.slice(0, 3).toUpperCase(),
+  };
+}
+
 vi.mock('~/lib/hooks/useBotDetail', () => ({
   useBotDetail: () => ({
     data: mocks.detail,
@@ -133,6 +146,7 @@ describe('ControlsTab', () => {
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
     mocks.updateConfigMutate.mockReset();
+    mocks.detail.submitter_address = '0x1111111111111111111111111111111111111111';
     mocks.detail.paper_trade = true;
     mocks.detail.strategy_config = {
       runtime_backend: 'docker',
@@ -203,7 +217,7 @@ describe('ControlsTab', () => {
 
     render(<ControlsTab bot={makeBot()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Edit Instructions' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.clear(screen.getByLabelText('Expert Knowledge'));
     await user.type(screen.getByLabelText('Expert Knowledge'), 'Focus on ETH momentum setups.');
     await user.clear(screen.getByLabelText('Custom Instructions'));
@@ -228,5 +242,107 @@ describe('ControlsTab', () => {
     expect(JSON.parse(payload.riskParamsJson)).toEqual({});
 
     confirmSpy.mockRestore();
+  });
+
+  it('excludes paper bypasses from approval rate and does not count unsigned approvals as approved', () => {
+    avgValidatorScore = 88;
+    trades.splice(0, trades.length);
+    trades.push(
+      {
+        id: 'signed-trade',
+        botId: 'bot-1',
+        botName: 'Test Bot',
+        action: 'buy',
+        assetIn: makeAssetDisplay('USDC'),
+        assetOut: makeAssetDisplay('WETH'),
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        amountIn: 1000,
+        amountOut: 0.5,
+        priceUsd: 2000,
+        timestamp: Date.now(),
+        status: 'paper',
+        venue: 'paper',
+        paperTrade: true,
+        validation: {
+          approved: true,
+          aggregateScore: 90,
+          intentHash: '0xsigned',
+          responses: [
+            {
+              validator: '0x1234567890abcdef1234567890abcdef12345678',
+              score: 90,
+              reasoning: 'Looks good',
+              signature: '0x' + 'ab'.repeat(65),
+            },
+          ],
+        },
+      },
+      {
+        id: 'bypass-trade',
+        botId: 'bot-1',
+        botName: 'Test Bot',
+        action: 'buy',
+        assetIn: makeAssetDisplay('USDC'),
+        assetOut: makeAssetDisplay('WETH'),
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        amountIn: 1000,
+        amountOut: 0.5,
+        priceUsd: 2000,
+        timestamp: Date.now(),
+        status: 'paper',
+        venue: 'paper',
+        paperTrade: true,
+        validation: {
+          approved: true,
+          aggregateScore: 100,
+          intentHash: '0xbypass',
+          responses: [
+            {
+              validator: 'paper-mode',
+              score: 100,
+              reasoning: 'Paper trade mode — validation bypassed',
+              signature: '0x' + '00'.repeat(65),
+            },
+          ],
+        },
+      },
+      {
+        id: 'unsigned-trade',
+        botId: 'bot-1',
+        botName: 'Test Bot',
+        action: 'buy',
+        assetIn: makeAssetDisplay('USDC'),
+        assetOut: makeAssetDisplay('WETH'),
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        amountIn: 1000,
+        amountOut: 0.5,
+        priceUsd: 2000,
+        timestamp: Date.now(),
+        status: 'paper',
+        venue: 'paper',
+        paperTrade: true,
+        validation: {
+          approved: true,
+          aggregateScore: 85,
+          intentHash: '0xunsigned',
+          responses: [
+            {
+              validator: '0xabcdef1234567890abcdef1234567890abcdef12',
+              score: 85,
+              reasoning: 'Score passed; signature error: invalid vault_address',
+              signature: '0x' + '00'.repeat(65),
+            },
+          ],
+        },
+      },
+    );
+
+    render(<ControlsTab bot={makeBot()} />);
+
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.getByText('(2 trades)')).toBeInTheDocument();
   });
 });

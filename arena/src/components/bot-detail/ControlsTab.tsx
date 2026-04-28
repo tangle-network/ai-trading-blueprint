@@ -26,6 +26,7 @@ import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
+import { getTradeValidationDisplay } from '~/lib/tradeValidation';
 
 const JOB_EXTEND = 6;
 const usdFormatter = new Intl.NumberFormat('en-US', {
@@ -850,11 +851,16 @@ function ValidatorInfoCard({
 
   const stats = useMemo(() => {
     if (!trades || trades.length === 0) return { approvalRate: null, totalValidated: 0 };
-    const validated = trades.filter((t) => t.validation);
-    const approved = validated.filter((t) => t.validation?.approved);
+    const measured = trades.filter((trade) => {
+      const display = getTradeValidationDisplay(trade);
+      return display != null && display.state !== 'paper_bypassed';
+    });
+    const approved = measured.filter(
+      (trade) => getTradeValidationDisplay(trade)?.state === 'approved_signed',
+    );
     return {
-      approvalRate: validated.length > 0 ? Math.round((approved.length / validated.length) * 100) : null,
-      totalValidated: validated.length,
+      approvalRate: measured.length > 0 ? Math.round((approved.length / measured.length) * 100) : null,
+      totalValidated: measured.length,
     };
   }, [trades]);
 

@@ -76,7 +76,7 @@ describe('ReasoningTab', () => {
   it('renders empty state when no validated trades', () => {
     render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
     expect(
-      screen.getByText("No validator reasoning available for this bot's trades."),
+      screen.getByText("No validation details available for this bot's trades."),
     ).toBeInTheDocument();
   });
 
@@ -103,6 +103,37 @@ describe('ReasoningTab', () => {
     render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
     expect(screen.getByText('BUY')).toBeInTheDocument();
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
+  });
+
+  it('renders explicit paper bypasses as bypassed with explanatory copy', () => {
+    allTrades = [
+      makeTrade({
+        id: 'trade-bypass',
+        paperTrade: true,
+        status: 'paper',
+        venue: 'paper',
+        validatorScore: 100,
+        validation: {
+          approved: true,
+          aggregateScore: 100,
+          intentHash: '0xbypass',
+          responses: [
+            {
+              validator: 'paper-mode',
+              score: 100,
+              reasoning: 'Paper trade mode — validation bypassed',
+              signature: '0x' + '00'.repeat(65),
+            },
+          ],
+        },
+      }),
+    ];
+    render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('BYPASSED')).toBeInTheDocument();
+    expect(
+      screen.getByText('Paper mode bypassed validator signing because no validators were configured.'),
+    ).toBeInTheDocument();
   });
 
   it('renders pending trade from recent validations', () => {

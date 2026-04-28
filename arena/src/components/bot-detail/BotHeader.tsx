@@ -8,6 +8,7 @@ import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
+import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 
 interface BotHeaderProps {
   bot: Bot;
@@ -51,7 +52,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
 
   const metrics = [
     {
-      label: 'PnL',
+      label: HEADER_RETURN_PERCENT_COPY.label,
       value: formatSignedPercent(summary.pnlPercent),
       color: summary.pnlPercent == null
         ? ''
@@ -63,7 +64,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
         : summary.pnlPercent >= 0
           ? 'glow-emerald'
           : 'glow-crimson',
-      title: 'Profit and loss as a percentage change in portfolio value over the sampled metrics history.',
+      title: HEADER_RETURN_PERCENT_COPY.title,
     },
     {
       label: 'Sharpe',

@@ -149,7 +149,48 @@ describe('TradeHistoryTab', () => {
 
     // Expanded view shows the APPROVED badge and validator details
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
+    await user.click(screen.getByText('0x1234...5678').closest('button')!);
     expect(screen.getByText('Solid trade rationale')).toBeInTheDocument();
+  });
+
+  it('renders contradictory historical paper approvals as unsigned instead of approved', async () => {
+    const user = userEvent.setup();
+    setTrades([
+      makeTrade({
+        paperTrade: true,
+        status: 'paper',
+        venue: 'paper',
+        validatorScore: 85,
+        validation: {
+          approved: true,
+          aggregateScore: 85,
+          intentHash: '0xunsigned',
+          responses: [
+            {
+              validator: '0x1234567890abcdef1234567890abcdef12345678',
+              score: 90,
+              reasoning: 'Score passed; signature error: invalid vault_address',
+              signature: '0x' + '00'.repeat(65),
+            },
+            {
+              validator: '0xabcdef1234567890abcdef1234567890abcdef12',
+              score: 80,
+              reasoning: 'Score passed; signature error: invalid vault_address',
+              signature: '0x' + '00'.repeat(65),
+            },
+          ],
+        },
+      }),
+    ]);
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    const row = screen.getByText('BUY').closest('tr')!;
+    await user.click(row);
+
+    expect(screen.getByText('UNSIGNED')).toBeInTheDocument();
+    expect(
+      screen.getByText('Validator scoring passed, but no usable signatures were produced.'),
+    ).toBeInTheDocument();
   });
 
   it('shows simulation detail in expanded view', async () => {
@@ -221,6 +262,56 @@ describe('TradeHistoryTab', () => {
     expect(screen.getAllByText('WETH').length).toBeGreaterThan(0);
     expect(screen.getByText('$2,560')).toBeInTheDocument();
     expect(screen.queryByText('3,200 USDC')).not.toBeInTheDocument();
+  });
+
+  it('renders prediction trades with a human-readable market label in the compact row', () => {
+    const pairLabel = 'Will ETH be above $4,000 on June 30? - YES';
+
+    setTrades([
+      makeTrade({
+        tokenIn: 'USDC',
+        tokenOut: '48328953829',
+        targetProtocol: 'polymarket_clob',
+        venue: 'clob',
+        predictionMetadata: {
+          marketQuestion: 'Will ETH be above $4,000 on June 30?',
+          outcomeLabel: 'YES',
+        },
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText(pairLabel)).toBeInTheDocument();
+    expect(screen.getByTitle(pairLabel)).toBeInTheDocument();
+    expect(screen.queryByText('USDC/48328953829')).not.toBeInTheDocument();
+  });
+
+  it('uses requested execution price for paper prediction trades when valuation is unavailable', () => {
+    setTrades([
+      makeTrade({
+        tokenIn: 'USDC',
+        tokenOut: '48328953829',
+        targetProtocol: 'polymarket_clob',
+        venue: 'paper',
+        paperTrade: true,
+        status: 'paper',
+        priceUsd: null,
+        execution: {
+          status: 'paper',
+          requestedPriceUsd: 0.585,
+        },
+        predictionMetadata: {
+          marketQuestion: 'Will ETH be above $4,000 on June 30?',
+          outcomeLabel: 'YES',
+        },
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('$0.585')).toBeInTheDocument();
+    expect(screen.queryByText('No USD leg')).not.toBeInTheDocument();
   });
 
   it('surfaces failed paper simulations in the compact status column', () => {

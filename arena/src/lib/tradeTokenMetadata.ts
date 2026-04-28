@@ -94,6 +94,14 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
   },
   {
+    symbol: 'USDC',
+    name: 'USD Coin',
+    decimals: 6,
+    address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+    chainIds: [137],
+    accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
+  },
+  {
     symbol: 'cbBTC',
     name: 'Coinbase Wrapped BTC',
     decimals: 8,
