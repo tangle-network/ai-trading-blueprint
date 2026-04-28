@@ -214,7 +214,7 @@ contract VaultFactory is Ownable2Step {
             revert VaultDeployerNotSet();
         }
 
-        // Deploy VaultShare via VaultShareDeployer
+        // Deploy VaultShare via dedicated helper to keep deployment bytecode under the EVM limit.
         bytes32 shareSalt = isBotVault
             ? keccak256(abi.encodePacked(serviceId, "bot-share", salt))
             : keccak256(abi.encodePacked(serviceId, "share", salt));
@@ -222,7 +222,7 @@ contract VaultFactory is Ownable2Step {
         shareAddr = address(shareToken);
         emit ShareTokenCreated(serviceId, shareAddr);
 
-        // Deploy TradingVault via VaultDeployer
+        // Deploy TradingVault via dedicated helper to keep deployment bytecode under the EVM limit.
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
         TradingVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
         vault = address(v);

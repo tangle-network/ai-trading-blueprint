@@ -100,8 +100,8 @@ abstract contract Setup is Test {
     // ═══════════════════════════════════════════════════════════════════════════
 
     VaultFactory public vaultFactory;
-    VaultDeployer public vaultDeployer;
     VaultShareDeployer public vaultShareDeployer;
+    VaultDeployer public vaultDeployer;
     PolicyEngine public policyEngine;
     TradeValidator public tradeValidator;
     FeeDistributor public feeDistributor;
