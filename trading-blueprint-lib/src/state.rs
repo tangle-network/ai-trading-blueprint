@@ -484,9 +484,12 @@ pub fn bot_state_health() -> Result<BotStateHealth, String> {
     })
 }
 
-/// Get a bot by either its trading ID or vault address.
+/// Get a bot by either its trading ID, sandbox ID, or vault address.
 pub fn resolve_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
     if let Some(b) = get_bot(id)? {
+        return Ok(Some(b));
+    }
+    if let Ok(b) = find_bot_by_sandbox(id) {
         return Ok(Some(b));
     }
     find_bot_by_vault_address(id)

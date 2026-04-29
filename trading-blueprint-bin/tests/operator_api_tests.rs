@@ -750,8 +750,11 @@ async fn test_list_bots_returns_seeded() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     let bots = json["bots"].as_array().unwrap();
-    let found = bots.iter().any(|b| b["id"].as_str() == Some(&bot.id));
-    assert!(found, "Seeded bot should appear in list");
+    let listed = bots
+        .iter()
+        .find(|b| b["id"].as_str() == Some(&bot.id))
+        .expect("Seeded bot should appear in list");
+    assert_eq!(listed["submitter_address"], SUBMITTER);
 }
 
 #[tokio::test]
@@ -1850,9 +1853,17 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         block_number: Some(1),
         gas_used: Some("21000".to_string()),
         paper_trade: true,
+        execution_status: None,
+        clob_order_id: None,
         amount_out: None,
         entry_price_usd: None,
         notional_usd: None,
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1863,7 +1874,6 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1977,9 +1987,17 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         block_number: Some(1),
         gas_used: Some("21000".to_string()),
         paper_trade: false,
+        execution_status: None,
+        clob_order_id: None,
         amount_out: Some("105".to_string()),
         entry_price_usd: Some("2100".to_string()),
         notional_usd: Some("105".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1990,7 +2008,6 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -2064,9 +2081,17 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         block_number: Some(1),
         gas_used: Some("21000".to_string()),
         paper_trade: false,
+        execution_status: None,
+        clob_order_id: None,
         amount_out: Some("105".to_string()),
         entry_price_usd: Some("2100".to_string()),
         notional_usd: Some("105".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -2077,7 +2102,6 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,

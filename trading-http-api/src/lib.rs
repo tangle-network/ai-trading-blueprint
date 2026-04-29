@@ -121,6 +121,38 @@ pub struct MultiBotTradingState {
     pub chain_client_chain_id: Option<u64>,
 }
 
+fn positive_u64_from_value(value: Option<&serde_json::Value>) -> Option<u64> {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
+        Some(serde_json::Value::String(raw)) => raw.parse::<u64>().ok().filter(|value| *value > 0),
+        _ => None,
+    }
+}
+
+fn positive_u64_from_env(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+pub fn protocol_chain_id_from_config(
+    execution_chain_id: u64,
+    strategy_config: &serde_json::Value,
+) -> u64 {
+    positive_u64_from_value(strategy_config.get("protocol_chain_id"))
+        .or_else(|| positive_u64_from_value(strategy_config.get("fork_base_chain_id")))
+        .or_else(|| positive_u64_from_env("PROTOCOL_CHAIN_ID"))
+        .or_else(|| positive_u64_from_env("FORK_BASE_CHAIN_ID"))
+        .unwrap_or(execution_chain_id)
+}
+
+pub fn protocol_chain_id_from_env(execution_chain_id: u64) -> u64 {
+    positive_u64_from_env("PROTOCOL_CHAIN_ID")
+        .or_else(|| positive_u64_from_env("FORK_BASE_CHAIN_ID"))
+        .unwrap_or(execution_chain_id)
+}
+
 /// Build a multi-bot trading HTTP API router.
 ///
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.

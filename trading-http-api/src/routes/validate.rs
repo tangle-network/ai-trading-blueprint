@@ -43,7 +43,7 @@ pub(crate) fn normalize_protocol_token(
     token: &str,
 ) -> String {
     let zero = token.trim().eq_ignore_ascii_case(ZERO_ADDRESS);
-    let ethereum_like = matches!(chain_id, Some(1 | 31339));
+    let ethereum_like = matches!(chain_id, Some(1 | 31338 | 31339));
     let yield_protocol = matches!(protocol, "aave_v3" | "morpho");
 
     if zero && ethereum_like && yield_protocol {
@@ -51,6 +51,10 @@ pub(crate) fn normalize_protocol_token(
     } else {
         token.to_string()
     }
+}
+
+fn state_protocol_chain_id(chain_id: Option<u64>) -> Option<u64> {
+    chain_id.map(crate::protocol_chain_id_from_env)
 }
 
 #[derive(Serialize)]
@@ -238,12 +242,19 @@ async fn validate(
     State(state): State<Arc<TradingApiState>>,
     Json(request): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, (StatusCode, String)> {
-    let parsed = parse_validate_request(&request, state.chain_id)?;
-    let token_in =
-        normalize_protocol_token(&request.target_protocol, state.chain_id, &request.token_in);
-    let token_out =
-        normalize_protocol_token(&request.target_protocol, state.chain_id, &request.token_out);
-    validate_chain_tokens(state.chain_id, &token_in, &token_out)?;
+    let protocol_chain_id = state_protocol_chain_id(state.chain_id);
+    let parsed = parse_validate_request(&request, protocol_chain_id)?;
+    let token_in = normalize_protocol_token(
+        &request.target_protocol,
+        protocol_chain_id,
+        &request.token_in,
+    );
+    let token_out = normalize_protocol_token(
+        &request.target_protocol,
+        protocol_chain_id,
+        &request.token_out,
+    );
+    validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
 
     if state.paper_trade && state.validator_endpoints.is_empty() {
         let intent_hash = hash_intent(&parsed.intent);
@@ -262,7 +273,7 @@ async fn validate(
         &token_out,
         &state.vault_address,
         state.rpc_url.as_deref(),
-        state.chain_id,
+        protocol_chain_id,
     )
     .await;
 
@@ -466,12 +477,17 @@ async fn validate_multi_bot(
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
-    let parsed = parse_validate_request(&req, Some(bot.chain_id))?;
+    let protocol_chain_id =
+        crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);
+    let parsed = parse_validate_request(&req, Some(protocol_chain_id))?;
     let token_in =
-        normalize_protocol_token(&req.target_protocol, Some(bot.chain_id), &req.token_in);
-    let token_out =
-        normalize_protocol_token(&req.target_protocol, Some(bot.chain_id), &req.token_out);
-    validate_chain_tokens(Some(bot.chain_id), &token_in, &token_out)?;
+        normalize_protocol_token(&req.target_protocol, Some(protocol_chain_id), &req.token_in);
+    let token_out = normalize_protocol_token(
+        &req.target_protocol,
+        Some(protocol_chain_id),
+        &req.token_out,
+    );
+    validate_chain_tokens(Some(protocol_chain_id), &token_in, &token_out)?;
 
     // Use validator endpoints from the bot context
     let validator_endpoints = bot.validator_endpoints.clone();
@@ -496,7 +512,7 @@ async fn validate_multi_bot(
         &token_out,
         &bot.vault_address,
         Some(&bot.rpc_url),
-        Some(bot.chain_id),
+        Some(protocol_chain_id),
     )
     .await;
 

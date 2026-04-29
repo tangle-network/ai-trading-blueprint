@@ -68,6 +68,7 @@ pub struct BotSummary {
     pub id: String,
     pub name: String,
     pub operator_address: String,
+    pub submitter_address: String,
     pub vault_address: String,
     pub strategy_type: String,
     pub strategy_config: serde_json::Value,
@@ -93,6 +94,7 @@ impl BotSummary {
             id: b.id,
             name: b.name,
             operator_address: b.operator_address,
+            submitter_address: b.submitter_address,
             vault_address: b.vault_address,
             strategy_type: b.strategy_type,
             strategy_config: b.strategy_config,
@@ -723,6 +725,34 @@ fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
     }
 }
 
+fn configured_protocol_chain_id(execution_chain_id: u64) -> u64 {
+    ["PROTOCOL_CHAIN_ID", "FORK_BASE_CHAIN_ID"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok())
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(execution_chain_id)
+}
+
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn default_paper_trade_for_chain(chain_id: u64) -> bool {
+    if let Some(value) = std::env::var("DEFAULT_PAPER_TRADE")
+        .ok()
+        .and_then(|raw| parse_bool_env(&raw))
+    {
+        return value;
+    }
+
+    !matches!(chain_id, 31338 | 31339)
+}
+
 fn strategy_context_filename(date: &str) -> String {
     format!("conversations/{date}-strategy-context.md")
 }
@@ -811,6 +841,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(31337);
+    let protocol_chain_id = configured_protocol_chain_id(chain_id);
     let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
         .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
     let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
@@ -818,21 +849,23 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| default_asset_token_address(chain_id).map(str::to_string))
+        .or_else(|| default_asset_token_address(protocol_chain_id).map(str::to_string))
         .ok_or_else(|| {
             ApiError::message(
                 StatusCode::FAILED_DEPENDENCY,
                 format!(
-                    "No asset token configured for chain {chain_id}. \
+                    "No asset token configured for chain {chain_id} / protocol chain {protocol_chain_id}. \
                      Set ASSET_TOKEN_ADDRESS or USDC_ADDRESS."
                 ),
             )
         })?;
     let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
+    let paper_trade = default_paper_trade_for_chain(chain_id);
 
     let strategy_config = serde_json::json!({
         "user_prompt": prompt,
-        "paper_trade": true,
+        "paper_trade": paper_trade,
+        "protocol_chain_id": protocol_chain_id,
     });
 
     let request = trading_blueprint_lib::TradingProvisionRequest {
@@ -2602,12 +2635,7 @@ fn configured_cash_token(bot: &TradingBotRecord) -> Option<String> {
     let configured = bot
         .strategy_config
         .as_object()
-        .and_then(|strategy| {
-            strategy
-                .get("asset_token")
-                .or_else(|| strategy.get("cash_token"))
-                .and_then(|value| value.as_str())
-        })
+        .and_then(|strategy| strategy.get("cash_token").and_then(|value| value.as_str()))
         .map(str::trim)
         .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
         .map(str::to_string);
@@ -2649,6 +2677,27 @@ fn seed_initial_paper_cash_position(
         capital,
         default_reference_price_usd(&token),
     );
+}
+
+fn initial_paper_capital_usd(bot: &TradingBotRecord) -> Option<f64> {
+    if !bot.paper_trade {
+        return None;
+    }
+
+    bot.strategy_config
+        .as_object()
+        .and_then(|strategy| {
+            strategy
+                .get("initial_capital_usd")
+                .or_else(|| strategy.get("initial_capital"))
+                .or_else(|| strategy.get("cash_balance"))
+        })
+        .and_then(|value| match value {
+            serde_json::Value::String(value) => parse_trade_number(value),
+            serde_json::Value::Number(value) => parse_trade_number(&value.to_string()),
+            _ => None,
+        })
+        .filter(|value| *value > 0.0)
 }
 
 fn credit_fallback_position(
@@ -2804,8 +2853,8 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
         let current_price = default_reference_price_usd(&position.token);
         let effective_price = current_price.or(position.entry_price);
         let valuation_status = match (current_price, position.entry_price) {
-            (Some(_), Some(_)) => trading_runtime::types::ValuationStatus::Priced,
-            (Some(_), None) | (None, Some(_)) => trading_runtime::types::ValuationStatus::ValueOnly,
+            (Some(_), _) => trading_runtime::types::ValuationStatus::Priced,
+            (None, Some(_)) => trading_runtime::types::ValuationStatus::ValueOnly,
             (None, None) => trading_runtime::types::ValuationStatus::Unpriced,
         };
         let value_usd = effective_price.map(|price| price * position.amount);
@@ -2899,6 +2948,72 @@ fn parse_metrics_snapshots(
         .map_err(|e| format!("invalid metrics snapshot array: {e}"))
 }
 
+fn fallback_metrics_history(
+    bot: &TradingBotRecord,
+    query: &MetricsHistoryQuery,
+) -> Vec<MetricsSnapshotResponse> {
+    let mut trades: Vec<_> = fallback_trade_dataset(bot)
+        .into_iter()
+        .map(|trade| {
+            let timestamp = trade
+                .get("created_at")
+                .or_else(|| trade.get("timestamp"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let value_usd = fallback_trade_value_usd(&trade).unwrap_or(0.0);
+            (timestamp, value_usd)
+        })
+        .collect();
+
+    if trades.is_empty() {
+        return Vec::new();
+    }
+
+    trades.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let initial_timestamp =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(bot.created_at as i64, 0)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+    let initial_account_value_usd = initial_paper_capital_usd(bot).unwrap_or(0.0);
+    let mut snapshots = vec![MetricsSnapshotResponse {
+        timestamp: initial_timestamp,
+        bot_id: bot.id.clone(),
+        account_value_usd: initial_account_value_usd,
+        unrealized_pnl: 0.0,
+        realized_pnl: 0.0,
+        high_water_mark: initial_account_value_usd,
+        drawdown_pct: 0.0,
+        positions_count: 0,
+        trade_count: 0,
+    }];
+
+    let mut account_value_usd = initial_account_value_usd;
+    let mut high_water_mark = account_value_usd;
+    for (index, (timestamp, value_usd)) in trades.into_iter().enumerate() {
+        account_value_usd += value_usd;
+        high_water_mark = high_water_mark.max(account_value_usd);
+        snapshots.push(MetricsSnapshotResponse {
+            timestamp,
+            bot_id: bot.id.clone(),
+            account_value_usd,
+            unrealized_pnl: 0.0,
+            realized_pnl: 0.0,
+            high_water_mark,
+            drawdown_pct: 0.0,
+            positions_count: (index + 1) as u32,
+            trade_count: (index + 1) as u32,
+        });
+    }
+
+    if let Some(limit) = query.limit {
+        snapshots.truncate(limit);
+    }
+
+    snapshots
+}
+
 async fn resolve_metrics_history_for_bot(
     bot: &TradingBotRecord,
     query: &MetricsHistoryQuery,
@@ -2916,10 +3031,24 @@ async fn resolve_metrics_history_for_bot(
 
     match fetch_trading_api_json(bot, "/metrics/history", &remote_query).await {
         Ok(Some(payload)) => {
-            extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots)
+            match extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots) {
+                Ok(snapshots) if !snapshots.is_empty() => Ok(snapshots),
+                Ok(_) => Ok(fallback_metrics_history(bot, query)),
+                Err(err) => {
+                    let fallback = fallback_metrics_history(bot, query);
+                    if fallback.is_empty() {
+                        Err(err)
+                    } else {
+                        Ok(fallback)
+                    }
+                }
+            }
         }
-        Ok(None) => Ok(Vec::new()),
-        Err(err) => Err(format!("trading api metrics request failed: {err}")),
+        Ok(None) => Ok(fallback_metrics_history(bot, query)),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
+            Ok(fallback_metrics_history(bot, query))
+        }
     }
 }
 
@@ -2950,8 +3079,8 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                 | trading_runtime::types::ValuationStatus::ValueOnly => position.valuation_status,
                 trading_runtime::types::ValuationStatus::Unpriced => {
                     match (position.current_price, position.entry_price, value_usd) {
-                        (Some(_), Some(_), _) => trading_runtime::types::ValuationStatus::Priced,
-                        (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => {
+                        (Some(_), _, _) => trading_runtime::types::ValuationStatus::Priced,
+                        (None, Some(_), _) | (None, None, Some(_)) => {
                             trading_runtime::types::ValuationStatus::ValueOnly
                         }
                         (None, None, None) => trading_runtime::types::ValuationStatus::Unpriced,
@@ -3042,8 +3171,8 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
                 _ => None,
             };
             let valuation_status = match (current_price, entry_price, value_usd) {
-                (Some(_), Some(_), _) => trading_runtime::types::ValuationStatus::Priced,
-                (Some(_), None, _) | (None, Some(_), _) | (None, None, Some(_)) => {
+                (Some(_), _, _) => trading_runtime::types::ValuationStatus::Priced,
+                (None, Some(_), _) | (None, None, Some(_)) => {
                     trading_runtime::types::ValuationStatus::ValueOnly
                 }
                 (None, None, None) => trading_runtime::types::ValuationStatus::Unpriced,
@@ -4251,7 +4380,7 @@ mod tests {
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
         };
-        store.insert(state::bot_key("wd-bot"), bot).unwrap();
+        let _ = store.insert(state::bot_key("wd-bot"), bot);
 
         let app = build_operator_router();
         let response = app
@@ -4270,6 +4399,36 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["wind_down_started_at"], 5000);
         assert_eq!(json["name"], "Wind Down Bot");
+    }
+
+    #[tokio::test]
+    async fn test_get_bot_accepts_sandbox_id_alias() {
+        ensure_state_dir();
+
+        let bot = seed_bot(
+            "sandbox-alias-bot",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-alias-1",
+        );
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/bots/sandbox-alias-1")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["id"], bot.id);
+        assert_eq!(json["sandbox_id"], "sandbox-alias-1");
     }
 
     // ── Helpers for unhappy-path tests ──────────────────────────────────
@@ -4309,10 +4468,9 @@ mod tests {
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
         };
-        state::bots()
-            .unwrap()
-            .insert(state::bot_key(id), record.clone())
-            .unwrap();
+        let _ = state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(id), record.clone());
         record
     }
 
@@ -4339,9 +4497,17 @@ mod tests {
             block_number: Some(0),
             gas_used: Some("0".to_string()),
             paper_trade: true,
+            execution_status: None,
+            clob_order_id: None,
             amount_out: None,
             entry_price_usd: None,
             notional_usd: None,
+            requested_price_usd: None,
+            filled_price_usd: None,
+            filled_amount: None,
+            slippage_bps: None,
+            execution_reason: None,
+            prediction_metadata: None,
             valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
             validation: trading_http_api::trade_store::StoredValidation {
                 approved: true,
@@ -4352,7 +4518,6 @@ mod tests {
             },
             signal_price: None,
             fill_price: None,
-            slippage_bps: None,
             signal_to_fill_ms: None,
             decision_source: None,
             runner_signal: None,
@@ -4510,6 +4675,7 @@ mod tests {
             false,
             "sandbox-secrets-forbidden-1",
         );
+        seed_sandbox_with_secrets("sandbox-secrets-forbidden-1");
 
         let app = build_operator_router();
 
@@ -4554,6 +4720,7 @@ mod tests {
             false,
             "sandbox-secrets-empty-env-1",
         );
+        seed_sandbox_with_secrets("sandbox-secrets-empty-env-1");
 
         let app = build_operator_router();
 
@@ -4592,6 +4759,7 @@ mod tests {
             false,
             "sandbox-stop-stopped-1",
         );
+        seed_sandbox_with_secrets("sandbox-stop-stopped-1");
 
         let app = build_operator_router();
 
@@ -4630,6 +4798,7 @@ mod tests {
             true,
             "sandbox-start-active-1",
         );
+        seed_sandbox_with_secrets("sandbox-start-active-1");
 
         let app = build_operator_router();
 
@@ -4910,6 +5079,26 @@ mod tests {
                 .err()
                 .is_some_and(|err| err.contains("invalid metrics snapshot array"))
         );
+    }
+
+    #[test]
+    fn initial_paper_capital_reads_usd_balance_not_asset_units() {
+        ensure_state_dir();
+        let bot = seed_bot(
+            "paper-capital-bot",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-capital-1",
+        );
+
+        let mut bot = bot;
+        bot.strategy_config = serde_json::json!({
+            "initial_capital_usd": "10000",
+            "asset_token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        });
+
+        assert_eq!(initial_paper_capital_usd(&bot), Some(10000.0));
+        assert_eq!(configured_cash_token(&bot), Some("USDC".to_string()));
     }
 
     #[test]

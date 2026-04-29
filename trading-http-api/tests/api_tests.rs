@@ -100,6 +100,49 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
     })
 }
 
+async fn test_state_with_bot_id_and_clob(
+    mock_uri: &str,
+    bot_id: &str,
+    clob_mock_uri: &str,
+) -> Arc<TradingApiState> {
+    use trading_runtime::polymarket_clob::ClobClient;
+
+    ensure_state_dir();
+
+    let clob_client = ClobClient::with_config(
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock_uri.to_string(),
+        Some(ClobClient::test_credentials()),
+    )
+    .expect("clob client");
+
+    Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(mock_uri.to_string()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:8545",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: bot_id.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id: bot_id.to_string(),
+        paper_trade: true,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: None,
+        clob_client: Some(Arc::new(clob_client)),
+    })
+}
+
 async fn test_state_with_chain_id(mock_uri: &str, chain_id: u64) -> Arc<TradingApiState> {
     ensure_state_dir();
 
@@ -1497,8 +1540,28 @@ async fn test_multi_bot_execute_paper_trade() {
 #[tokio::test]
 async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
     let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.57", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.58", "size": "150.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
     let bot_id = format!("paper-prediction-{}", uuid::Uuid::new_v4());
-    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
     let app = build_router(state);
 
     let execute_body = serde_json::to_string(&serde_json::json!({
@@ -1561,9 +1624,11 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
 
     assert_eq!(
         trade.execution_status,
-        Some(trading_http_api::trade_store::TradeExecutionStatus::Paper)
+        Some(trading_http_api::trade_store::TradeExecutionStatus::Filled)
     );
     assert_eq!(trade.requested_price_usd.as_deref(), Some("0.585"));
+    assert_eq!(trade.filled_price_usd.as_deref(), Some("0.58"));
+    assert_eq!(trade.filled_amount.as_deref(), Some("100.0"));
     assert_eq!(
         trade
             .prediction_metadata
@@ -1585,6 +1650,189 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
             .and_then(|metadata| metadata.outcome_label.as_deref()),
         Some("YES")
     );
+}
+
+#[tokio::test]
+async fn test_single_bot_paper_clob_trade_records_partial_fill() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.53", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.54", "size": "40.0"},
+                {"price": "0.60", "size": "100.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let bot_id = format!("paper-prediction-partial-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.55,
+                "condition_id": "0xcondition-partial",
+                "outcome_label": "YES"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    let trade = trades
+        .into_iter()
+        .find(|trade| trade.target_protocol == "polymarket_clob")
+        .expect("paper clob trade");
+
+    assert_eq!(
+        trade.execution_status,
+        Some(trading_http_api::trade_store::TradeExecutionStatus::Partial)
+    );
+    assert_eq!(trade.requested_price_usd.as_deref(), Some("0.55"));
+    assert_eq!(trade.filled_price_usd.as_deref(), Some("0.54"));
+    assert_eq!(trade.filled_amount.as_deref(), Some("40.0"));
+}
+
+#[tokio::test]
+async fn test_single_bot_paper_clob_trade_records_no_fill() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.53", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.60", "size": "100.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let bot_id = format!("paper-prediction-no-fill-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.55,
+                "condition_id": "0xcondition-no-fill",
+                "outcome_label": "YES"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    let trade = trades
+        .into_iter()
+        .find(|trade| trade.target_protocol == "polymarket_clob")
+        .expect("paper clob trade");
+
+    assert_eq!(
+        trade.execution_status,
+        Some(trading_http_api::trade_store::TradeExecutionStatus::NoFill)
+    );
+    assert_eq!(trade.requested_price_usd.as_deref(), Some("0.55"));
+    assert!(trade.filled_price_usd.is_none());
+    assert!(trade.filled_amount.is_none());
 }
 
 #[tokio::test]
