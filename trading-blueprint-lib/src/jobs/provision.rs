@@ -83,6 +83,26 @@ fn parse_paper_trade_from_strategy_config(
     }
 }
 
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn default_paper_trade_for_request(request: &TradingProvisionRequest) -> bool {
+    if let Some(value) = std::env::var("DEFAULT_PAPER_TRADE")
+        .ok()
+        .and_then(|raw| parse_bool_env(&raw))
+    {
+        return value;
+    }
+
+    let chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    !matches!(chain_id, 31338 | 31339)
+}
+
 fn default_paper_initial_capital_value() -> Value {
     let configured = std::env::var("DEFAULT_PAPER_INITIAL_CAPITAL_USD")
         .ok()
@@ -90,6 +110,42 @@ fn default_paper_initial_capital_value() -> Value {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_PAPER_INITIAL_CAPITAL_USD.to_string());
     Value::String(configured)
+}
+
+fn parse_u64_config(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(value) => value.as_u64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn configured_protocol_chain_id(
+    strategy_config: &Map<String, Value>,
+    execution_chain_id: u64,
+) -> u64 {
+    strategy_config
+        .get("protocol_chain_id")
+        .and_then(parse_u64_config)
+        .or_else(|| {
+            std::env::var("PROTOCOL_CHAIN_ID")
+                .or_else(|_| std::env::var("FORK_BASE_CHAIN_ID"))
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or(execution_chain_id)
+}
+
+fn default_paper_cash_token_value(
+    strategy_config: &Map<String, Value>,
+    request: &TradingProvisionRequest,
+) -> Option<Value> {
+    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
+    trading_runtime::token_metadata::token_address_for_symbol(protocol_chain_id, "USDC")
+        .map(|address| Value::String(address.to_string()))
+        .or_else(|| Some(Value::String("USDC".to_string())))
 }
 
 fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
@@ -111,6 +167,22 @@ fn apply_strategy_defaults(
         strategy_config
             .entry("initial_capital_usd".to_string())
             .or_insert_with(default_paper_initial_capital_value);
+        if let Some(cash_token) = default_paper_cash_token_value(strategy_config, request) {
+            strategy_config
+                .entry("cash_token".to_string())
+                .or_insert(cash_token);
+        }
+    }
+
+    if !strategy_config.contains_key("protocol_chain_id") {
+        let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+        let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
+        if protocol_chain_id != execution_chain_id {
+            strategy_config.insert(
+                "protocol_chain_id".to_string(),
+                Value::Number(protocol_chain_id.into()),
+            );
+        }
     }
 }
 
@@ -223,7 +295,7 @@ pub async fn provision_core(
             .inspect_err(|e| mark_provision_failed(call_id, e))?;
     let paper_trade = parse_paper_trade_from_strategy_config(parsed_strategy_config.as_ref())
         .inspect_err(|e| mark_provision_failed(call_id, e))?
-        .unwrap_or(true);
+        .unwrap_or_else(|| default_paper_trade_for_request(&request));
     let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
 

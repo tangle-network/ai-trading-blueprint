@@ -41,6 +41,8 @@ interface AdvancedSettingsDialogProps {
   executionTargetId: string;
   setExecutionTargetId: (v: string) => void;
   selectedExecutionTarget?: ExecutionTargetOption;
+  provisionPaperTrade: boolean;
+  setProvisionPaperTrade: (v: boolean) => void;
   onOpenInfrastructure: () => void;
 }
 
@@ -67,6 +69,8 @@ export function AdvancedSettingsDialog({
   executionTargetId,
   setExecutionTargetId,
   selectedExecutionTarget,
+  provisionPaperTrade,
+  setProvisionPaperTrade,
   onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
@@ -191,7 +195,7 @@ export function AdvancedSettingsDialog({
                   ))}
                 </select>
                 <p className="text-xs text-arena-elements-textTertiary mt-1.5">
-                  Choose where the DEX strategy runs. Base Sepolia cloud paper trading is the default, while Ethereum fork remains available for local QA.
+                  Choose where strategies run. The selected chain sets the default trading mode, but you can override it below.
                 </p>
                 {selectedExecutionTarget && (
                   <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
@@ -226,14 +230,54 @@ export function AdvancedSettingsDialog({
                       </div>
                     )}
                     <div className="flex justify-between gap-3">
-                      <span>Paper Trading</span>
+                      <span>Default Mode</span>
                       <span className="text-arena-elements-textPrimary">
-                        {selectedExecutionTarget.paperTrade ? 'Yes' : 'No'}
+                        {selectedExecutionTarget.paperTrade ? 'Paper' : 'Live'}
                       </span>
                     </div>
                     <div>{selectedExecutionTarget.description}</div>
                   </div>
                 )}
+              </div>
+              <div>
+                <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  Trading Mode
+                </span>
+                <div
+                  aria-label="Trading mode"
+                  className="inline-flex rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 p-1"
+                  role="group"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={!provisionPaperTrade}
+                    onClick={() => setProvisionPaperTrade(false)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      !provisionPaperTrade
+                        ? 'bg-violet-500 text-white shadow-sm'
+                        : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+                    }`}
+                  >
+                    Live
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={provisionPaperTrade}
+                    onClick={() => setProvisionPaperTrade(true)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      provisionPaperTrade
+                        ? 'bg-violet-500 text-white shadow-sm'
+                        : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+                    }`}
+                  >
+                    Paper
+                  </button>
+                </div>
+                <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                  {provisionPaperTrade
+                    ? 'Paper mode validates and simulates trades without on-chain execution.'
+                    : 'Live mode may execute trades on-chain using the bot vault.'}
+                </p>
               </div>
               <div>
                 <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">

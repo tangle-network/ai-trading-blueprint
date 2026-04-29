@@ -160,10 +160,12 @@ describe('provision runtime backend helpers', () => {
         customExpertKnowledge: 'expert notes',
         customInstructions: 'custom prompt',
         paperTrade: false,
+        protocolChainId: 1,
       }),
     ).toEqual({
       runtime_backend: 'docker',
       paper_trade: false,
+      protocol_chain_id: 1,
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
@@ -182,6 +184,7 @@ describe('provision runtime backend helpers', () => {
         vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
         assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
         paperTrade: false,
+        protocolChainId: 1,
       }),
     ).toEqual({
       chainId: 31339n,
@@ -189,7 +192,48 @@ describe('provision runtime backend helpers', () => {
       vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
       assetAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
       paperTrade: false,
+      protocolChainId: 1,
     });
+  });
+
+  it('defaults enabled execution targets to live mode when paper mode is omitted', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    const config = resolveExecutionTargetProvisionConfig({
+      id: 'ethereum',
+      label: 'Ethereum Fork (Local Live)',
+      description: 'Local fork',
+      enabled: true,
+      chainId: 31339,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+      assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    });
+
+    expect(config).toMatchObject({
+      paperTrade: false,
+    });
+  });
+
+  it('uses execution target config for every strategy on the Ethereum fork', async () => {
+    const { strategyUsesExecutionTarget } = await import('../provision');
+    const ethereumTarget = {
+      id: 'ethereum',
+      label: 'Ethereum Fork (Local Live)',
+      description: 'Local fork',
+      enabled: true,
+    } as const;
+    const baseTarget = {
+      id: 'base',
+      label: 'Base Sepolia',
+      description: 'Base',
+      enabled: true,
+    } as const;
+
+    expect(strategyUsesExecutionTarget('prediction', ethereumTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('perp', ethereumTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('yield', baseTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(true);
   });
 
   it('rejects incomplete execution targets', async () => {

@@ -85,6 +85,7 @@ interface StrategyConfigOptions {
   customInstructions?: string;
   firecrackerRuntimeSupported?: boolean;
   paperTrade?: boolean;
+  protocolChainId?: number;
 }
 
 type DexExecutionTargetId = 'ethereum' | 'arbitrum' | 'base';
@@ -100,6 +101,7 @@ interface DexExecutionTargetOption {
   vaultAddress?: string;
   assetToken?: string;
   paperTrade?: boolean;
+  protocolChainId?: number;
 }
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -136,13 +138,17 @@ const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
 
 const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'ethereum',
-  label: 'Ethereum Fork (Local QA)',
-  description: 'Uses the local fork of Ethereum for QA. This is not Ethereum mainnet.',
-  modeLabel: 'Local execution fork',
+  label: 'Ethereum Fork (Local Live)',
+  description: 'Uses the local Ethereum fork for live transaction execution. This is not Ethereum mainnet.',
+  modeLabel: 'Local live fork',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_ENABLED, true),
   chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID, 31339),
+  protocolChainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID, 1),
   rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? 'http://127.0.0.1:42545',
-  vaultAddress: import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS ?? '0x19ba547192222d3480665d4af454270b3fbe6749',
+  vaultAddress:
+    import.meta.env.VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
   assetToken: import.meta.env.VITE_DEX_ETHEREUM_ASSET_TOKEN ?? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_PAPER_TRADE, false),
 };
@@ -185,6 +191,7 @@ export function buildStrategyConfigForProvision({
   customInstructions,
   firecrackerRuntimeSupported,
   paperTrade,
+  protocolChainId,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -194,6 +201,9 @@ export function buildStrategyConfigForProvision({
     ),
   };
   if (paperTrade != null) config.paper_trade = paperTrade;
+  if (protocolChainId != null && Number.isFinite(protocolChainId) && protocolChainId > 0) {
+    config.protocol_chain_id = protocolChainId;
+  }
   if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
   return config;
@@ -218,7 +228,16 @@ export function resolveExecutionTargetProvisionConfig(
     vaultAddress: target.vaultAddress as Address,
     assetAddress: target.assetToken as Address,
     paperTrade: target.paperTrade ?? false,
+    protocolChainId: target.protocolChainId,
   };
+}
+
+export function strategyUsesExecutionTarget(
+  strategyType: string,
+  target: DexExecutionTargetOption | undefined,
+  paperTrade = true,
+): boolean {
+  return !paperTrade || strategyType === 'dex' || strategyType === 'yield' || target?.id === 'ethereum';
 }
 
 export function buildServiceActivationAttemptKey(
@@ -327,7 +346,7 @@ export default function ProvisionPage() {
     ];
   }, []);
   const [executionTargetId, setExecutionTargetId] = useState<DexExecutionTargetId>(
-    'base',
+    import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base',
   );
   const selectedExecutionTarget = useMemo(
     () =>
@@ -335,6 +354,12 @@ export default function ProvisionPage() {
       ?? executionTargets[0],
     [executionTargetId, executionTargets],
   );
+  const [provisionPaperTrade, setProvisionPaperTrade] = useState(
+    selectedExecutionTarget?.paperTrade ?? false,
+  );
+  useEffect(() => {
+    setProvisionPaperTrade(selectedExecutionTarget?.paperTrade ?? false);
+  }, [selectedExecutionTarget?.id, selectedExecutionTarget?.paperTrade]);
   const localFeeOverrides = useMemo(
     () =>
       import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' && targetChain.id === localChainId
@@ -693,7 +718,15 @@ export default function ProvisionPage() {
               return !isNaN(n) && n > 0 ? [n] : [];
             })();
 
+        const usesExecutionTarget = strategyUsesExecutionTarget(
+          strategyType,
+          selectedExecutionTarget,
+          provisionPaperTrade,
+        );
         const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
+        if (usesExecutionTarget && !executionConfig) {
+          throw new Error('Execution target is incomplete');
+        }
 
         const provisionBody = {
           name: name || `Instance Bot (service ${activatedServiceId})`,
@@ -704,19 +737,20 @@ export default function ProvisionPage() {
               isTeeBlueprint: !!selectedBlueprint?.isTee,
               customExpertKnowledge,
               customInstructions,
-              paperTrade: executionConfig?.paperTrade ?? false,
+              paperTrade: provisionPaperTrade,
+              protocolChainId: usesExecutionTarget ? executionConfig?.protocolChainId : undefined,
             }),
           ),
           risk_params_json: '{}',
           trading_loop_cron: effectiveCron,
           validator_service_ids: resolvedValidatorIds,
-          ...(executionConfig
+          ...(usesExecutionTarget && executionConfig
             ? {
                 chain_id: Number(executionConfig.chainId),
                 rpc_url: executionConfig.rpcUrl,
                 vault_address: executionConfig.vaultAddress,
                 asset_token: executionConfig.assetAddress,
-                paper_trade: executionConfig.paperTrade,
+                paper_trade: provisionPaperTrade,
               }
             : {}),
         };
@@ -769,7 +803,7 @@ export default function ProvisionPage() {
     if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
       instanceAutoProvisionInFlightRef.current = null;
     }
-  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth, selectedExecutionTarget]);
+  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth, selectedExecutionTarget, provisionPaperTrade]);
 
   const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
     if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
@@ -1104,7 +1138,11 @@ export default function ProvisionPage() {
       return;
     }
 
-    const requiresExecutionTarget = strategyType === 'dex';
+    const requiresExecutionTarget = strategyUsesExecutionTarget(
+      strategyType,
+      selectedExecutionTarget,
+      provisionPaperTrade,
+    );
     const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
     if (requiresExecutionTarget && !executionConfig) {
       toast.error('Execution target is incomplete — select a valid execution target in Advanced Settings');
@@ -1116,7 +1154,8 @@ export default function ProvisionPage() {
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
-      paperTrade: executionConfig?.paperTrade ?? true,
+      paperTrade: provisionPaperTrade,
+      protocolChainId: requiresExecutionTarget ? executionConfig?.protocolChainId : undefined,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
@@ -2093,6 +2132,8 @@ export default function ProvisionPage() {
         executionTargetId={executionTargetId}
         setExecutionTargetId={(value) => setExecutionTargetId(value as DexExecutionTargetId)}
         selectedExecutionTarget={selectedExecutionTarget}
+        provisionPaperTrade={provisionPaperTrade}
+        setProvisionPaperTrade={setProvisionPaperTrade}
         onOpenInfrastructure={() => {
           setShowAdvanced(false);
           setShowInfra(true);

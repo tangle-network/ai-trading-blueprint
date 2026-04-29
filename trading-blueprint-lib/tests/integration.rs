@@ -248,6 +248,39 @@ async fn test_provision_respects_non_paper_flag_from_strategy_config() {
 }
 
 #[tokio::test]
+async fn test_provision_defaults_fork_chain_to_live_mode() {
+    let _dir = common::init_test_env();
+
+    let mut request = make_provision_request_with_strategy_config(
+        "test-fork-live-bot",
+        "prediction",
+        r#"{"protocol_chain_id":1}"#,
+    );
+    request.chain_id = U256::from(31338);
+
+    let output = provision_core(
+        request,
+        Some(mock_sandbox("sb-fork-live-bot")),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&output.sandbox_id).unwrap();
+    assert!(
+        !bot.paper_trade,
+        "fork-chain bots should default to live mode when paper_trade is omitted"
+    );
+    assert!(
+        bot.strategy_config.get("initial_capital_usd").is_none(),
+        "live bots should not receive paper-only starting capital"
+    );
+}
+
+#[tokio::test]
 async fn test_provision_skips_zero_address_asset_token_default() {
     let _dir = common::init_test_env();
 
@@ -275,6 +308,10 @@ async fn test_provision_skips_zero_address_asset_token_default() {
         "zero placeholder asset token should not be persisted into strategy config"
     );
     assert_eq!(bot.strategy_config["initial_capital_usd"], "10000");
+    assert_eq!(
+        bot.strategy_config["cash_token"],
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    );
 }
 
 #[tokio::test]
