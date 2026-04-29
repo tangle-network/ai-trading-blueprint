@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, isAddress } from 'viem';
 import type { Address } from 'viem';
 import { Button, Input } from '@tangle-network/blueprint-ui/components';
@@ -10,6 +10,8 @@ interface CollateralAdminProps {
   assetDecimals: number;
   assetSymbol: string;
   maxCollateralBps?: number;
+  targetChainId: number;
+  targetChainName: string;
   onSuccess?: () => void;
 }
 
@@ -18,11 +20,20 @@ export function CollateralAdmin({
   assetDecimals,
   assetSymbol,
   maxCollateralBps,
+  targetChainId,
+  targetChainName,
   onSuccess,
 }: CollateralAdminProps) {
+  const { chainId } = useAccount();
   const [capPct, setCapPct] = useState(maxCollateralBps != null ? (maxCollateralBps / 100).toString() : '');
   const [writeDownOperator, setWriteDownOperator] = useState('');
   const [writeDownAmount, setWriteDownAmount] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const isReady = chainId === targetChainId;
+
+  useEffect(() => {
+    setCapPct(maxCollateralBps != null ? (maxCollateralBps / 100).toString() : '');
+  }, [maxCollateralBps]);
 
   // setMaxCollateralBps
   const {
@@ -32,7 +43,7 @@ export function CollateralAdmin({
     error: capError,
     reset: capReset,
   } = useWriteContract();
-  const { isLoading: capConfirming, isSuccess: capSuccess } = useWaitForTransactionReceipt({ hash: capHash });
+  const { isLoading: capConfirming, isSuccess: capSuccess } = useWaitForTransactionReceipt({ hash: capHash, chainId: targetChainId });
 
   // writeDownCollateral
   const {
@@ -42,28 +53,59 @@ export function CollateralAdmin({
     error: wdError,
     reset: wdReset,
   } = useWriteContract();
-  const { isLoading: wdConfirming, isSuccess: wdSuccess } = useWaitForTransactionReceipt({ hash: wdHash });
+  const { isLoading: wdConfirming, isSuccess: wdSuccess } = useWaitForTransactionReceipt({ hash: wdHash, chainId: targetChainId });
 
   function handleSetCap() {
+    if (!isReady) {
+      setValidationError(`Switch to ${targetChainName} first`);
+      return;
+    }
     const bps = Math.round(parseFloat(capPct) * 100);
-    if (isNaN(bps) || bps < 0 || bps > 10000) return;
+    if (isNaN(bps) || bps < 0 || bps > 10000) {
+      setValidationError('Collateral cap must be between 0 and 100');
+      return;
+    }
+    setValidationError(null);
     writeCap({
       address: vaultAddress,
       abi: tradingVaultAbi,
       functionName: 'setMaxCollateralBps',
       args: [BigInt(bps)],
+      chainId: targetChainId,
     });
   }
 
   function handleWriteDown() {
-    if (!writeDownOperator || !writeDownAmount) return;
-    if (!isAddress(writeDownOperator)) return;
-    const parsed = parseUnits(writeDownAmount, assetDecimals);
+    if (!isReady) {
+      setValidationError(`Switch to ${targetChainName} first`);
+      return;
+    }
+    if (!writeDownOperator || !writeDownAmount) {
+      setValidationError('Enter an operator and amount');
+      return;
+    }
+    if (!isAddress(writeDownOperator)) {
+      setValidationError('Enter a valid operator address');
+      return;
+    }
+    let parsed: bigint;
+    try {
+      parsed = parseUnits(writeDownAmount, assetDecimals);
+    } catch {
+      setValidationError('Enter a valid write-down amount');
+      return;
+    }
+    if (parsed <= 0n) {
+      setValidationError('Write-down amount must be greater than 0');
+      return;
+    }
+    setValidationError(null);
     writeDown({
       address: vaultAddress,
       abi: tradingVaultAbi,
       functionName: 'writeDownCollateral',
       args: [writeDownOperator as Address, parsed],
+      chainId: targetChainId,
     });
   }
 
@@ -100,7 +142,7 @@ export function CollateralAdmin({
             />
             <Button
               onClick={handleSetCap}
-              disabled={capPending || capConfirming || !capPct}
+              disabled={!isReady || capPending || capConfirming || !capPct}
               size="sm"
             >
               {capPending ? 'Confirm...' : capConfirming ? 'Setting...' : 'Set'}
@@ -108,6 +150,9 @@ export function CollateralAdmin({
           </div>
           {capError && (
             <p className="text-xs text-crimson-500 mt-1">{capError.message.slice(0, 80)}</p>
+          )}
+          {validationError && (
+            <p className="text-xs text-crimson-500 mt-1">{validationError}</p>
           )}
           <p className="text-xs text-arena-elements-textTertiary mt-1">
             Max % of vault NAV that can be released as CLOB collateral. 0 = disabled.
@@ -137,7 +182,7 @@ export function CollateralAdmin({
               />
               <Button
                 onClick={handleWriteDown}
-                disabled={wdPending || wdConfirming || !writeDownOperator || !writeDownAmount}
+                disabled={!isReady || wdPending || wdConfirming || !writeDownOperator || !writeDownAmount}
                 size="sm"
                 variant="outline"
               >

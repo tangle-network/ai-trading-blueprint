@@ -10,10 +10,14 @@ import { addTx } from '@tangle-network/blueprint-ui';
 interface WithdrawFormProps {
   vaultAddress: Address;
   assetSymbol: string;
+  assetDecimals: number;
   shareDecimals: number;
   sharePrice?: number;
   userShares?: bigint;
   userSharesFormatted?: number;
+  maxRedeem?: bigint;
+  maxWithdraw?: bigint;
+  paused: boolean;
   targetChainId: number;
   targetChainName: string;
   onSuccess: () => void;
@@ -22,10 +26,14 @@ interface WithdrawFormProps {
 export function WithdrawForm({
   vaultAddress,
   assetSymbol,
+  assetDecimals,
   shareDecimals,
   sharePrice,
   userShares,
   userSharesFormatted,
+  maxRedeem,
+  maxWithdraw,
+  paused,
   targetChainId,
   targetChainName,
   onSuccess,
@@ -35,14 +43,30 @@ export function WithdrawForm({
   const [shares, setShares] = useState('');
   const redeem = useRedeem();
 
-  const parsedShares = shares && parseFloat(shares) > 0
-    ? parseUnits(shares, shareDecimals)
-    : 0n;
+  const sharesNumber = Number(shares);
+  let parsedShares = 0n;
+  let invalidShares = false;
+  if (shares && Number.isFinite(sharesNumber) && sharesNumber > 0) {
+    try {
+      parsedShares = parseUnits(shares, shareDecimals);
+    } catch {
+      invalidShares = true;
+    }
+  } else if (shares) {
+    invalidShares = true;
+  }
 
   const insufficientShares = parsedShares > 0n && (userShares ?? 0n) < parsedShares;
+  const exceedsMaxRedeem = parsedShares > 0n && maxRedeem != null && parsedShares > maxRedeem;
+  const maxRedeemFormatted = maxRedeem != null
+    ? Number(formatUnits(maxRedeem, shareDecimals))
+    : userSharesFormatted;
+  const maxWithdrawFormatted = maxWithdraw != null
+    ? Number(formatUnits(maxWithdraw, assetDecimals))
+    : undefined;
 
-  const valueReceived = shares && parseFloat(shares) > 0 && sharePrice
-    ? (parseFloat(shares) * sharePrice).toFixed(4)
+  const valueReceived = shares && !invalidShares && sharesNumber > 0 && sharePrice
+    ? (sharesNumber * sharePrice).toFixed(4)
     : null;
 
   // Track confirmation (isSuccess from useWaitForTransactionReceipt) via ref
@@ -62,15 +86,27 @@ export function WithdrawForm({
   }, [redeem.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClick = () => {
-    if (!shares || parseFloat(shares) <= 0) {
+    if (!shares || invalidShares || sharesNumber <= 0) {
       toast.error('Enter a valid number of shares');
+      return;
+    }
+    if (!isReady) {
+      toast.error(`Switch to ${targetChainName} first`);
+      return;
+    }
+    if (paused) {
+      toast.error('Vault is paused');
       return;
     }
     if (insufficientShares) {
       toast.error('Insufficient shares');
       return;
     }
-    redeem.redeem(vaultAddress, shares, shareDecimals, {
+    if (exceedsMaxRedeem) {
+      toast.error('Requested shares are not withdrawable right now');
+      return;
+    }
+    redeem.redeem(vaultAddress, shares, shareDecimals, targetChainId, {
       onHash(h) {
         addTx(h, `Withdraw ${shares || '?'} shares`, targetChainId);
       },
@@ -87,8 +123,14 @@ export function WithdrawForm({
     ? 'Connect Wallet'
     : !isReady
     ? `Switch to ${targetChainName}`
+    : paused
+    ? 'Vault Paused'
+    : invalidShares
+    ? 'Invalid Shares'
     : insufficientShares
     ? 'Insufficient Shares'
+    : exceedsMaxRedeem
+    ? 'Not Withdrawable'
     : isPending
     ? 'Withdrawing...'
     : 'Withdraw';
@@ -129,14 +171,14 @@ export function WithdrawForm({
               <label htmlFor="withdraw-shares" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
                 Shares
               </label>
-              {userSharesFormatted != null && (
+              {maxRedeemFormatted != null && (
                 <button
                   type="button"
-                  onClick={() => setShares(userSharesFormatted.toString())}
+                  onClick={() => setShares(maxRedeemFormatted.toString())}
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
                   aria-label="Set maximum withdrawal"
                 >
-                  Balance: {userSharesFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  Withdrawable: {maxRedeemFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                 </button>
               )}
             </div>
@@ -148,8 +190,14 @@ export function WithdrawForm({
               onChange={(e) => setShares(e.target.value)}
               min="0"
               step="any"
+              disabled={isPending}
             />
           </div>
+          {maxWithdrawFormatted != null && (
+            <div className="text-xs text-arena-elements-textTertiary font-data">
+              Max assets: {maxWithdrawFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })} {assetSymbol}
+            </div>
+          )}
           {valueReceived && (
             <div className="flex items-center justify-between px-3.5 py-2.5 rounded-lg bg-crimson-500/5 border border-crimson-500/10">
               <span className="text-sm text-arena-elements-textSecondary font-data flex items-center gap-1.5">
@@ -165,7 +213,7 @@ export function WithdrawForm({
             onClick={handleClick}
             variant="outline"
             className="w-full"
-            disabled={!isReady || isPending || insufficientShares || !shares}
+            disabled={!isReady || isPending || invalidShares || insufficientShares || exceedsMaxRedeem || paused || !shares}
           >
             {buttonText}
           </Button>

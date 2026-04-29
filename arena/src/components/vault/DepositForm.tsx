@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
-import { parseUnits } from 'viem';
+import { formatUnits, maxUint256, parseUnits } from 'viem';
 import type { Address } from 'viem';
 import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
@@ -16,6 +16,8 @@ interface DepositFormProps {
   userAssetBalance?: bigint;
   userAssetBalanceFormatted?: number;
   userAllowance?: bigint;
+  maxDeposit?: bigint;
+  paused: boolean;
   targetChainId: number;
   targetChainName: string;
   onSuccess: () => void;
@@ -30,6 +32,8 @@ export function DepositForm({
   userAssetBalance,
   userAssetBalanceFormatted,
   userAllowance,
+  maxDeposit,
+  paused,
   targetChainId,
   targetChainName,
   onSuccess,
@@ -37,49 +41,47 @@ export function DepositForm({
   const { isConnected, chainId } = useAccount();
   const isReady = isConnected && chainId === targetChainId;
   const [amount, setAmount] = useState('');
-  // Track that we just approved — skip needsApproval check until refetch completes
-  const [justApproved, setJustApproved] = useState(false);
-  // Ref to current amount so approval effect always reads the latest value
-  const amountRef = useRef(amount);
-  amountRef.current = amount;
+  const pendingDepositAfterApprovalRef = useRef<{ amount: string } | null>(null);
 
   const approve = useApprove();
   const deposit = useDeposit();
 
-  const parsedAmount = amount && parseFloat(amount) > 0
-    ? parseUnits(amount, assetDecimals)
-    : 0n;
+  const amountNumber = Number(amount);
+  let parsedAmount = 0n;
+  let invalidAmount = false;
+  if (amount && Number.isFinite(amountNumber) && amountNumber > 0) {
+    try {
+      parsedAmount = parseUnits(amount, assetDecimals);
+    } catch {
+      invalidAmount = true;
+    }
+  } else if (amount) {
+    invalidAmount = true;
+  }
 
-  // If we just approved, skip the allowance check until refetch completes
-  const needsApproval = !justApproved && parsedAmount > 0n && (userAllowance ?? 0n) < parsedAmount;
+  const needsApproval = parsedAmount > 0n && (userAllowance ?? 0n) < parsedAmount;
+  const exceedsMaxDeposit = parsedAmount > 0n && maxDeposit != null && maxDeposit !== maxUint256 && parsedAmount > maxDeposit;
+  const maxDepositFormatted = maxDeposit != null && maxDeposit !== maxUint256
+    ? Number(formatUnits(maxDeposit, assetDecimals))
+    : undefined;
 
-  const sharesReceived = amount && parseFloat(amount) > 0 && sharePrice && sharePrice > 0
-    ? (parseFloat(amount) / sharePrice).toFixed(4)
+  const sharesReceived = amount && !invalidAmount && amountNumber > 0 && sharePrice && sharePrice > 0
+    ? (amountNumber / sharePrice).toFixed(4)
     : null;
 
   const insufficientBalance = parsedAmount > 0n && (userAssetBalance ?? 0n) < parsedAmount;
 
-  // Reset justApproved when allowance updates (refetch completed)
-  const prevAllowance = useRef(userAllowance);
-  useEffect(() => {
-    if (userAllowance !== prevAllowance.current) {
-      prevAllowance.current = userAllowance;
-      if (justApproved) setJustApproved(false);
-    }
-  }, [userAllowance, justApproved]);
-
   // Handle approval success — auto-proceed to deposit
   useEffect(() => {
     if (approve.isSuccess) {
+      const approvedRequest = pendingDepositAfterApprovalRef.current;
+      pendingDepositAfterApprovalRef.current = null;
       toast.success('Approval confirmed — depositing...');
       approve.reset();
-      setJustApproved(true);
       onSuccess(); // refetch allowance
 
-      // Auto-proceed to deposit using ref to avoid stale closure
-      const currentAmount = amountRef.current;
-      if (currentAmount && parseFloat(currentAmount) > 0) {
-        deposit.deposit(vaultAddress, currentAmount, assetDecimals);
+      if (approvedRequest) {
+        deposit.deposit(vaultAddress, approvedRequest.amount, assetDecimals, targetChainId);
       }
     }
   }, [approve.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -90,7 +92,6 @@ export function DepositForm({
       toast.success('Deposit confirmed!');
       deposit.reset();
       setAmount('');
-      setJustApproved(false);
       onSuccess();
     }
   }, [deposit.isSuccess]);
@@ -99,6 +100,7 @@ export function DepositForm({
   useEffect(() => {
     if (approve.error) {
       toast.error(`Approval failed: ${approve.error.message.slice(0, 100)}`);
+      pendingDepositAfterApprovalRef.current = null;
       approve.reset();
     }
     if (deposit.error) {
@@ -116,18 +118,31 @@ export function DepositForm({
   }, [deposit.hash, assetSymbol, targetChainId]);
 
   const handleClick = () => {
-    if (!amount || parseFloat(amount) <= 0) {
+    if (!amount || invalidAmount || amountNumber <= 0) {
       toast.error('Enter a valid amount');
+      return;
+    }
+    if (!isReady) {
+      toast.error(`Switch to ${targetChainName} first`);
+      return;
+    }
+    if (paused) {
+      toast.error('Vault is paused');
       return;
     }
     if (insufficientBalance) {
       toast.error('Insufficient balance');
       return;
     }
+    if (exceedsMaxDeposit) {
+      toast.error('Amount is above this vault deposit limit');
+      return;
+    }
     if (needsApproval && assetToken) {
-      approve.approve(assetToken, vaultAddress, parsedAmount);
+      pendingDepositAfterApprovalRef.current = { amount };
+      approve.approve(assetToken, vaultAddress, parsedAmount, targetChainId);
     } else {
-      deposit.deposit(vaultAddress, amount, assetDecimals);
+      deposit.deposit(vaultAddress, amount, assetDecimals, targetChainId);
     }
   };
 
@@ -137,8 +152,14 @@ export function DepositForm({
     ? 'Connect Wallet'
     : !isReady
     ? `Switch to ${targetChainName}`
+    : paused
+    ? 'Vault Paused'
+    : invalidAmount
+    ? 'Invalid Amount'
     : insufficientBalance
     ? 'Insufficient Balance'
+    : exceedsMaxDeposit
+    ? 'Above Deposit Limit'
     : isPending
     ? (approve.isPending || approve.isConfirming ? 'Approving...' : 'Depositing...')
     : needsApproval
@@ -203,9 +224,15 @@ export function DepositForm({
               onChange={(e) => setAmount(e.target.value)}
               min="0"
               step="any"
+              disabled={isPending}
               className="text-base"
             />
           </div>
+          {maxDepositFormatted != null && (
+            <div className="text-xs text-arena-elements-textTertiary font-data">
+              Max deposit: {maxDepositFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })} {assetSymbol}
+            </div>
+          )}
           {sharesReceived && (
             <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-emerald-700/5 dark:bg-emerald-500/5 border border-emerald-700/10 dark:border-emerald-500/10">
               <span className="text-sm text-arena-elements-textSecondary font-data flex items-center gap-1.5">
@@ -218,7 +245,7 @@ export function DepositForm({
           <Button
             onClick={handleClick}
             className="w-full text-sm"
-            disabled={!isReady || isPending || insufficientBalance || !amount}
+            disabled={!isReady || isPending || invalidAmount || insufficientBalance || exceedsMaxDeposit || paused || !amount}
           >
             {buttonText}
           </Button>

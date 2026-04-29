@@ -166,6 +166,8 @@ export default function VaultPage() {
             assetDecimals={vault.assetDecimals}
             assetSymbol={vault.assetSymbol}
             maxCollateralBps={vault.maxCollateralBps}
+            targetChainId={targetChainId}
+            targetChainName={targetChainName}
             onSuccess={vault.refetch}
           />
         )}
@@ -219,6 +221,8 @@ export default function VaultPage() {
             userAssetBalance={vault.userAssetBalance}
             userAssetBalanceFormatted={vault.userAssetBalanceFormatted}
             userAllowance={vault.userAllowance}
+            maxDeposit={vault.maxDeposit}
+            paused={vault.paused}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
             onSuccess={vault.refetch}
@@ -226,10 +230,14 @@ export default function VaultPage() {
           <WithdrawForm
             vaultAddress={vaultAddress}
             assetSymbol={vault.assetSymbol}
+            assetDecimals={vault.assetDecimals}
             shareDecimals={vault.shareDecimals}
             sharePrice={vault.sharePrice}
             userShares={vault.userShares}
             userSharesFormatted={vault.userSharesFormatted}
+            maxRedeem={vault.maxRedeem}
+            maxWithdraw={vault.maxWithdraw}
+            paused={vault.paused}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
             onSuccess={vault.refetch}
