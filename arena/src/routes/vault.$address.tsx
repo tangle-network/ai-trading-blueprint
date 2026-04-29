@@ -22,7 +22,7 @@ const KNOWN_CHAIN_NAMES: Record<number, string> = {
   84532: 'Base Sepolia',
   421614: 'Arbitrum Sepolia',
   31337: 'Tangle Local',
-  31338: 'Tangle Local',
+  31338: 'Ethereum Local Fork',
   31339: 'Ethereum Fork',
 };
 
@@ -50,7 +50,7 @@ export default function VaultPage() {
   const targetNetwork = networks[targetChainId];
   const targetChainName = chainLabel(targetChainId, targetNetwork?.chain.name);
 
-  const vault = useVaultRead(vaultAddress);
+  const vault = useVaultRead(vaultAddress, targetChainId);
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
   const isWrongChain = isConnected && chainId !== targetChainId;
@@ -127,11 +127,30 @@ export default function VaultPage() {
           assetSymbol={vault.assetSymbol}
           paused={vault.paused}
           isLoading={vault.isLoading}
+          isConnected={isConnected}
+          approximateNav={vault.hasNonDepositAssets}
           userSharesFormatted={vault.userSharesFormatted}
         />
 
+        {vault.hasNonDepositAssets && (
+          <div className="glass-card rounded-xl p-5 mb-6 border-amber-400/30 bg-amber-500/5">
+            <div className="flex items-start gap-3">
+              <div className="i-ph:warning-circle text-lg text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+                  Vault value is approximate
+                </div>
+                <p className="text-sm text-arena-elements-textSecondary mt-1">
+                  This vault holds assets other than {vault.assetSymbol}. Until priced NAV is implemented, TVL and share price are estimates.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <CollateralStats
           vaultAddress={vaultAddress}
+          targetChainId={targetChainId}
           totalOutstandingCollateral={vault.totalOutstandingCollateral}
           maxCollateralBps={vault.maxCollateralBps}
           availableCollateral={vault.availableCollateral}

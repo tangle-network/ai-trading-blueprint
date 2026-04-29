@@ -9,10 +9,12 @@ interface VaultStatsProps {
   assetSymbol: string;
   paused: boolean;
   isLoading: boolean;
+  isConnected: boolean;
+  approximateNav: boolean;
   userSharesFormatted?: number;
 }
 
-export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, isLoading, userSharesFormatted }: VaultStatsProps) {
+export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, isLoading, isConnected, approximateNav, userSharesFormatted }: VaultStatsProps) {
   const stats = [
     {
       label: 'Total Value Locked',
@@ -43,7 +45,7 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
     },
     {
       label: 'Your Shares',
-      value: userSharesFormatted ?? 0,
+      value: isConnected ? (userSharesFormatted ?? 0) : undefined,
       prefix: '',
       suffix: '',
       decimals: 4,
@@ -84,6 +86,9 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
                 suffix={stat.suffix}
                 decimals={stat.decimals}
               />
+              {approximateNav && (stat.label === 'Total Value Locked' || stat.label === 'Share Price') && (
+                <span className="ml-1 align-middle text-sm text-amber-600 dark:text-amber-400">~</span>
+              )}
             </div>
           ) : (
             <div className="text-2xl font-display font-bold text-arena-elements-textTertiary">—</div>

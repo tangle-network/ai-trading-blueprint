@@ -3,12 +3,13 @@ import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { Skeleton } from '@tangle-network/blueprint-ui/components';
-import { publicClient } from '@tangle-network/blueprint-ui';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
+import { getChainPublicClient } from '~/lib/contracts/chainClients';
 import { useEffect, useState } from 'react';
 
 interface CollateralStatsProps {
   vaultAddress: Address;
+  targetChainId: number;
   totalOutstandingCollateral?: bigint;
   maxCollateralBps?: number;
   availableCollateral?: bigint;
@@ -27,6 +28,7 @@ interface CollateralEvent {
 
 export function CollateralStats({
   vaultAddress,
+  targetChainId,
   totalOutstandingCollateral,
   maxCollateralBps,
   availableCollateral,
@@ -54,6 +56,7 @@ export function CollateralStats({
 
     async function fetchEvents() {
       try {
+        const publicClient = getChainPublicClient(targetChainId);
         // Use a recent block window to avoid scanning full chain history
         const currentBlock = await publicClient.getBlockNumber();
         const fromBlock = currentBlock > 10000n ? currentBlock - 10000n : 0n;
@@ -132,7 +135,7 @@ export function CollateralStats({
 
     fetchEvents();
     return () => { cancelled = true; };
-  }, [vaultAddress, enabled, assetDecimals]);
+  }, [vaultAddress, targetChainId, enabled, assetDecimals]);
 
   if (!enabled) {
     return (
