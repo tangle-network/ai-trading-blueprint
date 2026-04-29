@@ -176,15 +176,15 @@ impl ProtocolAdapter for AaveV3Adapter {
 
         match params.action {
             Action::Supply => {
-                let output_token =
-                    self.a_token_for_asset(params.token_in)
-                        .ok_or_else(|| TradingError::AdapterError {
-                            protocol: "aave_v3".into(),
-                            message: format!(
-                                "Missing Aave V3 aToken mapping for asset {} on chain {}",
-                                params.token_in, self.chain_id
-                            ),
-                        })?;
+                let output_token = self.a_token_for_asset(params.token_in).ok_or_else(|| {
+                    TradingError::AdapterError {
+                        protocol: "aave_v3".into(),
+                        message: format!(
+                            "Missing Aave V3 aToken mapping for asset {} on chain {}",
+                            params.token_in, self.chain_id
+                        ),
+                    }
+                })?;
                 let calldata =
                     self.encode_supply(params.token_in, params.amount, params.vault_address);
                 Ok(EncodedAction {

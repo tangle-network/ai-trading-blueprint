@@ -505,7 +505,7 @@ pub(crate) async fn ensure_sidecar_runtime_dirs(
 ) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown agent:agent /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; }'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown -R agent:agent /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; } && chmod -R u+rwX,g+rwX /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home 2>/dev/null || true'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -910,24 +910,60 @@ async fn resolve_vault_from_factory(
 
     let provider = ProviderBuilder::new().connect_http(rpc_url);
 
+    let has_blueprint_vault_index = local_trading_blueprint_address()?.is_some();
+    if has_blueprint_vault_index {
+        if let Some(vault) = resolve_blueprint_bot_vault(&provider, bot).await? {
+            return Ok(vault);
+        }
+
+        if !bot.paper_trade {
+            maybe_replay_local_provision_result(bot).await?;
+            if let Some(vault) = resolve_blueprint_bot_vault(&provider, bot).await? {
+                return Ok(vault);
+            }
+            return Err(format!(
+                "No vault found for service {} call {} in TradingBlueprint.botVaults",
+                bot.service_id, bot.call_id
+            ));
+        }
+    }
+
     // Call VaultFactory.getServiceVaults(service_id)
     let call = trading_runtime::contracts::IVaultFactory::getServiceVaultsCall {
         serviceId: bot.service_id,
     };
     let calldata = call.abi_encode();
 
-    let result = provider
+    let result = match provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(factory_addr)
                 .input(calldata.into()),
         )
         .await
-        .map_err(|e| format!("getServiceVaults call failed: {e}"))?;
+    {
+        Ok(result) => result,
+        Err(factory_err) => {
+            if let Ok(vault) = resolve_direct_vault_address(&provider, factory_addr).await {
+                return Ok(vault);
+            }
+            return Err(format!("getServiceVaults call failed: {factory_err}"));
+        }
+    };
 
     let vaults = <alloy::sol_types::sol_data::Array<alloy::sol_types::sol_data::Address>
         as alloy::sol_types::SolType>::abi_decode(&result)
-        .map_err(|e| format!("Failed to decode vault addresses: {e}"))?;
+        .map_err(|e| format!("Failed to decode vault addresses: {e}"));
+
+    let vaults = match vaults {
+        Ok(vaults) => vaults,
+        Err(decode_err) => {
+            if let Ok(vault) = resolve_direct_vault_address(&provider, factory_addr).await {
+                return Ok(vault);
+            }
+            return Err(decode_err);
+        }
+    };
 
     match vaults.len() {
         0 => Err("No vaults found for this service".into()),
@@ -937,4 +973,253 @@ async fn resolve_vault_from_factory(
             bot.service_id
         )),
     }
+}
+
+async fn resolve_blueprint_bot_vault<P>(
+    provider: &P,
+    bot: &crate::state::TradingBotRecord,
+) -> Result<Option<String>, String>
+where
+    P: alloy::providers::Provider,
+{
+    use alloy::primitives::Address;
+    use alloy::sol_types::SolCall;
+
+    let Some(blueprint_addr) = local_trading_blueprint_address()? else {
+        return Ok(None);
+    };
+
+    let call = trading_runtime::contracts::ITradingBlueprint::botVaultsCall {
+        serviceId: bot.service_id,
+        callId: bot.call_id,
+    };
+    let result = provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(blueprint_addr)
+                .input(call.abi_encode().into()),
+        )
+        .await
+        .map_err(|e| format!("botVaults call failed: {e}"))?;
+
+    let vault =
+        <alloy::sol_types::sol_data::Address as alloy::sol_types::SolType>::abi_decode(&result)
+            .map_err(|e| format!("Failed to decode botVaults address: {e}"))?;
+
+    if vault == Address::ZERO {
+        Ok(None)
+    } else {
+        Ok(Some(format!("{:#x}", vault)))
+    }
+}
+
+fn local_trading_blueprint_address() -> Result<Option<alloy::primitives::Address>, String> {
+    let Some(raw) = std::env::var("TRADING_BLUEPRINT_ADDRESS")
+        .or_else(|_| std::env::var("TRADING_BLUEPRINT"))
+        .or_else(|_| std::env::var("BLUEPRINT_CONTRACT"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    raw.parse()
+        .map(Some)
+        .map_err(|e| format!("Invalid TRADING_BLUEPRINT_ADDRESS '{raw}': {e}"))
+}
+
+fn local_tangle_contract_address() -> Result<Option<alloy::primitives::Address>, String> {
+    let Some(raw) = std::env::var("TANGLE_CONTRACT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    raw.parse()
+        .map(Some)
+        .map_err(|e| format!("Invalid TANGLE_CONTRACT '{raw}': {e}"))
+}
+
+fn local_rpc_allows_anvil_impersonation(rpc_url: &str) -> bool {
+    let explicit = std::env::var("LOCAL_ANVIL_REPLAY_JOB_RESULT")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "on"));
+    if explicit {
+        return true;
+    }
+
+    rpc_url.contains("127.0.0.1") || rpc_url.contains("localhost")
+}
+
+async fn maybe_replay_local_provision_result(
+    bot: &crate::state::TradingBotRecord,
+) -> Result<(), String> {
+    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::sol_types::SolCall;
+
+    if bot.paper_trade || !local_rpc_allows_anvil_impersonation(&bot.rpc_url) {
+        return Err("No vaults found for this service".into());
+    }
+
+    let Some(blueprint_addr) = local_trading_blueprint_address()? else {
+        return Err("No vaults found for this service".into());
+    };
+    let Some(tangle_addr) = local_tangle_contract_address()? else {
+        return Err("No vaults found for this service".into());
+    };
+    let operator: Address = bot
+        .operator_address
+        .parse()
+        .map_err(|e| format!("Invalid operator address '{}': {e}", bot.operator_address))?;
+
+    tracing::warn!(
+        bot_id = %bot.id,
+        service_id = bot.service_id,
+        call_id = bot.call_id,
+        "No bot vault found after provision; replaying local BSM onJobResult hook via Anvil impersonation"
+    );
+
+    let call = trading_runtime::contracts::ITradingBlueprint::onJobResultCall {
+        serviceId: bot.service_id,
+        job: 0,
+        jobCallId: bot.call_id,
+        operator,
+        inputs: Bytes::new(),
+        outputs: Bytes::new(),
+    };
+
+    let data = format!("0x{}", hex::encode(call.abi_encode()));
+    let tangle = format!("{:#x}", tangle_addr);
+    let blueprint = format!("{:#x}", blueprint_addr);
+    let client = reqwest::Client::new();
+
+    json_rpc(
+        &client,
+        &bot.rpc_url,
+        "anvil_impersonateAccount",
+        json!([tangle]),
+    )
+    .await?;
+    json_rpc(
+        &client,
+        &bot.rpc_url,
+        "anvil_setBalance",
+        json!([tangle, format!("0x{:x}", U256::from(10u128.pow(20)))]),
+    )
+    .await?;
+    let tx_hash = json_rpc(
+        &client,
+        &bot.rpc_url,
+        "eth_sendTransaction",
+        json!([{
+            "from": tangle,
+            "to": blueprint,
+            "data": data,
+            "gas": "0x7a1200",
+        }]),
+    )
+    .await?;
+    let _ = json_rpc(
+        &client,
+        &bot.rpc_url,
+        "anvil_stopImpersonatingAccount",
+        json!([tangle]),
+    )
+    .await;
+
+    let tx_hash = tx_hash
+        .as_str()
+        .ok_or_else(|| "eth_sendTransaction returned non-string tx hash".to_string())?
+        .to_string();
+    wait_for_json_rpc_receipt(&client, &bot.rpc_url, &tx_hash).await?;
+    Ok(())
+}
+
+async fn json_rpc(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let payload = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+    let response: serde_json::Value = client
+        .post(rpc_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("{method} request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{method} response decode failed: {e}"))?;
+
+    if let Some(error) = response.get("error") {
+        return Err(format!("{method} failed: {error}"));
+    }
+
+    Ok(response
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+async fn wait_for_json_rpc_receipt(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    tx_hash: &str,
+) -> Result<(), String> {
+    for _ in 0..30 {
+        let receipt = json_rpc(
+            client,
+            rpc_url,
+            "eth_getTransactionReceipt",
+            json!([tx_hash]),
+        )
+        .await?;
+        if !receipt.is_null() {
+            let status = receipt
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if status == "0x1" {
+                return Ok(());
+            }
+            return Err(format!(
+                "local onJobResult replay reverted: receipt={receipt}"
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Err(format!(
+        "timed out waiting for local onJobResult replay tx {tx_hash}"
+    ))
+}
+
+async fn resolve_direct_vault_address<P>(
+    provider: &P,
+    vault_addr: alloy::primitives::Address,
+) -> Result<String, String>
+where
+    P: alloy::providers::Provider,
+{
+    use alloy::sol_types::SolCall;
+
+    let call = trading_runtime::contracts::ITradingVault::assetCall {};
+    provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(vault_addr)
+                .input(call.abi_encode().into()),
+        )
+        .await
+        .map_err(|e| format!("asset() call failed: {e}"))?;
+
+    Ok(format!("{vault_addr:#x}"))
 }

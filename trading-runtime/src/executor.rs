@@ -23,7 +23,7 @@ use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
 const DEFAULT_EXECUTION_GAS_LIMIT: u64 = 3_000_000;
-const LOCAL_ETHEREUM_FORK_CHAIN_ID: u64 = 31_339;
+const LOCAL_ETHEREUM_FORK_CHAIN_IDS: &[u64] = &[31_338, 31_339];
 
 fn gas_limit_from_env(var: &str, default: u64) -> u64 {
     std::env::var(var)
@@ -337,11 +337,36 @@ fn parse_tx_value(value: &str) -> U256 {
 }
 
 fn canonicalize_adapter_chain_id(protocol: &str, chain_id: Option<u64>) -> Option<u64> {
-    match (protocol, chain_id) {
+    if protocol != "aave_v3" {
+        return chain_id;
+    }
+
+    if let Some(protocol_chain_id) = configured_protocol_chain_id(chain_id) {
+        return Some(protocol_chain_id);
+    }
+
+    match chain_id {
         // Keep the synthetic fork id for signing/execution, but resolve Aave
         // protocol addresses against canonical Ethereum deployments.
-        ("aave_v3", Some(LOCAL_ETHEREUM_FORK_CHAIN_ID)) => Some(1),
+        Some(local_id) if LOCAL_ETHEREUM_FORK_CHAIN_IDS.contains(&local_id) => Some(1),
         _ => chain_id,
+    }
+}
+
+fn configured_protocol_chain_id(chain_id: Option<u64>) -> Option<u64> {
+    let execution_chain_id = chain_id?;
+    let protocol_chain_id = ["PROTOCOL_CHAIN_ID", "FORK_BASE_CHAIN_ID"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok())
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)?;
+
+    if protocol_chain_id != execution_chain_id
+        && LOCAL_ETHEREUM_FORK_CHAIN_IDS.contains(&execution_chain_id)
+    {
+        Some(protocol_chain_id)
+    } else {
+        None
     }
 }
 
@@ -466,6 +491,10 @@ mod tests {
     fn test_canonicalize_adapter_chain_id_maps_local_ethereum_fork_for_aave() {
         assert_eq!(
             canonicalize_adapter_chain_id("aave_v3", Some(31339)),
+            Some(1)
+        );
+        assert_eq!(
+            canonicalize_adapter_chain_id("aave_v3", Some(31338)),
             Some(1)
         );
         assert_eq!(
