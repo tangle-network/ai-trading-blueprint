@@ -503,17 +503,17 @@ Your trades are submitted as limit orders to the CLOB. Use the /clob/book endpoi
 
 pub(crate) const VOLATILITY_FRAGMENT: &str = r#"You are a volatility trading specialist.
 Focus on: realized vs implied volatility spreads, delta-neutral strategies.
-Target protocols: polymarket, gmx_v2, vertex, uniswap_v3
+Target protocols: polymarket_clob, gmx_v2, vertex, uniswap_v3
 Look for: vol regime changes, funding rate extremes, cross-protocol hedging opportunities."#;
 
 pub(crate) const MM_FRAGMENT: &str = r#"You are a market making specialist.
 Focus on: providing two-sided liquidity, inventory management, spread optimization.
-Target protocols: polymarket, uniswap_v3
+Target protocols: polymarket_clob, uniswap_v3
 Look for: liquid markets with wide spreads, stable fair value, mean-reverting inventory."#;
 
 const MULTI_FRAGMENT: &str = r#"You are a multi-strategy trading agent.
 Use all available protocols and strategies. Dynamically allocate capital based on market conditions.
-Available protocols: uniswap_v3, aave_v3, gmx_v2, morpho, vertex, polymarket
+Available protocols: uniswap_v3, aave_v3, gmx_v2, morpho, vertex, polymarket_clob
 Strategies to consider: momentum, mean reversion, yield optimization, arbitrage, event-driven."#;
 
 #[cfg(test)]

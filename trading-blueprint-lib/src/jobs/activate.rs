@@ -826,6 +826,16 @@ pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(),
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn submit_trade_tool_preserves_query_strings() {
+        let tool = include_str!("../prompts/tools/submit_trade.js");
+        assert!(tool.contains("path: url.pathname + url.search"));
+        assert!(!tool.contains("path: url.pathname,"));
+    }
+}
+
 /// Remove secrets from a bot: stop workflow, wipe user secrets from sidecar.
 ///
 /// Uses `sandbox_runtime::secret_provisioning::wipe_secrets()` which preserves

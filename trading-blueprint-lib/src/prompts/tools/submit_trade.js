@@ -84,7 +84,7 @@ function apiCall(config, method, path, body) {
     const url = new URL(path, config.api_url);
     const mod = url.protocol === 'https:' ? https : http;
     const opts = {
-      method, hostname: url.hostname, port: url.port, path: url.pathname,
+      method, hostname: url.hostname, port: url.port, path: url.pathname + url.search,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + config.token,

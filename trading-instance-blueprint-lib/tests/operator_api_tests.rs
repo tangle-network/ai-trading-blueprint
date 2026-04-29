@@ -1270,6 +1270,23 @@ async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json[0]["account_value_usd"], 10123.45);
 
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["portfolio_value_usd"], 1050.0);
+    assert_eq!(json["total_pnl"], 46.0);
+    assert_eq!(json["trade_count"], 1);
+
     let _ = clear_instance_bot_id();
 }
 
@@ -1342,9 +1359,16 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         block_number: Some(1),
         gas_used: Some("21000".to_string()),
         paper_trade: true,
+        execution_status: None,
+        clob_order_id: None,
         amount_out: None,
         entry_price_usd: None,
         notional_usd: None,
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
