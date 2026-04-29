@@ -197,7 +197,13 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             }
 
             // Decode TradingProvisionRequest — same layout as _storeProvisionInputs
-            (string memory name_,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,, uint256 maxCollateralBps_) = abi.decode(
+            (
+                string memory name_,,,,,
+                address assetToken,
+                address[] memory signers,
+                uint256 requiredSigs,,,,,,,,
+                uint256 maxCollateralBps_
+            ) = abi.decode(
                 inner,
                 (
                     string,
@@ -234,7 +240,8 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     }
 
     /// @notice Called when the service is activated (all operators approved).
-    /// @dev Stores config and operators for per-bot vault creation.
+    /// @dev Tangle passes permitted callers here, not operators. Load the real
+    ///      operator set from Tangle core before using it for vault signers.
     ///      Fleet mode: Vaults created per-bot in onJobResult(PROVISION).
     ///      Instance mode: Vault created here immediately (one vault per service).
     function onServiceInitialized(
@@ -242,14 +249,18 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint64 requestId,
         uint64 serviceId,
         address,
-        address[] calldata operators,
+        address[] calldata localOperatorsFallback,
         uint64
     ) external override onlyFromTangle {
         ServiceRequestConfig memory req = _pendingRequests[requestId];
+        address[] memory operators = _loadServiceOperators(serviceId);
+        if (instanceMode && operators.length == 0 && tangleCore.code.length == 0) {
+            operators = localOperatorsFallback;
+        }
 
         // Persist config for per-bot vault defaults
         _serviceConfigs[serviceId] = req;
-        _serviceOperators[serviceId] = operators;
+        _setServiceOperators(serviceId, operators);
         instanceProvisioned[serviceId] = true;
 
         delete _pendingRequests[requestId];
@@ -264,7 +275,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Called from onServiceInitialized when instanceMode=true. Uses callId=0
     ///      since there is exactly one bot per service. Mirrors _handleProvisionResult
     ///      logic but uses service-level config directly.
-    function _createInstanceVault(uint64 serviceId, ServiceRequestConfig memory cfg, address[] calldata operators)
+    function _createInstanceVault(uint64 serviceId, ServiceRequestConfig memory cfg, address[] memory operators)
         internal
     {
         if (vaultFactory == address(0)) return;
@@ -363,7 +374,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         }
 
         // Track operator for future bot vault grants
-        _serviceOperators[serviceId].push(operator);
+        _appendServiceOperatorIfMissing(serviceId, operator);
     }
 
     /// @notice Called when the service is terminated.
@@ -539,7 +550,13 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         // Layout: (name, strategy_type, strategy_config_json, risk_params_json,
         //          factory_address, asset_token, signers, required_signatures, ...,
         //          max_collateral_bps)
-        (string memory botName,,,,, address assetToken, address[] memory signers, uint256 requiredSigs,,,,,,,, uint256 maxCollBps) = abi.decode(
+        (
+            string memory botName,,,,,
+            address assetToken,
+            address[] memory signers,
+            uint256 requiredSigs,,,,,,,,
+            uint256 maxCollBps
+        ) = abi.decode(
             inner,
             (
                 string,
@@ -562,16 +579,15 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         );
 
         ServiceRequestConfig memory svcCfg = _serviceConfigs[serviceId];
-        _pendingProvisions[serviceId][jobCallId] =
-            PendingProvision({
-                assetToken: assetToken,
-                signers: signers,
-                requiredSigs: requiredSigs,
-                name: botName,
-                policyConfig: svcCfg.policyConfig,
-                feeConfig: svcCfg.feeConfig,
-                maxCollateralBps: maxCollBps
-            });
+        _pendingProvisions[serviceId][jobCallId] = PendingProvision({
+            assetToken: assetToken,
+            signers: signers,
+            requiredSigs: requiredSigs,
+            name: botName,
+            policyConfig: svcCfg.policyConfig,
+            feeConfig: svcCfg.feeConfig,
+            maxCollateralBps: maxCollBps
+        });
     }
 
     /// @notice Creates a per-bot vault when a provision job completes.
@@ -621,9 +637,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                         }
                     }
                     if (!found) {
-                        emit BotVaultSkipped(
-                            serviceId, jobCallId, "provision signer not in service-approved set"
-                        );
+                        emit BotVaultSkipped(serviceId, jobCallId, "provision signer not in service-approved set");
                         return;
                     }
                 }
@@ -686,6 +700,36 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         emit BotVaultDeployed(serviceId, jobCallId, vault, shareToken);
     }
 
+    function _loadServiceOperators(uint64 serviceId) internal view returns (address[] memory operators) {
+        if (tangleCore.code.length == 0) {
+            return new address[](0);
+        }
+
+        try ITangleServiceOperators(tangleCore).getServiceOperators(serviceId) returns (address[] memory loaded) {
+            return loaded;
+        } catch {
+            return new address[](0);
+        }
+    }
+
+    function _setServiceOperators(uint64 serviceId, address[] memory operators) internal {
+        delete _serviceOperators[serviceId];
+        for (uint256 i = 0; i < operators.length; i++) {
+            _appendServiceOperatorIfMissing(serviceId, operators[i]);
+        }
+    }
+
+    function _appendServiceOperatorIfMissing(uint64 serviceId, address operator) internal {
+        if (operator == address(0)) return;
+        address[] storage operators = _serviceOperators[serviceId];
+        for (uint256 i = 0; i < operators.length; i++) {
+            if (operators[i] == operator) {
+                return;
+            }
+        }
+        operators.push(operator);
+    }
+
     function _defaultPolicyConfig() internal pure returns (PolicyEngine.PolicyConfig memory) {
         return PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500});
     }
@@ -744,6 +788,10 @@ interface IVaultFactory {
     ) external returns (address vault, address shareToken);
 
     function getServiceVaults(uint64 serviceId) external view returns (address[] memory);
+}
+
+interface ITangleServiceOperators {
+    function getServiceOperators(uint64 serviceId) external view returns (address[] memory);
 }
 
 /// @notice Minimal interface for TradingVault collateral configuration

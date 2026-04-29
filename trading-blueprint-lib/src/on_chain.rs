@@ -61,6 +61,16 @@ pub async fn deploy_vault(
         name,
         symbol,
         salt,
+        policyConfig: IVaultFactory::PolicyConfig {
+            leverageCap: U256::from(50_000u64),
+            maxTradesPerHour: U256::from(100u64),
+            maxSlippageBps: U256::from(500u64),
+        },
+        feeConfig: IVaultFactory::FeeConfig {
+            performanceFeeBps: U256::from(2_000u64),
+            managementFeeBps: U256::from(200u64),
+            validatorFeeShareBps: U256::from(3_000u64),
+        },
     };
 
     let tx = alloy::rpc::types::TransactionRequest::default()

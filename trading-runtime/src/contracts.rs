@@ -63,19 +63,47 @@ sol! {
 
     #[sol(rpc)]
     interface IVaultFactory {
+        struct PolicyConfig {
+            uint256 leverageCap;
+            uint256 maxTradesPerHour;
+            uint256 maxSlippageBps;
+        }
+
+        struct FeeConfig {
+            uint256 performanceFeeBps;
+            uint256 managementFeeBps;
+            uint256 validatorFeeShareBps;
+        }
+
         function createVault(
             uint64 serviceId, address assetToken, address admin, address operator,
             address[] calldata signers, uint256 requiredSigs,
-            string calldata name, string calldata symbol, bytes32 salt
+            string calldata name, string calldata symbol, bytes32 salt,
+            PolicyConfig calldata policyConfig, FeeConfig calldata feeConfig
         ) external returns (address vault, address shareToken);
 
-        function addAssetVault(
+        function createBotVault(
             uint64 serviceId, address assetToken, address admin, address operator,
-            address[] calldata signers, uint256 requiredSigs, bytes32 salt
-        ) external returns (address vault);
+            address[] calldata signers, uint256 requiredSigs,
+            string calldata name, string calldata symbol, bytes32 salt,
+            PolicyConfig calldata policyConfig, FeeConfig calldata feeConfig
+        ) external returns (address vault, address shareToken);
 
         function getServiceVaults(uint64 serviceId) external view returns (address[] memory);
         function serviceShares(uint64 serviceId) external view returns (address);
+    }
+
+    #[sol(rpc)]
+    interface ITradingBlueprint {
+        function botVaults(uint64 serviceId, uint64 callId) external view returns (address);
+        function onJobResult(
+            uint64 serviceId,
+            uint8 job,
+            uint64 jobCallId,
+            address operator,
+            bytes calldata inputs,
+            bytes calldata outputs
+        ) external payable;
     }
 
     #[sol(rpc)]

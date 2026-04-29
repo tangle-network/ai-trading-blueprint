@@ -71,22 +71,22 @@ contract TradingBlueprintMultiOpTest is Setup {
 
         // Full TradingProvisionRequest tuple (matches frontend encoding)
         return abi.encode(
-            "Test Vault",    // name
-            "",              // strategyType
-            "",              // strategyConfigJson
-            "",              // riskParamsJson
-            address(0),      // factoryAddress (unused)
+            "Test Vault", // name
+            "", // strategyType
+            "", // strategyConfigJson
+            "", // riskParamsJson
+            address(0), // factoryAddress (unused)
             address(tokenA), // assetToken
-            signers,         // signers
-            uint256(2),      // requiredSignatures (2-of-3)
-            uint256(0),      // chainId
-            "",              // rpcUrl
-            "",              // cron
-            uint64(0),       // cpuCores
-            uint64(0),       // memoryMb
-            uint64(0),       // maxLifetimeDays
-            validatorIds,    // validatorServiceIds
-            uint256(0)       // maxCollateralBps
+            signers, // signers
+            uint256(2), // requiredSignatures (2-of-3)
+            uint256(0), // chainId
+            "", // rpcUrl
+            "", // cron
+            uint64(0), // cpuCores
+            uint64(0), // memoryMb
+            uint64(0), // maxLifetimeDays
+            validatorIds, // validatorServiceIds
+            uint256(0) // maxCollateralBps
         );
     }
 
@@ -392,23 +392,29 @@ contract TradingBlueprintMultiOpTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_onJobCall_onlyFromTangle() public {
-        vm.expectRevert(abi.encodeWithSelector(
-            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+            )
+        );
         blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, "");
     }
 
     function test_onJobResult_onlyFromTangle() public {
-        vm.expectRevert(abi.encodeWithSelector(
-            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+            )
+        );
         blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, "", "");
     }
 
     function test_setVaultFactory_onlyFromTangle() public {
-        vm.expectRevert(abi.encodeWithSelector(
-            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+            )
+        );
         blueprint.setVaultFactory(address(0xBEEF));
     }
 
@@ -600,6 +606,55 @@ contract TradingBlueprintMultiOpTest is Setup {
         // H-2: default is now 2-of-n (not 1-of-n) to prevent single-key compromise.
         assertEq(tradeValidator.getSignerCount(vault), 2, "Should have 2 signers (the operators)");
         assertEq(tradeValidator.getRequiredSignatures(vault), 2, "Should require 2 signatures (H-2 floor)");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
+    }
+
+    function test_serviceInitialized_ignoresPermittedCallersForVaultSigners() public {
+        address permitted1 = makeAddr("permitted1");
+        address permitted2 = makeAddr("permitted2");
+        address[] memory permittedCallers = new address[](3);
+        permittedCallers[0] = permitted1;
+        permittedCallers[1] = permitted2;
+        permittedCallers[2] = permitted1;
+
+        vm.prank(tangleCore);
+        blueprint.onRequest(requestId, address(0), new address[](0), _buildRequestInputs(), 0, address(0), 0);
+        vm.prank(tangleCore);
+        blueprint.onServiceInitialized(0, requestId, serviceId, address(0), permittedCallers, 0);
+        _joinOperator(operator);
+        _joinOperator(operator2);
+
+        bytes memory inputs = _buildBotProvisionInputsNoSigners();
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+
+        address vault = blueprint.botVaults(serviceId, 1);
+        assertTrue(vault != address(0), "Bot vault should be deployed");
+        assertEq(tradeValidator.getSignerCount(vault), 2, "Only joined operators should be signers");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
+        assertFalse(tradeValidator.isVaultSigner(vault, permitted1), "Permitted caller should not be a signer");
+        assertFalse(tradeValidator.isVaultSigner(vault, permitted2), "Permitted caller should not be a signer");
+    }
+
+    function test_onOperatorJoined_isIdempotentForSignerFallback() public {
+        _initService();
+        _joinOperator(operator);
+        _joinOperator(operator);
+        _joinOperator(operator2);
+
+        bytes memory inputs = _buildBotProvisionInputsNoSigners();
+        vm.prank(tangleCore);
+        blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
+        vm.prank(tangleCore);
+        blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
+
+        address vault = blueprint.botVaults(serviceId, 1);
+        assertTrue(vault != address(0), "Bot vault should be deployed");
+        assertEq(tradeValidator.getSignerCount(vault), 2, "Duplicate operator joins should be ignored");
         assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
         assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
     }
