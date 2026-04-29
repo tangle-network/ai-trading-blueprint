@@ -8,6 +8,7 @@ import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
+import { buildVaultPath } from '~/lib/utils/vaultRoute';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 
 interface BotHeaderProps {
@@ -140,7 +141,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
         )}
         {bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000' && (
           <Button asChild variant="ghost" size="sm">
-            <Link to={`/vault/${bot.vaultAddress}`}>
+            <Link to={buildVaultPath(bot.vaultAddress, bot.chainId)}>
               <span className="i-ph:wallet text-xs" /> View Vault
             </Link>
           </Button>

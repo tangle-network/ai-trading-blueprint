@@ -48,6 +48,7 @@ import {
 } from "~/lib/stores/provisions";
 import type { Bot } from "~/lib/types/bot";
 import {
+  buildOperatorDetailFallbackBot,
   buildInstanceFallbackBot,
   findMatchingInstanceRouteProvision,
 } from "~/lib/utils/instanceBotRoute";
@@ -92,6 +93,7 @@ export default function BotDetailPage() {
   const scopedOperatorApiUrl =
     storeBot?.operatorApiUrl ?? fallbackOperatorApiUrl;
   const routeOperatorApiUrl = scopedOperatorApiUrl ?? OPERATOR_API_URL;
+  const routeAuth = useOperatorAuth(routeOperatorApiUrl);
   const storeBotDetail = useBotDetail(
     storeBot?.id,
     storeBot?.operatorApiUrl ?? routeOperatorApiUrl,
@@ -112,6 +114,12 @@ export default function BotDetailPage() {
     fallbackOperatorApiUrl,
     fallbackOperatorKind,
   );
+  const routeDetailLookupEnabled = !storeBot && !matchingProvision && Boolean(id);
+  const routeDetail = useBotDetail(
+    routeDetailLookupEnabled ? id : undefined,
+    routeOperatorApiUrl,
+    "cloud",
+  );
 
   const fallbackBot = useMemo<Bot | undefined>(() => {
     if (storeBot || !id || !matchingProvision) return undefined;
@@ -130,9 +138,18 @@ export default function BotDetailPage() {
     matchingProvision,
     storeBot,
   ]);
+  const routeFallbackBot = useMemo<Bot | undefined>(() => {
+    if (!routeDetailLookupEnabled || !id) return undefined;
+    return buildOperatorDetailFallbackBot({
+      routeId: id,
+      detail: routeDetail.data,
+      operatorApiUrl: routeOperatorApiUrl,
+      operatorKind: "cloud",
+    });
+  }, [id, routeDetail.data, routeDetailLookupEnabled, routeOperatorApiUrl]);
 
   const bot = useMemo<Bot | undefined>(() => {
-    if (!storeBot) return fallbackBot;
+    if (!storeBot) return fallbackBot ?? routeFallbackBot;
     const detail = storeBotDetail.data;
     if (!detail) return storeBot;
 
@@ -148,7 +165,7 @@ export default function BotDetailPage() {
       windDownStartedAt: detail.wind_down_started_at ?? undefined,
       workflowId: detail.workflow_id ?? storeBot.workflowId,
     };
-  }, [fallbackBot, storeBot, storeBotDetail.data]);
+  }, [fallbackBot, routeFallbackBot, storeBot, storeBotDetail.data]);
   const displayBotName = bot
     ? resolveBotDisplayName({
         fallbackName: bot.name,
@@ -182,6 +199,7 @@ export default function BotDetailPage() {
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
+  const routeAuthToken = routeAuth.getCachedToken();
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? "",
     displayBotName,
@@ -196,7 +214,15 @@ export default function BotDetailPage() {
     !fallbackBot &&
     (fallbackAuth.isAuthenticating ||
       fallbackDetail.isLoading ||
-      fallbackDetail.isFetching);
+      fallbackDetail.isFetching ||
+      (routeDetailLookupEnabled &&
+        isConnected &&
+        !routeAuth.error &&
+        !routeDetail.isError &&
+        (!routeAuthToken ||
+          routeAuth.isAuthenticating ||
+          routeDetail.isLoading ||
+          routeDetail.isFetching)));
 
   if (!bot && (isLoading || isRouteFallbackLoading)) {
     return (

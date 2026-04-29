@@ -110,4 +110,16 @@ describe('BotHeader', () => {
 
     expect(screen.getByRole('heading', { name: 'Base Sepolia Rollout Plan' })).toBeInTheDocument();
   });
+
+  it('links to the vault with the bot chain id', () => {
+    mockDetail = { validator_endpoints: ['https://validator.example'] };
+    const vaultAddress = '0x1111111111111111111111111111111111111111';
+
+    render(<BotHeader bot={makeBot({ vaultAddress, chainId: 84532 })} />);
+
+    expect(screen.getByRole('link', { name: /View Vault/i })).toHaveAttribute(
+      'href',
+      `/vault/${vaultAddress}?chainId=84532`,
+    );
+  });
 });

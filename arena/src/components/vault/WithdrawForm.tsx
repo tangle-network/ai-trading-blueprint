@@ -5,7 +5,7 @@ import type { Address } from 'viem';
 import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { useRedeem } from '~/lib/hooks/useVaultWrite';
-import { addTx, selectedChainIdStore } from '@tangle-network/blueprint-ui';
+import { addTx } from '@tangle-network/blueprint-ui';
 
 interface WithdrawFormProps {
   vaultAddress: Address;
@@ -14,6 +14,8 @@ interface WithdrawFormProps {
   sharePrice?: number;
   userShares?: bigint;
   userSharesFormatted?: number;
+  targetChainId: number;
+  targetChainName: string;
   onSuccess: () => void;
 }
 
@@ -24,10 +26,12 @@ export function WithdrawForm({
   sharePrice,
   userShares,
   userSharesFormatted,
+  targetChainId,
+  targetChainName,
   onSuccess,
 }: WithdrawFormProps) {
   const { isConnected, chainId } = useAccount();
-  const isReady = isConnected && chainId === selectedChainIdStore.get();
+  const isReady = isConnected && chainId === targetChainId;
   const [shares, setShares] = useState('');
   const redeem = useRedeem();
 
@@ -68,7 +72,7 @@ export function WithdrawForm({
     }
     redeem.redeem(vaultAddress, shares, shareDecimals, {
       onHash(h) {
-        addTx(h, `Withdraw ${shares || '?'} shares`, selectedChainIdStore.get());
+        addTx(h, `Withdraw ${shares || '?'} shares`, targetChainId);
       },
       onError(e) {
         toast.error(`Withdrawal failed: ${e.message.slice(0, 100)}`);
@@ -82,7 +86,7 @@ export function WithdrawForm({
   const buttonText = !isConnected
     ? 'Connect Wallet'
     : !isReady
-    ? 'Switch to Tangle Local'
+    ? `Switch to ${targetChainName}`
     : insufficientShares
     ? 'Insufficient Shares'
     : isPending

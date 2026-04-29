@@ -8,6 +8,7 @@ import {
   ACTIVATION_LABELS,
   type AiProvider,
 } from '~/lib/config/aiProviders';
+import { getProvisionBotRouteId } from '~/lib/utils/provisionBotRoute';
 
 interface SecretsStepProps {
   latestDeployment: TrackedProvision;
@@ -49,6 +50,8 @@ export function SecretsStep({
   resetTx,
   defaultProvider,
 }: SecretsStepProps) {
+  const botRouteId = getProvisionBotRouteId(latestDeployment);
+
   return (
     <>
       {/* Deployment success summary */}
@@ -173,16 +176,9 @@ export function SecretsStep({
               Agent Activated Successfully
             </span>
           </div>
-          {(latestDeployment.vaultAddress && latestDeployment.vaultAddress !== zeroAddress) ? (
+          {botRouteId ? (
             <Link
-              to={`/arena/bot/${latestDeployment.vaultAddress.toLowerCase()}`}
-              className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline"
-            >
-              View Bot &rarr;
-            </Link>
-          ) : latestDeployment.sandboxId ? (
-            <Link
-              to={`/arena/bot/${encodeURIComponent(latestDeployment.sandboxId)}`}
+              to={`/arena/bot/${encodeURIComponent(botRouteId)}`}
               className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
               View Bot &rarr;

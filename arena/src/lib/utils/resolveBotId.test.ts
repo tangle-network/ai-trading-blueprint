@@ -189,6 +189,47 @@ describe('resolveBotId', () => {
     expect(result).toEqual({ botId: 'fresh-bot' });
   });
 
+  it('trusts provision metadata when a local reset reuses call id with a new sandbox', async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === 'http://operator.test/api/provisions/0') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sandbox_id: 'sandbox-fresh',
+            metadata: {
+              bot_id: 'fresh-bot',
+              service_id: 1,
+            },
+          }),
+        };
+      }
+      if (input === 'http://operator.test/api/bots/fresh-bot') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'fresh-bot',
+            sandbox_id: 'sandbox-fresh',
+            sandbox_exists: true,
+            call_id: 0,
+            service_id: 1,
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveBotId('http://operator.test', {
+      callId: 0,
+      serviceId: 1,
+      sandboxId: 'sandbox-from-before-reset',
+    });
+
+    expect(result).toEqual({ botId: 'fresh-bot' });
+  });
+
   it('surfaces backend conflict responses from service/call lookup', async () => {
     const fetchMock = vi.fn(async (input: string) => {
       if (input === 'http://operator.test/api/provisions/7') {
@@ -221,5 +262,57 @@ describe('resolveBotId', () => {
       error: 'Multiple live bots found',
       code: 'conflict',
     });
+  });
+
+  it('does not return a service/call fallback bot when the sandbox hint differs', async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === 'http://operator.test/api/provisions/0') {
+        return {
+          ok: false,
+          status: 404,
+          text: async () => 'missing',
+        };
+      }
+      if (input === 'http://operator.test/api/bots?call_id=0&service_id=1') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            bots: [{
+              id: 'old-yield-bot',
+              sandbox_id: 'sandbox-old',
+              sandbox_exists: true,
+              call_id: 0,
+              service_id: 1,
+            }],
+          }),
+        };
+      }
+      if (input === 'http://operator.test/api/bots?limit=200') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            bots: [{
+              id: 'new-dex-bot',
+              sandbox_id: 'sandbox-fresh',
+              sandbox_exists: true,
+              call_id: 0,
+              service_id: 1,
+            }],
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveBotId('http://operator.test', {
+      callId: 0,
+      serviceId: 1,
+      sandboxId: 'sandbox-fresh',
+    });
+
+    expect(result).toEqual({ botId: 'new-dex-bot' });
   });
 });

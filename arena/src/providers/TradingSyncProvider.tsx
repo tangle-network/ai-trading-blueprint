@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '@nanostores/react';
-import { zeroAddress } from 'viem';
+import { isAddress, zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { publicClient } from '@tangle-network/blueprint-ui';
 import {
@@ -53,6 +53,7 @@ type OperatorBotRecord = {
   id: string;
   name?: string | null;
   operator_address: string;
+  submitter_address?: string | null;
   vault_address: string;
   strategy_type: string;
   strategy_config?: Record<string, unknown>;
@@ -142,6 +143,17 @@ function filterOperatorSources(
   return sources.filter((source) => isOperatorSourceInScope(source.apiUrl, syncScope));
 }
 
+function isExplicitVaultPlaceholder(vaultAddress: string | null | undefined): boolean {
+  return vaultAddress?.trim().toLowerCase().startsWith('factory:') ?? false;
+}
+
+function usableVaultAddress(vaultAddress: string | null | undefined): Address | null {
+  if (!vaultAddress || isExplicitVaultPlaceholder(vaultAddress)) return null;
+  const trimmed = vaultAddress.trim();
+  if (!isAddress(trimmed) || trimmed.toLowerCase() === zeroAddress) return null;
+  return trimmed as Address;
+}
+
 async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotResponse[]> {
   const path = source.deploymentKind === 'instance' ? '/api/bot' : '/api/bots?limit=200';
   const data = await operatorJsonWithAuth<any>(
@@ -161,6 +173,7 @@ async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotRes
         id: data.id,
         name: data.name,
         operator_address: data.operator_address,
+        submitter_address: data.submitter_address,
         vault_address: data.vault_address,
         strategy_type: data.strategy_type,
         strategy_config: data.strategy_config,
@@ -315,25 +328,44 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
     try {
       const storedProvisions = provisionsStore.get();
 
-      const allLogs = await Promise.all(
-        ALL_BLUEPRINT_IDS.map((bpId) =>
-          publicClient.getLogs({
-            address: addresses.tangle,
-            event: {
-              type: 'event',
-              name: 'ServiceActivated',
-              inputs: [
-                { name: 'serviceId', type: 'uint64', indexed: true },
-                { name: 'requestId', type: 'uint64', indexed: true },
-                { name: 'blueprintId', type: 'uint64', indexed: true },
-              ],
-            },
-            args: { blueprintId: bpId },
-            fromBlock: 0n,
-            toBlock: 'latest',
-          }),
-        ),
-      );
+      const operatorFetches = activeOperatorSources
+        .filter((source) => source.apiUrl && source.token)
+        .map(async (source) => {
+          try {
+            return await fetchOperatorBots(source);
+          } catch (err) {
+            console.warn(`[TradingSyncProvider] Operator bot fetch failed for ${source.apiUrl}:`, err);
+            return [];
+          }
+        });
+      const operatorBotGroups = await Promise.all(operatorFetches);
+      if (signal.aborted || refreshSeqRef.current !== refreshSeq) return;
+      const operatorBots = operatorBotGroups.flat();
+
+      let allLogs: unknown[][] = [];
+      try {
+        allLogs = await Promise.all(
+          ALL_BLUEPRINT_IDS.map((bpId) =>
+            publicClient.getLogs({
+              address: addresses.tangle,
+              event: {
+                type: 'event',
+                name: 'ServiceActivated',
+                inputs: [
+                  { name: 'serviceId', type: 'uint64', indexed: true },
+                  { name: 'requestId', type: 'uint64', indexed: true },
+                  { name: 'blueprintId', type: 'uint64', indexed: true },
+                ],
+              },
+              args: { blueprintId: bpId },
+              fromBlock: 0n,
+              toBlock: 'latest',
+            }),
+          ),
+        );
+      } catch (err) {
+        console.warn('[TradingSyncProvider] Service event discovery failed; falling back to configured service IDs:', err);
+      }
       if (signal.aborted || refreshSeqRef.current !== refreshSeq) return;
 
       type ActivatedLog = { args: { serviceId?: bigint } };
@@ -362,12 +394,17 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       const hasVaultFactory = addresses.vaultFactory !== zeroAddress;
 
       if (serviceIds.length > 0) {
-        serviceResults = await publicClient.multicall({
-          contracts: serviceIds.flatMap((id) => [
-            { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'getServiceOperators' as const, args: [BigInt(id)] },
-            { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'isServiceActive' as const, args: [BigInt(id)] },
-          ]),
-        });
+        try {
+          serviceResults = await publicClient.multicall({
+            contracts: serviceIds.flatMap((id) => [
+              { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'getServiceOperators' as const, args: [BigInt(id)] },
+              { address: addresses.tangle, abi: tangleServicesAbi, functionName: 'isServiceActive' as const, args: [BigInt(id)] },
+            ]),
+          });
+        } catch (err) {
+          console.warn('[TradingSyncProvider] Service metadata lookup failed; continuing with operator data:', err);
+          serviceResults = [];
+        }
 
         if (hasBlueprint) {
           try {
@@ -555,22 +592,13 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       }
 
       const operatorBackedBots: Bot[] = [];
-      const operatorFetches = activeOperatorSources
-        .filter((source) => source.apiUrl && source.token)
-        .map(async (source) => {
-          try {
-            return await fetchOperatorBots(source);
-          } catch {
-            return [];
-          }
-        });
-      const operatorBotGroups = await Promise.all(operatorFetches);
-      if (signal.aborted || refreshSeqRef.current !== refreshSeq) return;
-
-      const operatorBots = operatorBotGroups.flat();
       const needsVaultResolution = operatorBots.filter((bot) => {
         const vault = bot.vault_address?.toLowerCase() ?? '';
-        return (!vault || vault === zeroAddress) && bot.call_id != null && bot.service_id > 0;
+        return (
+          (!vault || vault === zeroAddress || isExplicitVaultPlaceholder(vault))
+          && bot.call_id != null
+          && bot.service_id > 0
+        );
       });
 
       const resolvedVaults: Record<string, Address> = {};
@@ -597,8 +625,8 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
 
       const allOperatorVaults = new Set<string>();
       for (const operatorBot of operatorBots) {
-        const vault = operatorBot.vault_address?.toLowerCase();
-        if (vault && vault !== zeroAddress) allOperatorVaults.add(vault);
+        const vault = usableVaultAddress(operatorBot.vault_address);
+        if (vault) allOperatorVaults.add(vault.toLowerCase());
         const resolved = resolvedVaults[operatorBot.id]?.toLowerCase();
         if (resolved) allOperatorVaults.add(resolved);
       }
@@ -626,18 +654,11 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
             ),
         );
 
-        let vaultAddress = (operatorBot.vault_address || zeroAddress) as Address;
-        if (!vaultAddress || vaultAddress === zeroAddress) {
-          vaultAddress = resolvedVaults[operatorBot.id] ?? zeroAddress;
-        }
+        const vaultAddress = usableVaultAddress(operatorBot.vault_address)
+          ?? resolvedVaults[operatorBot.id]
+          ?? zeroAddress;
 
         const vaultLower = vaultAddress.toLowerCase();
-        if (vaultLower !== zeroAddress && (
-          vaultLower === addresses.vaultFactory.toLowerCase()
-          || vaultLower === addresses.tangle.toLowerCase()
-        )) {
-          continue;
-        }
 
         const hasOperatorLifecycleState = operatorBot.lifecycle_status !== 'unknown'
           || operatorBot.secrets_configured === true
@@ -659,6 +680,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
             strategyType: operatorBot.strategy_type,
           }),
           operatorAddress: operatorBot.operator_address || (vaultEntry?.operators[0] ?? zeroAddress),
+          submitterAddress: operatorBot.submitter_address ?? matchingProvision?.owner,
           vaultAddress,
           strategyType: (operatorBot.strategy_type || 'momentum') as StrategyType,
           strategyConfig: operatorBot.strategy_config,

@@ -5,7 +5,7 @@ import type { Address } from 'viem';
 import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import { useApprove, useDeposit } from '~/lib/hooks/useVaultWrite';
-import { addTx, selectedChainIdStore } from '@tangle-network/blueprint-ui';
+import { addTx } from '@tangle-network/blueprint-ui';
 
 interface DepositFormProps {
   vaultAddress: Address;
@@ -16,6 +16,8 @@ interface DepositFormProps {
   userAssetBalance?: bigint;
   userAssetBalanceFormatted?: number;
   userAllowance?: bigint;
+  targetChainId: number;
+  targetChainName: string;
   onSuccess: () => void;
 }
 
@@ -28,10 +30,12 @@ export function DepositForm({
   userAssetBalance,
   userAssetBalanceFormatted,
   userAllowance,
+  targetChainId,
+  targetChainName,
   onSuccess,
 }: DepositFormProps) {
   const { isConnected, chainId } = useAccount();
-  const isReady = isConnected && chainId === selectedChainIdStore.get();
+  const isReady = isConnected && chainId === targetChainId;
   const [amount, setAmount] = useState('');
   // Track that we just approved — skip needsApproval check until refetch completes
   const [justApproved, setJustApproved] = useState(false);
@@ -105,11 +109,11 @@ export function DepositForm({
 
   // Register txs in history store
   useEffect(() => {
-    if (approve.hash) addTx(approve.hash, `Approve ${assetSymbol}`, selectedChainIdStore.get());
-  }, [approve.hash, assetSymbol]);
+    if (approve.hash) addTx(approve.hash, `Approve ${assetSymbol}`, targetChainId);
+  }, [approve.hash, assetSymbol, targetChainId]);
   useEffect(() => {
-    if (deposit.hash) addTx(deposit.hash, `Deposit ${amount || '?'} ${assetSymbol}`, selectedChainIdStore.get());
-  }, [deposit.hash, assetSymbol]);
+    if (deposit.hash) addTx(deposit.hash, `Deposit ${amount || '?'} ${assetSymbol}`, targetChainId);
+  }, [deposit.hash, assetSymbol, targetChainId]);
 
   const handleClick = () => {
     if (!amount || parseFloat(amount) <= 0) {
@@ -132,7 +136,7 @@ export function DepositForm({
   const buttonText = !isConnected
     ? 'Connect Wallet'
     : !isReady
-    ? 'Switch to Tangle Local'
+    ? `Switch to ${targetChainName}`
     : insufficientBalance
     ? 'Insufficient Balance'
     : isPending
