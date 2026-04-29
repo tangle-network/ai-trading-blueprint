@@ -283,33 +283,53 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
 
 /// Build the RESEARCH tick prompt — 15 turns, self-improvement + backtesting.
 pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> String {
+    let api_url = config.trading_api_url.trim_end_matches('/');
+    let strategy_focus = match config.strategy_type.as_str() {
+        "yield" => {
+            "Yield focus: test get-portfolio.js, aave-reserve-status.js, api-client price/circuit-breaker calls, and Aave validation schemas. Do not test prediction-market-only tools."
+        }
+        "dex" | "dex_trading" => {
+            "DEX focus: test get-portfolio.js, api-client price/circuit-breaker calls, candle fetching, and walk-forward backtests for swap strategy changes. Do not test prediction-market-only tools."
+        }
+        "prediction" | "polymarket" => {
+            "Prediction-market focus: test prediction-market scanner, order-book, and collateral tools, then record which external services are reachable."
+        }
+        _ => {
+            "Strategy focus: test only tools that match this bot's strategy type, then record which APIs are reachable."
+        }
+    };
+
     format!(
         "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
          ## 1. Review performance\n\
          Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
-         ## 2. Identify ONE structural improvement\n\
-         Don't write another tool — you have 25+. Instead:\n\
-         - Test an existing tool: does it produce correct output?\n\
-         - Delete tools you don't use\n\
-         - OR propose a HarnessConfig mutation and BACKTEST it:\n\
+         ## 2. Stay strategy-specific\n\
+         {strategy_focus}\n\n\
+         ## 3. Identify ONE structural improvement\n\
+         Keep the cycle small:\n\
+         - Test one existing relevant tool, or\n\
+         - Propose one HarnessConfig mutation and backtest it.\n\n\
+         Correct candle workflow:\n\
          ```\n\
-         curl -X POST {api_url}/market-data/candles -H 'Authorization: Bearer {token}' \\\n\
-           -H 'Content-Type: application/json' -d '{{\"token\":\"ETH\",\"limit\":200}}'\n\
+         curl -X POST {api_url}/market-data/candles/fetch -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' -d '{{\"tokens\":[\"ETH\"],\"interval\":\"1h\",\"limit\":200}}'\n\
+         curl '{api_url}/market-data/candles?token=ETH&limit=200' -H 'Authorization: Bearer {token}'\n\
          ```\n\
-         Then walk-forward test:\n\
+         Correct walk-forward schema:\n\
          ```\n\
          curl -X POST {api_url}/backtest/walk-forward -H 'Authorization: Bearer {token}' \\\n\
            -H 'Content-Type: application/json' \\\n\
-           -d '{{\"current_config\": <current_harness>, \"candidate_config\": <mutation>, \"candles\": <array>}}'\n\
+           -d '{{\"current\": <current_harness>, \"candidate\": <mutation>, \"candles\": <array>, \"train_pct\":0.7}}'\n\
          ```\n\n\
-         ## 3. Promote or discard\n\
+         ## 4. Promote or discard\n\
          If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
          If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
-         ## 4. Update memory\n\
+         ## 5. Update memory\n\
          Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
          Report: what you analyzed, what you changed, backtest results.",
-        api_url = config.trading_api_url,
+        api_url = api_url,
         token = config.trading_api_token,
+        strategy_focus = strategy_focus,
     )
 }
 
@@ -631,6 +651,52 @@ mod tests {
         assert!(
             prompt.contains("no-trade 50%"),
             "qa-enabled dex loop must surface configured weights"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_uses_candle_fetch_and_walk_forward_schema() {
+        let prompt = build_research_tick_prompt(&test_config());
+
+        assert!(
+            prompt.contains("/market-data/candles/fetch"),
+            "research prompt must fetch candles with the fetch endpoint"
+        );
+        assert!(
+            prompt.contains("/market-data/candles?token=ETH&limit=200"),
+            "research prompt must read stored candles with GET"
+        );
+        assert!(
+            prompt.contains("\"current\": <current_harness>"),
+            "research prompt must use the backtest current field"
+        );
+        assert!(
+            prompt.contains("\"candidate\": <mutation>"),
+            "research prompt must use the backtest candidate field"
+        );
+        assert!(
+            !prompt.contains("current_config"),
+            "research prompt must not use stale current_config schema"
+        );
+        assert!(
+            !prompt.contains("{\"token\":\"ETH\",\"limit\":200}"),
+            "research prompt must not use stale candle POST schema"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_is_strategy_specific_for_yield() {
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_research_tick_prompt(&config);
+
+        assert!(
+            prompt.contains("aave-reserve-status.js"),
+            "yield research prompt must focus on Aave reserve tooling"
+        );
+        assert!(
+            prompt.contains("Do not test prediction-market-only tools"),
+            "yield research prompt must avoid irrelevant prediction-market tools"
         );
     }
 

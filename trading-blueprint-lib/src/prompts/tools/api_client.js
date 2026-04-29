@@ -36,7 +36,14 @@ function loadConfig() {
 }
 
 function tokenDefaults(config = loadConfig()) {
-  const chainId = Number(config.chain_id || 0);
+  const chainId = Number(
+    (config.strategy_config && config.strategy_config.protocol_chain_id)
+      || config.protocol_chain_id
+      || process.env.PROTOCOL_CHAIN_ID
+      || process.env.FORK_BASE_CHAIN_ID
+      || config.chain_id
+      || 0,
+  );
   return TOKEN_DEFAULTS_BY_CHAIN[chainId] || {};
 }
 

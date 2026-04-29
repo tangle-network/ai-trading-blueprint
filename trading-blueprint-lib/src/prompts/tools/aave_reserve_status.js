@@ -45,6 +45,26 @@ function loadConfig() {
   }
 }
 
+function parsePositiveNumber(...values) {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function resolveProtocolChainId(config) {
+  return parsePositiveNumber(
+    config.strategy_config && config.strategy_config.protocol_chain_id,
+    config.protocol_chain_id,
+    process.env.PROTOCOL_CHAIN_ID,
+    process.env.FORK_BASE_CHAIN_ID,
+    config.chain_id,
+    process.env.CHAIN_ID,
+    1,
+  );
+}
+
 function rpcCall(rpcUrl, method, params) {
   return new Promise((resolve, reject) => {
     const url = new URL(rpcUrl);
@@ -204,11 +224,12 @@ async function main() {
   const config = loadConfig();
   const rpcUrl = config.rpc_url || process.env.RPC_URL || 'http://host.docker.internal:8545';
   const chainId = Number(config.chain_id || process.env.CHAIN_ID || '1');
+  const protocolChainId = resolveProtocolChainId(config);
 
   const assets = [];
   for (const asset of DEFAULT_ASSETS) {
     try {
-      assets.push(await fetchReserveStatus(rpcUrl, chainId, asset));
+      assets.push(await fetchReserveStatus(rpcUrl, protocolChainId, asset));
     } catch (error) {
       assets.push({
         ...asset,
@@ -235,8 +256,9 @@ async function main() {
       {
         protocol: 'aave_v3',
         chain_id: chainId,
+        protocol_chain_id: protocolChainId,
         rpc_url: rpcUrl,
-        pool: POOL_BY_CHAIN[chainId] || null,
+        pool: POOL_BY_CHAIN[protocolChainId] || null,
         executable_supply_assets: executable,
         blocked_supply_assets: blocked,
         preferred_supply_asset: executable.includes('USDC')
