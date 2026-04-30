@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { m, useInView, useSpring, useTransform } from 'framer-motion';
+import { formatNumber } from '~/lib/format';
 
 interface AnimatedNumberProps {
   value: number;
@@ -28,10 +29,7 @@ export function AnimatedNumber({
   });
 
   const display = useTransform(spring, (v) => {
-    if (decimals > 0) {
-      return v.toFixed(decimals);
-    }
-    return Math.round(v).toLocaleString();
+    return formatNumber(v, { maximumFractionDigits: decimals });
   });
 
   useEffect(() => {

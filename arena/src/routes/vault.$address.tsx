@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
@@ -9,6 +10,7 @@ import { CollateralStats } from '~/components/vault/CollateralStats';
 import { CollateralAdmin } from '~/components/vault/CollateralAdmin';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
+import { VaultActivity } from '~/components/vault/VaultActivity';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
 import { networks } from '~/lib/contracts/chains';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
@@ -51,6 +53,11 @@ export default function VaultPage() {
   const targetChainName = chainLabel(targetChainId, targetNetwork?.chain.name);
 
   const vault = useVaultRead(vaultAddress, targetChainId);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const handleVaultMutationSuccess = useCallback(() => {
+    void vault.refetch();
+    setActivityRefreshKey((key) => key + 1);
+  }, [vault.refetch]);
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
   const isWrongChain = isConnected && chainId !== targetChainId;
@@ -183,7 +190,7 @@ export default function VaultPage() {
             maxCollateralBps={vault.maxCollateralBps}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
-            onSuccess={vault.refetch}
+            onSuccess={handleVaultMutationSuccess}
           />
         )}
 
@@ -240,7 +247,7 @@ export default function VaultPage() {
             paused={vault.paused}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
-            onSuccess={vault.refetch}
+            onSuccess={handleVaultMutationSuccess}
           />
           <WithdrawForm
             vaultAddress={vaultAddress}
@@ -251,20 +258,18 @@ export default function VaultPage() {
             paused={vault.paused}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
-            onSuccess={vault.refetch}
+            onSuccess={handleVaultMutationSuccess}
           />
         </div>
 
-        {/* Recent Activity */}
-        <div className="glass-card rounded-xl p-6">
-          <h2 className="font-display font-bold text-lg mb-4">Recent Activity</h2>
-          <div className="py-8 text-center">
-            <div className="i-ph:clock-counter-clockwise text-2xl text-arena-elements-textTertiary mb-3 mx-auto" />
-            <p className="text-sm text-arena-elements-textSecondary">
-              Deposit and withdrawal history coming soon.
-            </p>
-          </div>
-        </div>
+        <VaultActivity
+          vaultAddress={vaultAddress}
+          targetChainId={targetChainId}
+          assetSymbol={vault.assetSymbol}
+          assetDecimals={vault.assetDecimals}
+          shareDecimals={vault.shareDecimals}
+          refreshKey={activityRefreshKey}
+        />
       </div>
     </AnimatedPage>
   );

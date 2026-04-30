@@ -8,6 +8,7 @@ import { useRedeemInKind } from '~/lib/hooks/useVaultWrite';
 import { erc20Abi, tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
 import { addTx } from '@tangle-network/blueprint-ui';
+import { formatNumber } from '~/lib/format';
 
 interface WithdrawFormProps {
   vaultAddress: Address;
@@ -209,7 +210,7 @@ export function WithdrawForm({
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
                   aria-label="Set maximum withdrawal"
                 >
-                  Withdrawable: {maxSharesFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  Withdrawable: {formatNumber(maxSharesFormatted, { maximumFractionDigits: 4 })}
                 </button>
               )}
             </div>
@@ -235,7 +236,7 @@ export function WithdrawForm({
                   <div key={item.token} className="flex items-center justify-between gap-3 text-sm">
                     <span className="font-data text-arena-elements-textSecondary">{item.symbol}</span>
                     <span className="font-data font-semibold text-arena-elements-textPrimary">
-                      {Number(formatUnits(item.amount, item.decimals)).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      {formatNumber(Number(formatUnits(item.amount, item.decimals)), { maximumFractionDigits: 6 })}
                     </span>
                   </div>
                 ))}

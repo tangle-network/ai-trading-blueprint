@@ -25,12 +25,15 @@ interface VaultReadState {
   heldTokens: Address[];
   hasNonDepositAssets: boolean;
   isNavSafe?: boolean;
+  loadedVaultAddress?: Address;
+  loadedTargetChainId?: number;
   // Collateral
   totalOutstandingCollateral?: bigint;
   maxCollateralBps?: number;
   availableCollateral?: bigint;
   isAdmin?: boolean;
   isLoading: boolean;
+  isRefreshing: boolean;
   error?: Error;
 }
 
@@ -45,15 +48,28 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
     heldTokens: [],
     hasNonDepositAssets: false,
     isLoading: true,
+    isRefreshing: false,
   });
 
   const fetchAll = useCallback(async () => {
     if (!vaultAddress) {
-      setState((s) => ({ ...s, isLoading: false }));
+      setState((s) => ({ ...s, isLoading: false, isRefreshing: false }));
       return;
     }
 
-      setState((s) => ({ ...s, isLoading: true, error: undefined }));
+    setState((s) => {
+      const hasLoadedVault =
+        s.assetToken != null &&
+        s.shareToken != null &&
+        s.loadedVaultAddress?.toLowerCase() === vaultAddress.toLowerCase() &&
+        s.loadedTargetChainId === targetChainId;
+      return {
+        ...s,
+        isLoading: !hasLoadedVault,
+        isRefreshing: hasLoadedVault,
+        error: undefined,
+      };
+    });
 
     try {
       const client = getChainPublicClient(targetChainId);
@@ -101,7 +117,10 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
           assetToken,
           shareToken,
           paused,
+          loadedVaultAddress: vaultAddress,
+          loadedTargetChainId: targetChainId,
           isLoading: false,
+          isRefreshing: false,
           error: new Error(`Could not read vault contract at ${vaultAddress}. Is the vault deployed on this chain?`),
         }));
         return;
@@ -267,17 +286,21 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
         heldTokens,
         hasNonDepositAssets,
         isNavSafe,
+        loadedVaultAddress: vaultAddress,
+        loadedTargetChainId: targetChainId,
         totalOutstandingCollateral,
         maxCollateralBps,
         availableCollateral,
         isAdmin,
         isLoading: false,
+        isRefreshing: false,
       });
     } catch (err) {
       console.warn('[useVaultRead] Failed:', err);
       setState((s) => ({
         ...s,
         isLoading: false,
+        isRefreshing: false,
         error: err instanceof Error ? err : new Error(String(err)),
       }));
     }

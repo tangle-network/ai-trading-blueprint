@@ -6,6 +6,7 @@ import { Skeleton } from '@tangle-network/blueprint-ui/components';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
 import { useEffect, useState } from 'react';
+import { formatNumber } from '~/lib/format';
 
 interface CollateralStatsProps {
   vaultAddress: Address;
@@ -163,7 +164,7 @@ export function CollateralStats({
       label: 'Outstanding',
       value: outstandingFormatted,
       suffix: ` ${assetSymbol}`,
-      subtext: outstandingPct > 0 ? `${outstandingPct.toFixed(1)}% of NAV` : undefined,
+      subtext: outstandingPct > 0 ? `${formatNumber(outstandingPct, { maximumFractionDigits: 1 })}% of NAV` : undefined,
       decimals: 2,
       icon: 'i-ph:arrow-up-right',
       color: outstandingFormatted && outstandingFormatted > 0 ? 'text-amber-600 dark:text-amber-400' : '',
@@ -258,7 +259,7 @@ export function CollateralStats({
                   : evt.type === 'written_down' ? 'text-crimson-600 dark:text-crimson-400'
                   : 'text-arena-elements-icon-success'
                 }>
-                  {evt.type === 'returned' ? '+' : '-'}{evt.amount.toFixed(2)} {assetSymbol}
+                  {evt.type === 'returned' ? '+' : '-'}{formatNumber(evt.amount, { maximumFractionDigits: 2 })} {assetSymbol}
                 </span>
               </div>
             ))}

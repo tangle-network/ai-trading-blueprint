@@ -6,6 +6,7 @@ import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle
 import { toast } from 'sonner';
 import { useApprove, useDeposit } from '~/lib/hooks/useVaultWrite';
 import { addTx } from '@tangle-network/blueprint-ui';
+import { formatNumber } from '~/lib/format';
 
 interface DepositFormProps {
   vaultAddress: Address;
@@ -66,7 +67,7 @@ export function DepositForm({
     : undefined;
 
   const sharesReceived = amount && !invalidAmount && amountNumber > 0 && sharePrice && sharePrice > 0
-    ? (amountNumber / sharePrice).toFixed(4)
+    ? formatNumber(amountNumber / sharePrice, { maximumFractionDigits: 4 })
     : null;
 
   const insufficientBalance = parsedAmount > 0n && (userAssetBalance ?? 0n) < parsedAmount;
@@ -212,7 +213,7 @@ export function DepositForm({
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
                   aria-label="Set maximum deposit"
                 >
-                  Balance: {userAssetBalanceFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  Balance: {formatNumber(userAssetBalanceFormatted, { maximumFractionDigits: 4 })}
                 </button>
               )}
             </div>
@@ -230,7 +231,7 @@ export function DepositForm({
           </div>
           {maxDepositFormatted != null && (
             <div className="text-xs text-arena-elements-textTertiary font-data">
-              Max deposit: {maxDepositFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })} {assetSymbol}
+              Max deposit: {formatNumber(maxDepositFormatted, { maximumFractionDigits: 4 })} {assetSymbol}
             </div>
           )}
           {sharesReceived && (
