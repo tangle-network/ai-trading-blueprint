@@ -47,6 +47,9 @@ contract FullLifecycleTest is Setup {
 
         vault = TradingVault(payable(vaultAddr));
         shareToken = VaultShare(shareAddr);
+        mockAssetValuator.setRate(address(tokenB), address(tokenA), 1e18);
+        vm.prank(owner);
+        vault.setValuationAdapter(address(tokenB), address(mockAssetValuator));
 
         assertTrue(vaultAddr != address(0), "Vault address should be non-zero");
         assertTrue(shareAddr != address(0), "Share address should be non-zero");

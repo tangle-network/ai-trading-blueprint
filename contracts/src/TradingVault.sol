@@ -12,6 +12,7 @@ import "./VaultShare.sol";
 import "./TradeValidator.sol";
 import "./PolicyEngine.sol";
 import "./FeeDistributor.sol";
+import "./interfaces/IAssetValuator.sol";
 
 /// @title TradingVault
 /// @notice ERC-7575 multi-asset vault for AI trading agents
@@ -71,6 +72,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error CollateralNotEnabled();
     error ApprovalSpenderMismatch(address spender, address target);
     error HeldTokenNotEmpty(address token, uint256 balance);
+    error UnsupportedValuationAsset(address token, address asset);
+    error OutstandingCollateralActive(uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -94,6 +97,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event CollateralReturned(address indexed operator, uint256 amount, uint256 credited);
     event CollateralWrittenDown(address indexed operator, uint256 amount);
     event MaxCollateralBpsUpdated(uint256 bps);
+    event ValuationAdapterUpdated(address indexed token, address indexed adapter);
+    event InKindRedeemed(address indexed caller, address indexed receiver, address indexed owner, uint256 shares);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -141,6 +146,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     mapping(address => bool) public isHeldToken;
     uint256 public depositAssetReserveBps;
     uint256 public adminUnwindMaxDrawdownBps;
+    mapping(address => IAssetValuator) public valuationAdapters;
 
     /// @notice Fallback drawdown cap used by adminUnwind when adminUnwindMaxDrawdownBps is 0.
     /// @dev Audit finding H-1: previously `adminUnwindMaxDrawdownBps = 0` meant "no limit",
@@ -230,7 +236,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @inheritdoc IERC7575
     /// @return Maximum depositable assets (0 when paused, type(uint256).max otherwise)
     function maxDeposit(address) external view override returns (uint256) {
-        return paused() ? 0 : type(uint256).max;
+        return (paused() || !_isNavSafe()) ? 0 : type(uint256).max;
     }
 
     /// @inheritdoc IERC7575
@@ -270,6 +276,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function maxWithdraw(address owner_) public view override returns (uint256) {
         if (paused()) return 0;
         if (_isDepositLocked(owner_)) return 0;
+        if (!_isNavSafe()) return 0;
         uint256 entitled = convertToAssets(shareToken.balanceOf(owner_));
         uint256 liquid = liquidAssets();
         return entitled < liquid ? entitled : liquid;
@@ -318,6 +325,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function maxRedeem(address owner_) public view override returns (uint256) {
         if (paused()) return 0;
         if (_isDepositLocked(owner_)) return 0;
+        if (!_isNavSafe()) return 0;
         uint256 ownerShares = shareToken.balanceOf(owner_);
         uint256 liquid = liquidAssets();
         uint256 liquidShares = convertToShares(liquid);
@@ -352,6 +360,41 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _asset.safeTransfer(receiver, assets);
 
         emit Withdraw(msg.sender, receiver, owner_, assets, shares);
+    }
+
+    /// @notice Preview the exact token basket returned by an in-kind share redemption.
+    function previewRedeemInKind(uint256 shares)
+        external
+        view
+        returns (address[] memory tokens, uint256[] memory amounts)
+    {
+        return _previewRedeemInKind(shares);
+    }
+
+    /// @notice Redeem shares for a proportional basket of all vault-held tokens.
+    function redeemInKind(uint256 shares, address receiver, address owner_)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (address[] memory tokens, uint256[] memory amounts)
+    {
+        if (shares == 0) revert ZeroShares();
+        if (receiver == address(0)) revert ZeroAddress();
+        _enforceDepositLockup(owner_);
+        if (totalOutstandingCollateral > 0) revert OutstandingCollateralActive(totalOutstandingCollateral);
+
+        (tokens, amounts) = _previewRedeemInKind(shares);
+
+        _spendShareAllowance(owner_, shares);
+        shareToken.burn(owner_, shares);
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            if (amounts[i] > 0) {
+                IERC20(tokens[i]).safeTransfer(receiver, amounts[i]);
+            }
+        }
+
+        emit InKindRedeemed(msg.sender, receiver, owner_, shares);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -414,6 +457,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
         if (params.minOutput == 0) revert ZeroAmount();
+        _requireValuableOutputToken(params.outputToken);
 
         // 0. Intent deduplication — prevents multiple operators executing the same trade
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
@@ -449,8 +493,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 deadline,
         uint256 actionKind
     ) internal view {
-        (bool ok,) =
-            tradeValidator.validateWithSignatures(intentHash, address(this), signatures, scores, deadline, actionKind);
+        (bool ok,) = tradeValidator.validateWithSignatures(
+            intentHash, address(this), signatures, scores, deadline, actionKind
+        );
         if (!ok) revert ValidatorCheckFailed();
     }
 
@@ -796,36 +841,25 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     // MULTI-ASSET POSITION TRACKING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Sum of held-token balances, normalized to deposit asset decimals.
-    /// @dev Scales each held token's balance to the deposit asset's decimal precision.
-    ///      Tokens whose decimals cannot be read (non-standard ERC-20) are included
-    ///      at raw balance as a conservative fallback.
+    /// @notice Sum of held-token balances, valued in deposit asset units.
+    /// @dev Non-deposit held tokens must have a configured valuation adapter.
     function positionsValue() public view returns (uint256 total) {
-        uint8 assetDec;
-        try IERC20Metadata(asset()).decimals() returns (uint8 d) {
-            assetDec = d;
-        } catch {
-            // Non-standard deposit asset — fall back to raw balance sum
-            for (uint256 i = 0; i < heldTokens.length; i++) {
-                total += IERC20(heldTokens[i]).balanceOf(address(this));
-            }
-            return total;
-        }
+        address depositAsset = asset();
         for (uint256 i = 0; i < heldTokens.length; i++) {
-            uint256 bal = IERC20(heldTokens[i]).balanceOf(address(this));
+            address token = heldTokens[i];
+            uint256 bal = IERC20(token).balanceOf(address(this));
             if (bal == 0) continue;
-            uint8 tokenDec = assetDec; // default: assume same decimals
-            try IERC20Metadata(heldTokens[i]).decimals() returns (uint8 d) {
-                tokenDec = d;
-            } catch {}
-            if (tokenDec == assetDec) {
-                total += bal;
-            } else if (tokenDec > assetDec) {
-                total += bal / (10 ** (tokenDec - assetDec));
-            } else {
-                total += bal * (10 ** (assetDec - tokenDec));
+            IAssetValuator adapter = valuationAdapters[token];
+            if (address(adapter) == address(0) || !adapter.isSupported(token, depositAsset)) {
+                revert UnsupportedValuationAsset(token, depositAsset);
             }
+            total += adapter.valueInAsset(token, bal, depositAsset);
         }
+    }
+
+    /// @notice True when every nonzero held token can be priced right now.
+    function isNavSafe() external view returns (bool) {
+        return _isNavSafe();
     }
 
     /// @notice Get the list of non-deposit tokens held by this vault
@@ -841,6 +875,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Deposit asset balance available for immediate withdrawal
     function liquidAssets() public view returns (uint256) {
         return IERC20(asset()).balanceOf(address(this));
+    }
+
+    /// @notice Set the adapter used to value a held token in this vault's deposit asset.
+    function setValuationAdapter(address token, address adapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (token == address(0)) revert ZeroAddress();
+        valuationAdapters[token] = IAssetValuator(adapter);
+        emit ValuationAdapterUpdated(token, adapter);
     }
 
     /// @notice Replace the held token list. Skips the deposit asset and enforces MAX_HELD_TOKENS.
@@ -897,6 +938,55 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 }
             } catch {}
         } catch {}
+    }
+
+    function _previewRedeemInKind(uint256 shares)
+        internal
+        view
+        returns (address[] memory tokens, uint256[] memory amounts)
+    {
+        if (shares == 0) revert ZeroShares();
+        uint256 supply = shareToken.totalSupply();
+        if (supply == 0 || shares > supply) revert InsufficientBalance();
+
+        tokens = new address[](heldTokens.length + 1);
+        amounts = new uint256[](heldTokens.length + 1);
+        tokens[0] = asset();
+        amounts[0] = IERC20(tokens[0]).balanceOf(address(this)) * shares / supply;
+
+        for (uint256 i = 0; i < heldTokens.length; i++) {
+            tokens[i + 1] = heldTokens[i];
+            amounts[i + 1] = IERC20(heldTokens[i]).balanceOf(address(this)) * shares / supply;
+        }
+    }
+
+    function _requireValuableOutputToken(address token) internal view {
+        address depositAsset = asset();
+        if (token == address(0) || token == depositAsset) return;
+        IAssetValuator adapter = valuationAdapters[token];
+        if (address(adapter) == address(0) || !adapter.isSupported(token, depositAsset)) {
+            revert UnsupportedValuationAsset(token, depositAsset);
+        }
+    }
+
+    function _isNavSafe() internal view returns (bool) {
+        address depositAsset = asset();
+        for (uint256 i = 0; i < heldTokens.length; i++) {
+            address token = heldTokens[i];
+            uint256 bal = IERC20(token).balanceOf(address(this));
+            if (bal == 0) continue;
+            IAssetValuator adapter = valuationAdapters[token];
+            if (address(adapter) == address(0)) return false;
+            try adapter.valueInAsset(token, bal, depositAsset) returns (
+                uint256
+            ) {
+            // A successful valuation is enough; zero value is allowed for dust.
+            }
+            catch {
+                return false;
+            }
+        }
+        return true;
     }
 
     function _removeHeldToken(address token) internal {

@@ -75,6 +75,10 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// When false, vault is created per-bot in onJobResult(PROVISION) (fleet mode).
     bool public instanceMode;
 
+    /// @notice Default valuation adapters applied to each newly created bot vault.
+    address[] public defaultValuationTokens;
+    mapping(address token => address adapter) public defaultValuationAdapters;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // PER-JOB PRICING MULTIPLIERS (informational — used by off-chain pricing engine)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -150,6 +154,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     event TradingStopped(uint64 indexed serviceId);
     event BotExtended(uint64 indexed serviceId, uint64 jobCallId, uint64 additionalDays);
     event BotVaultSkipped(uint64 indexed serviceId, uint64 indexed callId, string reason);
+    event DefaultValuationAdapterUpdated(address indexed token, address indexed adapter);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONFIGURATION
@@ -164,6 +169,16 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Set to true for instance/TEE BSMs after deployment.
     function setInstanceMode(bool _mode) external onlyFromTangle {
         instanceMode = _mode;
+    }
+
+    /// @notice Configure a token valuation adapter to install on new vaults.
+    function setDefaultValuationAdapter(address token, address adapter) external onlyFromTangle {
+        if (token == address(0)) return;
+        if (defaultValuationAdapters[token] == address(0) && adapter != address(0)) {
+            defaultValuationTokens.push(token);
+        }
+        defaultValuationAdapters[token] = adapter;
+        emit DefaultValuationAdapterUpdated(token, adapter);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -348,6 +363,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         if (cfg.maxCollateralBps > 0) {
             ITradingVault(vault).setMaxCollateralBps(cfg.maxCollateralBps);
         }
+        _configureValuationAdapters(vault);
 
         emit BotVaultDeployed(serviceId, 0, vault, shareToken);
     }
@@ -693,6 +709,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         if (pp.maxCollateralBps > 0) {
             ITradingVault(vault).setMaxCollateralBps(pp.maxCollateralBps);
         }
+        _configureValuationAdapters(vault);
 
         // Cleanup stored inputs
         delete _pendingProvisions[serviceId][jobCallId];
@@ -728,6 +745,16 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             }
         }
         operators.push(operator);
+    }
+
+    function _configureValuationAdapters(address vault) internal {
+        for (uint256 i = 0; i < defaultValuationTokens.length; i++) {
+            address token = defaultValuationTokens[i];
+            address adapter = defaultValuationAdapters[token];
+            if (adapter != address(0)) {
+                ITradingVault(vault).setValuationAdapter(token, adapter);
+            }
+        }
     }
 
     function _defaultPolicyConfig() internal pure returns (PolicyEngine.PolicyConfig memory) {
@@ -797,4 +824,5 @@ interface ITangleServiceOperators {
 /// @notice Minimal interface for TradingVault collateral configuration
 interface ITradingVault {
     function setMaxCollateralBps(uint256 bps) external;
+    function setValuationAdapter(address token, address adapter) external;
 }

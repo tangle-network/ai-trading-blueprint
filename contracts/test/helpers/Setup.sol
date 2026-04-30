@@ -13,6 +13,7 @@ import "../../src/TradeValidator.sol";
 import "../../src/FeeDistributor.sol";
 import "../../src/StrategyRegistry.sol";
 import "../../src/interfaces/IOracleAdapter.sol";
+import "../../src/interfaces/IAssetValuator.sol";
 
 /// @title MockERC20
 /// @notice Simple ERC20 with public mint for testing
@@ -71,6 +72,27 @@ contract MockOracle is IOracleAdapter {
     }
 }
 
+/// @title MockAssetValuator
+/// @notice Test valuator returning token values in asset units.
+contract MockAssetValuator is IAssetValuator {
+    mapping(address => mapping(address => uint256)) public rates;
+
+    function setRate(address token, address asset, uint256 rate) external {
+        rates[token][asset] = rate;
+    }
+
+    function isSupported(address token, address asset) external view override returns (bool) {
+        return token == asset || rates[token][asset] != 0;
+    }
+
+    function valueInAsset(address token, uint256 amount, address asset) external view override returns (uint256) {
+        if (token == asset) return amount;
+        uint256 rate = rates[token][asset];
+        if (rate == 0) revert("unsupported");
+        return amount * rate / 1e18;
+    }
+}
+
 /// @title Setup
 /// @notice Base test setup that deploys mock tokens, core contracts, and test accounts
 abstract contract Setup is Test {
@@ -106,6 +128,7 @@ abstract contract Setup is Test {
     TradeValidator public tradeValidator;
     FeeDistributor public feeDistributor;
     StrategyRegistry public strategyRegistry;
+    MockAssetValuator public mockAssetValuator;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SETUP
@@ -157,6 +180,7 @@ abstract contract Setup is Test {
 
         // Deploy StrategyRegistry (owned by owner)
         strategyRegistry = new StrategyRegistry(owner);
+        mockAssetValuator = new MockAssetValuator();
 
         // Give ETH to test accounts
         vm.deal(owner, 100 ether);
@@ -191,6 +215,10 @@ abstract contract Setup is Test {
             _defaultPolicyConfig(),
             _defaultFeeConfig()
         );
+
+        mockAssetValuator.setRate(address(tokenB), address(tokenA), 1e18);
+        vm.prank(owner);
+        TradingVault(payable(vault)).setValuationAdapter(address(tokenB), address(mockAssetValuator));
     }
 
     function _defaultPolicyConfig() internal pure returns (PolicyEngine.PolicyConfig memory) {

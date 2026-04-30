@@ -78,16 +78,16 @@ contract PositionTrackingTest is Setup {
 
         // Operator no longer authorized (was the vector for NAV manipulation)
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole)
+        );
         vault.updateHeldTokens(tokens);
 
         // Random user also unauthorized
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         vault.updateHeldTokens(tokens);
     }
 
@@ -143,9 +143,9 @@ contract PositionTrackingTest is Setup {
     function test_removeHeldToken_onlyAdmin() public {
         bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, operator, adminRole)
+        );
         vault.removeHeldToken(address(tokenB));
     }
 
@@ -164,6 +164,69 @@ contract PositionTrackingTest is Setup {
 
         // totalAssets = deposit asset balance + positionsValue
         assertEq(vault.totalAssets(), 10_000 ether + 500 ether);
+    }
+
+    function test_redeemInKind_returnsProRataBasket() public {
+        tokenB.mint(address(vault), 2000 ether);
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(tokenB);
+        vm.prank(owner);
+        vault.updateHeldTokens(tokens);
+
+        uint256 shares = shareToken.balanceOf(user) / 2;
+        uint256 userTokenABefore = tokenA.balanceOf(user);
+        uint256 userTokenBBefore = tokenB.balanceOf(user);
+
+        vm.prank(user);
+        (address[] memory outTokens, uint256[] memory amounts) = vault.redeemInKind(shares, user, user);
+
+        assertEq(outTokens.length, 2);
+        assertEq(outTokens[0], address(tokenA));
+        assertEq(outTokens[1], address(tokenB));
+        assertEq(amounts[0], 5000 ether);
+        assertEq(amounts[1], 1000 ether);
+        assertEq(tokenA.balanceOf(user) - userTokenABefore, 5000 ether);
+        assertEq(tokenB.balanceOf(user) - userTokenBBefore, 1000 ether);
+    }
+
+    function test_execute_rejectsUnsupportedValuationOutputToken() public {
+        MockERC20 tokenC = new MockERC20("Token C", "TKC", 18);
+        MockTarget targetC = new MockTarget(tokenC);
+
+        vm.startPrank(address(vaultFactory));
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(tokenC);
+        policyEngine.setWhitelist(address(vault), tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = address(targetC);
+        policyEngine.setTargetWhitelist(address(vault), targets, true);
+        policyEngine.setPositionLimit(address(vault), address(tokenC), 100_000 ether);
+        vm.stopPrank();
+
+        bytes32 intentHash = keccak256("unsupported valuation output");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        scores[0] = 80;
+        scores[1] = 75;
+        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(targetC),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether),
+            value: 0,
+            minOutput: 1 ether,
+            outputToken: address(tokenC),
+            intentHash: intentHash,
+            deadline: deadline
+        });
+
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(TradingVault.UnsupportedValuationAsset.selector, address(tokenC), address(tokenA))
+        );
+        vault.execute(params, sigs, scores);
     }
 
     function test_liquidAssets() public view {
@@ -203,9 +266,9 @@ contract PositionTrackingTest is Setup {
     function test_setDepositAssetReserveBps_onlyAdmin() public {
         bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         vault.setDepositAssetReserveBps(5000);
     }
 

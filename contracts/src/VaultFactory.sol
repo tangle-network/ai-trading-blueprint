@@ -40,6 +40,7 @@ contract VaultFactory is Ownable2Step {
     );
     event ShareTokenCreated(uint64 indexed serviceId, address indexed shareToken);
     event AuthorizedCallerUpdated(address indexed caller, bool authorized);
+    event DefaultWhitelistedTokenUpdated(address indexed token, bool allowed);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -70,6 +71,10 @@ contract VaultFactory is Ownable2Step {
 
     /// @notice Helper contract that deploys VaultShare instances.
     VaultShareDeployer public shareDeployer;
+
+    /// @notice Default token whitelist applied to every newly created vault.
+    address[] public defaultWhitelistedTokens;
+    mapping(address token => bool) public isDefaultWhitelistedToken;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -126,6 +131,16 @@ contract VaultFactory is Ownable2Step {
         emit AuthorizedCallerUpdated(caller, authorized);
     }
 
+    /// @notice Configure a token to be policy-whitelisted on all newly created vaults.
+    function setDefaultWhitelistedToken(address token, bool allowed) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (allowed && !isDefaultWhitelistedToken[token]) {
+            defaultWhitelistedTokens.push(token);
+        }
+        isDefaultWhitelistedToken[token] = allowed;
+        emit DefaultWhitelistedTokenUpdated(token, allowed);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // VAULT CREATION
     // ═══════════════════════════════════════════════════════════════════════════
@@ -147,8 +162,20 @@ contract VaultFactory is Ownable2Step {
     ) external onlyAuthorized returns (address vault, address shareAddr) {
         if (serviceShares[serviceId] != address(0)) revert ServiceAlreadyInitialized(serviceId);
 
-        (vault, shareAddr) =
-            _createVaultWithNewShare(serviceId, assetToken, admin, operator, signers, requiredSigs, name, symbol, salt, false, policyConfig, feeConfig);
+        (vault, shareAddr) = _createVaultWithNewShare(
+            serviceId,
+            assetToken,
+            admin,
+            operator,
+            signers,
+            requiredSigs,
+            name,
+            symbol,
+            salt,
+            false,
+            policyConfig,
+            feeConfig
+        );
 
         serviceShares[serviceId] = shareAddr;
     }
@@ -168,8 +195,20 @@ contract VaultFactory is Ownable2Step {
         PolicyEngine.PolicyConfig calldata policyConfig,
         FeeDistributor.FeeConfig calldata feeConfig
     ) external onlyAuthorized returns (address vault, address shareAddr) {
-        (vault, shareAddr) =
-            _createVaultWithNewShare(serviceId, assetToken, admin, operator, signers, requiredSigs, name, symbol, salt, true, policyConfig, feeConfig);
+        (vault, shareAddr) = _createVaultWithNewShare(
+            serviceId,
+            assetToken,
+            admin,
+            operator,
+            signers,
+            requiredSigs,
+            name,
+            symbol,
+            salt,
+            true,
+            policyConfig,
+            feeConfig
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -199,13 +238,13 @@ contract VaultFactory is Ownable2Step {
         PolicyEngine.PolicyConfig calldata policyConfig,
         FeeDistributor.FeeConfig calldata feeConfig
     ) internal returns (address vault, address shareAddr) {
-        if (assetToken == address(0) || admin == address(0)) revert ZeroAddress();
+        if (assetToken == address(0) || admin == address(0)) {
+            revert ZeroAddress();
+        }
         // H-2+H-4: enforce minimum signer floor. 1-of-n collapses the validator
         // layer — a single compromised key = bounded-by-whitelist theft. Require at
         // least 2 signers with at least 2-of-n threshold for meaningful multi-sig.
-        if (
-            signers.length < 2 || requiredSigs < 2 || requiredSigs > signers.length
-        ) {
+        if (signers.length < 2 || requiredSigs < 2 || requiredSigs > signers.length) {
             revert InvalidSignerConfig();
         }
         VaultDeployer vaultDeployer = deployer;
@@ -236,6 +275,12 @@ contract VaultFactory is Ownable2Step {
         policyEngine.initializeVault(vault, admin, policyConfig);
         policyEngine.setAuthorizedCaller(vault, true);
         policyEngine.whitelistToken(vault, assetToken, true);
+        for (uint256 i = 0; i < defaultWhitelistedTokens.length; i++) {
+            address token = defaultWhitelistedTokens[i];
+            if (isDefaultWhitelistedToken[token]) {
+                policyEngine.whitelistToken(vault, token, true);
+            }
+        }
         feeDistributor.initializeVaultFees(vault, admin, feeConfig);
 
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);

@@ -116,7 +116,8 @@ contract ErrorPathsTest is Setup {
         vm.prank(fdOwner);
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.InvalidBps.selector));
         feeDistributor.initializeVaultFees(
-            fakeVault, owner,
+            fakeVault,
+            owner,
             FeeDistributor.FeeConfig({performanceFeeBps: 10001, managementFeeBps: 200, validatorFeeShareBps: 3000})
         );
     }
@@ -127,7 +128,8 @@ contract ErrorPathsTest is Setup {
         vm.prank(fdOwner);
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.InvalidBps.selector));
         feeDistributor.initializeVaultFees(
-            fakeVault, owner,
+            fakeVault,
+            owner,
             FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 10001, validatorFeeShareBps: 3000})
         );
     }
@@ -138,7 +140,8 @@ contract ErrorPathsTest is Setup {
         vm.prank(fdOwner);
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.InvalidBps.selector));
         feeDistributor.initializeVaultFees(
-            fakeVault, owner,
+            fakeVault,
+            owner,
             FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 10001})
         );
     }
@@ -193,7 +196,8 @@ contract ErrorPathsTest is Setup {
         vm.prank(address(vaultFactory));
         vm.expectRevert(abi.encodeWithSelector(PolicyEngine.MaxTradesPerHourTooHigh.selector));
         policyEngine.initializeVault(
-            newVault, owner,
+            newVault,
+            owner,
             PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 1001, maxSlippageBps: 500})
         );
     }
@@ -208,7 +212,8 @@ contract ErrorPathsTest is Setup {
         vm.prank(address(vaultFactory));
         vm.expectRevert(abi.encodeWithSelector(PolicyEngine.ZeroAddress.selector));
         policyEngine.initializeVault(
-            address(0), owner,
+            address(0),
+            owner,
             PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500})
         );
     }
@@ -560,6 +565,9 @@ contract ErrorPathsTest is Setup {
         t[0] = address(usdcTarget);
         policyEngine.setTargetWhitelist(address(vault), t, true);
         vm.stopPrank();
+        mockAssetValuator.setRate(address(usdc), address(tokenA), 1e12);
+        vm.prank(owner);
+        vault.setValuationAdapter(address(usdc), address(mockAssetValuator));
 
         bytes32 intentHash = keccak256("decimal mismatch test");
         uint256 deadline = block.timestamp + 1 hours;
@@ -582,10 +590,24 @@ contract ErrorPathsTest is Setup {
         sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
 
         // Should emit HeldTokenDecimalMismatch for 6-decimal token in 18-decimal vault
+        vm.recordLogs();
         vm.prank(operator);
-        vm.expectEmit(true, false, false, true);
-        emit TradingVault.HeldTokenDecimalMismatch(address(usdc), 6, 18);
         vault.execute(params, sigs, scores);
+
+        bytes32 expectedTopic = keccak256("HeldTokenDecimalMismatch(address,uint8,uint8)");
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bool found;
+        for (uint256 i = 0; i < entries.length; i++) {
+            if (
+                entries[i].topics.length == 2 && entries[i].topics[0] == expectedTopic
+                    && address(uint160(uint256(entries[i].topics[1]))) == address(usdc)
+            ) {
+                (uint8 tokenDecimals, uint8 assetDecimals) = abi.decode(entries[i].data, (uint8, uint8));
+                found = tokenDecimals == 6 && assetDecimals == 18;
+                break;
+            }
+        }
+        assertTrue(found, "HeldTokenDecimalMismatch not emitted");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -617,8 +639,17 @@ contract ErrorPathsTest is Setup {
         vm.prank(user); // user is not authorized
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.NotAuthorized.selector));
         vaultFactory.createVault(
-            99, address(tokenA), owner, operator, signers, 1, "Test", "T", bytes32("s"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            99,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            1,
+            "Test",
+            "T",
+            bytes32("s"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -629,8 +660,17 @@ contract ErrorPathsTest is Setup {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.NotAuthorized.selector));
         vaultFactory.createBotVault(
-            99, address(tokenA), owner, operator, signers, 1, "Test", "T", bytes32("s"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            99,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            1,
+            "Test",
+            "T",
+            bytes32("s"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -640,8 +680,17 @@ contract ErrorPathsTest is Setup {
 
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.ZeroAddress.selector));
         vaultFactory.createVault(
-            99, address(0), owner, operator, signers, 1, "Test", "T", bytes32("s"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            99,
+            address(0),
+            owner,
+            operator,
+            signers,
+            1,
+            "Test",
+            "T",
+            bytes32("s"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -651,8 +700,17 @@ contract ErrorPathsTest is Setup {
 
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.ZeroAddress.selector));
         vaultFactory.createVault(
-            99, address(tokenA), address(0), operator, signers, 1, "Test", "T", bytes32("s"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            99,
+            address(tokenA),
+            address(0),
+            operator,
+            signers,
+            1,
+            "Test",
+            "T",
+            bytes32("s"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -661,8 +719,17 @@ contract ErrorPathsTest is Setup {
 
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.InvalidSignerConfig.selector));
         vaultFactory.createVault(
-            99, address(tokenA), owner, operator, signers, 1, "Test", "T", bytes32("s"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            99,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            1,
+            "Test",
+            "T",
+            bytes32("s"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 }
