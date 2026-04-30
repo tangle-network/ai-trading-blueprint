@@ -5,11 +5,6 @@ import { toast } from 'sonner';
 import {
   Badge,
   Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
 } from '@tangle-network/blueprint-ui/components';
 import type { Bot } from '~/lib/types/bot';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
@@ -18,10 +13,11 @@ import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
 } from '~/lib/operator/meta';
-import { readOperatorError } from '~/lib/operator/errors';
+import { OperatorRequestError, readOperatorError } from '~/lib/operator/errors';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
 import {
   ACTIVATION_LABELS,
+  AI_PROVIDERS,
   buildEnvForProvider,
   DEFAULT_AI_API_KEY,
   DEFAULT_AI_PROVIDER,
@@ -44,7 +40,37 @@ type SecretsResponse = {
   workflow_id?: string | null;
 };
 
+type GetSecretsResponse = {
+  sandbox_id?: string;
+  env_json?: Record<string, unknown>;
+};
+
 const WALLET_AUTH_REQUIRED_MESSAGE = 'Connect your wallet to manage this bot\'s secrets.';
+const OPENCODE_ENV_KEYS = new Set([
+  'OPENCODE_MODEL_PROVIDER',
+  'OPENCODE_MODEL_NAME',
+  'OPENCODE_MODEL_API_KEY',
+  'OPENCODE_MODEL_BASE_URL',
+  'TANGLE_ROUTER_BASE_URL',
+]);
+
+function stringifyEnvValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function detectProviderFromEnv(env: Record<string, unknown>): AiProvider {
+  const providerName = typeof env.OPENCODE_MODEL_PROVIDER === 'string'
+    ? env.OPENCODE_MODEL_PROVIDER
+    : '';
+  const nativeProvider = AI_PROVIDERS.find((candidate) => {
+    return typeof env[candidate.envKey] === 'string'
+      || candidate.modelProvider === providerName;
+  });
+  return nativeProvider?.id ?? 'anthropic';
+}
 
 export function SecretsTab({ bot }: SecretsTabProps) {
   const { address } = useAccount();
@@ -64,9 +90,11 @@ export function SecretsTab({ bot }: SecretsTabProps) {
   const envIdRef = useRef(0);
   const [useOperatorKey, setUseOperatorKey] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
+  const [valuesVisible, setValuesVisible] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmWipeOpen, setConfirmWipeOpen] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isOwner = Boolean(
@@ -186,6 +214,62 @@ export function SecretsTab({ bot }: SecretsTabProps) {
     return res.json() as Promise<SecretsResponse>;
   }, [operatorFetch, secretsPath]);
 
+  const populateSecretsForm = useCallback((envJson: Record<string, unknown>) => {
+    const nextProvider = detectProviderFromEnv(envJson);
+    const providerConfig = AI_PROVIDERS.find((candidate) => candidate.id === nextProvider)
+      ?? AI_PROVIDERS[0];
+    const providerKey = stringifyEnvValue(
+      envJson.OPENCODE_MODEL_API_KEY ?? envJson[providerConfig.envKey] ?? '',
+    );
+    const providerNativeKeys = new Set(AI_PROVIDERS.map((candidate) => candidate.envKey));
+    const extraRows = Object.entries(envJson)
+      .filter(([key]) => {
+        if (OPENCODE_ENV_KEYS.has(key)) return false;
+        if (providerNativeKeys.has(key)) return false;
+        return true;
+      })
+      .map(([key, value]) => {
+        envIdRef.current += 1;
+        return {
+          id: envIdRef.current,
+          key,
+          value: stringifyEnvValue(value),
+        };
+      });
+
+    setProvider(nextProvider);
+    setApiKey(providerKey);
+    setExtraEnvs(extraRows);
+    setUseOperatorKey(false);
+    setSecretsLoaded(true);
+  }, []);
+
+  const handleToggleSecretVisibility = useCallback(async () => {
+    if (secretsLoaded) {
+      setValuesVisible((current) => !current);
+      return;
+    }
+
+    setRevealBusy(true);
+    setError(null);
+
+    try {
+      const res = await operatorFetch(secretsPath, 'GET');
+      if (!res.ok) throw await readOperatorError(res);
+      const body = await res.json() as GetSecretsResponse;
+      populateSecretsForm(body.env_json ?? {});
+      setValuesVisible(true);
+    } catch (err) {
+      const message = err instanceof OperatorRequestError && err.status === 405
+        ? 'Secret reveal is not available from the running operator API yet. Restart or update the operator so it supports revealing stored secrets.'
+        : err instanceof Error ? err.message : 'Failed to reveal secrets';
+      setError(message);
+      toast.error(`Reveal failed: ${message.slice(0, 160)}`);
+    } finally {
+      setRevealBusy(false);
+    }
+  }, [operatorFetch, populateSecretsForm, secretsLoaded, secretsPath]);
+
   const handleSubmitSecrets = useCallback(async () => {
     if (!canSubmit || busy) return;
 
@@ -205,6 +289,8 @@ export function SecretsTab({ bot }: SecretsTabProps) {
       setApiKey('');
       setExtraEnvs([]);
       setUseOperatorKey(false);
+      setSecretsLoaded(false);
+      setValuesVisible(false);
       invalidateBotData();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update secrets';
@@ -229,28 +315,6 @@ export function SecretsTab({ bot }: SecretsTabProps) {
     secretsConfigured,
     startActivationPolling,
   ]);
-
-  const handleWipeSecrets = useCallback(async () => {
-    setConfirmWipeOpen(false);
-    setBusy(true);
-    setError(null);
-    setActivationPhase(null);
-
-    try {
-      await deleteSecrets();
-      toast.success('Secrets wiped. Bot is awaiting new secrets.');
-      setApiKey('');
-      setExtraEnvs([]);
-      setUseOperatorKey(false);
-      invalidateBotData();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to wipe secrets';
-      setError(message);
-      toast.error(`Wipe failed: ${message.slice(0, 160)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [deleteSecrets, invalidateBotData]);
 
   useEffect(() => {
     return () => clearPolling();
@@ -310,18 +374,20 @@ export function SecretsTab({ bot }: SecretsTabProps) {
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4">
+      <div>
         <div className="glass-card rounded-xl p-5 space-y-5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="font-display font-bold text-lg">Runtime Secrets</h3>
               <p className="text-sm text-arena-elements-textSecondary mt-1">
-                Replace the bot&apos;s private runtime environment without putting keys on-chain.
+                View or replace the bot&apos;s private runtime environment without putting keys on-chain.
               </p>
             </div>
-            <Badge variant={secretsConfigured ? 'success' : 'outline'}>
-              {secretsConfigured ? 'Configured' : 'Not Set'}
-            </Badge>
+            <div className="flex items-center gap-2 shrink-0">
+              <Badge variant={secretsConfigured ? 'success' : 'outline'}>
+                {secretsConfigured ? 'Configured' : 'Not Set'}
+              </Badge>
+            </div>
           </div>
 
           {error && (
@@ -332,7 +398,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
 
           {secretsConfigured && (
             <div className="text-sm text-arena-elements-textSecondary p-3 rounded-lg bg-arena-elements-background-depth-3 border border-arena-elements-borderColor">
-              Existing secret values are hidden. Submitting this form wipes the current user-provided secrets, restarts the sidecar, and activates the bot with the new set.
+              Existing secret values stay hidden until you reveal them. Saving changes wipes the current user-provided secrets, restarts the sidecar, and activates the bot with the new set.
             </div>
           )}
 
@@ -377,6 +443,11 @@ export function SecretsTab({ bot }: SecretsTabProps) {
               envIdRef={envIdRef}
               defaultProvider={defaultProvider}
               variant="card"
+              revealValues={valuesVisible}
+              showRevealToggle={secretsConfigured}
+              revealBusy={revealBusy}
+              revealDisabled={busy}
+              onToggleReveal={() => { void handleToggleSecretVisibility(); }}
             />
           )}
 
@@ -392,69 +463,17 @@ export function SecretsTab({ bot }: SecretsTabProps) {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={() => { void handleSubmitSecrets(); }}
-              disabled={!canSubmit || busy}
+              disabled={!canSubmit || busy || revealBusy}
             >
               {busy
                 ? 'Updating...'
                 : secretsConfigured
-                  ? 'Replace Secrets'
+                  ? secretsLoaded ? 'Save Secrets' : 'Replace Secrets'
                   : 'Activate With Secrets'}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={() => setConfirmWipeOpen(true)}
-              disabled={!secretsConfigured || busy}
-            >
-              Wipe All Secrets
-            </Button>
-          </div>
-        </div>
-
-        <div className="glass-card rounded-xl p-5 h-fit space-y-4">
-          <h3 className="font-display font-bold text-lg">What Changes</h3>
-          <div className="space-y-3 text-sm text-arena-elements-textSecondary">
-            <div className="flex gap-2">
-              <div className="i-ph:eye-slash text-base text-arena-elements-textTertiary shrink-0 mt-0.5" />
-              <p>Secret values are never shown back in the browser.</p>
-            </div>
-            <div className="flex gap-2">
-              <div className="i-ph:arrows-clockwise text-base text-arena-elements-textTertiary shrink-0 mt-0.5" />
-              <p>Replacing secrets restarts the bot sidecar so the new environment is applied.</p>
-            </div>
-            <div className="flex gap-2">
-              <div className="i-ph:warning text-base text-arena-elements-textTertiary shrink-0 mt-0.5" />
-              <p>Wiping secrets pauses the bot until new credentials are configured.</p>
-            </div>
           </div>
         </div>
       </div>
-
-      <Dialog open={confirmWipeOpen} onOpenChange={setConfirmWipeOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Wipe Bot Secrets?</DialogTitle>
-            <DialogDescription>
-              This removes all user-provided runtime secrets and restarts the bot sidecar without them. Trading and chat remain unavailable until new secrets are configured.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => setConfirmWipeOpen(false)}
-              disabled={busy}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => { void handleWipeSecrets(); }}
-              disabled={busy}
-            >
-              {busy ? 'Wiping...' : 'Wipe Secrets'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

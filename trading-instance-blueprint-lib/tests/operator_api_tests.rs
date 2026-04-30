@@ -1625,6 +1625,36 @@ async fn test_configure_secrets_correct_submitter_reaches_activation() {
 }
 
 #[tokio::test]
+async fn test_get_secrets_returns_owner_env() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, sandbox_id) = seed_singleton("dex");
+    mark_sandbox_secrets_configured(&sandbox_id);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/bot/secrets")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["sandbox_id"], sandbox_id);
+    assert_eq!(json["env_json"]["ANTHROPIC_API_KEY"], "sk-test");
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
 async fn test_wipe_secrets_requires_existing_secrets() {
     let _dir = common::init_test_env();
     let _lock = common::HARNESS_LOCK.lock().await;

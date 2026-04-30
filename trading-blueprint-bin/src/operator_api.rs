@@ -271,6 +271,12 @@ struct SecretsResponse {
 }
 
 #[derive(Serialize)]
+struct GetSecretsResponse {
+    sandbox_id: String,
+    env_json: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
 struct ActivationProgressResponse {
     bot_id: String,
     phase: String,
@@ -582,7 +588,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
-            post(configure_secrets).delete(wipe_secrets),
+            get(get_secrets).post(configure_secrets).delete(wipe_secrets),
         )
         .route("/api/bots/{bot_id}/start", post(start_bot))
         .route("/api/bots/{bot_id}/stop", post(stop_bot))
@@ -1439,6 +1445,27 @@ async fn configure_secrets(
         workflow_id: Some(result.workflow_id.to_string()),
         trading_api_token: Some(result.trading_api_token),
         trading_api_url: Some(result.trading_api_url),
+    }))
+}
+
+async fn get_secrets(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<GetSecretsResponse>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let env_json = if sandbox.user_env_json.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        serde_json::from_str(&sandbox.user_env_json).unwrap_or_default()
+    };
+
+    Ok(Json(GetSecretsResponse {
+        sandbox_id: sandbox.id,
+        env_json,
     }))
 }
 

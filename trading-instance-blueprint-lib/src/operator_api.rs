@@ -175,6 +175,12 @@ struct SecretsResponse {
 }
 
 #[derive(Serialize)]
+struct GetSecretsResponse {
+    sandbox_id: String,
+    env_json: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
 struct ActivationProgressResponse {
     bot_id: String,
     phase: String,
@@ -501,7 +507,7 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot", get(get_bot))
         .route(
             "/api/bot/secrets",
-            post(configure_secrets).delete(wipe_secrets),
+            get(get_secrets).post(configure_secrets).delete(wipe_secrets),
         )
         .route("/api/bot/start", post(start_bot))
         .route("/api/bot/stop", post(stop_bot))
@@ -2252,6 +2258,26 @@ async fn configure_secrets(
         status: "active".to_string(),
         sandbox_id: Some(result.sandbox_id),
         workflow_id: Some(result.workflow_id.to_string()),
+    }))
+}
+
+async fn get_secrets(
+    SessionAuth(caller): SessionAuth,
+) -> Result<Json<GetSecretsResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
+
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let env_json = if sandbox.user_env_json.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        serde_json::from_str(&sandbox.user_env_json).unwrap_or_default()
+    };
+
+    Ok(Json(GetSecretsResponse {
+        sandbox_id: sandbox.id,
+        env_json,
     }))
 }
 

@@ -1500,6 +1500,32 @@ async fn test_configure_secrets_wrong_submitter() {
 }
 
 #[tokio::test]
+async fn test_get_secrets_returns_owner_env() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("secrets-get-1", "dex", false);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/bots/{}/secrets", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["sandbox_id"], bot.sandbox_id);
+    assert_eq!(json["env_json"]["ANTHROPIC_API_KEY"], "sk-test");
+}
+
+#[tokio::test]
 async fn test_update_config_with_auth() {
     let _dir = init_test_env();
 
