@@ -52,14 +52,14 @@ interface RedeemCallbacks {
   onError?: (error: Error) => void;
 }
 
-/** Redeem shares from the vault (shares -> assets). */
-export function useRedeem() {
+/** Redeem shares for the vault's proportional token basket. */
+export function useRedeemInKind() {
   const { address: userAddress } = useAccount();
   const [receiptChainId, setReceiptChainId] = useState<number | undefined>();
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: receiptChainId });
 
-  function redeem(
+  function redeemInKind(
     vaultAddress: Address,
     shares: string,
     shareDecimals: number,
@@ -73,7 +73,7 @@ export function useRedeem() {
       {
         address: vaultAddress,
         abi: tradingVaultAbi,
-        functionName: 'redeem',
+        functionName: 'redeemInKind',
         args: [parsed, userAddress, userAddress],
         chainId,
       },
@@ -84,5 +84,5 @@ export function useRedeem() {
     );
   }
 
-  return { redeem, hash, isPending, isConfirming, isSuccess, error, reset };
+  return { redeemInKind, hash, isPending, isConfirming, isSuccess, error, reset };
 }

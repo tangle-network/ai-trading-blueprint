@@ -17,6 +17,9 @@ interface BotHeaderProps {
 
 export function BotHeader({ bot }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
+  const hasVaultAddress = Boolean(
+    bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000',
+  );
   const displayName = resolveBotDisplayName({
     primaryName: detail?.name,
     fallbackName: bot.name,
@@ -105,24 +108,35 @@ export function BotHeader({ bot }: BotHeaderProps) {
 
   return (
     <div className="mb-8">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-2">
-        <h1 className="font-display font-bold text-3xl tracking-tight">{displayName}</h1>
-        <div className="flex items-center gap-2">
-          <Badge variant={botStatusBadgeVariant(bot.status)}>
-            <div className={`w-1.5 h-1.5 rounded-full ${
-              bot.status === 'active'
-                ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse'
-                : (bot.status === 'paused' || bot.status === 'needs_config' || bot.status === 'winding_down')
-                  ? 'bg-amber-400'
-                  : 'bg-arena-elements-textTertiary'
-            }`} />
-            {botStatusLabel(bot.status)}
-          </Badge>
-          <Badge variant="accent">{bot.strategyType}</Badge>
-          {bot.verificationState === 'unverified' && (
-            <Badge variant="outline">Unverified</Badge>
-          )}
+      <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <h1 className="font-display font-bold text-3xl tracking-tight">{displayName}</h1>
+          <div className="flex items-center gap-2">
+            <Badge variant={botStatusBadgeVariant(bot.status)}>
+              <div className={`w-1.5 h-1.5 rounded-full ${
+                bot.status === 'active'
+                  ? 'bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse'
+                  : (bot.status === 'paused' || bot.status === 'needs_config' || bot.status === 'winding_down')
+                    ? 'bg-amber-400'
+                    : 'bg-arena-elements-textTertiary'
+              }`} />
+              {botStatusLabel(bot.status)}
+            </Badge>
+            <Badge variant="accent">{bot.strategyType}</Badge>
+            {bot.verificationState === 'unverified' && (
+              <Badge variant="outline">Unverified</Badge>
+            )}
+          </div>
         </div>
+        {hasVaultAddress && (
+          <Button asChild size="sm" className="h-9 px-4 shadow-[0_0_24px_rgba(142,89,255,0.35)]">
+            <Link to={buildVaultPath(bot.vaultAddress, bot.chainId)}>
+              <span className="i-ph:wallet text-sm" aria-hidden="true" />
+              View Vault
+              <span className="i-ph:arrow-square-out text-[11px]" aria-hidden="true" />
+            </Link>
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center gap-4 text-sm text-arena-elements-textTertiary mb-6 font-data">
@@ -138,13 +152,6 @@ export function BotHeader({ bot }: BotHeaderProps) {
               {validatorCount} validator{validatorCount !== 1 ? 's' : ''}
             </span>
           </span>
-        )}
-        {bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000' && (
-          <Button asChild variant="ghost" size="sm">
-            <Link to={buildVaultPath(bot.vaultAddress, bot.chainId)}>
-              <span className="i-ph:wallet text-xs" /> View Vault
-            </Link>
-          </Button>
         )}
       </div>
 

@@ -22,10 +22,9 @@ interface VaultReadState {
   userAssetBalanceFormatted?: number;
   userAllowance?: bigint;
   maxDeposit?: bigint;
-  maxRedeem?: bigint;
-  maxWithdraw?: bigint;
   heldTokens: Address[];
   hasNonDepositAssets: boolean;
+  isNavSafe?: boolean;
   // Collateral
   totalOutstandingCollateral?: bigint;
   maxCollateralBps?: number;
@@ -154,9 +153,8 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
       let userAssetBalance: bigint | undefined;
       let userAllowance: bigint | undefined;
       let maxDeposit: bigint | undefined;
-      let maxRedeem: bigint | undefined;
-      let maxWithdraw: bigint | undefined;
       let heldTokens: Address[] = [];
+      let isNavSafe: boolean | undefined;
 
       if (userAddress) {
         try {
@@ -166,24 +164,18 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
               { address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
               { address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] },
               { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] },
-              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxRedeem', args: [userAddress] },
-              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxWithdraw', args: [userAddress] },
             ],
           });
           userShares = userResults[0]?.status === 'success' ? userResults[0].result as bigint : undefined;
           userAssetBalance = userResults[1]?.status === 'success' ? userResults[1].result as bigint : undefined;
           userAllowance = userResults[2]?.status === 'success' ? userResults[2].result as bigint : undefined;
           maxDeposit = userResults[3]?.status === 'success' ? userResults[3].result as bigint : undefined;
-          maxRedeem = userResults[4]?.status === 'success' ? userResults[4].result as bigint : undefined;
-          maxWithdraw = userResults[5]?.status === 'success' ? userResults[5].result as bigint : undefined;
         } catch (mcErr) {
           console.warn('[useVaultRead] user balance multicall failed, trying individual calls:', mcErr);
           try { userShares = await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
           try { userAssetBalance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
           try { userAllowance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] }) as bigint; } catch {}
           try { maxDeposit = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] }) as bigint; } catch {}
-          try { maxRedeem = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxRedeem', args: [userAddress] }) as bigint; } catch {}
-          try { maxWithdraw = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxWithdraw', args: [userAddress] }) as bigint; } catch {}
         }
       } else {
         try { maxDeposit = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [zeroAddress] }) as bigint; } catch {}
@@ -197,6 +189,15 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
         }) as Address[];
       } catch {
         heldTokens = [];
+      }
+      try {
+        isNavSafe = await client.readContract({
+          address: vaultAddress,
+          abi: tradingVaultAbi,
+          functionName: 'isNavSafe',
+        }) as boolean;
+      } catch {
+        isNavSafe = undefined;
       }
 
       // Phase 5: Collateral state
@@ -263,10 +264,9 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
         userAssetBalanceFormatted: userAssetBalance != null ? Number(formatUnits(userAssetBalance, assetDecimals)) : undefined,
         userAllowance,
         maxDeposit,
-        maxRedeem,
-        maxWithdraw,
         heldTokens,
         hasNonDepositAssets,
+        isNavSafe,
         totalOutstandingCollateral,
         maxCollateralBps,
         availableCollateral,

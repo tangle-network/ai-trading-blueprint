@@ -54,6 +54,7 @@ export default function VaultPage() {
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
   const isWrongChain = isConnected && chainId !== targetChainId;
+  const navNeedsPricing = vault.hasNonDepositAssets && vault.isNavSafe !== true;
 
   if (!isValidAddress) {
     return (
@@ -128,25 +129,39 @@ export default function VaultPage() {
           paused={vault.paused}
           isLoading={vault.isLoading}
           isConnected={isConnected}
-          approximateNav={vault.hasNonDepositAssets}
+          approximateNav={navNeedsPricing}
           userSharesFormatted={vault.userSharesFormatted}
         />
 
-        {vault.hasNonDepositAssets && (
+        {navNeedsPricing ? (
           <div className="glass-card rounded-xl p-5 mb-6 border-amber-400/30 bg-amber-500/5">
             <div className="flex items-start gap-3">
               <div className="i-ph:warning-circle text-lg text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <div>
                 <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
-                  Vault value is approximate
+                  Vault value needs pricing
                 </div>
                 <p className="text-sm text-arena-elements-textSecondary mt-1">
-                  This vault holds assets other than {vault.assetSymbol}. Until priced NAV is implemented, TVL and share price are estimates.
+                  This vault holds assets without a configured price adapter. Deposits and main-asset withdrawals are paused until pricing is configured.
                 </p>
               </div>
             </div>
           </div>
-        )}
+        ) : vault.hasNonDepositAssets ? (
+          <div className="glass-card rounded-xl p-5 mb-6 border-emerald-400/30 bg-emerald-500/5">
+            <div className="flex items-start gap-3">
+              <div className="i-ph:check-circle text-lg text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+                  Vault value includes traded assets
+                </div>
+                <p className="text-sm text-arena-elements-textSecondary mt-1">
+                  Non-{vault.assetSymbol} positions are priced through the vault adapter. Basket withdrawals return each held asset pro rata.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <CollateralStats
           vaultAddress={vaultAddress}
@@ -230,13 +245,9 @@ export default function VaultPage() {
           <WithdrawForm
             vaultAddress={vaultAddress}
             assetSymbol={vault.assetSymbol}
-            assetDecimals={vault.assetDecimals}
             shareDecimals={vault.shareDecimals}
-            sharePrice={vault.sharePrice}
             userShares={vault.userShares}
             userSharesFormatted={vault.userSharesFormatted}
-            maxRedeem={vault.maxRedeem}
-            maxWithdraw={vault.maxWithdraw}
             paused={vault.paused}
             targetChainId={targetChainId}
             targetChainName={targetChainName}
