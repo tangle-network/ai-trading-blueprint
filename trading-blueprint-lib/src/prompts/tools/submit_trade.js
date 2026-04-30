@@ -2,8 +2,9 @@
 // Submit a trade — handles circuit-breaker, validation, execution, and logging
 // in a single command. The agent just decides WHAT to trade.
 //
-// Usage: node submit-trade.js --condition-id <id> --side YES --amount 100 --reason "8% edge on X"
+// Usage: node submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --reason "8% edge on X"
 // Options:
+//   --action        buy (default) or sell. Use sell to reduce/exit an existing outcome position.
 //   --condition-id  Polymarket condition ID (from analyze-opportunities)
 //   --side          YES or NO
 //   --amount        Size in outcome shares (e.g. 100)
@@ -114,6 +115,7 @@ function log(entry) {
 }
 
 async function main() {
+  const action = (parseArg('--action') || 'buy').toLowerCase();
   const conditionId = parseArg('--condition-id');
   const side = (parseArg('--side') || 'YES').toUpperCase();
   const amount = parseFloat(parseArg('--amount') || '0');
@@ -122,6 +124,7 @@ async function main() {
   let price = parseFloat(parseArg('--price') || '0');
   const orderType = (parseArg('--order-type') || 'GTC').toUpperCase();
 
+  if (action !== 'buy' && action !== 'sell') { console.log(JSON.stringify({ error: 'Invalid --action. Use buy or sell.' })); process.exit(1); }
   if (!conditionId) { console.log(JSON.stringify({ error: 'Missing --condition-id' })); process.exit(1); }
   if (amount <= 0) { console.log(JSON.stringify({ error: 'Missing or invalid --amount' })); process.exit(1); }
 
@@ -178,7 +181,7 @@ async function main() {
     cbResult = await apiCall(config, 'POST', '/circuit-breaker/check', { max_drawdown_pct: 10 });
     if (cbResult.body && cbResult.body.triggered) {
       const result = { action: 'blocked', reason: 'Circuit breaker triggered', details: cbResult.body };
-      log({ ...result, condition_id: conditionId, side, amount });
+      log({ ...result, trade_action: action, condition_id: conditionId, side, amount });
       console.log(JSON.stringify(result, null, 2));
       return;
     }
@@ -191,7 +194,7 @@ async function main() {
   // action=buy for purchasing outcome tokens, sell for selling.
   const intent = {
     strategy_id: 'prediction-' + conditionId.slice(0, 8),
-    action: 'buy',
+    action: action,
     token_in: USDC,
     token_out: tokenId,
     amount_in: amount.toString(),
@@ -241,13 +244,16 @@ async function main() {
   }
 
   // Step 4: Log and report
+  const notionalUsd = (amount * price).toFixed(2);
   const result = {
     action: 'traded',
+    trade_action: action,
     condition_id: conditionId,
     side,
     size: amount,
     price,
-    cost_usd: (amount * price).toFixed(2),
+    notional_usd: notionalUsd,
+    ...(action === 'buy' ? { cost_usd: notionalUsd } : { estimated_proceeds_usd: notionalUsd }),
     order_type: orderType,
     reason,
     validation_approved: validation.approved !== false,
@@ -258,11 +264,13 @@ async function main() {
   console.log(JSON.stringify({
     status: 'success',
     trade: {
+      action,
       condition_id: conditionId,
       side,
       size: amount + ' shares',
       price: price.toFixed(4),
-      cost: '$' + (amount * price).toFixed(2),
+      notional: '$' + notionalUsd,
+      ...(action === 'buy' ? { cost: '$' + notionalUsd } : { estimated_proceeds: '$' + notionalUsd }),
       order_type: orderType,
       reason,
     },

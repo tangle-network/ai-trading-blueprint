@@ -834,6 +834,15 @@ mod tests {
         assert!(tool.contains("path: url.pathname + url.search"));
         assert!(!tool.contains("path: url.pathname,"));
     }
+
+    #[test]
+    fn submit_trade_tool_supports_buy_and_sell_actions() {
+        let tool = include_str!("../prompts/tools/submit_trade.js");
+        assert!(tool.contains("parseArg('--action')"));
+        assert!(tool.contains("Invalid --action. Use buy or sell."));
+        assert!(tool.contains("action: action"));
+        assert!(tool.contains("estimated_proceeds_usd"));
+    }
 }
 
 /// Remove secrets from a bot: stop workflow, wipe user secrets from sidecar.
