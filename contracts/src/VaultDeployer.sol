@@ -2,14 +2,13 @@
 pragma solidity ^0.8.20;
 
 import "./TradingVault.sol";
-import "./VaultShare.sol";
 import "./PolicyEngine.sol";
 import "./TradeValidator.sol";
 import "./FeeDistributor.sol";
 
 /// @title VaultDeployer
-/// @notice Holds TradingVault creation bytecode, keeping VaultFactory under size limit.
-/// @dev Called exclusively by VaultFactory to deploy vaults via CREATE2.
+/// @notice Deploys TradingVault instances for VaultFactory via CREATE2.
+/// @dev Split from VaultShare deployment so each helper stays below the EVM code size limit.
 contract VaultDeployer {
     error NotAuthorized();
 

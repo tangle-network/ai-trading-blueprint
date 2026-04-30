@@ -3,12 +3,14 @@ import { formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { AnimatedNumber } from '~/components/motion/AnimatedNumber';
 import { Skeleton } from '@tangle-network/blueprint-ui/components';
-import { publicClient } from '@tangle-network/blueprint-ui';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
+import { getChainPublicClient } from '~/lib/contracts/chainClients';
 import { useEffect, useState } from 'react';
+import { formatNumber } from '~/lib/format';
 
 interface CollateralStatsProps {
   vaultAddress: Address;
+  targetChainId: number;
   totalOutstandingCollateral?: bigint;
   maxCollateralBps?: number;
   availableCollateral?: bigint;
@@ -27,6 +29,7 @@ interface CollateralEvent {
 
 export function CollateralStats({
   vaultAddress,
+  targetChainId,
   totalOutstandingCollateral,
   maxCollateralBps,
   availableCollateral,
@@ -54,6 +57,7 @@ export function CollateralStats({
 
     async function fetchEvents() {
       try {
+        const publicClient = getChainPublicClient(targetChainId);
         // Use a recent block window to avoid scanning full chain history
         const currentBlock = await publicClient.getBlockNumber();
         const fromBlock = currentBlock > 10000n ? currentBlock - 10000n : 0n;
@@ -132,7 +136,7 @@ export function CollateralStats({
 
     fetchEvents();
     return () => { cancelled = true; };
-  }, [vaultAddress, enabled, assetDecimals]);
+  }, [vaultAddress, targetChainId, enabled, assetDecimals]);
 
   if (!enabled) {
     return (
@@ -160,7 +164,7 @@ export function CollateralStats({
       label: 'Outstanding',
       value: outstandingFormatted,
       suffix: ` ${assetSymbol}`,
-      subtext: outstandingPct > 0 ? `${outstandingPct.toFixed(1)}% of NAV` : undefined,
+      subtext: outstandingPct > 0 ? `${formatNumber(outstandingPct, { maximumFractionDigits: 1 })}% of NAV` : undefined,
       decimals: 2,
       icon: 'i-ph:arrow-up-right',
       color: outstandingFormatted && outstandingFormatted > 0 ? 'text-amber-600 dark:text-amber-400' : '',
@@ -255,7 +259,7 @@ export function CollateralStats({
                   : evt.type === 'written_down' ? 'text-crimson-600 dark:text-crimson-400'
                   : 'text-arena-elements-icon-success'
                 }>
-                  {evt.type === 'returned' ? '+' : '-'}{evt.amount.toFixed(2)} {assetSymbol}
+                  {evt.type === 'returned' ? '+' : '-'}{formatNumber(evt.amount, { maximumFractionDigits: 2 })} {assetSymbol}
                 </span>
               </div>
             ))}

@@ -5,6 +5,8 @@ export interface StrategyPackDef {
   name: string;
   providers: string[];
   description: string;
+  executionMode: 'single-chain' | 'paper-only' | 'none';
+  supportedChainIds: number[];
   cron: string;
   maxTurns: number;
   timeoutMs: number;

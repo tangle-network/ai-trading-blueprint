@@ -122,15 +122,20 @@ export default function HomePage() {
 
   // Main dashboard bots are strict-authoritative only.
   const myBots = useMemo(() => {
+    const normalizedUserAddress = userAddress?.toLowerCase();
     return authoritativeBots.filter((b) => {
       if (b.status === 'archived') return false;
+      if (
+        normalizedUserAddress
+        && b.submitterAddress?.toLowerCase() === normalizedUserAddress
+      ) return true;
       if (confirmedServiceIds.has(b.serviceId)) return true;
       if (confirmedServiceVaults.has(b.vaultAddress.toLowerCase())) return true;
       return myProvisions.some((provision) =>
         provision.phase !== 'failed' && doesProvisionMatchBot(provision, b),
       );
     });
-  }, [authoritativeBots, confirmedServiceIds, confirmedServiceVaults, myProvisions]);
+  }, [authoritativeBots, confirmedServiceIds, confirmedServiceVaults, myProvisions, userAddress]);
   const visibleMyBots = myBots;
 
   // Bots grouped by service

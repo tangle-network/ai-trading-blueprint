@@ -185,11 +185,11 @@ imminent (<48h) or where price has moved >5% since last check.
 
 7. **Execution**: Submit trade intents through the Trading HTTP API with:
    - `action`: "buy" or "sell"
-   - `target_protocol`: "polymarket"
+   - `target_protocol`: "polymarket_clob"
    - `token_in`: USDC address
    - `token_out`: conditional token address (token_id from CLOB)
-   - `amount_in`: position size in USDC (6 decimals)
-   - Include `metadata.condition_id`, `metadata.outcome_index`, `metadata.market_slug`
+   - `amount_in`: outcome share size for the CLOB order
+   - Include `metadata.token_id`, `metadata.price`, `metadata.condition_id`, `metadata.outcome_index`, `metadata.market_slug`
 "#;
 
 #[cfg(test)]
@@ -216,6 +216,16 @@ mod tests {
         assert!(prompt.contains("resolutionSource"));
         assert!(prompt.contains("metaculus.com"));
         assert!(prompt.contains("base rate"));
+    }
+
+    #[test]
+    fn test_polymarket_expert_prompt_matches_clob_execution_contract() {
+        let p = PolymarketProvider;
+        let prompt = p.expert_prompt();
+        assert!(prompt.contains(r#"`target_protocol`: "polymarket_clob""#));
+        assert!(prompt.contains(r#"`amount_in`: outcome share size"#));
+        assert!(!prompt.contains(r#"`target_protocol`: "polymarket""#));
+        assert!(!prompt.contains("position size in USDC (6 decimals)"));
     }
 
     #[test]

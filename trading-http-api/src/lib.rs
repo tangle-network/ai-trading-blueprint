@@ -121,6 +121,97 @@ pub struct MultiBotTradingState {
     pub chain_client_chain_id: Option<u64>,
 }
 
+fn positive_u64_from_value(value: Option<&serde_json::Value>) -> Option<u64> {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
+        Some(serde_json::Value::String(raw)) => raw.parse::<u64>().ok().filter(|value| *value > 0),
+        _ => None,
+    }
+}
+
+fn positive_u64_from_env(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+pub fn protocol_chain_id_from_config(
+    execution_chain_id: u64,
+    strategy_config: &serde_json::Value,
+) -> u64 {
+    positive_u64_from_value(strategy_config.get("protocol_chain_id"))
+        .or_else(|| positive_u64_from_value(strategy_config.get("fork_base_chain_id")))
+        .or_else(|| positive_u64_from_env("PROTOCOL_CHAIN_ID"))
+        .or_else(|| positive_u64_from_env("FORK_BASE_CHAIN_ID"))
+        .unwrap_or(execution_chain_id)
+}
+
+pub fn protocol_chain_id_from_env(execution_chain_id: u64) -> u64 {
+    positive_u64_from_env("PROTOCOL_CHAIN_ID")
+        .or_else(|| positive_u64_from_env("FORK_BASE_CHAIN_ID"))
+        .unwrap_or(execution_chain_id)
+}
+
+pub fn available_protocols_from_config(strategy_config: &serde_json::Value) -> Option<Vec<String>> {
+    let value = strategy_config.get("available_protocols")?;
+    let protocols = match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>(),
+        serde_json::Value::String(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    (!protocols.is_empty()).then_some(protocols)
+}
+
+pub fn validate_protocol_available(
+    strategy_config: &serde_json::Value,
+    target_protocol: &str,
+) -> Result<(), String> {
+    let Some(protocols) = available_protocols_from_config(strategy_config) else {
+        return Ok(());
+    };
+
+    if protocols.iter().any(|protocol| protocol == target_protocol) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Protocol {target_protocol} is not available for this bot. Available protocols: {}",
+        protocols.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn protocol_allow_list_accepts_configured_protocols() {
+        let config = json!({ "available_protocols": ["gmx_v2", "vertex"] });
+        assert!(validate_protocol_available(&config, "gmx_v2").is_ok());
+        assert!(validate_protocol_available(&config, "vertex").is_ok());
+        assert!(validate_protocol_available(&config, "hyperliquid").is_err());
+    }
+
+    #[test]
+    fn missing_protocol_allow_list_is_unrestricted() {
+        assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
+    }
+}
+
 /// Build a multi-bot trading HTTP API router.
 ///
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.

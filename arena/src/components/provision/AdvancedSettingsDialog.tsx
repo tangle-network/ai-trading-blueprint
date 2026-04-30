@@ -12,6 +12,7 @@ interface ExecutionTargetOption {
   modeLabel?: string;
   enabled: boolean;
   chainId?: number;
+  protocolChainId?: number;
   rpcUrl?: string;
   vaultAddress?: string;
   assetToken?: string;
@@ -41,6 +42,10 @@ interface AdvancedSettingsDialogProps {
   executionTargetId: string;
   setExecutionTargetId: (v: string) => void;
   selectedExecutionTarget?: ExecutionTargetOption;
+  executionChainMessage?: string | null;
+  liveModeDisabled?: boolean;
+  provisionPaperTrade: boolean;
+  setProvisionPaperTrade: (v: boolean) => void;
   onOpenInfrastructure: () => void;
 }
 
@@ -67,6 +72,10 @@ export function AdvancedSettingsDialog({
   executionTargetId,
   setExecutionTargetId,
   selectedExecutionTarget,
+  executionChainMessage,
+  liveModeDisabled = false,
+  provisionPaperTrade,
+  setProvisionPaperTrade,
   onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
@@ -181,6 +190,7 @@ export function AdvancedSettingsDialog({
                 <select
                   id="execution-chain"
                   value={executionTargetId}
+                  disabled={executionTargets.length === 0}
                   onChange={(e) => setExecutionTargetId(e.target.value)}
                   className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary"
                 >
@@ -191,7 +201,7 @@ export function AdvancedSettingsDialog({
                   ))}
                 </select>
                 <p className="text-xs text-arena-elements-textTertiary mt-1.5">
-                  Choose where the DEX strategy runs. Base Sepolia cloud paper trading is the default, while Ethereum fork remains available for local QA.
+                  {executionChainMessage ?? 'Choose where strategies run. The selected chain sets the default trading mode, but you can override it below.'}
                 </p>
                 {selectedExecutionTarget && (
                   <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
@@ -205,6 +215,12 @@ export function AdvancedSettingsDialog({
                       <div className="flex justify-between gap-3">
                         <span>Chain ID</span>
                         <span className="text-arena-elements-textPrimary">{selectedExecutionTarget.chainId}</span>
+                      </div>
+                    )}
+                    {selectedExecutionTarget.protocolChainId != null && selectedExecutionTarget.protocolChainId !== selectedExecutionTarget.chainId && (
+                      <div className="flex justify-between gap-3">
+                        <span>Protocol Chain</span>
+                        <span className="text-arena-elements-textPrimary">{selectedExecutionTarget.protocolChainId}</span>
                       </div>
                     )}
                     {selectedExecutionTarget.rpcUrl && (
@@ -226,14 +242,59 @@ export function AdvancedSettingsDialog({
                       </div>
                     )}
                     <div className="flex justify-between gap-3">
-                      <span>Paper Trading</span>
+                      <span>Default Mode</span>
                       <span className="text-arena-elements-textPrimary">
-                        {selectedExecutionTarget.paperTrade ? 'Yes' : 'No'}
+                        {selectedExecutionTarget.paperTrade ? 'Paper' : 'Live'}
                       </span>
                     </div>
                     <div>{selectedExecutionTarget.description}</div>
                   </div>
                 )}
+              </div>
+              <div>
+                <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                  Trading Mode
+                </span>
+                <div
+                  aria-label="Trading mode"
+                  className="inline-flex rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 p-1"
+                  role="group"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={!provisionPaperTrade}
+                    disabled={liveModeDisabled}
+                    onClick={() => {
+                      if (!liveModeDisabled) setProvisionPaperTrade(false);
+                    }}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      !provisionPaperTrade
+                        ? 'bg-violet-500 text-white shadow-sm'
+                        : liveModeDisabled
+                          ? 'text-arena-elements-textTertiary cursor-not-allowed opacity-60'
+                          : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+                    }`}
+                  >
+                    Live
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={provisionPaperTrade}
+                    onClick={() => setProvisionPaperTrade(true)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      provisionPaperTrade
+                        ? 'bg-violet-500 text-white shadow-sm'
+                        : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+                    }`}
+                  >
+                    Paper
+                  </button>
+                </div>
+                <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                  {provisionPaperTrade
+                    ? 'Paper mode validates and simulates trades without on-chain execution.'
+                    : 'Live mode may execute trades on-chain using the bot vault.'}
+                </p>
               </div>
               <div>
                 <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">

@@ -3,6 +3,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import { Badge } from '@tangle-network/blueprint-ui/components';
 import { useThemeValue } from '@tangle-network/blueprint-ui';
 import type { TradeSimulation, ValidatorResponseDetail } from '~/lib/types/trade';
+import { hasUsableValidatorSignature } from '~/lib/tradeValidation';
 
 // ── Utilities ───────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export function ScoreRing({ score, size = 44, indeterminate = false }: { score: 
 
 export function ValidatorCard({ response, index }: { response: ValidatorResponseDetail; index: number }) {
   const [expanded, setExpanded] = useState(false);
-  const hasSignature = response.signature && response.signature !== `0x${'00'.repeat(65)}`;
+  const hasSignature = hasUsableValidatorSignature(response.signature);
   const hasEip712Domain = response.chainId != null && response.verifyingContract;
 
   return (

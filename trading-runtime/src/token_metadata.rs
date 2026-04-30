@@ -99,7 +99,7 @@ pub fn chain_display_name(chain_id: u64) -> &'static str {
         8453 => "Base",
         1 => "Ethereum mainnet",
         31337 => "Ethereum fork",
-        31339 => "Ethereum local fork",
+        31338 | 31339 => "Ethereum local fork",
         _ => "unknown chain",
     }
 }
@@ -108,7 +108,7 @@ pub fn tokens_for_chain(chain_id: u64) -> &'static [TokenMetadata] {
     match chain_id {
         8453 => BASE_TOKENS,
         84532 => BASE_SEPOLIA_TOKENS,
-        1 | 31337 | 31339 => ETHEREUM_TOKENS,
+        1 | 31337 | 31338 | 31339 => ETHEREUM_TOKENS,
         _ => &[],
     }
 }
@@ -153,7 +153,7 @@ pub fn address_chain_mismatch(chain_id: u64, token: &str) -> Option<u64> {
         return None;
     }
 
-    for candidate_chain in [84532_u64, 8453, 1, 31337, 31339] {
+    for candidate_chain in [84532_u64, 8453, 1, 31337, 31338, 31339] {
         if candidate_chain == chain_id {
             continue;
         }
@@ -166,7 +166,7 @@ pub fn address_chain_mismatch(chain_id: u64, token: &str) -> Option<u64> {
 
 fn token_metadata_across_known_chains(token: &str) -> Option<&'static TokenMetadata> {
     let key = normalize_token_key(token);
-    [84532_u64, 8453, 1, 31337, 31339]
+    [84532_u64, 8453, 1, 31337, 31338, 31339]
         .into_iter()
         .flat_map(tokens_for_chain)
         .find(|metadata| token_matches(metadata, &key))

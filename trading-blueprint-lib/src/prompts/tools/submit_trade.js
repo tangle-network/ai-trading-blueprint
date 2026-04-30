@@ -2,8 +2,9 @@
 // Submit a trade — handles circuit-breaker, validation, execution, and logging
 // in a single command. The agent just decides WHAT to trade.
 //
-// Usage: node submit-trade.js --condition-id <id> --side YES --amount 100 --reason "8% edge on X"
+// Usage: node submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --reason "8% edge on X"
 // Options:
+//   --action        buy (default) or sell. Use sell to reduce/exit an existing outcome position.
 //   --condition-id  Polymarket condition ID (from analyze-opportunities)
 //   --side          YES or NO
 //   --amount        Size in outcome shares (e.g. 100)
@@ -31,12 +32,60 @@ function loadConfig() {
   catch { return { api_url: process.env.TRADING_API_URL || 'http://localhost:9100', token: '' }; }
 }
 
+function loadTradingDb() {
+  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
+  catch { return { markets: [] }; }
+}
+
+function normalizeOutcomeKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function getMarketOutcomes(market) {
+  if (!market) return [];
+  if (Array.isArray(market.outcomes)) return market.outcomes;
+  if (typeof market.outcomes === 'string') {
+    try {
+      const parsed = JSON.parse(market.outcomes);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function resolveOutcomeMetadata(market, side) {
+  const outcomes = getMarketOutcomes(market).map((outcome) => String(outcome || '').trim()).filter(Boolean);
+  const normalizedSide = normalizeOutcomeKey(side);
+  const matchingIndex = outcomes.findIndex((outcome) => normalizeOutcomeKey(outcome) === normalizedSide);
+
+  if (matchingIndex >= 0) {
+    return {
+      outcome_label: outcomes[matchingIndex],
+      outcome_index: matchingIndex,
+    };
+  }
+
+  if (normalizedSide === 'YES' || normalizedSide === 'NO') {
+    return {
+      outcome_label: side,
+      outcome_index: outcomes.length === 0 || outcomes.length <= 2 ? (normalizedSide === 'YES' ? 0 : 1) : undefined,
+    };
+  }
+
+  return {
+    outcome_label: side,
+    outcome_index: undefined,
+  };
+}
+
 function apiCall(config, method, path, body) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, config.api_url);
     const mod = url.protocol === 'https:' ? https : http;
     const opts = {
-      method, hostname: url.hostname, port: url.port, path: url.pathname,
+      method, hostname: url.hostname, port: url.port, path: url.pathname + url.search,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + config.token,
@@ -58,6 +107,28 @@ function apiCall(config, method, path, body) {
   });
 }
 
+async function getOutcomeHolding(config, tokenId) {
+  try {
+    const result = await apiCall(config, 'POST', '/portfolio/state', {});
+    const positions = result.body && Array.isArray(result.body.positions)
+      ? result.body.positions
+      : [];
+    const target = String(tokenId || '').trim().toLowerCase();
+
+    return positions
+      .filter((position) => {
+        const token = String(position.token || '').trim().toLowerCase();
+        const protocol = String(position.protocol || '').trim().toLowerCase();
+        const positionType = String(position.position_type || '').trim().toLowerCase();
+        return token === target
+          && (protocol === 'polymarket_clob' || positionType === 'conditional_token');
+      })
+      .reduce((sum, position) => sum + Number(position.amount || 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
 function log(entry) {
   try {
     fs.mkdirSync('/home/agent/logs', { recursive: true });
@@ -66,6 +137,7 @@ function log(entry) {
 }
 
 async function main() {
+  const action = (parseArg('--action') || 'buy').toLowerCase();
   const conditionId = parseArg('--condition-id');
   const side = (parseArg('--side') || 'YES').toUpperCase();
   const amount = parseFloat(parseArg('--amount') || '0');
@@ -74,26 +146,46 @@ async function main() {
   let price = parseFloat(parseArg('--price') || '0');
   const orderType = (parseArg('--order-type') || 'GTC').toUpperCase();
 
+  if (action !== 'buy' && action !== 'sell') { console.log(JSON.stringify({ error: 'Invalid --action. Use buy or sell.' })); process.exit(1); }
   if (!conditionId) { console.log(JSON.stringify({ error: 'Missing --condition-id' })); process.exit(1); }
   if (amount <= 0) { console.log(JSON.stringify({ error: 'Missing or invalid --amount' })); process.exit(1); }
 
+  const db = loadTradingDb();
+  const market = (db.markets || []).find(m => m.condition_id === conditionId) || null;
+
   // Look up token ID from trading.json if not provided
   if (!tokenId) {
-    try {
-      const db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      const market = (db.markets || []).find(m => m.condition_id === conditionId);
-      if (market && market.clob_token_ids) {
-        tokenId = side === 'YES' ? market.clob_token_ids[0] : market.clob_token_ids[1];
-      }
-    } catch {}
+    if (market && market.clob_token_ids) {
+      tokenId = side === 'YES' ? market.clob_token_ids[0] : market.clob_token_ids[1];
+    }
     if (!tokenId) {
       console.log(JSON.stringify({ error: 'Could not find CLOB token ID for condition ' + conditionId + '. Provide --token-id.' }));
       process.exit(1);
     }
   }
 
+  const outcomeMetadata = resolveOutcomeMetadata(market, side);
+
   const config = loadConfig();
   const USDC = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'; // Polygon USDC
+
+  if (action === 'sell') {
+    const held = await getOutcomeHolding(config, tokenId);
+    if (held + 1e-9 < amount) {
+      const result = {
+        action: 'blocked',
+        reason: 'Insufficient outcome inventory for sell',
+        condition_id: conditionId,
+        side,
+        requested_amount: amount,
+        held_amount: held,
+        guidance: 'Sell only reduces an existing outcome position. If the outcome is overpriced and you hold none, buy the opposite side when available or skip.',
+      };
+      log(result);
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+  }
 
   // Fetch midpoint price from trading HTTP API if not provided
   if (price <= 0) {
@@ -129,7 +221,7 @@ async function main() {
     cbResult = await apiCall(config, 'POST', '/circuit-breaker/check', { max_drawdown_pct: 10 });
     if (cbResult.body && cbResult.body.triggered) {
       const result = { action: 'blocked', reason: 'Circuit breaker triggered', details: cbResult.body };
-      log({ ...result, condition_id: conditionId, side, amount });
+      log({ ...result, trade_action: action, condition_id: conditionId, side, amount });
       console.log(JSON.stringify(result, null, 2));
       return;
     }
@@ -142,7 +234,7 @@ async function main() {
   // action=buy for purchasing outcome tokens, sell for selling.
   const intent = {
     strategy_id: 'prediction-' + conditionId.slice(0, 8),
-    action: 'buy',
+    action: action,
     token_in: USDC,
     token_out: tokenId,
     amount_in: amount.toString(),
@@ -154,6 +246,10 @@ async function main() {
       order_type: orderType,
       condition_id: conditionId,
       outcome: side,
+      outcome_label: outcomeMetadata.outcome_label,
+      ...(outcomeMetadata.outcome_index !== undefined ? { outcome_index: outcomeMetadata.outcome_index } : {}),
+      ...(market && market.question ? { market_question: market.question } : {}),
+      ...(market && (market.slug || market.market_slug) ? { market_slug: market.slug || market.market_slug } : {}),
       reason,
     },
   };
@@ -188,13 +284,16 @@ async function main() {
   }
 
   // Step 4: Log and report
+  const notionalUsd = (amount * price).toFixed(2);
   const result = {
     action: 'traded',
+    trade_action: action,
     condition_id: conditionId,
     side,
     size: amount,
     price,
-    cost_usd: (amount * price).toFixed(2),
+    notional_usd: notionalUsd,
+    ...(action === 'buy' ? { cost_usd: notionalUsd } : { estimated_proceeds_usd: notionalUsd }),
     order_type: orderType,
     reason,
     validation_approved: validation.approved !== false,
@@ -205,11 +304,13 @@ async function main() {
   console.log(JSON.stringify({
     status: 'success',
     trade: {
+      action,
       condition_id: conditionId,
       side,
       size: amount + ' shares',
       price: price.toFixed(4),
-      cost: '$' + (amount * price).toFixed(2),
+      notional: '$' + notionalUsd,
+      ...(action === 'buy' ? { cost: '$' + notionalUsd } : { estimated_proceeds: '$' + notionalUsd }),
       order_type: orderType,
       reason,
     },

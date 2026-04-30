@@ -52,6 +52,7 @@ arena/build/
 .env.local
 arena/.env.local
 settings.env
+.execution-fork.env
 
 # Keystore data (test keys)
 data/

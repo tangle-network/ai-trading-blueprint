@@ -548,7 +548,7 @@ fn yield_pack() -> StrategyPack {
 }
 
 fn perp_pack() -> StrategyPack {
-    let providers = vec!["gmx_v2", "hyperliquid", "vertex", "coingecko"];
+    let providers = vec!["gmx_v2", "vertex", "coingecko"];
     let methodology = PERP_STRATEGY_METHODOLOGY;
     StrategyPack {
         strategy_type: "perp".into(),
@@ -667,13 +667,15 @@ fn multi_pack() -> StrategyPack {
 // any single provider.
 // ---------------------------------------------------------------------------
 
-const PERP_STRATEGY_METHODOLOGY: &str = r#"## Cross-Venue Perpetual Futures Strategy
+const PERP_STRATEGY_METHODOLOGY: &str = r#"## Vault-Based EVM Perpetual Futures Strategy
 
 ### Market Selection
 
-Focus on majors first — ETH and BTC have the deepest liquidity and tightest spreads across all venues. Secondary markets (ARB, SOL, LINK on GMX; broader menu on Hyperliquid) are viable for smaller positions but require wider stops due to thinner books.
+Focus on majors first — ETH and BTC have the deepest liquidity and tightest spreads across GMX v2 and Vertex. Secondary markets such as ARB, SOL, and LINK are viable for smaller positions but require wider stops due to thinner books.
 
-Scan funding rates across GMX, Hyperliquid, and Vertex every iteration. Store them in the signals table for cross-venue comparison.
+Scan funding rates across GMX v2 and Vertex every iteration. Store them in the signals table for cross-venue comparison.
+
+This strategy is restricted to vault-based EVM execution on Arbitrum-compatible targets. Use only `target_protocol: "gmx_v2"` or `target_protocol: "vertex"`. Do not use Hyperliquid native endpoints from this strategy; Hyperliquid requires a separate native/API execution mode.
 
 ### Signal Framework
 
@@ -688,7 +690,7 @@ When 8h funding rates diverge between venues:
 
 #### 2. Momentum / Trend Following
 
-Use 4h candles from Hyperliquid:
+Use 4h candles from GMX, Vertex, or CoinGecko:
 - Enter long when EMA(12) crosses above EMA(26) AND RSI(14) < 70
 - Enter short when EMA(12) crosses below EMA(26) AND RSI(14) > 30
 - Confirm with volume: entry only if volume exceeds 20-period average
@@ -705,7 +707,7 @@ After a >5% move in 4 hours:
 
 #### 4. Liquidation Cascade
 
-Monitor Hyperliquid for liquidation events:
+Monitor GMX and Vertex for liquidation events:
 - After a cascade, wait for volatility to settle (at least one iteration)
 - Then look for mean-reversion entries at key support/resistance levels
 - Smaller position size (1% max) — cascades can extend further than expected
@@ -714,8 +716,7 @@ Monitor Hyperliquid for liquidation events:
 
 Route orders to the venue offering best execution:
 - **GMX V2**: Deeper liquidity, use for larger positions (accept ~0.1% price impact)
-- **Hyperliquid**: Faster entries, real-time order book, tighter spreads for majors
-- **Vertex**: Secondary venue — use when its funding rate creates arb opportunity with the others
+- **Vertex**: Secondary venue — use when its funding rate creates an arb opportunity versus GMX or when its order book offers better execution
 
 Always compare execution cost (fees + expected slippage) across venues before routing.
 
@@ -1334,8 +1335,18 @@ fn strategy_iteration_protocol(strategy_type: &str) -> String {
         "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, then call `api.validate(intent)` and `api.execute(intent, validation)`. Use raw base units for swap amounts (for example `2000000000` for 2,000 USDC), include `amount_format: "base_units"`, and set a realistic `min_amount_out` instead of a placeholder. Also include `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Log the outcome immediately. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, a realistic `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
+
+After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
+
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
+            .to_string(),
+        "yield" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+
+- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Run `node tools/aave-reserve-status.js` to inspect live Aave asset availability on the execution RPC, then fetch current price context with `api-client.js`. Compare only executable Aave/Morpho opportunities and only form a thesis if the expected yield improvement is meaningful after gas and risk.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3` or `morpho`, validate it through the Trading HTTP API, then execute if approved. Use `aave-reserve-status.js` as a hard gate for Aave assets: do not trade assets marked unavailable or frozen. Safe pattern: `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Then proceed to reflect.
+- **reflect**: Review whether the action improved capital placement, whether risk stayed acceptable, and whether the result matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
@@ -1363,11 +1374,19 @@ fn strategy_core_workflow_tools(strategy_type: &str) -> String {
 | `log-decision.js` | `node tools/log-decision.js '{"action":"trade-or-skip","reason":"..."}'` | Append your trade thesis or skip reason to the decision log. |
 | `write-metrics.js` | `node tools/write-metrics.js '{"portfolio_value_usd":10000}'` | Write iteration metrics. |"#
             .to_string(),
+        "yield" => r#"| Tool | Usage | What It Does |
+|------|-------|--------------|
+| `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, and iteration state. |
+| `aave-reserve-status.js` | `node tools/aave-reserve-status.js` | Reads live Aave reserve status from the execution RPC so you know which assets are actually available on the current fork. |
+| `api-client.js` | `node -e "const api=require('./tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))"` | Trading API wrapper for prices, circuit breaker, validate, execute, adapters, and metrics. |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"yield-trade-or-skip","reason":"..."}'` | Append your yield thesis or skip reason to the decision log. |
+| `write-metrics.js` | `node tools/write-metrics.js '{"portfolio_value_usd":10000}'` | Write iteration metrics. |"#
+            .to_string(),
         _ => r#"| Tool | Usage | What It Does |
 |------|-------|--------------|
 | `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
 | `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, iteration state. |
-| `submit-trade.js` | `node tools/submit-trade.js --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. One command. |
+| `submit-trade.js` | `node tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. Use `--action sell` only to reduce/exit outcome shares already held. If an outcome is overpriced and you do not hold it, buy the opposite side or skip. |
 | `manage-collateral.js` | `node tools/manage-collateral.js --action status` | CLOB collateral: release vault funds, return funds, check status. Actions: status, release, return, return-all. |
 | `write-metrics.js` | `node tools/write-metrics.js '{{"portfolio_value_usd":10000}}'` | Write iteration metrics. |"#
             .to_string(),
@@ -1379,16 +1398,26 @@ fn strategy_typical_iteration(strategy_type: &str) -> String {
         "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then call `api.validate(intent)` and `api.execute(intent, validation)`
+4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 
 Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for DEX swaps — those are prediction-market tools."#
             .to_string(),
+        "yield" => r#"1. Run `get-portfolio.js` — check current positions and recent changes
+2. Run `aave-reserve-status.js` — treat assets with `available_for_supply: false` as blocked on this fork
+3. Fetch current price context via `api-client.js` and compare only executable Aave vs Morpho opportunities
+4. Run the circuit breaker check before any trade
+5. If the setup is actionable, build a `supply`, `withdraw`, `borrow`, or `repay` intent with `target_protocol: "aave_v3"` or `"morpho"`, validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+6. Run `log-decision.js` with the thesis or skip reason
+7. Run `write-metrics.js` to update state
+
+Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for yield actions — those are prediction-market tools."#
+            .to_string(),
         _ => r#"1. Run `analyze-opportunities.js` — read the opportunities list
 2. Run `get-portfolio.js` — check current positions
 3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
-4. For markets with edge > 5%: run `submit-trade.js` with your reasoning
+4. For markets with edge > 5%: run `submit-trade.js --action buy` to increase a position. For negative edge, only run `--action sell` when reducing/exiting an existing outcome position; otherwise buy the opposite side when available or skip. Never sell outcome shares you do not hold.
 5. Run `write-metrics.js` to update state"#
             .to_string(),
     }
@@ -1401,6 +1430,15 @@ fn strategy_utility_tools(strategy_type: &str) -> String {
 | `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
 | `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (prices, circuit breaker, validate, execute) |
 | `log-decision.js` | `node tools/log-decision.js '{"action":"skip","reason":"no clean setup"}'` | Log decisions |
+| `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Optional broad market scan if you need extra context |
+| `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Optional raw price helper for additional context |"#
+            .to_string(),
+        "yield" => r#"| Tool | Usage | Purpose |
+|------|-------|---------|
+| `update-phase.js` | `node tools/update-phase.js <phase>` | Update phase state |
+| `aave-reserve-status.js` | `node tools/aave-reserve-status.js` | Live Aave reserve availability on the execution RPC. Use it before any Aave action. |
+| `api-client.js` | `require('./tools/api-client')` | Trading HTTP API wrapper (prices, circuit breaker, validate, execute) |
+| `log-decision.js` | `node tools/log-decision.js '{"action":"skip","reason":"yield spread not worth gas"}'` | Log decisions |
 | `scan-markets.js` | `node tools/scan-markets.js [--limit 50]` | Optional broad market scan if you need extra context |
 | `check-prices.js` | `node tools/check-prices.js [--limit 20]` | Optional raw price helper for additional context |"#
             .to_string(),
@@ -1445,6 +1483,19 @@ fn build_profile_instructions(
         .get("custom_instructions")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let available_protocols = config
+        .strategy_config
+        .get("available_protocols")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty());
 
     // Use override if provided, otherwise use pack expert prompt
     let effective_expert = if expert_override.is_empty() {
@@ -1574,6 +1625,7 @@ Endpoints:
 - Vault Address: {vault}
 - Chain ID: {chain_id}
 - Strategy: {strategy_type}
+{available_protocols_line}
 
 ## Risk Parameters
 
@@ -1600,6 +1652,12 @@ Endpoints:
         token = config.trading_api_token,
         vault = config.vault_address,
         chain_id = config.chain_id,
+        available_protocols_line = available_protocols
+            .map(|protocols| format!(
+                "- Available Protocols: {}\n- Do not use any `target_protocol` outside this list.",
+                protocols.join(", ")
+            ))
+            .unwrap_or_default(),
         iteration_protocol = iteration_protocol,
         core_workflow_tools = core_workflow_tools,
         typical_iteration = typical_iteration,
@@ -2176,7 +2234,6 @@ mod tests {
         assert!(!providers.is_empty());
         let ids: Vec<_> = providers.iter().map(|p| p.id()).collect();
         assert!(ids.contains(&"gmx_v2"));
-        assert!(ids.contains(&"hyperliquid"));
         assert!(ids.contains(&"vertex"));
     }
 
@@ -2211,7 +2268,7 @@ mod tests {
     #[test]
     fn test_perp_pack_has_cross_venue_methodology() {
         let pack = get_pack("perp").unwrap();
-        assert!(pack.system_prompt.contains("Cross-Venue"));
+        assert!(pack.system_prompt.contains("Execution Across Venues"));
         assert!(pack.system_prompt.contains("Funding Rate Arbitrage"));
     }
 
@@ -2274,6 +2331,21 @@ mod tests {
         assert!(
             content.contains("Custom Instructions"),
             "custom instructions section header must appear"
+        );
+    }
+
+    #[test]
+    fn test_yield_pack_mentions_aave_reserve_status_tool() {
+        let pack = get_pack("yield").unwrap();
+        let content = render_pack_agent_instructions(&pack, &test_config());
+
+        assert!(
+            content.contains("aave-reserve-status.js"),
+            "yield profile should instruct the agent to inspect live Aave reserve status"
+        );
+        assert!(
+            content.contains("available_for_supply"),
+            "yield profile should treat unavailable reserves as blocked"
         );
     }
 

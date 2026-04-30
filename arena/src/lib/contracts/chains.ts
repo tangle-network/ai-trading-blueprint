@@ -1,11 +1,25 @@
 import type { Address } from 'viem';
+import { defineChain } from 'viem';
 import {
-  tangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
+  tangleLocal as sharedTangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
   configureNetworks, getNetworks,
   type CoreAddresses,
 } from '@tangle-network/blueprint-ui';
 
-export { tangleLocal };
+const forkMode = import.meta.env.VITE_FORK_MODE === 'true';
+const executionForkChainId = Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?? sharedTangleLocal.id);
+const executionForkRpcUrl = import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? rpcUrl;
+
+export const executionForkChain = defineChain({
+  id: executionForkChainId,
+  name: 'Ethereum Local Fork',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [executionForkRpcUrl] } },
+  blockExplorers: { default: { name: 'Explorer', url: '' } },
+  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+});
+
+export const tangleLocal = forkMode ? executionForkChain : sharedTangleLocal;
 
 export {
   tangleTestnet, tangleMainnet, rpcUrl,
@@ -25,8 +39,8 @@ export interface ArenaAddresses extends CoreAddresses {
 configureNetworks<ArenaAddresses>({
   [tangleLocal.id]: {
     chain: tangleLocal,
-    rpcUrl,
-    label: 'Tangle Local',
+    rpcUrl: tangleLocal.rpcUrls.default.http[0] ?? rpcUrl,
+    label: forkMode ? 'Ethereum Local Fork' : 'Tangle Local',
     shortLabel: 'Local',
     addresses: {
       jobs: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,

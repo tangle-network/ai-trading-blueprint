@@ -22,10 +22,11 @@ OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
 INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 N_VALIDATOR_SERVICES="${N_VALIDATOR_SERVICES:-1}"
 FORK_MODE="${FORK_MODE:-false}"
+FORK_BASE_CHAIN_ID="${FORK_BASE_CHAIN_ID:-${PROTOCOL_CHAIN_ID:-}}"
 ENABLE_VALIDATOR_SERVICE="${ENABLE_VALIDATOR_SERVICE:-}"
 EXISTING_USDC_ADDRESS="${EXISTING_USDC_ADDRESS:-${USDC_ADDRESS:-}}"
 EXISTING_WETH_ADDRESS="${EXISTING_WETH_ADDRESS:-${WETH_ADDRESS:-}}"
-FORGE_SCRIPT_TIMEOUT_SECS="${FORGE_SCRIPT_TIMEOUT_SECS:-120}"
+FORGE_SCRIPT_TIMEOUT_SECS="${FORGE_SCRIPT_TIMEOUT_SECS:-300}"
 TRADING_APPROVE_GAS_LIMIT="${TRADING_APPROVE_GAS_LIMIT:-25000000}"
 TRADING_APPROVE_GAS_PRICE_WEI="${TRADING_APPROVE_GAS_PRICE_WEI:-1}"
 OPERATOR_REGISTRATION_GAS_LIMIT="${OPERATOR_REGISTRATION_GAS_LIMIT:-3000000}"
@@ -250,6 +251,34 @@ create_manual_singleton_vault() {
     exit 1
   fi
 
+  if [[ -n "${PRIMARY_VALUATOR:-}" ]]; then
+    local mainnet_usdt="0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    local mainnet_dai="0x6B175474E89094C44Da98b954EedeAC495271d0F"
+    local mainnet_wbtc="0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+    local aave_aweth="0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8"
+    local aave_ausdc="0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+    local aave_adai="0x018008bfb33d285247A21d44E50697654f754e63"
+    for token in "$USDC" "$WETH"; do
+      send_with_retry "$vault" "setValuationAdapter(address,address)" "$token" "$PRIMARY_VALUATOR" \
+        --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+        --rpc-url "$RPC_URL" --from "$admin_address" --unlocked > /dev/null
+    done
+    if [[ "$FORK_MODE" == "true" ]]; then
+      for token in "$mainnet_usdt" "$mainnet_dai" "$mainnet_wbtc"; do
+        send_with_retry "$vault" "setValuationAdapter(address,address)" "$token" "$PRIMARY_VALUATOR" \
+          --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+          --rpc-url "$RPC_URL" --from "$admin_address" --unlocked > /dev/null
+      done
+      if [[ -n "${WRAPPED_VALUATOR:-}" ]]; then
+        for token in "$aave_aweth" "$aave_ausdc" "$aave_adai"; do
+          send_with_retry "$vault" "setValuationAdapter(address,address)" "$token" "$WRAPPED_VALUATOR" \
+            --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+            --rpc-url "$RPC_URL" --from "$admin_address" --unlocked > /dev/null
+        done
+      fi
+    fi
+  fi
+
   printf '%s\n' "$vault"
 }
 
@@ -263,6 +292,8 @@ USDC=$(parse_deploy USDC)
 WETH=$(parse_deploy WETH)
 TRADE_VALIDATOR=$(parse_deploy TRADE_VALIDATOR)
 FEE_DISTRIBUTOR=$(parse_deploy FEE_DISTRIBUTOR)
+PRIMARY_VALUATOR=$(parse_deploy PRIMARY_VALUATOR)
+WRAPPED_VALUATOR=$(parse_deploy WRAPPED_VALUATOR)
 BLUEPRINT_ID=$(parse_deploy BLUEPRINT_ID)
 INSTANCE_BLUEPRINT_ID=$(parse_deploy INSTANCE_BLUEPRINT_ID)
 TEE_BLUEPRINT_ID=$(parse_deploy TEE_BLUEPRINT_ID)
@@ -283,6 +314,8 @@ echo "  TEE BSM:                $TEE_BSM"
 echo "  Validator BSM:          $VALIDATOR_BSM"
 echo "  VaultFactory:           $VAULT_FACTORY"
 echo "  TradeValidator:         $TRADE_VALIDATOR"
+echo "  Primary valuator:       $PRIMARY_VALUATOR"
+echo "  Wrapped valuator:       $WRAPPED_VALUATOR"
 echo "  USDC:                   $USDC"
 echo "  WETH:                   $WETH"
 echo "  Cloud Blueprint ID:     $BLUEPRINT_ID"
@@ -337,6 +370,36 @@ for BSM_ADDR in "$BSM" "$INSTANCE_BSM" "$TEE_BSM"; do
     --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
     --rpc-url "$RPC_URL" > /dev/null 2>&1
 done
+
+if [[ -n "$PRIMARY_VALUATOR" ]]; then
+  MAINNET_USDT="0xdAC17F958D2ee523a2206206994597C13D831ec7"
+  MAINNET_DAI="0x6B175474E89094C44Da98b954EedeAC495271d0F"
+  MAINNET_WBTC="0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+  AAVE_AWETH="0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8"
+  AAVE_AUSDC="0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+  AAVE_ADAI="0x018008bfb33d285247A21d44E50697654f754e63"
+  for BSM_ADDR in "$BSM" "$INSTANCE_BSM" "$TEE_BSM"; do
+    for token in "$USDC" "$WETH"; do
+      cast send "$BSM_ADDR" "setDefaultValuationAdapter(address,address)" "$token" "$PRIMARY_VALUATOR" \
+        --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+        --rpc-url "$RPC_URL" > /dev/null 2>&1
+    done
+    if [[ "$FORK_MODE" == "true" ]]; then
+      for token in "$MAINNET_USDT" "$MAINNET_DAI" "$MAINNET_WBTC"; do
+        cast send "$BSM_ADDR" "setDefaultValuationAdapter(address,address)" "$token" "$PRIMARY_VALUATOR" \
+          --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+          --rpc-url "$RPC_URL" > /dev/null 2>&1
+      done
+      if [[ -n "$WRAPPED_VALUATOR" ]]; then
+        for token in "$AAVE_AWETH" "$AAVE_AUSDC" "$AAVE_ADAI"; do
+          cast send "$BSM_ADDR" "setDefaultValuationAdapter(address,address)" "$token" "$WRAPPED_VALUATOR" \
+            --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+            --rpc-url "$RPC_URL" > /dev/null 2>&1
+        done
+      fi
+    fi
+  done
+fi
 
 if [[ "$FORK_MODE" != "true" ]]; then
   # Set instanceMode=true on Instance and TEE BSMs (vault created at service init, not provision job)
@@ -786,6 +849,18 @@ echo "[8/9] Writing arena/.env.local..."
 
 # Build comma-separated service IDs for all variants
 ALL_SERVICE_IDS="$CLOUD_SERVICE_ID,$INSTANCE_SERVICE_ID,$TEE_SERVICE_ID"
+ETHEREUM_MAINNET_WETH="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+ARBITRUM_USDC="0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+DEX_ETHEREUM_ASSET_TOKEN="${VITE_DEX_ETHEREUM_ASSET_TOKEN:-$WETH}"
+if [[ "$FORK_MODE" == "true" && "${FORK_BASE_CHAIN_ID:-}" == "1" ]]; then
+  DEX_ETHEREUM_ASSET_TOKEN="${VITE_DEX_ETHEREUM_ASSET_TOKEN:-$ETHEREUM_MAINNET_WETH}"
+fi
+DEX_ETHEREUM_ENABLED="$FORK_MODE"
+DEX_ARBITRUM_FORK_ENABLED="${VITE_DEX_ARBITRUM_FORK_ENABLED:-false}"
+if [[ "$FORK_MODE" == "true" && "${FORK_BASE_CHAIN_ID:-}" == "42161" ]]; then
+  DEX_ETHEREUM_ENABLED=false
+  DEX_ARBITRUM_FORK_ENABLED=true
+fi
 
 cat > arena/.env.local <<EOF
 VITE_USE_LOCAL_CHAIN=true
@@ -799,6 +874,20 @@ VITE_WETH_ADDRESS=$WETH
 VITE_INSTANCE_VAULT_ADDRESS=$INSTANCE_VAULT
 VITE_TEE_VAULT_ADDRESS=$TEE_VAULT
 VITE_FORK_MODE=$FORK_MODE
+VITE_DEX_ETHEREUM_ENABLED=$DEX_ETHEREUM_ENABLED
+VITE_DEX_ETHEREUM_CHAIN_ID=$CHAIN_ID
+VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID=${FORK_BASE_CHAIN_ID:-}
+VITE_DEX_ETHEREUM_RPC_URL=$RPC_URL
+VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS=$VAULT_FACTORY
+VITE_DEX_ETHEREUM_ASSET_TOKEN=$DEX_ETHEREUM_ASSET_TOKEN
+VITE_DEX_ETHEREUM_PAPER_TRADE=${VITE_DEX_ETHEREUM_PAPER_TRADE:-false}
+VITE_DEX_ARBITRUM_FORK_ENABLED=$DEX_ARBITRUM_FORK_ENABLED
+VITE_DEX_ARBITRUM_FORK_CHAIN_ID=$CHAIN_ID
+VITE_DEX_ARBITRUM_FORK_PROTOCOL_CHAIN_ID=${FORK_BASE_CHAIN_ID:-42161}
+VITE_DEX_ARBITRUM_FORK_RPC_URL=$RPC_URL
+VITE_DEX_ARBITRUM_FORK_VAULT_FACTORY_ADDRESS=$VAULT_FACTORY
+VITE_DEX_ARBITRUM_FORK_ASSET_TOKEN=${VITE_DEX_ARBITRUM_FORK_ASSET_TOKEN:-$ARBITRUM_USDC}
+VITE_DEX_ARBITRUM_FORK_PAPER_TRADE=${VITE_DEX_ARBITRUM_FORK_PAPER_TRADE:-false}
 VITE_SERVICE_IDS=$ALL_SERVICE_IDS
 VITE_BOT_META={"$CLOUD_SERVICE_ID":{"name":"Cloud Demo Bot","strategyType":"dex"},"$INSTANCE_SERVICE_ID":{"name":"Instance Demo Bot","strategyType":"dex"},"$TEE_SERVICE_ID":{"name":"TEE Demo Bot","strategyType":"dex"}}
 VITE_OPERATOR_API_URL=/operator-api

@@ -3,6 +3,20 @@ import type { Address } from 'viem';
 import { strategyPacks, type StrategyPackDef } from '~/lib/blueprints';
 import type { ServiceInfo } from '~/routes/provision/types';
 
+const CLOB_COLLATERAL_STRATEGY_IDS = new Set(['volatility', 'mm', 'multi']);
+
+export function strategySupportsClobCollateral(
+  strategyType: string,
+  selectedPack: Pick<StrategyPackDef, 'providers'>,
+): boolean {
+  if (strategyType.startsWith('prediction')) return true;
+  if (CLOB_COLLATERAL_STRATEGY_IDS.has(strategyType)) return true;
+  return selectedPack.providers.some((provider) => {
+    const normalized = provider.trim().toLowerCase();
+    return normalized === 'polymarket' || normalized === 'all protocols';
+  });
+}
+
 interface ConfigureStepProps {
   name: string;
   setName: (v: string) => void;
@@ -16,6 +30,7 @@ interface ConfigureStepProps {
   serviceError: string | null;
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
+  strategyExecutionNotice?: string | null;
   collateralCapPct: string;
   setCollateralCapPct: (v: string) => void;
   canNext: boolean;
@@ -35,12 +50,13 @@ export function ConfigureStep({
   serviceError,
   selectedOperators,
   setShowAdvanced,
+  strategyExecutionNotice,
   collateralCapPct,
   setCollateralCapPct,
   canNext,
   goNext,
 }: ConfigureStepProps) {
-  const isPrediction = strategyType.startsWith('prediction');
+  const supportsClobCollateral = strategySupportsClobCollateral(strategyType, selectedPack);
   return (
     <>
       <Card>
@@ -140,6 +156,11 @@ export function ConfigureStep({
           <p className="text-xs text-arena-elements-textTertiary">
             Runtime backend and infrastructure controls are available in Advanced Settings.
           </p>
+          {strategyExecutionNotice && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {strategyExecutionNotice}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -171,7 +192,7 @@ export function ConfigureStep({
         </CardContent>
       </Card>
 
-      {isPrediction && (
+      {supportsClobCollateral && (
         <Card>
           <CardContent className="pt-5 pb-4">
             <label htmlFor="collateral-cap" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">

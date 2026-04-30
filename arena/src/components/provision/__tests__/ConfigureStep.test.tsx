@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ConfigureStep } from '../ConfigureStep';
+import { ConfigureStep, strategySupportsClobCollateral } from '../ConfigureStep';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 
 mockBlueprintUi();
@@ -14,6 +14,8 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'DEX Swing',
       description: 'Swing trading on DEXes',
       providers: ['Uniswap', 'Sushiswap'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [1, 8453],
       cron: '0 */6 * * *',
       maxTurns: 40,
       timeoutMs: 120000,
@@ -24,6 +26,8 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'DeFi Yield',
       description: 'Yield farming strategies',
       providers: ['Aave', 'Compound'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [1, 8453],
       cron: '0 */8 * * *',
       maxTurns: 40,
       timeoutMs: 120000,
@@ -34,10 +38,36 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'Polymarket',
       description: 'Prediction market strategies',
       providers: ['Polymarket'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [137],
       cron: '0 */6 * * *',
       maxTurns: 40,
       timeoutMs: 120000,
       expertKnowledge: 'Prediction market signal selection and execution.',
+    },
+    {
+      id: 'volatility',
+      name: 'Volatility',
+      description: 'Volatility strategies',
+      providers: ['Polymarket', 'Uniswap V3'],
+      executionMode: 'paper-only' as const,
+      supportedChainIds: [],
+      cron: '0 */10 * * *',
+      maxTurns: 40,
+      timeoutMs: 120000,
+      expertKnowledge: 'Volatility and prediction market setup.',
+    },
+    {
+      id: 'multi',
+      name: 'Cross-Strategy',
+      description: 'Cross-strategy allocation',
+      providers: ['All protocols'],
+      executionMode: 'none' as const,
+      supportedChainIds: [],
+      cron: '0 */5 * * *',
+      maxTurns: 40,
+      timeoutMs: 120000,
+      expertKnowledge: 'Cross-protocol setup.',
     },
   ],
 }));
@@ -53,6 +83,8 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
       name: 'DEX Swing',
       description: 'Swing trading on DEXes',
       providers: ['Uniswap', 'Sushiswap'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [1, 8453],
       cron: '0 */6 * * *',
       maxTurns: 40,
       timeoutMs: 120000,
@@ -76,6 +108,14 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe('ConfigureStep', () => {
+  it('identifies all Polymarket-capable strategies as CLOB collateral candidates', () => {
+    expect(strategySupportsClobCollateral('prediction_crypto', { providers: ['Polymarket'] })).toBe(true);
+    expect(strategySupportsClobCollateral('volatility', { providers: ['Polymarket', 'Uniswap V3'] })).toBe(true);
+    expect(strategySupportsClobCollateral('mm', { providers: ['Polymarket', 'Hyperliquid'] })).toBe(true);
+    expect(strategySupportsClobCollateral('multi', { providers: ['All protocols'] })).toBe(true);
+    expect(strategySupportsClobCollateral('dex', { providers: ['Uniswap V3'] })).toBe(false);
+  });
+
   it('renders agent name input', () => {
     render(<ConfigureStep {...defaultProps()} />);
     expect(screen.getByText('Agent Name')).toBeInTheDocument();
@@ -207,5 +247,34 @@ describe('ConfigureStep', () => {
     const selectedOperators = new Set(['0x1234567890123456789012345678901234567890']);
     render(<ConfigureStep {...defaultProps({ isInstance: true, selectedOperators })} />);
     expect(screen.getByText(/Instance service mode with 1 selected operator\./)).toBeInTheDocument();
+  });
+
+  it('shows CLOB collateral controls for Polymarket-capable non-prediction strategies', () => {
+    render(
+      <ConfigureStep
+        {...defaultProps({
+          strategyType: 'volatility',
+          selectedPack: {
+            id: 'volatility',
+            name: 'Volatility',
+            description: 'Volatility strategies',
+            providers: ['Polymarket', 'Uniswap V3'],
+            executionMode: 'paper-only' as const,
+            supportedChainIds: [],
+            cron: '0 */10 * * *',
+            maxTurns: 40,
+            timeoutMs: 120000,
+            expertKnowledge: 'Volatility and prediction market setup.',
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText('CLOB Collateral Cap (%)')).toBeInTheDocument();
+  });
+
+  it('does not show CLOB collateral controls for non-Polymarket strategies', () => {
+    render(<ConfigureStep {...defaultProps()} />);
+    expect(screen.queryByLabelText('CLOB Collateral Cap (%)')).not.toBeInTheDocument();
   });
 });

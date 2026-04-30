@@ -7,6 +7,7 @@ import type { TradingBlueprintDef, StrategyPackDef } from '~/lib/blueprints';
 import type { ServiceInfo } from '~/routes/provision/types';
 import { PROVISION_PROGRESS_LABELS, cronToHuman, formatCost } from '~/routes/provision/types';
 import { TimelineStage, ElapsedTime } from './TimelineStage';
+import { getProvisionBotRouteId } from '~/lib/utils/provisionBotRoute';
 
 interface DeployStepProps {
   isInstance: boolean;
@@ -82,6 +83,8 @@ export function DeployStep({
   goBack,
   resetTx,
 }: DeployStepProps) {
+  const botRouteId = latestDeployment ? getProvisionBotRouteId(latestDeployment) : undefined;
+
   return (
     <>
       {/* Instance blueprint: create service -> auto-provision */}
@@ -383,16 +386,9 @@ export function DeployStep({
                     </>
                   )}
                 </div>
-                {(latestDeployment.vaultAddress && latestDeployment.vaultAddress !== zeroAddress) ? (
+                {botRouteId ? (
                   <Link
-                    to={`/arena/bot/${latestDeployment.vaultAddress.toLowerCase()}`}
-                    className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
-                  >
-                    View Bot &rarr;
-                  </Link>
-                ) : latestDeployment.sandboxId ? (
-                  <Link
-                    to={`/arena/bot/${encodeURIComponent(latestDeployment.sandboxId)}`}
+                    to={`/arena/bot/${encodeURIComponent(botRouteId)}`}
                     className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
                   >
                     View Bot &rarr;

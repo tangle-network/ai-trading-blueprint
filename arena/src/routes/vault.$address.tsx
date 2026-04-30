@@ -1,4 +1,5 @@
-import { useParams, Link } from 'react-router';
+import { useCallback, useState } from 'react';
+import { useParams, Link, useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
 import { useAccount, useSwitchChain } from 'wagmi';
@@ -9,6 +10,7 @@ import { CollateralStats } from '~/components/vault/CollateralStats';
 import { CollateralAdmin } from '~/components/vault/CollateralAdmin';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
+import { VaultActivity } from '~/components/vault/VaultActivity';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
 import { networks } from '~/lib/contracts/chains';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
@@ -17,19 +19,49 @@ export const meta: MetaFunction = () => [
   { title: 'Vault — AI Trading Arena' },
 ];
 
+const KNOWN_CHAIN_NAMES: Record<number, string> = {
+  8453: 'Base',
+  84532: 'Base Sepolia',
+  421614: 'Arbitrum Sepolia',
+  31337: 'Tangle Local',
+  31338: 'Ethereum Local Fork',
+  31339: 'Ethereum Fork',
+};
+
+function parseChainIdParam(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function chainLabel(chainId: number, configuredName?: string): string {
+  return configuredName ?? KNOWN_CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
+}
+
 export default function VaultPage() {
   const { address } = useParams();
+  const [searchParams] = useSearchParams();
   const vaultAddress = address as Address | undefined;
   const { isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const selectedChainId = useStore(selectedChainIdStore);
-  const selectedNetwork = networks[selectedChainId]!;
-  const targetChain = selectedNetwork.chain;
+  const selectedNetwork = networks[selectedChainId] ?? Object.values(networks)[0];
+  const requestedChainId = parseChainIdParam(searchParams.get('chainId'));
+  const targetChainId = requestedChainId ?? selectedNetwork.chain.id;
+  const targetNetwork = networks[targetChainId];
+  const targetChainName = chainLabel(targetChainId, targetNetwork?.chain.name);
 
-  const vault = useVaultRead(vaultAddress);
+  const vault = useVaultRead(vaultAddress, targetChainId);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const handleVaultMutationSuccess = useCallback(() => {
+    void vault.refetch();
+    setActivityRefreshKey((key) => key + 1);
+  }, [vault.refetch]);
 
   const isValidAddress = vaultAddress && /^0x[a-fA-F0-9]{40}$/.test(vaultAddress);
-  const isWrongChain = isConnected && chainId !== targetChain.id;
+  const isWrongChain = isConnected && chainId !== targetChainId;
+  const navNeedsPricing = vault.hasNonDepositAssets && vault.isNavSafe !== true;
 
   if (!isValidAddress) {
     return (
@@ -73,6 +105,9 @@ export default function VaultPage() {
                     Paused
                   </span>
                 )}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-arena-elements-background-depth-2 border border-arena-elements-borderColor text-xs font-data font-semibold text-arena-elements-textSecondary uppercase tracking-wider">
+                  {targetChainName} · {targetChainId}
+                </span>
               </div>
               <div className="flex items-center gap-2 mt-1.5">
                 <p className="text-sm text-arena-elements-textSecondary font-data truncate">
@@ -100,11 +135,44 @@ export default function VaultPage() {
           assetSymbol={vault.assetSymbol}
           paused={vault.paused}
           isLoading={vault.isLoading}
+          isConnected={isConnected}
+          approximateNav={navNeedsPricing}
           userSharesFormatted={vault.userSharesFormatted}
         />
 
+        {navNeedsPricing ? (
+          <div className="glass-card rounded-xl p-5 mb-6 border-amber-400/30 bg-amber-500/5">
+            <div className="flex items-start gap-3">
+              <div className="i-ph:warning-circle text-lg text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+                  Vault value needs pricing
+                </div>
+                <p className="text-sm text-arena-elements-textSecondary mt-1">
+                  This vault holds assets without a configured price adapter. Deposits and main-asset withdrawals are paused until pricing is configured.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : vault.hasNonDepositAssets ? (
+          <div className="glass-card rounded-xl p-5 mb-6 border-emerald-400/30 bg-emerald-500/5">
+            <div className="flex items-start gap-3">
+              <div className="i-ph:check-circle text-lg text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+                  Vault value includes traded assets
+                </div>
+                <p className="text-sm text-arena-elements-textSecondary mt-1">
+                  Non-{vault.assetSymbol} positions are priced through the vault adapter. Basket withdrawals return each held asset pro rata.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <CollateralStats
           vaultAddress={vaultAddress}
+          targetChainId={targetChainId}
           totalOutstandingCollateral={vault.totalOutstandingCollateral}
           maxCollateralBps={vault.maxCollateralBps}
           availableCollateral={vault.availableCollateral}
@@ -120,7 +188,9 @@ export default function VaultPage() {
             assetDecimals={vault.assetDecimals}
             assetSymbol={vault.assetSymbol}
             maxCollateralBps={vault.maxCollateralBps}
-            onSuccess={vault.refetch}
+            targetChainId={targetChainId}
+            targetChainName={targetChainName}
+            onSuccess={handleVaultMutationSuccess}
           />
         )}
 
@@ -145,20 +215,20 @@ export default function VaultPage() {
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
             <div className="i-ph:wallet text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary">
-              Connect your wallet to deposit or withdraw.
+              Connect your wallet on {targetChainName} ({targetChainId}) to deposit or withdraw.
             </p>
           </div>
         ) : isWrongChain ? (
           <div className="glass-card rounded-xl p-8 mb-6 text-center">
             <div className="i-ph:arrow-square-out text-3xl text-amber-500 dark:text-amber-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-4">
-              Your wallet is connected to chain {chainId}. Switch to <span className="text-violet-700 dark:text-violet-400 font-semibold">{targetChain.name} ({targetChain.id})</span> to interact with this vault.
+              This vault is on <span className="text-violet-700 dark:text-violet-400 font-semibold">{targetChainName} ({targetChainId})</span>. Your wallet is connected to chain {chainId}. Switch chains to deposit or withdraw.
             </p>
             <Button
-              onClick={() => switchChain({ chainId: targetChain.id })}
+              onClick={() => switchChain({ chainId: targetChainId })}
               className="bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
             >
-              Switch to {targetChain.name}
+              Switch to {targetChainName}
             </Button>
           </div>
         ) : null}
@@ -173,29 +243,34 @@ export default function VaultPage() {
             userAssetBalance={vault.userAssetBalance}
             userAssetBalanceFormatted={vault.userAssetBalanceFormatted}
             userAllowance={vault.userAllowance}
-            onSuccess={vault.refetch}
+            maxDeposit={vault.maxDeposit}
+            paused={vault.paused}
+            targetChainId={targetChainId}
+            targetChainName={targetChainName}
+            onSuccess={handleVaultMutationSuccess}
           />
           <WithdrawForm
             vaultAddress={vaultAddress}
             assetSymbol={vault.assetSymbol}
             shareDecimals={vault.shareDecimals}
-            sharePrice={vault.sharePrice}
             userShares={vault.userShares}
             userSharesFormatted={vault.userSharesFormatted}
-            onSuccess={vault.refetch}
+            paused={vault.paused}
+            targetChainId={targetChainId}
+            targetChainName={targetChainName}
+            onSuccess={handleVaultMutationSuccess}
           />
         </div>
 
-        {/* Recent Activity */}
-        <div className="glass-card rounded-xl p-6">
-          <h2 className="font-display font-bold text-lg mb-4">Recent Activity</h2>
-          <div className="py-8 text-center">
-            <div className="i-ph:clock-counter-clockwise text-2xl text-arena-elements-textTertiary mb-3 mx-auto" />
-            <p className="text-sm text-arena-elements-textSecondary">
-              Deposit and withdrawal history coming soon.
-            </p>
-          </div>
-        </div>
+        <VaultActivity
+          vaultAddress={vaultAddress}
+          assetToken={vault.assetToken}
+          targetChainId={targetChainId}
+          assetSymbol={vault.assetSymbol}
+          assetDecimals={vault.assetDecimals}
+          shareDecimals={vault.shareDecimals}
+          refreshKey={activityRefreshKey}
+        />
       </div>
     </AnimatedPage>
   );

@@ -83,6 +83,26 @@ fn parse_paper_trade_from_strategy_config(
     }
 }
 
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn default_paper_trade_for_request(request: &TradingProvisionRequest) -> bool {
+    if let Some(value) = std::env::var("DEFAULT_PAPER_TRADE")
+        .ok()
+        .and_then(|raw| parse_bool_env(&raw))
+    {
+        return value;
+    }
+
+    let chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    !matches!(chain_id, 31338 | 31339)
+}
+
 fn default_paper_initial_capital_value() -> Value {
     let configured = std::env::var("DEFAULT_PAPER_INITIAL_CAPITAL_USD")
         .ok()
@@ -90,6 +110,42 @@ fn default_paper_initial_capital_value() -> Value {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_PAPER_INITIAL_CAPITAL_USD.to_string());
     Value::String(configured)
+}
+
+fn parse_u64_config(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(value) => value.as_u64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn configured_protocol_chain_id(
+    strategy_config: &Map<String, Value>,
+    execution_chain_id: u64,
+) -> u64 {
+    strategy_config
+        .get("protocol_chain_id")
+        .and_then(parse_u64_config)
+        .or_else(|| {
+            std::env::var("PROTOCOL_CHAIN_ID")
+                .or_else(|_| std::env::var("FORK_BASE_CHAIN_ID"))
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or(execution_chain_id)
+}
+
+fn default_paper_cash_token_value(
+    strategy_config: &Map<String, Value>,
+    request: &TradingProvisionRequest,
+) -> Option<Value> {
+    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
+    trading_runtime::token_metadata::token_address_for_symbol(protocol_chain_id, "USDC")
+        .map(|address| Value::String(address.to_string()))
+        .or_else(|| Some(Value::String("USDC".to_string())))
 }
 
 fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
@@ -111,6 +167,22 @@ fn apply_strategy_defaults(
         strategy_config
             .entry("initial_capital_usd".to_string())
             .or_insert_with(default_paper_initial_capital_value);
+        if let Some(cash_token) = default_paper_cash_token_value(strategy_config, request) {
+            strategy_config
+                .entry("cash_token".to_string())
+                .or_insert(cash_token);
+        }
+    }
+
+    if !strategy_config.contains_key("protocol_chain_id") {
+        let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+        let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
+        if protocol_chain_id != execution_chain_id {
+            strategy_config.insert(
+                "protocol_chain_id".to_string(),
+                Value::Number(protocol_chain_id.into()),
+            );
+        }
     }
 }
 
@@ -223,7 +295,7 @@ pub async fn provision_core(
             .inspect_err(|e| mark_provision_failed(call_id, e))?;
     let paper_trade = parse_paper_trade_from_strategy_config(parsed_strategy_config.as_ref())
         .inspect_err(|e| mark_provision_failed(call_id, e))?
-        .unwrap_or(true);
+        .unwrap_or_else(|| default_paper_trade_for_request(&request));
     let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
 
@@ -241,9 +313,14 @@ pub async fn provision_core(
     let rpc_url = if request.rpc_url.is_empty() {
         std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string())
     } else {
+        let allow_loopback =
+            std::env::var("ALLOW_LOOPBACK_RPC_URLS").is_ok_and(|v| v == "true" || v == "1");
         // Validate user-supplied RPC URL to block SSRF (internal IPs, metadata endpoints)
-        trading_runtime::url_validation::validate_rpc_url(&request.rpc_url)
-            .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
+        trading_runtime::url_validation::validate_rpc_url_with_options(
+            &request.rpc_url,
+            trading_runtime::url_validation::RpcUrlValidationOptions { allow_loopback },
+        )
+        .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
     };
 
     // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().
@@ -352,13 +429,9 @@ pub async fn provision_core(
             name: request.name.clone(),
             image: std::env::var("SIDECAR_IMAGE")
                 .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
-            stack: String::new(),
             agent_identifier: format!("trading-{}", request.strategy_type),
             env_json,
             metadata_json,
-            ssh_enabled: false,
-            ssh_public_key: String::new(),
-            web_terminal_enabled: false,
             max_lifetime_seconds: {
                 let days = if request.max_lifetime_days == 0 {
                     30
@@ -371,11 +444,7 @@ pub async fn provision_core(
             cpu_cores: request.cpu_cores,
             memory_mb: request.memory_mb,
             disk_gb: 10,
-            tee_config: None,
-            service_id: None,
-            owner: String::new(),
-            user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
-            port_mappings: Vec::new(),
+            ..Default::default()
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)

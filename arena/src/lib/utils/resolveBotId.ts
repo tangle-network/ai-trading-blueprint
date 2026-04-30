@@ -27,6 +27,12 @@ interface OperatorErrorBody {
   message?: string;
 }
 
+function numberFromUnknown(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return undefined;
+}
+
 function botMatchesHints(
   bot: BotLookupRecord,
   opts: {
@@ -180,11 +186,15 @@ export async function resolveBotId(
       if (res.ok) {
         const data = await res.json();
         if (typeof data?.metadata?.bot_id === 'string' && data.metadata.bot_id.length > 0) {
+          const provisionHints = {
+            callId: opts.callId,
+            serviceId: opts.serviceId ?? numberFromUnknown(data?.metadata?.service_id),
+          };
           const verified = await verifyBotCandidate(
             operatorApiUrl,
             data.metadata.bot_id as string,
             headers,
-            opts,
+            provisionHints,
           );
           if (verified.kind === 'match') return { botId: verified.botId };
           if (verified.kind === 'auth_required') return authRequired;
@@ -216,7 +226,17 @@ export async function resolveBotId(
       if (res.ok) {
         const data = await res.json();
         if (data.bots?.length > 0) {
-          return { botId: data.bots[0].id as string };
+          const matchingBots = (data.bots as BotLookupRecord[])
+            .filter((bot) => typeof bot.id === 'string' && botMatchesHints(bot, opts));
+          if (matchingBots.length === 1) {
+            return { botId: matchingBots[0].id as string };
+          }
+          if (matchingBots.length > 1) {
+            return {
+              error: 'Multiple matching bots found on operator. Open the intended bot from the dashboard.',
+              code: 'conflict',
+            };
+          }
         }
       }
       if (res.status === 401 || res.status === 403) return authRequired;

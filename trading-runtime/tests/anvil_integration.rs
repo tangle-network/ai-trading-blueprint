@@ -66,6 +66,11 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface MockAssetValuator {
+        function setRate(address token, address asset, uint256 rate) external;
+    }
+
+    #[sol(rpc)]
     interface PolicyEngine {
         function transferOwnership(address newOwner) external;
         function acceptOwnership() external;
@@ -81,7 +86,7 @@ sol! {
         function acceptOwnership() external;
         function getRequiredSignatures(address vault) external view returns (uint256);
         function computeDigest(
-            bytes32 intentHash, address vault, uint256 score, uint256 deadline
+            bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind
         ) external view returns (bytes32);
     }
 
@@ -111,6 +116,7 @@ sol! {
             string calldata name, string calldata symbol, bytes32 salt,
             PolicyConfig calldata policyConfig, FeeConfig calldata feeConfig
         ) external returns (address vault, address shareToken);
+        function setVaultDeployers(address vaultDeployer, address shareDeployer) external;
     }
 
     #[sol(rpc)]
@@ -132,6 +138,7 @@ sol! {
         function getBalance(address token) external view returns (uint256);
         function convertToAssets(uint256 shares) external view returns (uint256);
         function liquidAssets() external view returns (uint256);
+        function setValuationAdapter(address token, address adapter) external;
 
         // CLOB collateral management
         function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
@@ -174,6 +181,78 @@ async fn deploy_contract(
     receipt
         .contract_address
         .expect("no contract address in receipt")
+}
+
+async fn configure_vault_factory_deployers(
+    provider: &impl Provider,
+    vault_factory_addr: Address,
+    policy_engine_addr: Address,
+    trade_validator_addr: Address,
+    fee_distributor_addr: Address,
+) {
+    let vault_deployer_args = alloy::sol_types::SolValue::abi_encode(&(
+        vault_factory_addr,
+        policy_engine_addr,
+        trade_validator_addr,
+        fee_distributor_addr,
+    ));
+    let vault_deployer_addr = deploy_contract(
+        provider,
+        load_bytecode("VaultDeployer"),
+        vault_deployer_args,
+    )
+    .await;
+
+    let share_deployer_args = alloy::sol_types::SolValue::abi_encode(&(vault_factory_addr,));
+    let share_deployer_addr = deploy_contract(
+        provider,
+        load_bytecode("VaultShareDeployer"),
+        share_deployer_args,
+    )
+    .await;
+
+    VaultFactory::new(vault_factory_addr, provider)
+        .setVaultDeployers(vault_deployer_addr, share_deployer_addr)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+}
+
+async fn deploy_mock_asset_valuator(
+    provider: &impl Provider,
+    token: Address,
+    asset: Address,
+    rate: U256,
+) -> Address {
+    let valuator_addr = deploy_contract(provider, load_bytecode("MockAssetValuator"), vec![]).await;
+    MockAssetValuator::new(valuator_addr, provider)
+        .setRate(token, asset, rate)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    valuator_addr
+}
+
+async fn configure_vault_valuation_adapter(
+    provider: &impl Provider,
+    vault_addr: Address,
+    token: Address,
+    adapter: Address,
+) {
+    TradingVault::new(vault_addr, provider)
+        .setValuationAdapter(token, adapter)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 }
 
 /// Default PolicyConfig for tests: reasonable limits, no leverage.
@@ -313,6 +392,14 @@ async fn test_full_lifecycle_on_anvil() {
     ));
     let vault_factory_addr =
         deploy_contract(&deployer_provider, load_bytecode("VaultFactory"), vf_args).await;
+    configure_vault_factory_deployers(
+        &deployer_provider,
+        vault_factory_addr,
+        policy_engine_addr,
+        trade_validator_addr,
+        fee_distributor_addr,
+    )
+    .await;
 
     // ── 5. Transfer ownership to factory ────────────────────────────────────
     let policy = PolicyEngine::new(policy_engine_addr, &deployer_provider);
@@ -461,6 +548,15 @@ async fn test_full_lifecycle_on_anvil() {
         .unwrap();
 
     assert!(deploy_receipt.status(), "createVault should succeed");
+    let valuator_addr = deploy_mock_asset_valuator(
+        &deployer_provider,
+        token_b_addr,
+        token_a_addr,
+        U256::from(10u64).pow(U256::from(18)),
+    )
+    .await;
+    configure_vault_valuation_adapter(&deployer_provider, vault_addr, token_b_addr, valuator_addr)
+        .await;
     assert_ne!(
         vault_addr,
         Address::ZERO,
@@ -624,12 +720,12 @@ async fn test_full_lifecycle_on_anvil() {
     // Compute EIP-712 digest using on-chain computeDigest
     let tv = TradeValidator::new(trade_validator_addr, &deployer_provider);
     let digest1: FixedBytes<32> = tv
-        .computeDigest(intent_hash, vault_addr, scores[0], deadline)
+        .computeDigest(intent_hash, vault_addr, scores[0], deadline, U256::ZERO)
         .call()
         .await
         .unwrap();
     let digest2: FixedBytes<32> = tv
-        .computeDigest(intent_hash, vault_addr, scores[1], deadline)
+        .computeDigest(intent_hash, vault_addr, scores[1], deadline, U256::ZERO)
         .call()
         .await
         .unwrap();
@@ -825,6 +921,14 @@ async fn test_vault_edge_cases() {
     ));
     let vault_factory_addr =
         deploy_contract(&deployer_provider, load_bytecode("VaultFactory"), vf_args).await;
+    configure_vault_factory_deployers(
+        &deployer_provider,
+        vault_factory_addr,
+        policy_engine_addr,
+        trade_validator_addr,
+        fee_distributor_addr,
+    )
+    .await;
 
     // Transfer ownership to factory
     let policy = PolicyEngine::new(policy_engine_addr, &deployer_provider);
@@ -961,6 +1065,10 @@ async fn test_vault_edge_cases() {
         .get_receipt()
         .await
         .unwrap();
+    let valuator_addr =
+        deploy_mock_asset_valuator(&deployer_provider, token_b_addr, token_a_addr, e18).await;
+    configure_vault_valuation_adapter(&deployer_provider, vault_addr, token_b_addr, valuator_addr)
+        .await;
 
     // Configure policy
     let _: () = deployer_provider
@@ -1087,12 +1195,24 @@ async fn test_vault_edge_cases() {
     let scores = vec![U256::from(85u64), U256::from(75u64)];
     let tv_contract = TradeValidator::new(trade_validator_addr, &deployer_provider);
     let digest1 = tv_contract
-        .computeDigest(intent_hash, vault_addr, scores[0], past_deadline)
+        .computeDigest(
+            intent_hash,
+            vault_addr,
+            scores[0],
+            past_deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
     let digest2 = tv_contract
-        .computeDigest(intent_hash, vault_addr, scores[1], past_deadline)
+        .computeDigest(
+            intent_hash,
+            vault_addr,
+            scores[1],
+            past_deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
@@ -1154,7 +1274,13 @@ async fn test_vault_edge_cases() {
 
     let one_score = vec![U256::from(85u64)];
     let d1 = tv_contract
-        .computeDigest(intent_hash2, vault_addr, one_score[0], future_deadline)
+        .computeDigest(
+            intent_hash2,
+            vault_addr,
+            one_score[0],
+            future_deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
@@ -1440,6 +1566,14 @@ impl VaultTestSetup {
         ));
         let vault_factory_addr =
             deploy_contract(&deployer_provider, load_bytecode("VaultFactory"), vf_args).await;
+        configure_vault_factory_deployers(
+            &deployer_provider,
+            vault_factory_addr,
+            policy_engine_addr,
+            trade_validator_addr,
+            fee_distributor_addr,
+        )
+        .await;
 
         // Transfer ownership to factory
         PolicyEngine::new(policy_engine_addr, &deployer_provider)
@@ -1577,6 +1711,15 @@ impl VaultTestSetup {
             .get_receipt()
             .await
             .unwrap();
+        let valuator_addr =
+            deploy_mock_asset_valuator(&deployer_provider, token_b_addr, token_a_addr, e18).await;
+        configure_vault_valuation_adapter(
+            &deployer_provider,
+            vault_addr,
+            token_b_addr,
+            valuator_addr,
+        )
+        .await;
 
         // Configure policy — whitelist tokens and target
         let _: () = deployer_provider
@@ -1775,12 +1918,24 @@ async fn test_execute_expired_deadline_reverts() {
     // Sign with validators
     let tv = TradeValidator::new(setup.trade_validator_addr, &setup.deployer_provider);
     let digest1 = tv
-        .computeDigest(intent_hash, setup.vault_addr, scores[0], deadline)
+        .computeDigest(
+            intent_hash,
+            setup.vault_addr,
+            scores[0],
+            deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
     let digest2 = tv
-        .computeDigest(intent_hash, setup.vault_addr, scores[1], deadline)
+        .computeDigest(
+            intent_hash,
+            setup.vault_addr,
+            scores[1],
+            deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
@@ -1847,7 +2002,13 @@ async fn test_execute_insufficient_signatures_reverts() {
     let scores = vec![U256::from(85u64)];
     let tv = TradeValidator::new(setup.trade_validator_addr, &setup.deployer_provider);
     let digest1 = tv
-        .computeDigest(intent_hash, setup.vault_addr, scores[0], deadline)
+        .computeDigest(
+            intent_hash,
+            setup.vault_addr,
+            scores[0],
+            deadline,
+            U256::ZERO,
+        )
         .call()
         .await
         .unwrap();
@@ -2095,12 +2256,24 @@ async fn test_collateral_roundtrip_on_anvil() {
     let scores = vec![U256::from(80u64), U256::from(75u64)];
     let tv = TradeValidator::new(setup.trade_validator_addr, &setup.deployer_provider);
     let digest1: FixedBytes<32> = tv
-        .computeDigest(intent_hash, setup.vault_addr, scores[0], deadline)
+        .computeDigest(
+            intent_hash,
+            setup.vault_addr,
+            scores[0],
+            deadline,
+            U256::from(1u64),
+        )
         .call()
         .await
         .unwrap();
     let digest2: FixedBytes<32> = tv
-        .computeDigest(intent_hash, setup.vault_addr, scores[1], deadline)
+        .computeDigest(
+            intent_hash,
+            setup.vault_addr,
+            scores[1],
+            deadline,
+            U256::from(1u64),
+        )
         .call()
         .await
         .unwrap();

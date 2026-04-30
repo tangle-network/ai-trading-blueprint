@@ -1,5 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import type { Trade, TradeSimulation, TradeValidation, ValidatorResponseDetail } from '~/lib/types/trade';
+import type {
+  PredictionTradeMetadata,
+  Trade,
+  TradeExecutionDetails,
+  TradeExecutionStatus,
+  TradeSimulation,
+  TradeValidation,
+  ValidatorResponseDetail,
+} from '~/lib/types/trade';
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
@@ -26,6 +34,8 @@ interface ApiTrade {
   block_number?: number;
   gas_used?: string;
   paper_trade: boolean;
+  execution_status?: TradeExecutionStatus;
+  clob_order_id?: string;
   validation?: {
     approved: boolean;
     aggregate_score: number;
@@ -51,6 +61,19 @@ interface ApiTrade {
   amount_out?: string;
   entry_price_usd?: string;
   notional_usd?: string;
+  requested_price_usd?: string;
+  filled_price_usd?: string;
+  filled_amount?: string;
+  slippage_bps?: string;
+  execution_reason?: string;
+  prediction_metadata?: {
+    condition_id?: string;
+    token_id?: string;
+    market_question?: string;
+    outcome_label?: string;
+    outcome_index?: number;
+    market_slug?: string;
+  };
   valuation_status?: 'priced' | 'value_only' | 'unpriced';
 }
 
@@ -167,8 +190,67 @@ function getTradePriceUsd(trade: ApiTrade): number | null {
   return Number.isFinite(priceUsd) && priceUsd > 0 ? priceUsd : null;
 }
 
+function mapExecutionDetails(trade: ApiTrade): TradeExecutionDetails | undefined {
+  if (
+    !trade.execution_status &&
+    !trade.clob_order_id &&
+    !trade.requested_price_usd &&
+    !trade.filled_price_usd &&
+    !trade.filled_amount &&
+    !trade.slippage_bps &&
+    !trade.execution_reason
+  ) {
+    return undefined;
+  }
+
+  return {
+    status: trade.execution_status ?? (trade.paper_trade ? 'paper' : 'confirmed'),
+    clobOrderId: trade.clob_order_id,
+    requestedPriceUsd: trade.requested_price_usd != null
+      ? parseTradeAmount(trade.requested_price_usd)
+      : null,
+    filledPriceUsd: trade.filled_price_usd != null
+      ? parseTradeAmount(trade.filled_price_usd)
+      : null,
+    filledAmount: trade.filled_amount != null
+      ? parseTradeAmount(trade.filled_amount)
+      : null,
+    slippageBps: trade.slippage_bps != null
+      ? parseTradeAmount(trade.slippage_bps)
+      : null,
+    reason: trade.execution_reason,
+  };
+}
+
+function mapPredictionMetadata(trade: ApiTrade): PredictionTradeMetadata | undefined {
+  const metadata = trade.prediction_metadata;
+  if (!metadata) return undefined;
+
+  if (
+    !metadata.condition_id &&
+    !metadata.token_id &&
+    !metadata.market_question &&
+    !metadata.outcome_label &&
+    metadata.outcome_index == null &&
+    !metadata.market_slug
+  ) {
+    return undefined;
+  }
+
+  return {
+    conditionId: metadata.condition_id,
+    tokenId: metadata.token_id,
+    marketQuestion: metadata.market_question,
+    outcomeLabel: metadata.outcome_label,
+    outcomeIndex: metadata.outcome_index,
+    marketSlug: metadata.market_slug,
+  };
+}
+
 export function mapApiTrade(trade: ApiTrade, botName: string, fallbackChainId?: number): Trade {
   const validation = mapApiValidation(trade);
+  const execution = mapExecutionDetails(trade);
+  const predictionMetadata = mapPredictionMetadata(trade);
   const amountOut = deriveTradeAmountOut(trade);
   const chainId = trade.validation?.responses?.[0]?.chain_id ?? fallbackChainId;
   const assetIn = resolveAssetDisplay(trade.token_in, chainId);
@@ -200,6 +282,8 @@ export function mapApiTrade(trade: ApiTrade, botName: string, fallbackChainId?: 
     validatorScore: trade.validation?.aggregate_score,
     validatorReasoning: trade.validation?.responses?.[0]?.reasoning,
     validation,
+    execution,
+    predictionMetadata,
   };
 }
 

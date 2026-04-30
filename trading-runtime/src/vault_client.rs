@@ -123,6 +123,30 @@ impl VaultClient {
         })
     }
 
+    /// Encode an in-kind redeem call: `redeemInKind(uint256,address,address)`
+    pub fn encode_redeem_in_kind(
+        &self,
+        shares: &str,
+        receiver: &str,
+        owner: &str,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let shares_amount = Self::parse_u256(shares)?;
+        let receiver_addr = Self::parse_address(receiver)?;
+        let owner_addr = Self::parse_address(owner)?;
+
+        let call = ITradingVault::redeemInKindCall {
+            shares: shares_amount,
+            receiver: receiver_addr,
+            owner: owner_addr,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: "0".into(),
+        })
+    }
+
     /// Encode an execute call (trade through the vault with multisig validation).
     ///
     /// Uses the `ExecuteParams` struct matching the on-chain TradingVault contract.
@@ -373,6 +397,20 @@ mod tests {
             .unwrap();
         assert_eq!(tx.to, TEST_VAULT);
         assert!(tx.data.len() >= 4);
+    }
+
+    #[test]
+    fn test_encode_redeem_in_kind() {
+        let client = VaultClient::new(TEST_VAULT.into(), "http://localhost:8545".into(), 42161);
+        let tx = client
+            .encode_redeem_in_kind("1000000", TEST_RECEIVER, TEST_RECEIVER)
+            .unwrap();
+        assert_eq!(tx.to, TEST_VAULT);
+        assert_eq!(
+            &tx.data[..4],
+            &ITradingVault::redeemInKindCall::SELECTOR[..]
+        );
+        assert_eq!(tx.value, "0");
     }
 
     #[test]

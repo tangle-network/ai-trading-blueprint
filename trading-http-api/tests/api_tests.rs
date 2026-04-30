@@ -100,6 +100,49 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
     })
 }
 
+async fn test_state_with_bot_id_and_clob(
+    mock_uri: &str,
+    bot_id: &str,
+    clob_mock_uri: &str,
+) -> Arc<TradingApiState> {
+    use trading_runtime::polymarket_clob::ClobClient;
+
+    ensure_state_dir();
+
+    let clob_client = ClobClient::with_config(
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock_uri.to_string(),
+        Some(ClobClient::test_credentials()),
+    )
+    .expect("clob client");
+
+    Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(mock_uri.to_string()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:8545",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: bot_id.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id: bot_id.to_string(),
+        paper_trade: true,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: None,
+        clob_client: Some(Arc::new(clob_client)),
+    })
+}
+
 async fn test_state_with_chain_id(mock_uri: &str, chain_id: u64) -> Arc<TradingApiState> {
     ensure_state_dir();
 
@@ -156,13 +199,13 @@ fn execute_body() -> String {
                     "validator": "0xValidator1",
                     "score": 90,
                     "reasoning": "Good trade with favorable market conditions",
-                    "signature": "0xsig1"
+                    "signature": TEST_SIG
                 },
                 {
                     "validator": "0xValidator2",
                     "score": 80,
                     "reasoning": "Acceptable risk level within parameters",
-                    "signature": "0xsig2"
+                    "signature": TEST_SIG
                 }
             ]
         }
@@ -748,7 +791,14 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
             "approved": true,
             "aggregate_score": 100,
             "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
-            "validator_responses": []
+            "validator_responses": [
+                {
+                    "validator": "paper-mode",
+                    "score": 100,
+                    "reasoning": "Paper trade mode — validation bypassed",
+                    "signature": format!("0x{}", "00".repeat(65))
+                }
+            ]
         }
     }))
     .unwrap();
@@ -824,7 +874,14 @@ async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placehold
             "approved": true,
             "aggregate_score": 100,
             "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
-            "validator_responses": []
+            "validator_responses": [
+                {
+                    "validator": "paper-mode",
+                    "score": 100,
+                    "reasoning": "Paper trade mode — validation bypassed",
+                    "signature": format!("0x{}", "00".repeat(65))
+                }
+            ]
         }
     }))
     .unwrap();
@@ -1131,6 +1188,29 @@ fn multi_bot_state_with_strategy_config_and_bot(
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
+            } else {
+                None
+            }
+        }),
+        clob_client: None,
+        chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
+    })
+}
+
+fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTradingState> {
+    ensure_state_dir();
+    let auth_token = auth_token.to_string();
+    Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(move |token: &str| {
+            if token == auth_token {
+                Some(bot.clone())
             } else {
                 None
             }
@@ -1458,6 +1538,372 @@ async fn test_multi_bot_execute_paper_trade() {
 }
 
 #[tokio::test]
+async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.57", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.58", "size": "150.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let bot_id = format!("paper-prediction-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.585,
+                "condition_id": "0xcondition-paper",
+                "market_question": "Will ETH be above $4,000 on June 30?",
+                "outcome_label": "YES",
+                "outcome_index": 0,
+                "market_slug": "eth-above-4000-june-30"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    let trade = trades
+        .into_iter()
+        .find(|trade| trade.target_protocol == "polymarket_clob")
+        .expect("paper clob trade");
+
+    assert_eq!(
+        trade.execution_status,
+        Some(trading_http_api::trade_store::TradeExecutionStatus::Filled)
+    );
+    assert_eq!(trade.requested_price_usd.as_deref(), Some("0.585"));
+    assert_eq!(trade.filled_price_usd.as_deref(), Some("0.58"));
+    assert_eq!(trade.filled_amount.as_deref(), Some("100.0"));
+    assert_eq!(
+        trade
+            .prediction_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.condition_id.as_deref()),
+        Some("0xcondition-paper")
+    );
+    assert_eq!(
+        trade
+            .prediction_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.market_question.as_deref()),
+        Some("Will ETH be above $4,000 on June 30?")
+    );
+    assert_eq!(
+        trade
+            .prediction_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.outcome_label.as_deref()),
+        Some("YES")
+    );
+}
+
+#[tokio::test]
+async fn test_single_bot_paper_clob_sell_without_inventory_is_rejected() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    let bot_id = format!("paper-prediction-no-inventory-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "sell",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.585,
+                "condition_id": "0xcondition-paper",
+                "outcome_label": "YES",
+                "outcome_index": 0
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("Cannot sell 100.0 shares"),
+        "unexpected rejection body: {text}"
+    );
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    assert!(trades.is_empty());
+}
+
+#[tokio::test]
+async fn test_single_bot_paper_clob_trade_records_partial_fill() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.53", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.54", "size": "40.0"},
+                {"price": "0.60", "size": "100.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let bot_id = format!("paper-prediction-partial-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.55,
+                "condition_id": "0xcondition-partial",
+                "outcome_label": "YES"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    let trade = trades
+        .into_iter()
+        .find(|trade| trade.target_protocol == "polymarket_clob")
+        .expect("paper clob trade");
+
+    assert_eq!(
+        trade.execution_status,
+        Some(trading_http_api::trade_store::TradeExecutionStatus::Partial)
+    );
+    assert_eq!(trade.requested_price_usd.as_deref(), Some("0.55"));
+    assert_eq!(trade.filled_price_usd.as_deref(), Some("0.54"));
+    assert_eq!(trade.filled_amount.as_deref(), Some("40.0"));
+}
+
+#[tokio::test]
+async fn test_single_bot_paper_clob_trade_records_no_fill() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/book"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+            "asset_id": "48328953829",
+            "bids": [
+                {"price": "0.53", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.60", "size": "100.0"}
+            ],
+            "timestamp": "1740000000000",
+            "min_order_size": "1.0",
+            "neg_risk": false,
+            "tick_size": "0.01"
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let bot_id = format!("paper-prediction-no-fill-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.55,
+                "condition_id": "0xcondition-no-fill",
+                "outcome_label": "YES"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    let trade = trades
+        .into_iter()
+        .find(|trade| trade.target_protocol == "polymarket_clob")
+        .expect("paper clob trade");
+
+    assert_eq!(
+        trade.execution_status,
+        Some(trading_http_api::trade_store::TradeExecutionStatus::NoFill)
+    );
+    assert_eq!(trade.requested_price_usd.as_deref(), Some("0.55"));
+    assert!(trade.filled_price_usd.is_none());
+    assert!(trade.filled_amount.is_none());
+}
+
+#[tokio::test]
 async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
     let mock = MockServer::start().await;
 
@@ -1560,9 +2006,17 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Submitted),
+        clob_order_id: None,
         amount_out: Some("500".to_string()),
         entry_price_usd: Some("1".to_string()),
         notional_usd: Some("500".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1573,7 +2027,6 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1658,9 +2111,17 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Submitted),
+        clob_order_id: None,
         amount_out: Some("100".to_string()),
         entry_price_usd: Some("0.55".to_string()),
         notional_usd: Some("55".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1671,7 +2132,6 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1728,9 +2188,17 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         block_number: None,
         gas_used: None,
         paper_trade: false,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Submitted),
+        clob_order_id: None,
         amount_out: Some("0.05".to_string()),
         entry_price_usd: Some("2000".to_string()),
         notional_usd: Some("100".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1741,7 +2209,6 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1814,10 +2281,7 @@ async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
     assert_eq!(json["warnings"], serde_json::json!([]));
     assert_eq!(json["has_unpriced_positions"], false);
     assert_eq!(positions.len(), 1);
-    assert_eq!(
-        positions[0]["token"],
-        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-    );
+    assert_eq!(positions[0]["token"], "USDC");
     assert_eq!(positions[0]["amount"], "10000");
     assert_eq!(positions[0]["value_usd"], "10000");
 }
@@ -1874,9 +2338,17 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         block_number: None,
         gas_used: None,
         paper_trade: true,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Paper),
+        clob_order_id: None,
         amount_out: Some("0.5".to_string()),
         entry_price_usd: Some("2000".to_string()),
         notional_usd: Some("1000".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -1887,7 +2359,6 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         },
         signal_price: None,
         fill_price: None,
-        slippage_bps: None,
         signal_to_fill_ms: None,
         decision_source: None,
         runner_signal: None,
@@ -1980,6 +2451,77 @@ async fn test_multi_bot_execute_rejects_unapproved() {
     assert!(
         body_str.contains("Validation not approved"),
         "Expected 'Validation not approved', got: {body_str}"
+    );
+}
+
+#[tokio::test]
+async fn test_multi_bot_execute_rejects_paper_trade_with_no_usable_signatures() {
+    let state = multi_bot_state_for_bot(
+        "paper-execute-token",
+        BotContext {
+            bot_id: "bot-paper-execute".to_string(),
+            vault_address: "factory:0x1111111111111111111111111111111111111111".to_string(),
+            paper_trade: true,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec!["http://validator-1".to_string()],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        },
+    );
+    let app = build_multi_bot_router(state);
+
+    let contradictory_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "test-strat",
+            "action": "swap",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "3000",
+            "target_protocol": "uniswap_v3"
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 85,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 90,
+                    "reasoning": "Score passed; signature error: invalid vault_address",
+                    "signature": format!("0x{}", "00".repeat(65))
+                },
+                {
+                    "validator": "0xValidator2",
+                    "score": 80,
+                    "reasoning": "Score passed; signature error: invalid vault_address",
+                    "signature": format!("0x{}", "00".repeat(65))
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer paper-execute-token")
+                .header("content-type", "application/json")
+                .body(Body::from(contradictory_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(
+        body_str.contains("requires at least one usable validator signature"),
+        "Expected paper-signature consistency error, got: {body_str}"
     );
 }
 

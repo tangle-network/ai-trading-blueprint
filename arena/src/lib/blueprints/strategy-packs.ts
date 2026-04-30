@@ -107,6 +107,8 @@ export const strategyPacks: StrategyPackDef[] = [
     providers: ['Uniswap V3', 'CoinGecko'],
     description:
       'Spot trading on decentralized exchanges. Discovers pools, tracks prices, executes swaps.',
+    executionMode: 'single-chain',
+    supportedChainIds: [1, 8453, 42161, 137, 10, 31339, 84532],
     cron: '0 */5 * * * *',
     maxTurns: 12,
     timeoutMs: 150_000,
@@ -137,6 +139,8 @@ Build tools for:
     name: 'Prediction Market Trading',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Trades event outcomes on Polymarket using the CLOB API.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -164,6 +168,8 @@ Build probability estimation tools from news analysis and market data cross-refe
     name: 'Politics',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Elections, governance, and policy prediction markets with polling-based analysis.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -178,6 +184,8 @@ Edge: Markets anchor on single polls, overweight recency, neglect base rates.`,
     name: 'Crypto Events',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Cryptocurrency price and event markets using quantitative volatility models.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -192,6 +200,8 @@ Formula: prob = 1 - \u03A6((ln(target) - ln(current)) / (\u03C3_daily * sqrt(day
     name: 'Geopolitics',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Conflict and international relations markets with qualitative research frameworks.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -206,6 +216,8 @@ Caution: High tail risk \u2014 max 5% position size per market.`,
     name: 'Trending',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Viral and rapidly-growing markets across all categories. Early-mover edge.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -220,6 +232,8 @@ Caution: New markets have thin liquidity and sometimes ambiguous resolution crit
     name: 'Celebrity',
     providers: ['Polymarket', 'CoinGecko'],
     description: 'Celebrity, entertainment, and awards markets. Expert aggregator arbitrage.',
+    executionMode: 'single-chain',
+    supportedChainIds: [137],
     cron: '0 */15 * * * *',
     maxTurns: 20,
     timeoutMs: 240_000,
@@ -234,6 +248,8 @@ Best timing: Enter 7-30 days before resolution when consensus is forming but odd
     name: 'DeFi Yield Optimization',
     providers: ['Aave V3', 'Morpho', 'CoinGecko'],
     description: 'Finds the best DeFi lending/borrowing yields across protocols.',
+    executionMode: 'single-chain',
+    supportedChainIds: [1, 8453],
     cron: '0 */15 * * * *',
     maxTurns: 10,
     timeoutMs: 120_000,
@@ -259,8 +275,10 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
   {
     id: 'perp',
     name: 'Perpetual Futures',
-    providers: ['GMX V2', 'Hyperliquid', 'Vertex', 'CoinGecko'],
-    description: 'Cross-venue perpetual futures with funding rate arbitrage.',
+    providers: ['GMX V2', 'Vertex', 'CoinGecko'],
+    description: 'Vault-based EVM perpetual futures on Arbitrum via GMX v2 and Vertex.',
+    executionMode: 'single-chain',
+    supportedChainIds: [42161],
     cron: '0 */2 * * * *',
     maxTurns: 15,
     timeoutMs: 180_000,
@@ -268,19 +286,18 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
 - Router: 0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8
 - Reader: 0xf60becbba223EEA9495Da3f606753867eC10d139
 
-### Hyperliquid
-- REST: https://api.hyperliquid.xyz
-- WebSocket: wss://api.hyperliquid.xyz/ws
-- POST /info for meta, funding, positions
-- POST /exchange for orders
-
 ### Vertex
 - REST: https://prod.vertexprotocol-backend.com
 - Query engine for positions, orderbook
 
-### Cross-Venue Funding Rate Arbitrage
+### EVM Perp Execution
 
-When funding rates diverge between GMX and Hyperliquid:
+This bot is restricted to vault-based EVM perp execution on Arbitrum-compatible
+targets. It may set \`target_protocol\` to "gmx_v2" or "vertex" only. Do not use
+Hyperliquid native endpoints from this strategy; Hyperliquid requires a separate
+native/API execution mode.
+
+When funding rates diverge between GMX and Vertex:
 1. Long on the venue with negative funding (you get paid)
 2. Short on the venue with positive funding (you get paid)
 3. Net delta-neutral, collect funding from both sides
@@ -292,6 +309,8 @@ When funding rates diverge between GMX and Hyperliquid:
     providers: ['Polymarket', 'Uniswap V3', 'GMX V2', 'Hyperliquid', 'Vertex', 'CoinGecko'],
     description:
       'Trades implied vs realized volatility using funding rates and prediction markets.',
+    executionMode: 'paper-only',
+    supportedChainIds: [],
     cron: '0 */10 * * * *',
     maxTurns: 12,
     timeoutMs: 150_000,
@@ -322,6 +341,8 @@ Crypto markets lack traditional options IV. Use these proxies:
     name: 'Market Making',
     providers: ['Polymarket', 'Hyperliquid', 'Uniswap V3', 'CoinGecko'],
     description: 'Automated market making with inventory management and spread calculation.',
+    executionMode: 'paper-only',
+    supportedChainIds: [],
     cron: '0 */1 * * * *',
     maxTurns: 15,
     timeoutMs: 180_000,
@@ -353,6 +374,8 @@ Select 3-5 markets: Volume > $100k, spread < 3%, moderate volatility.
     name: 'Cross-Strategy',
     providers: ['All protocols'],
     description: 'Allocates capital across prediction, yield, perps, and spot strategies.',
+    executionMode: 'none',
+    supportedChainIds: [],
     cron: '0 */5 * * * *',
     maxTurns: 20,
     timeoutMs: 300_000,

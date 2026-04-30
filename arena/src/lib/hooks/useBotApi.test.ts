@@ -114,4 +114,71 @@ describe('useBotApi trade mapping helpers', () => {
       },
     })).toBe('failed');
   });
+
+  it('maps persisted execution QA fields when present', () => {
+    const trade = mapApiTrade({
+      id: 'trade-4',
+      bot_id: 'bot-1',
+      timestamp: '2026-04-07T00:00:00Z',
+      action: 'buy',
+      token_in: 'USDC',
+      token_out: 'prediction-token',
+      amount_in: '100',
+      min_amount_out: '0',
+      target_protocol: 'polymarket_clob',
+      paper_trade: true,
+      execution_status: 'paper',
+      clob_order_id: 'order-123',
+      requested_price_usd: '0.44',
+      filled_price_usd: '0.45',
+      filled_amount: '80',
+      slippage_bps: '227.27',
+      execution_reason: 'Would have partially filled against the live book.',
+      valuation_status: 'unpriced',
+    }, 'Bot');
+
+    expect(trade.execution).toEqual({
+      status: 'paper',
+      clobOrderId: 'order-123',
+      requestedPriceUsd: 0.44,
+      filledPriceUsd: 0.45,
+      filledAmount: 80,
+      slippageBps: 227.27,
+      reason: 'Would have partially filled against the live book.',
+    });
+  });
+
+  it('maps persisted prediction metadata for human-readable trade history labels', () => {
+    const trade = mapApiTrade({
+      id: 'trade-5',
+      bot_id: 'bot-1',
+      timestamp: '2026-04-07T00:00:00Z',
+      action: 'buy',
+      token_in: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+      token_out: '48328953829',
+      amount_in: '100',
+      min_amount_out: '0',
+      target_protocol: 'polymarket_clob',
+      paper_trade: true,
+      prediction_metadata: {
+        condition_id: '0xcondition',
+        token_id: '48328953829',
+        market_question: 'Will ETH be above $4,000 on June 30?',
+        outcome_label: 'YES',
+        outcome_index: 0,
+        market_slug: 'eth-above-4000-june-30',
+      },
+      valuation_status: 'unpriced',
+    }, 'Bot');
+
+    expect(trade.tokenIn).toBe('USDC');
+    expect(trade.predictionMetadata).toEqual({
+      conditionId: '0xcondition',
+      tokenId: '48328953829',
+      marketQuestion: 'Will ETH be above $4,000 on June 30?',
+      outcomeLabel: 'YES',
+      outcomeIndex: 0,
+      marketSlug: 'eth-above-4000-june-30',
+    });
+  });
 });

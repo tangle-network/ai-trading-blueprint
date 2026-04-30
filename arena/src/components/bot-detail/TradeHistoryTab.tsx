@@ -2,15 +2,16 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
-import { ValidatorCard, truncateAddress, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { ValidatorCard, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
-import { VENUE_CONFIG } from '~/lib/types/trade';
+import { getTradePairLabel, VENUE_CONFIG } from '~/lib/types/trade';
 import type { TradeVenue } from '~/lib/types/trade';
 import type { Trade, TradeStatus } from '~/lib/types/trade';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
+import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -74,9 +75,21 @@ function formatTradeAmount(amount: number): string {
   return amount.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
+function formatExecutionStatus(status: string): string {
+  return status.replace(/_/g, ' ');
+}
+
 function renderTradePrice(trade: Trade): string {
   if (trade.priceUsd != null && trade.priceUsd > 0) {
     return `$${trade.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  }
+  if (
+    trade.paperTrade &&
+    trade.targetProtocol === 'polymarket_clob' &&
+    trade.execution?.requestedPriceUsd != null &&
+    trade.execution.requestedPriceUsd > 0
+  ) {
+    return `$${trade.execution.requestedPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
   }
   if (trade.paperTrade) return 'No USD leg';
   return '—';
@@ -200,9 +213,9 @@ export function TradeHistoryTab({
       <TableBody>
         {trades.map((trade) => {
           const responses = trade.validation?.responses ?? [];
-          const signedCount = responses.filter(
-            (r) => r.signature && r.signature !== `0x${'00'.repeat(65)}`
-          ).length;
+          const signedCount = countUsableValidatorSignatures(responses);
+          const validationDisplay = getTradeValidationDisplay(trade);
+          const pairLabel = getTradePairLabel(trade);
           const hasValidation = responses.length > 0 || trade.validatorScore != null;
           const isExpanded = expandedId === trade.id;
 
@@ -239,15 +252,24 @@ export function TradeHistoryTab({
                         {getActionLabel(trade.action)}
                       </Badge>
                       <VenueBadge venue={trade.venue} />
-                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      {trade.targetProtocol === 'polymarket_clob' ? (
+                        <span
+                          className="text-sm font-display font-medium text-arena-elements-textPrimary"
+                          title={pairLabel}
+                        >
+                          {pairLabel}
+                        </span>
+                      ) : (
+                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      )}
                       <span className="text-xs font-data text-arena-elements-textTertiary">
                         {new Date(trade.timestamp).toLocaleString('en-US', {
                           month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                         })}
                       </span>
-                      {trade.validation && (
-                        <Badge variant={trade.validation.approved ? 'success' : 'destructive'} className="text-xs">
-                          {trade.validation.approved ? 'APPROVED' : 'REJECTED'}
+                      {validationDisplay && (
+                        <Badge variant={validationDisplay.badgeVariant} className="text-xs">
+                          {validationDisplay.label}
                         </Badge>
                       )}
                     </div>
@@ -272,6 +294,61 @@ export function TradeHistoryTab({
                           Tx Hash
                         </span>
                         {renderTxHash(trade)}
+                      </div>
+                    )}
+
+                    {validationDisplay?.helperText && (
+                      <p className="mb-3 px-1 text-sm leading-relaxed text-arena-elements-textSecondary">
+                        {validationDisplay.helperText}
+                      </p>
+                    )}
+
+                    {trade.execution && (
+                      <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-3">
+                        <div className="mb-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                          Execution QA
+                        </div>
+                        <div className="grid gap-2 text-sm text-arena-elements-textSecondary md:grid-cols-2">
+                          <div>
+                            <span className="text-arena-elements-textTertiary">Status:</span>{' '}
+                            {formatExecutionStatus(trade.execution.status)}
+                          </div>
+                          {trade.execution.clobOrderId && (
+                            <div>
+                              <span className="text-arena-elements-textTertiary">CLOB order:</span>{' '}
+                              <code className="font-data text-xs">{trade.execution.clobOrderId}</code>
+                            </div>
+                          )}
+                          {trade.execution.requestedPriceUsd != null && (
+                            <div>
+                              <span className="text-arena-elements-textTertiary">Requested price:</span>{' '}
+                              ${trade.execution.requestedPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                            </div>
+                          )}
+                          {trade.execution.filledPriceUsd != null && (
+                            <div>
+                              <span className="text-arena-elements-textTertiary">Filled price:</span>{' '}
+                              ${trade.execution.filledPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                            </div>
+                          )}
+                          {trade.execution.filledAmount != null && (
+                            <div>
+                              <span className="text-arena-elements-textTertiary">Filled amount:</span>{' '}
+                              {formatTradeAmount(trade.execution.filledAmount)}
+                            </div>
+                          )}
+                          {trade.execution.slippageBps != null && (
+                            <div>
+                              <span className="text-arena-elements-textTertiary">Slippage:</span>{' '}
+                              {trade.execution.slippageBps.toLocaleString('en-US', { maximumFractionDigits: 2 })} bps
+                            </div>
+                          )}
+                        </div>
+                        {trade.execution.reason && (
+                          <p className="mt-2 text-sm leading-relaxed text-arena-elements-textSecondary">
+                            {trade.execution.reason}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -331,9 +408,13 @@ export function TradeHistoryTab({
                   <TableCell className="hidden sm:table-cell">
                     <VenueBadge venue={trade.venue} />
                   </TableCell>
-                  <TableCell className="font-display font-medium text-sm">
+                  <TableCell className="font-display font-medium text-sm" title={pairLabel}>
                     <div className="space-y-1">
-                      <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      {trade.targetProtocol === 'polymarket_clob' ? (
+                        <div className="max-w-80 truncate">{pairLabel}</div>
+                      ) : (
+                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                      )}
                       <div className="text-xs font-data text-arena-elements-textSecondary">
                         <span>{formatTradeAmount(trade.amountIn)}</span>
                         {' '}

@@ -16,6 +16,8 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
       name: 'DEX Swing',
       description: 'Swing trading on DEXes',
       providers: ['Uniswap', 'Sushiswap'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [1, 8453],
       cron: '0 */6 * * *',
       maxTurns: 40,
       timeoutMs: 120000,
@@ -57,10 +59,12 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     ],
     executionTargetId: 'ethereum',
     setExecutionTargetId: vi.fn(),
+    provisionPaperTrade: false,
+    setProvisionPaperTrade: vi.fn(),
     selectedExecutionTarget: {
       id: 'ethereum',
-      label: 'Ethereum Fork (Local QA)',
-      description: 'Uses the local fork of Ethereum for QA. This is not Ethereum mainnet.',
+      label: 'Ethereum Fork (Local Live)',
+      description: 'Uses the local Ethereum fork for live transaction execution. This is not Ethereum mainnet.',
       enabled: true,
       chainId: 31339,
       rpcUrl: 'http://127.0.0.1:42545',
@@ -112,6 +116,24 @@ describe('AdvancedSettingsDialog', () => {
     );
     await user.selectOptions(screen.getByLabelText('Runtime Backend'), 'firecracker');
     expect(setRuntimeBackend).toHaveBeenCalledWith('firecracker');
+  });
+
+  it('lets users choose paper or live mode before provisioning', async () => {
+    const setProvisionPaperTrade = vi.fn();
+    const user = userEvent.setup();
+    render(<AdvancedSettingsDialog {...defaultProps({ provisionPaperTrade: false, setProvisionPaperTrade })} />);
+
+    expect(screen.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Live mode may execute trades on-chain using the bot vault.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Paper' }));
+    expect(setProvisionPaperTrade).toHaveBeenCalledWith(true);
+  });
+
+  it('shows paper mode copy when paper trading is selected', () => {
+    render(<AdvancedSettingsDialog {...defaultProps({ provisionPaperTrade: true })} />);
+    expect(screen.getByRole('button', { name: 'Paper' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Paper mode validates and simulates trades without on-chain execution.')).toBeInTheDocument();
   });
 
   it('shows enabled firecracker option when supported', () => {

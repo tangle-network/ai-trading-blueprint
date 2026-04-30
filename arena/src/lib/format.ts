@@ -108,6 +108,27 @@ export function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+interface FormatNumberOptions {
+  maximumFractionDigits?: number;
+  minimumFractionDigits?: number;
+  locale?: string;
+}
+
+export function formatNumber(value: number, options: FormatNumberOptions = {}): string {
+  const {
+    maximumFractionDigits = 2,
+    minimumFractionDigits = 0,
+    locale = 'en-US',
+  } = options;
+
+  if (!Number.isFinite(value)) return String(value);
+
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits,
+    minimumFractionDigits,
+  }).format(value);
+}
+
 export function botStatusLabel(status: BotStatus): string {
   switch (status) {
     case 'active':

@@ -183,23 +183,26 @@ pub(crate) async fn build_multi_bot_portfolio_response(
     let mut total_value_decimal = Decimal::ZERO;
     let mut vault_lookup_failed = false;
 
-    match read_vault_cash_position(bot, market_data_base_url).await {
-        Ok(Some(position)) => {
-            cash_balance = Some(position.amount.clone());
-            has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
-            has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
-            if let Some(onchain_value) = position.value_usd.as_deref().and_then(parse_decimal_maybe)
-            {
-                total_value_decimal += onchain_value;
+    if !should_skip_onchain_vault_lookup(bot) {
+        match read_vault_cash_position(bot, market_data_base_url).await {
+            Ok(Some(position)) => {
+                cash_balance = Some(position.amount.clone());
+                has_unpriced_positions = position.valuation_status == ValuationStatus::Unpriced;
+                has_value_only_positions = position.valuation_status == ValuationStatus::ValueOnly;
+                if let Some(onchain_value) =
+                    position.value_usd.as_deref().and_then(parse_decimal_maybe)
+                {
+                    total_value_decimal += onchain_value;
+                }
+                positions.push(position);
             }
-            positions.push(position);
-        }
-        Ok(None) => {}
-        Err(e) => {
-            vault_lookup_failed = true;
-            warnings.push(format!(
-                "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
-            ));
+            Ok(None) => {}
+            Err(e) => {
+                vault_lookup_failed = true;
+                warnings.push(format!(
+                    "On-chain vault balance lookup failed; using latest snapshot fallback: {e}"
+                ));
+            }
         }
     }
 
@@ -320,6 +323,8 @@ async fn synthesize_trade_positions(
 ) -> Result<SyntheticPortfolio, String> {
     let mut trades = trade_store::trades_for_bot(&bot.bot_id, 1000, 0)?.trades;
     let mut positions: HashMap<String, SyntheticPositionAccumulator> = HashMap::new();
+    let protocol_chain_id =
+        crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);
     seed_initial_paper_cash(&mut positions, bot);
 
     if trades.is_empty() && positions.is_empty() {
@@ -328,7 +333,7 @@ async fn synthesize_trade_positions(
 
     trades.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     for trade in &trades {
-        apply_trade_to_synthetic_positions(&mut positions, bot.chain_id, trade);
+        apply_trade_to_synthetic_positions(&mut positions, protocol_chain_id, trade);
     }
 
     let mut open_positions: Vec<SyntheticPositionAccumulator> = positions
@@ -345,7 +350,7 @@ async fn synthesize_trade_positions(
         .map(|position| position.token.clone())
         .collect();
     let prices = market_client
-        .get_prices_for_chain(Some(bot.chain_id), &tokens)
+        .get_prices_for_chain(Some(protocol_chain_id), &tokens)
         .await
         .unwrap_or_default();
     let current_prices: HashMap<String, Decimal> = prices
@@ -415,7 +420,7 @@ fn seed_initial_paper_cash(
         None => return,
     };
     let token = strategy
-        .get("asset_token")
+        .get("cash_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
@@ -448,12 +453,7 @@ fn synthetic_cash_balance(bot: &crate::BotContext, positions: &[PositionEntry]) 
     let token = bot
         .strategy_config
         .as_object()
-        .and_then(|strategy| {
-            strategy
-                .get("asset_token")
-                .or_else(|| strategy.get("cash_token"))
-                .and_then(|value| value.as_str())
-        })
+        .and_then(|strategy| strategy.get("cash_token").and_then(|value| value.as_str()))
         .map(str::trim)
         .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
         .unwrap_or("USDC");
@@ -733,6 +733,10 @@ fn default_reference_price_usd(token: &str) -> Option<Decimal> {
     }
 }
 
+fn should_skip_onchain_vault_lookup(bot: &crate::BotContext) -> bool {
+    bot.paper_trade && bot.vault_address.starts_with("factory:")
+}
+
 async fn read_vault_cash_position(
     bot: &crate::BotContext,
     market_data_base_url: &str,
@@ -940,5 +944,81 @@ fn format_units(amount: U256, decimals: u8) -> String {
         "0".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_onchain_lookup_for_paper_bot_factory_placeholder() {
+        let bot = crate::BotContext {
+            bot_id: "bot-1".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: true,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+
+        assert!(should_skip_onchain_vault_lookup(&bot));
+    }
+
+    #[test]
+    fn does_not_skip_lookup_for_non_placeholder_or_live_bots() {
+        let live_bot = crate::BotContext {
+            bot_id: "bot-2".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: false,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let paper_bot_with_real_vault = crate::BotContext {
+            bot_id: "bot-3".to_string(),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            paper_trade: true,
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+
+        assert!(!should_skip_onchain_vault_lookup(&live_bot));
+        assert!(!should_skip_onchain_vault_lookup(
+            &paper_bot_with_real_vault
+        ));
+    }
+
+    #[test]
+    fn initial_paper_capital_defaults_to_usdc_cash_not_asset_token_units() {
+        let bot = crate::BotContext {
+            bot_id: "bot-4".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: true,
+            chain_id: 31338,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({
+                "initial_capital_usd": "10000",
+                "asset_token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            }),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let mut positions = HashMap::new();
+
+        seed_initial_paper_cash(&mut positions, &bot);
+
+        let position = positions.get("usdc|spot").expect("paper cash position");
+        assert_eq!(position.token, "USDC");
+        assert_eq!(position.amount, Decimal::new(10000, 0));
+        assert_eq!(position.entry_price, Some(Decimal::ONE));
+        assert!(!positions.contains_key("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2|spot"));
     }
 }

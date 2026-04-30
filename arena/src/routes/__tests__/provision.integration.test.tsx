@@ -139,6 +139,8 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'DEX',
       description: 'DEX strategy',
       providers: ['Uniswap'],
+      executionMode: 'single-chain',
+      supportedChainIds: [84532, 31339],
       cron: '* * * * *',
       maxTurns: 1,
       timeoutMs: 1000,

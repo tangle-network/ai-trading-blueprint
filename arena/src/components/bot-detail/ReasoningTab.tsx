@@ -2,12 +2,17 @@ import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
-import { ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { CopyButton, ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
+import {
+  countUsableValidatorSignatures,
+  getTradeValidationDisplay,
+  hasUsableValidatorSignature,
+} from '~/lib/tradeValidation';
 
 interface ReasoningTabProps {
   botId: string;
@@ -23,12 +28,20 @@ interface ReasoningTabProps {
 
 function PendingValidationCard({ trade, index }: { trade: Trade; index: number }) {
   const responses = trade.validation?.responses ?? [];
-  const signedCount = responses.filter(
-    (r) => r.signature && r.signature !== `0x${'00'.repeat(65)}`
-  ).length;
+  const signedCount = countUsableValidatorSignatures(responses);
+  const validationDisplay = getTradeValidationDisplay(trade);
   const isPending = trade.status === 'pending';
   const elapsed = Math.floor((Date.now() - trade.timestamp) / 1000);
   const timeLabel = elapsed < 5 ? 'just now' : elapsed < 60 ? `${elapsed}s ago` : `${Math.floor(elapsed / 60)}m ago`;
+  const accentClass = isPending
+    ? 'border-l-violet-500 dark:border-l-violet-400'
+    : validationDisplay?.state === 'approved_signed'
+      ? 'border-l-emerald-500 dark:border-l-emerald-400'
+      : validationDisplay?.state === 'paper_bypassed'
+        ? 'border-l-slate-500 dark:border-l-slate-400'
+        : validationDisplay?.state === 'unsigned_error'
+          ? 'border-l-amber-500 dark:border-l-amber-400'
+          : 'border-l-crimson-500 dark:border-l-crimson-400';
 
   return (
     <m.div
@@ -38,13 +51,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
       exit={{ opacity: 0, y: -8, scale: 0.97 }}
       transition={{ delay: index * 0.05, duration: 0.35, type: 'spring', bounce: 0.15 }}
     >
-      <Card className={`overflow-hidden border-l-2 ${
-        isPending
-          ? 'border-l-violet-500 dark:border-l-violet-400'
-          : trade.validation?.approved
-            ? 'border-l-emerald-500 dark:border-l-emerald-400'
-            : 'border-l-crimson-500 dark:border-l-crimson-400'
-      }`}>
+      <Card className={`overflow-hidden border-l-2 ${accentClass}`}>
         <CardContent className="pt-4 pb-4">
           {/* Header */}
           <div className="flex items-center gap-3 mb-3">
@@ -71,9 +78,9 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
                     validating
                   </span>
                 )}
-                {!isPending && trade.validation && (
-                  <Badge variant={trade.validation.approved ? 'success' : 'destructive'} className="text-xs">
-                    {trade.validation.approved ? 'APPROVED' : 'REJECTED'}
+                {!isPending && validationDisplay && (
+                  <Badge variant={validationDisplay.badgeVariant} className="text-xs">
+                    {validationDisplay.label}
                   </Badge>
                 )}
               </div>
@@ -84,7 +91,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
           {responses.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
               {responses.map((r, vi) => {
-                const hasSig = r.signature && r.signature !== `0x${'00'.repeat(65)}`;
+                const hasSig = hasUsableValidatorSignature(r.signature);
                 return (
                   <m.div
                     key={`${trade.id}-slot-${r.validator}-${vi}`}
@@ -121,11 +128,17 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
             </div>
           )}
 
+          {validationDisplay?.helperText && (
+            <p className="mb-3 text-sm leading-relaxed text-arena-elements-textSecondary">
+              {validationDisplay.helperText}
+            </p>
+          )}
+
           {/* Summary row */}
           <div className="flex items-center gap-3 text-xs">
             {responses.length > 0 && (
               <span className="font-data text-arena-elements-textTertiary">
-                {signedCount}/{responses.length} responses
+                {signedCount}/{responses.length} produced signatures
               </span>
             )}
             {trade.validatorScore != null && (
@@ -144,9 +157,8 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
 
 function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) {
   const responses = trade.validation?.responses ?? [];
-  const signedCount = responses.filter(
-    (r) => r.signature && r.signature !== `0x${'00'.repeat(65)}`
-  ).length;
+  const signedCount = countUsableValidatorSignatures(responses);
+  const validationDisplay = getTradeValidationDisplay(trade);
 
   return (
     <m.div
@@ -183,17 +195,34 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
                     Validators
                   </span>
                   <Badge variant={signedCount === responses.length && signedCount > 0 ? 'success' : 'amber'}>
-                    {signedCount}/{responses.length} signed
+                    {signedCount}/{responses.length} produced signatures
                   </Badge>
                 </div>
-                {trade.validation && (
-                  <Badge variant={trade.validation.approved ? 'success' : 'destructive'}>
-                    {trade.validation.approved ? 'APPROVED' : 'REJECTED'}
+                {trade.validation?.intentHash && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                      Intent
+                    </span>
+                    <code className="text-xs font-data text-arena-elements-textTertiary">
+                      {truncateAddress(trade.validation.intentHash)}
+                    </code>
+                    <CopyButton text={trade.validation.intentHash} label="Copy" />
+                  </div>
+                )}
+                {validationDisplay && (
+                  <Badge variant={validationDisplay.badgeVariant}>
+                    {validationDisplay.label}
                   </Badge>
                 )}
               </div>
             </div>
           </div>
+
+          {validationDisplay?.helperText && (
+            <p className="mb-3 text-sm leading-relaxed text-arena-elements-textSecondary">
+              {validationDisplay.helperText}
+            </p>
+          )}
 
           {/* Per-validator breakdown */}
           {responses.length > 0 && (

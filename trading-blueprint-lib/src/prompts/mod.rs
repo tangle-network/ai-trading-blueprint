@@ -63,6 +63,8 @@ pub fn build_pack_loop_prompt(
                         Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
                         Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
+                        Do not manually rebuild the validation payload or validator signatures.\n\
+                        Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
                      5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
                      6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
@@ -71,6 +73,25 @@ pub fn build_pack_loop_prompt(
                 )
             }
         }
+        "yield" => format!(
+            "Trading tick ({name}). Run these steps:\n\n\
+             1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
+             2. `node /home/agent/tools/aave-reserve-status.js` — inspect live Aave reserve availability on the execution RPC. Only consider Aave assets where `available_for_supply` is true.\n\
+             3. Fetch market context and reference pricing with the Trading API client:\n\
+                `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+             4. Check the circuit breaker before any action:\n\
+                `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+             5. If there is a clear yield action, build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3` or `morpho`, validate it, then execute it with `api-client.js`.\n\
+                For Aave, use the reserve status tool output as a hard gate: do not attempt assets that are frozen or unavailable on the current fork.\n\
+                Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
+                Do not manually rebuild the validation payload or validator signatures.\n\
+                Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
+             6. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
+             7. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+             Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
+            name = pack.name,
+            max_turns = pack.max_turns,
+        ),
         _ => format!(
             "Trading tick ({name}). Run these steps:\n\n\
              1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
@@ -79,7 +100,10 @@ pub fn build_pack_loop_prompt(
                 If no collateral released yet and CLOB trades needed: `--action release --amount <amount>`\n\
              4. `node /home/agent/tools/check-orders.js --cancel-stale 4` — check fills on open orders, flag stale orders older than 4h\n\
              5. For each opportunity with edge: estimate your probability, calculate edge = your_prob - market_price. If |edge| > 5%, trade:\n\
-                `node /home/agent/tools/submit-trade.js --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Positive edge: buy/increase that outcome, e.g. `node /home/agent/tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Negative edge: only sell/reduce if you already hold that exact outcome. If you do not hold it, buy the opposite side when available or skip.\n\
+                Reduce/exit existing holdings only: `node /home/agent/tools/submit-trade.js --action sell --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Never sell outcome shares you do not hold.\n\
                 (price is optional — auto-fetched from CLOB midpoint if omitted)\n\
              6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
              If no edge found, skip step 5. Be decisive — you have {max_turns} turns.",
@@ -112,6 +136,14 @@ Authorization: Bearer {token}
   - "limit_price": "2500" (for limit orders, omit for market)
   - "trigger_price": "2400" + "tpsl": "sl" (for stop-loss)
   - "trigger_price": "3000" + "tpsl": "tp" (for take-profit)
+  When using `/home/agent/tools/api-client.js`, call `validate(intent)` first and pass the returned object directly into `execute(intent, validationResult)`.
+  Do not hand-assemble `validation.approved`, `validator_responses`, or signatures.
+
+## Execution Context
+- Vault address: {vault}
+- Execution chain ID: {chain_id}
+- Execution RPC: {rpc_url}
+- For Aave decisions, use `/home/agent/tools/aave-reserve-status.js` before trading so you only consider assets available on the live fork.
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
@@ -166,6 +198,7 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         token = config.trading_api_token,
         vault = config.vault_address,
         chain_id = config.chain_id,
+        rpc_url = config.rpc_url,
         risk_params = serde_json::to_string_pretty(&config.risk_params).unwrap_or_default(),
     );
 
@@ -253,33 +286,53 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
 
 /// Build the RESEARCH tick prompt — 15 turns, self-improvement + backtesting.
 pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> String {
+    let api_url = config.trading_api_url.trim_end_matches('/');
+    let strategy_focus = match config.strategy_type.as_str() {
+        "yield" => {
+            "Yield focus: test get-portfolio.js, aave-reserve-status.js, api-client price/circuit-breaker calls, and Aave validation schemas. Do not test prediction-market-only tools."
+        }
+        "dex" | "dex_trading" => {
+            "DEX focus: test get-portfolio.js, api-client price/circuit-breaker calls, candle fetching, and walk-forward backtests for swap strategy changes. Do not test prediction-market-only tools."
+        }
+        "prediction" | "polymarket" => {
+            "Prediction-market focus: test prediction-market scanner, order-book, and collateral tools, then record which external services are reachable."
+        }
+        _ => {
+            "Strategy focus: test only tools that match this bot's strategy type, then record which APIs are reachable."
+        }
+    };
+
     format!(
         "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
          ## 1. Review performance\n\
          Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
-         ## 2. Identify ONE structural improvement\n\
-         Don't write another tool — you have 25+. Instead:\n\
-         - Test an existing tool: does it produce correct output?\n\
-         - Delete tools you don't use\n\
-         - OR propose a HarnessConfig mutation and BACKTEST it:\n\
+         ## 2. Stay strategy-specific\n\
+         {strategy_focus}\n\n\
+         ## 3. Identify ONE structural improvement\n\
+         Keep the cycle small:\n\
+         - Test one existing relevant tool, or\n\
+         - Propose one HarnessConfig mutation and backtest it.\n\n\
+         Correct candle workflow:\n\
          ```\n\
-         curl -X POST {api_url}/market-data/candles -H 'Authorization: Bearer {token}' \\\n\
-           -H 'Content-Type: application/json' -d '{{\"token\":\"ETH\",\"limit\":200}}'\n\
+         curl -X POST {api_url}/market-data/candles/fetch -H 'Authorization: Bearer {token}' \\\n\
+           -H 'Content-Type: application/json' -d '{{\"tokens\":[\"ETH\"],\"interval\":\"1h\",\"limit\":200}}'\n\
+         curl '{api_url}/market-data/candles?token=ETH&limit=200' -H 'Authorization: Bearer {token}'\n\
          ```\n\
-         Then walk-forward test:\n\
+         Correct walk-forward schema:\n\
          ```\n\
          curl -X POST {api_url}/backtest/walk-forward -H 'Authorization: Bearer {token}' \\\n\
            -H 'Content-Type: application/json' \\\n\
-           -d '{{\"current_config\": <current_harness>, \"candidate_config\": <mutation>, \"candles\": <array>}}'\n\
+           -d '{{\"current\": <current_harness>, \"candidate\": <mutation>, \"candles\": <array>, \"train_pct\":0.7}}'\n\
          ```\n\n\
-         ## 3. Promote or discard\n\
+         ## 4. Promote or discard\n\
          If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
          If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
-         ## 4. Update memory\n\
+         ## 5. Update memory\n\
          Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
          Report: what you analyzed, what you changed, backtest results.",
-        api_url = config.trading_api_url,
+        api_url = api_url,
         token = config.trading_api_token,
+        strategy_focus = strategy_focus,
     )
 }
 
@@ -453,17 +506,17 @@ Your trades are submitted as limit orders to the CLOB. Use the /clob/book endpoi
 
 pub(crate) const VOLATILITY_FRAGMENT: &str = r#"You are a volatility trading specialist.
 Focus on: realized vs implied volatility spreads, delta-neutral strategies.
-Target protocols: polymarket, gmx_v2, vertex, uniswap_v3
+Target protocols: polymarket_clob, gmx_v2, vertex, uniswap_v3
 Look for: vol regime changes, funding rate extremes, cross-protocol hedging opportunities."#;
 
 pub(crate) const MM_FRAGMENT: &str = r#"You are a market making specialist.
 Focus on: providing two-sided liquidity, inventory management, spread optimization.
-Target protocols: polymarket, uniswap_v3
+Target protocols: polymarket_clob, uniswap_v3
 Look for: liquid markets with wide spreads, stable fair value, mean-reverting inventory."#;
 
 const MULTI_FRAGMENT: &str = r#"You are a multi-strategy trading agent.
 Use all available protocols and strategies. Dynamically allocate capital based on market conditions.
-Available protocols: uniswap_v3, aave_v3, gmx_v2, morpho, vertex, polymarket
+Available protocols: uniswap_v3, aave_v3, gmx_v2, morpho, vertex, polymarket_clob
 Strategies to consider: momentum, mean reversion, yield optimization, arbitrage, event-driven."#;
 
 #[cfg(test)]
@@ -529,6 +582,10 @@ mod tests {
         assert!(
             prompt.contains("write-metrics.js"),
             "loop prompt must reference write-metrics tool"
+        );
+        assert!(
+            prompt.contains("Never sell outcome shares you do not hold"),
+            "loop prompt must forbid inventory-less prediction sells"
         );
         assert!(
             prompt.contains("30 turns"),
@@ -605,6 +662,52 @@ mod tests {
     }
 
     #[test]
+    fn test_research_prompt_uses_candle_fetch_and_walk_forward_schema() {
+        let prompt = build_research_tick_prompt(&test_config());
+
+        assert!(
+            prompt.contains("/market-data/candles/fetch"),
+            "research prompt must fetch candles with the fetch endpoint"
+        );
+        assert!(
+            prompt.contains("/market-data/candles?token=ETH&limit=200"),
+            "research prompt must read stored candles with GET"
+        );
+        assert!(
+            prompt.contains("\"current\": <current_harness>"),
+            "research prompt must use the backtest current field"
+        );
+        assert!(
+            prompt.contains("\"candidate\": <mutation>"),
+            "research prompt must use the backtest candidate field"
+        );
+        assert!(
+            !prompt.contains("current_config"),
+            "research prompt must not use stale current_config schema"
+        );
+        assert!(
+            !prompt.contains("{\"token\":\"ETH\",\"limit\":200}"),
+            "research prompt must not use stale candle POST schema"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_is_strategy_specific_for_yield() {
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_research_tick_prompt(&config);
+
+        assert!(
+            prompt.contains("aave-reserve-status.js"),
+            "yield research prompt must focus on Aave reserve tooling"
+        );
+        assert!(
+            prompt.contains("Do not test prediction-market-only tools"),
+            "yield research prompt must avoid irrelevant prediction-market tools"
+        );
+    }
+
+    #[test]
     fn test_build_system_prompt_volatility() {
         let prompt = build_system_prompt("volatility", &test_config());
         assert!(
@@ -622,5 +725,18 @@ mod tests {
         let prompt = build_system_prompt("mm", &test_config());
         assert!(prompt.contains("market making"), "must include mm fragment");
         assert!(prompt.contains("inventory"), "must mention inventory");
+    }
+
+    #[test]
+    fn test_build_system_prompt_yield_mentions_aave_reserve_status() {
+        let prompt = build_system_prompt("yield", &test_config());
+        assert!(
+            prompt.contains("aave-reserve-status.js"),
+            "yield system prompt should mention live Aave reserve status tool"
+        );
+        assert!(
+            prompt.contains("Execution RPC"),
+            "yield system prompt should surface execution RPC context"
+        );
     }
 }

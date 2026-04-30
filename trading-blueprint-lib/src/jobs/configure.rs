@@ -58,6 +58,8 @@ pub async fn configure_core(
                 updated_bot.chain_id,
                 &updated_bot.strategy_type,
                 &sidecar_bot.trading_api_url,
+                &sidecar_bot.rpc_url,
+                &updated_bot.vault_address,
                 &updated_bot.trading_api_token,
                 &updated_bot.operator_address,
                 &updated_bot.strategy_config,

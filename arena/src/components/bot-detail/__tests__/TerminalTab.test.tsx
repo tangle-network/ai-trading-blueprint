@@ -45,6 +45,15 @@ vi.mock('~/components/operator/OperatorTerminalView', () => ({
   ),
 }));
 
+vi.mock('~/components/operator/OperatorAccessCard', () => ({
+  OperatorAccessCard: ({ title, description }: { title: string; description: string }) => (
+    <div>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  ),
+}));
+
 describe('TerminalTab', () => {
   beforeEach(() => {
     authState.token = 'test-token';

@@ -13,6 +13,9 @@ import "../src/TradeValidator.sol";
 import "../src/FeeDistributor.sol";
 import "../src/VaultShare.sol";
 import "../src/TradingVault.sol";
+import "../src/ChainlinkUsdValuator.sol";
+import "../src/WrappedAssetValuator.sol";
+import "../src/interfaces/IAssetValuator.sol";
 import "../test/helpers/Setup.sol";
 
 /// @notice Minimal interface for Tangle contract blueprint registration
@@ -41,6 +44,21 @@ contract RegisterBlueprint is Script {
     address constant USER_ACCOUNT = 0x68FF20459d48917748CA13afCbDA3B265a449D48;
     address constant OPERATOR1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address constant OPERATOR2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+
+    address constant MAINNET_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant MAINNET_DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+    address constant MAINNET_WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant AAVE_AWETH = 0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8;
+    address constant AAVE_AUSDC = 0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c;
+    address constant AAVE_ADAI = 0x018008bfb33d285247A21d44E50697654f754e63;
+
+    address constant ETH_USD_FEED = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
+    address constant USDC_USD_FEED = 0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
+    address constant USDT_USD_FEED = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+    address constant DAI_USD_FEED = 0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9;
+    address constant BTC_USD_FEED = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
 
     function run() external {
         address deployer = vm.addr(DEPLOYER_KEY);
@@ -77,14 +95,41 @@ contract RegisterBlueprint is Script {
             wethAddress = address(weth);
         }
 
+        IAssetValuator primaryValuator;
+        IAssetValuator wrappedValuator;
+        if (usingExistingAssets) {
+            ChainlinkUsdValuator chainlinkValuator = new ChainlinkUsdValuator(deployer);
+            chainlinkValuator.setFeed(MAINNET_WETH, ETH_USD_FEED, 1 days);
+            chainlinkValuator.setFeed(MAINNET_USDC, USDC_USD_FEED, 1 days);
+            chainlinkValuator.setFeed(MAINNET_USDT, USDT_USD_FEED, 1 days);
+            chainlinkValuator.setFeed(MAINNET_DAI, DAI_USD_FEED, 1 days);
+            chainlinkValuator.setFeed(MAINNET_WBTC, BTC_USD_FEED, 1 days);
+
+            WrappedAssetValuator wrapperValuator = new WrappedAssetValuator(deployer, chainlinkValuator);
+            wrapperValuator.setUnderlying(AAVE_AWETH, MAINNET_WETH);
+            wrapperValuator.setUnderlying(AAVE_AUSDC, MAINNET_USDC);
+            wrapperValuator.setUnderlying(AAVE_ADAI, MAINNET_DAI);
+
+            primaryValuator = chainlinkValuator;
+            wrappedValuator = wrapperValuator;
+        } else {
+            MockAssetValuator mockValuator = new MockAssetValuator();
+            mockValuator.setRate(wethAddress, usdcAddress, 2000 * 1e6);
+            mockValuator.setRate(usdcAddress, wethAddress, 5e26);
+            primaryValuator = mockValuator;
+            wrappedValuator = mockValuator;
+        }
+
         // ── Deploy Core Contracts ─────────────────────────────────────
         PolicyEngine policyEngine = new PolicyEngine();
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer = new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer =
+            new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
+        _configureDefaultWhitelists(vaultFactory, usingExistingAssets, usdcAddress, wethAddress);
 
         // ── Deploy BSMs ───────────────────────────────────────────────
         // Each variant needs its own BSM instance because onBlueprintCreated
@@ -121,7 +166,10 @@ contract RegisterBlueprint is Script {
                 "iVAULT",
                 policyEngine,
                 tradeValidator,
-                feeDistributor
+                feeDistributor,
+                usingExistingAssets,
+                primaryValuator,
+                wrappedValuator
             );
             teeSingletonVault = _createPrecreatedSingletonVault(
                 singletonAsset,
@@ -130,7 +178,10 @@ contract RegisterBlueprint is Script {
                 "tVAULT",
                 policyEngine,
                 tradeValidator,
-                feeDistributor
+                feeDistributor,
+                usingExistingAssets,
+                primaryValuator,
+                wrappedValuator
             );
         }
 
@@ -192,35 +243,21 @@ contract RegisterBlueprint is Script {
         emit log_string(string.concat("DEPLOY_VAULT_FACTORY=", vm.toString(address(vaultFactory))));
         emit log_string(string.concat("DEPLOY_USDC=", vm.toString(usdcAddress)));
         emit log_string(string.concat("DEPLOY_WETH=", vm.toString(wethAddress)));
+        emit log_string(string.concat("DEPLOY_PRIMARY_VALUATOR=", vm.toString(address(primaryValuator))));
+        emit log_string(string.concat("DEPLOY_WRAPPED_VALUATOR=", vm.toString(address(wrappedValuator))));
         emit log_string(string.concat("DEPLOY_POLICY_ENGINE=", vm.toString(address(policyEngine))));
-        emit log_string(
-            string.concat("DEPLOY_TRADE_VALIDATOR=", vm.toString(address(tradeValidator)))
-        );
-        emit log_string(
-            string.concat("DEPLOY_FEE_DISTRIBUTOR=", vm.toString(address(feeDistributor)))
-        );
-        emit log_string(
-            string.concat("DEPLOY_VALIDATOR_BSM=", vm.toString(address(validatorBsm)))
-        );
+        emit log_string(string.concat("DEPLOY_TRADE_VALIDATOR=", vm.toString(address(tradeValidator))));
+        emit log_string(string.concat("DEPLOY_FEE_DISTRIBUTOR=", vm.toString(address(feeDistributor))));
+        emit log_string(string.concat("DEPLOY_VALIDATOR_BSM=", vm.toString(address(validatorBsm))));
         emit log_string(string.concat("DEPLOY_BLUEPRINT_ID=", vm.toString(cloudId)));
-        emit log_string(
-            string.concat("DEPLOY_INSTANCE_BLUEPRINT_ID=", vm.toString(instanceId))
-        );
+        emit log_string(string.concat("DEPLOY_INSTANCE_BLUEPRINT_ID=", vm.toString(instanceId)));
         emit log_string(string.concat("DEPLOY_TEE_BLUEPRINT_ID=", vm.toString(teeId)));
-        emit log_string(
-            string.concat("DEPLOY_VALIDATOR_BLUEPRINT_ID=", vm.toString(validatorId))
-        );
+        emit log_string(string.concat("DEPLOY_VALIDATOR_BLUEPRINT_ID=", vm.toString(validatorId)));
         if (instanceSingletonVault != address(0)) {
-            emit log_string(
-                string.concat(
-                    "DEPLOY_INSTANCE_SINGLETON_VAULT=", vm.toString(instanceSingletonVault)
-                )
-            );
+            emit log_string(string.concat("DEPLOY_INSTANCE_SINGLETON_VAULT=", vm.toString(instanceSingletonVault)));
         }
         if (teeSingletonVault != address(0)) {
-            emit log_string(
-                string.concat("DEPLOY_TEE_SINGLETON_VAULT=", vm.toString(teeSingletonVault))
-            );
+            emit log_string(string.concat("DEPLOY_TEE_SINGLETON_VAULT=", vm.toString(teeSingletonVault)));
         }
     }
 
@@ -231,22 +268,18 @@ contract RegisterBlueprint is Script {
         string memory vaultSymbol,
         PolicyEngine policyEngine,
         TradeValidator tradeValidator,
-        FeeDistributor feeDistributor
+        FeeDistributor feeDistributor,
+        bool usingExistingAssets,
+        IAssetValuator primaryValuator,
+        IAssetValuator wrappedValuator
     ) internal returns (address vaultAddress) {
         address[] memory signers = new address[](2);
         signers[0] = OPERATOR1;
         signers[1] = OPERATOR2;
 
         VaultShare share = new VaultShare(vaultName, vaultSymbol, admin);
-        TradingVault vault = new TradingVault(
-            assetToken,
-            share,
-            policyEngine,
-            tradeValidator,
-            feeDistributor,
-            admin,
-            address(0)
-        );
+        TradingVault vault =
+            new TradingVault(assetToken, share, policyEngine, tradeValidator, feeDistributor, admin, address(0));
 
         share.grantRole(share.MINTER_ROLE(), address(vault));
         share.linkVault(address(vault));
@@ -255,22 +288,17 @@ contract RegisterBlueprint is Script {
         policyEngine.initializeVault(
             address(vault),
             admin,
-            PolicyEngine.PolicyConfig({
-                leverageCap: 50000,
-                maxTradesPerHour: 100,
-                maxSlippageBps: 500
-            })
+            PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500})
         );
         policyEngine.setAuthorizedCaller(address(vault), true);
         policyEngine.whitelistToken(address(vault), assetToken, true);
+        _configureVaultWhitelistsAndAdapters(
+            address(vault), policyEngine, usingExistingAssets, primaryValuator, wrappedValuator, assetToken
+        );
         feeDistributor.initializeVaultFees(
             address(vault),
             admin,
-            FeeDistributor.FeeConfig({
-                performanceFeeBps: 2000,
-                managementFeeBps: 200,
-                validatorFeeShareBps: 3000
-            })
+            FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
         );
 
         vault.grantRole(keccak256("OPERATOR_ROLE"), OPERATOR1);
@@ -278,6 +306,49 @@ contract RegisterBlueprint is Script {
         vault.grantRole(keccak256("CREATOR_ROLE"), admin);
 
         return address(vault);
+    }
+
+    function _configureDefaultWhitelists(
+        VaultFactory vaultFactory,
+        bool usingExistingAssets,
+        address usdcAddress,
+        address wethAddress
+    ) internal {
+        vaultFactory.setDefaultWhitelistedToken(usdcAddress, true);
+        vaultFactory.setDefaultWhitelistedToken(wethAddress, true);
+        if (usingExistingAssets) {
+            vaultFactory.setDefaultWhitelistedToken(MAINNET_USDT, true);
+            vaultFactory.setDefaultWhitelistedToken(MAINNET_DAI, true);
+            vaultFactory.setDefaultWhitelistedToken(MAINNET_WBTC, true);
+            vaultFactory.setDefaultWhitelistedToken(AAVE_AWETH, true);
+            vaultFactory.setDefaultWhitelistedToken(AAVE_AUSDC, true);
+            vaultFactory.setDefaultWhitelistedToken(AAVE_ADAI, true);
+        }
+    }
+
+    function _configureVaultWhitelistsAndAdapters(
+        address vaultAddress,
+        PolicyEngine policyEngine,
+        bool usingExistingAssets,
+        IAssetValuator primaryValuator,
+        IAssetValuator wrappedValuator,
+        address assetToken
+    ) internal {
+        TradingVault vault = TradingVault(payable(vaultAddress));
+        if (usingExistingAssets) {
+            address[5] memory tokens = [MAINNET_WETH, MAINNET_USDC, MAINNET_USDT, MAINNET_DAI, MAINNET_WBTC];
+            for (uint256 i = 0; i < tokens.length; i++) {
+                policyEngine.whitelistToken(vaultAddress, tokens[i], true);
+                vault.setValuationAdapter(tokens[i], address(primaryValuator));
+            }
+            address[3] memory wrappers = [AAVE_AWETH, AAVE_AUSDC, AAVE_ADAI];
+            for (uint256 i = 0; i < wrappers.length; i++) {
+                policyEngine.whitelistToken(vaultAddress, wrappers[i], true);
+                vault.setValuationAdapter(wrappers[i], address(wrappedValuator));
+            }
+        } else {
+            vault.setValuationAdapter(assetToken, address(primaryValuator));
+        }
     }
 
     /// @notice Construct a BlueprintDefinition for a specific variant.

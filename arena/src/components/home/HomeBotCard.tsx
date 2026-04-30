@@ -6,6 +6,7 @@ import { SparklineChart } from '~/components/arena/SparklineChart';
 import type { Bot } from '~/lib/types/bot';
 import { STRATEGY_SHORT } from '~/lib/format';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { buildVaultPath } from '~/lib/utils/vaultRoute';
 
 const STATUS_BADGE: Record<string, { variant: 'success' | 'amber' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
   active: { variant: 'success', label: 'Active' },
@@ -210,7 +211,7 @@ export function HomeBotCard({
               </Button>
               {hasVault && (
                 <Button variant="outline" size="sm" asChild className="text-xs">
-                  <Link to={`/vault/${bot.vaultAddress}`}>
+                  <Link to={buildVaultPath(bot.vaultAddress, bot.chainId)}>
                     <div className="i-ph:vault text-xs mr-1" />
                     Vault
                   </Link>

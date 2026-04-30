@@ -4,90 +4,168 @@ import { parseUnits, formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
-import { useRedeem } from '~/lib/hooks/useVaultWrite';
-import { addTx, selectedChainIdStore } from '@tangle-network/blueprint-ui';
+import { useRedeemInKind } from '~/lib/hooks/useVaultWrite';
+import { erc20Abi, tradingVaultAbi } from '~/lib/contracts/abis';
+import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { addTx } from '@tangle-network/blueprint-ui';
+import { formatNumber } from '~/lib/format';
 
 interface WithdrawFormProps {
   vaultAddress: Address;
   assetSymbol: string;
   shareDecimals: number;
-  sharePrice?: number;
   userShares?: bigint;
   userSharesFormatted?: number;
+  paused: boolean;
+  targetChainId: number;
+  targetChainName: string;
   onSuccess: () => void;
+}
+
+interface BasketPreviewItem {
+  token: Address;
+  symbol: string;
+  amount: bigint;
+  decimals: number;
 }
 
 export function WithdrawForm({
   vaultAddress,
   assetSymbol,
   shareDecimals,
-  sharePrice,
   userShares,
   userSharesFormatted,
+  paused,
+  targetChainId,
+  targetChainName,
   onSuccess,
 }: WithdrawFormProps) {
   const { isConnected, chainId } = useAccount();
-  const isReady = isConnected && chainId === selectedChainIdStore.get();
+  const isReady = isConnected && chainId === targetChainId;
   const [shares, setShares] = useState('');
-  const redeem = useRedeem();
+  const [basketPreview, setBasketPreview] = useState<BasketPreviewItem[]>([]);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const redeemInKind = useRedeemInKind();
 
-  const parsedShares = shares && parseFloat(shares) > 0
-    ? parseUnits(shares, shareDecimals)
-    : 0n;
+  const sharesNumber = Number(shares);
+  let parsedShares = 0n;
+  let invalidShares = false;
+  if (shares && Number.isFinite(sharesNumber) && sharesNumber > 0) {
+    try {
+      parsedShares = parseUnits(shares, shareDecimals);
+    } catch {
+      invalidShares = true;
+    }
+  } else if (shares) {
+    invalidShares = true;
+  }
 
   const insufficientShares = parsedShares > 0n && (userShares ?? 0n) < parsedShares;
+  const maxSharesFormatted = userShares != null
+    ? Number(formatUnits(userShares, shareDecimals))
+    : userSharesFormatted;
 
-  const valueReceived = shares && parseFloat(shares) > 0 && sharePrice
-    ? (parseFloat(shares) * sharePrice).toFixed(4)
-    : null;
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPreview() {
+      if (parsedShares === 0n || invalidShares) {
+        setBasketPreview([]);
+        return;
+      }
+      setIsPreviewLoading(true);
+      try {
+        const client = getChainPublicClient(targetChainId);
+        const result = await client.readContract({
+          address: vaultAddress,
+          abi: tradingVaultAbi,
+          functionName: 'previewRedeemInKind',
+          args: [parsedShares],
+        }) as readonly [Address[], bigint[]];
+        const [tokens, amounts] = result;
+        const items = await Promise.all(tokens.map(async (token, index) => {
+          let symbol = 'Asset';
+          let decimals = 18;
+          try {
+            symbol = await client.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' }) as string;
+          } catch {}
+          try {
+            decimals = await client.readContract({ address: token, abi: erc20Abi, functionName: 'decimals' }) as number;
+          } catch {}
+          return { token, symbol, amount: amounts[index] ?? 0n, decimals };
+        }));
+        if (!cancelled) setBasketPreview(items.filter((item) => item.amount > 0n));
+      } catch {
+        if (!cancelled) setBasketPreview([]);
+      } finally {
+        if (!cancelled) setIsPreviewLoading(false);
+      }
+    }
+    loadPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [invalidShares, parsedShares, targetChainId, vaultAddress]);
 
   // Track confirmation (isSuccess from useWaitForTransactionReceipt) via ref
   // to avoid firing the callback multiple times during re-renders.
   const confirmedRef = useRef(false);
   useEffect(() => {
-    if (redeem.isSuccess && !confirmedRef.current) {
+    if (redeemInKind.isSuccess && !confirmedRef.current) {
       confirmedRef.current = true;
       toast.success('Withdrawal confirmed!');
-      redeem.reset();
+      redeemInKind.reset();
       setShares('');
       onSuccess();
     }
-    if (!redeem.isSuccess) {
+    if (!redeemInKind.isSuccess) {
       confirmedRef.current = false;
     }
-  }, [redeem.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [redeemInKind.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClick = () => {
-    if (!shares || parseFloat(shares) <= 0) {
+    if (!shares || invalidShares || sharesNumber <= 0) {
       toast.error('Enter a valid number of shares');
+      return;
+    }
+    if (!isReady) {
+      toast.error(`Switch to ${targetChainName} first`);
+      return;
+    }
+    if (paused) {
+      toast.error('Vault is paused');
       return;
     }
     if (insufficientShares) {
       toast.error('Insufficient shares');
       return;
     }
-    redeem.redeem(vaultAddress, shares, shareDecimals, {
-      onHash(h) {
-        addTx(h, `Withdraw ${shares || '?'} shares`, selectedChainIdStore.get());
+    const callbacks = {
+      onHash(h: `0x${string}`) {
+        addTx(h, `Withdraw ${shares || '?'} shares as basket`, targetChainId);
       },
-      onError(e) {
+      onError(e: Error) {
         toast.error(`Withdrawal failed: ${e.message.slice(0, 100)}`);
-        redeem.reset();
+        redeemInKind.reset();
       },
-    });
+    };
+    redeemInKind.redeemInKind(vaultAddress, shares, shareDecimals, targetChainId, callbacks);
   };
 
-  const isPending = redeem.isPending || redeem.isConfirming;
+  const isPending = redeemInKind.isPending || redeemInKind.isConfirming;
 
   const buttonText = !isConnected
     ? 'Connect Wallet'
     : !isReady
-    ? 'Switch to Tangle Local'
+    ? `Switch to ${targetChainName}`
+    : paused
+    ? 'Vault Paused'
+    : invalidShares
+    ? 'Invalid Shares'
     : insufficientShares
     ? 'Insufficient Shares'
     : isPending
     ? 'Withdrawing...'
-    : 'Withdraw';
+    : 'Withdraw Basket';
 
   if (assetSymbol === '???') {
     return (
@@ -125,14 +203,14 @@ export function WithdrawForm({
               <label htmlFor="withdraw-shares" className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
                 Shares
               </label>
-              {userSharesFormatted != null && (
+              {maxSharesFormatted != null && (
                 <button
                   type="button"
-                  onClick={() => setShares(userSharesFormatted.toString())}
+                  onClick={() => setShares(maxSharesFormatted.toString())}
                   className="text-sm font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors"
                   aria-label="Set maximum withdrawal"
                 >
-                  Balance: {userSharesFormatted.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  Withdrawable: {formatNumber(maxSharesFormatted, { maximumFractionDigits: 4 })}
                 </button>
               )}
             </div>
@@ -144,24 +222,36 @@ export function WithdrawForm({
               onChange={(e) => setShares(e.target.value)}
               min="0"
               step="any"
+              disabled={isPending}
             />
           </div>
-          {valueReceived && (
-            <div className="flex items-center justify-between px-3.5 py-2.5 rounded-lg bg-crimson-500/5 border border-crimson-500/10">
-              <span className="text-sm text-arena-elements-textSecondary font-data flex items-center gap-1.5">
-                <div className="i-ph:arrow-right text-xs text-arena-elements-textTertiary" />
-                You'll receive
-              </span>
-              <span className="text-base font-data font-bold text-arena-elements-textPrimary">
-                ~{valueReceived} {assetSymbol}
-              </span>
+          <div className="rounded-lg border border-arena-border bg-arena-surface-muted/40 p-3">
+            <div className="mb-2 flex items-center justify-between text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              <span>Withdrawal Basket</span>
+              {isPreviewLoading && <span>Loading...</span>}
             </div>
-          )}
+            {basketPreview.length > 0 ? (
+              <div className="space-y-2">
+                {basketPreview.map((item) => (
+                  <div key={item.token} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-data text-arena-elements-textSecondary">{item.symbol}</span>
+                    <span className="font-data font-semibold text-arena-elements-textPrimary">
+                      {formatNumber(Number(formatUnits(item.amount, item.decimals)), { maximumFractionDigits: 6 })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-arena-elements-textSecondary">
+                Enter shares to preview the assets you will receive.
+              </div>
+            )}
+          </div>
           <Button
             onClick={handleClick}
             variant="outline"
             className="w-full"
-            disabled={!isReady || isPending || insufficientShares || !shares}
+            disabled={!isReady || isPending || invalidShares || insufficientShares || paused || !shares}
           >
             {buttonText}
           </Button>

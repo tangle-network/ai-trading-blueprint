@@ -2,6 +2,7 @@ import { zeroAddress } from 'viem';
 import type { TrackedProvision } from '~/lib/stores/provisions';
 import type { Bot, BotLifecycleStatus, BotOperatorKind, BotStatus, StrategyType } from '~/lib/types/bot';
 import type { BotDetail } from '~/lib/hooks/useBotDetail';
+import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 export function findMatchingInstanceRouteProvision(
   provisions: TrackedProvision[],
@@ -100,6 +101,70 @@ export function buildInstanceFallbackBot({
     operatorKind: operatorKind ?? null,
     operatorApiUrl: operatorApiUrl ?? null,
     lastVerifiedAt: detail ? Date.now() : null,
+    isUnverified: false,
+  };
+}
+
+interface BuildOperatorDetailFallbackBotOptions {
+  routeId: string;
+  detail?: BotDetail;
+  operatorApiUrl?: string | null;
+  operatorKind?: BotOperatorKind;
+}
+
+export function buildOperatorDetailFallbackBot({
+  routeId,
+  detail,
+  operatorApiUrl,
+  operatorKind,
+}: BuildOperatorDetailFallbackBotOptions): Bot | undefined {
+  if (!detail) return undefined;
+
+  const lifecycleStatus = detail.lifecycle_status;
+  const tradingActive = detail.trading_active;
+
+  return {
+    id: detail.id || routeId,
+    serviceId: detail.service_id ?? 0,
+    name: resolveBotDisplayName({
+      primaryName: detail.name,
+      strategyType: detail.strategy_type,
+    }),
+    operatorAddress: detail.operator_address || zeroAddress,
+    vaultAddress: detail.vault_address || zeroAddress,
+    strategyType: (detail.strategy_type || 'dex') as StrategyType,
+    status: mapLifecycleStatusToBotStatus(lifecycleStatus, tradingActive),
+    createdAt: detail.created_at ? detail.created_at * 1000 : Date.now(),
+    chainId: detail.chain_id,
+    pnlPercent: 0,
+    pnlAbsolute: 0,
+    sharpeRatio: 0,
+    maxDrawdown: 0,
+    winRate: 0,
+    totalTrades: 0,
+    tvl: 0,
+    avgValidatorScore: 0,
+    sparklineData: [],
+    sandboxId: detail.sandbox_id,
+    sandboxState: detail.sandbox_state ?? null,
+    lifecycleStatus,
+    archived: detail.archived ?? lifecycleStatus === 'archived',
+    controlAvailable: detail.control_available ?? lifecycleStatus !== 'archived',
+    tradingActive,
+    workflowId: detail.workflow_id ?? undefined,
+    maxLifetimeDays: detail.max_lifetime_days,
+    windDownStartedAt: detail.wind_down_started_at ?? undefined,
+    secretsConfigured: detail.secrets_configured,
+    submitterAddress: detail.submitter_address,
+    strategyConfig: detail.strategy_config ?? undefined,
+    riskParams: detail.risk_params ?? undefined,
+    paperTrade: detail.paper_trade ?? false,
+    callId: detail.call_id,
+    source: 'operator',
+    verificationState: 'authoritative',
+    operatorKind: operatorKind ?? null,
+    operatorApiUrl: operatorApiUrl ?? null,
+    lastVerifiedAt: Date.now(),
     isUnverified: false,
   };
 }

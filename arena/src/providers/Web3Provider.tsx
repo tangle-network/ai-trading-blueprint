@@ -1,18 +1,20 @@
 import { createConfig } from 'wagmi';
 import { ConnectKitProvider, getDefaultConfig } from 'connectkit';
 import { type ReactNode } from 'react';
-import {
-  createTangleTransports,
-  defaultConnectKitOptions,
-  getTangleWalletChains,
-} from '@tangle-network/blueprint-ui';
+import { defaultConnectKitOptions, getTangleWalletChains } from '@tangle-network/blueprint-ui';
 import { Web3Shell } from '@tangle-network/blueprint-ui/components';
 import { tangleLocal } from '~/lib/contracts/chains';
+import { http } from 'wagmi';
 
 const config = createConfig(
   getDefaultConfig({
     chains: getTangleWalletChains(tangleLocal),
-    transports: createTangleTransports(tangleLocal),
+    transports: Object.fromEntries(
+      getTangleWalletChains(tangleLocal).map((chain) => [
+        chain.id,
+        http(chain.rpcUrls.default.http[0]),
+      ]),
+    ),
     walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3fcc6bba6f1de962d911bb5b5c3dba68',
     appName: 'AI Trading Arena',
     appDescription: 'AI-powered trading competition platform on Tangle Network',

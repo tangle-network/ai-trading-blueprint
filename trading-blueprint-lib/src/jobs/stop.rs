@@ -4,6 +4,14 @@ use serde_json::json;
 use crate::state::{bot_key, find_bot_by_sandbox};
 use crate::{JsonResponse, TradingControlRequest};
 
+fn workflow_group_ids(workflow_id: u64) -> [u64; 3] {
+    [
+        workflow_id,
+        workflow_id.saturating_add(1),
+        workflow_id.saturating_add(2),
+    ]
+}
+
 /// Stop core logic, testable without Tangle extractors.
 ///
 /// When `skip_docker` is true, skips the `stop_sidecar` Docker call but
@@ -29,11 +37,13 @@ pub async fn stop_core(sandbox_id: &str, skip_docker: bool) -> Result<JsonRespon
 
     // Deactivate workflow
     if let Some(wf_id) = workflow_id {
-        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-        let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.update(&key, |e| {
-            e.active = false;
-            e.next_run_at = None;
-        });
+        for id in workflow_group_ids(wf_id) {
+            let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+            let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()?.update(&key, |e| {
+                e.active = false;
+                e.next_run_at = None;
+            });
+        }
     }
 
     // Set trading_active = false

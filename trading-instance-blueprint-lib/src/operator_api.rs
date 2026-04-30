@@ -175,6 +175,12 @@ struct SecretsResponse {
 }
 
 #[derive(Serialize)]
+struct GetSecretsResponse {
+    sandbox_id: String,
+    env_json: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
 struct ActivationProgressResponse {
     bot_id: String,
     phase: String,
@@ -501,7 +507,9 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot", get(get_bot))
         .route(
             "/api/bot/secrets",
-            post(configure_secrets).delete(wipe_secrets),
+            get(get_secrets)
+                .post(configure_secrets)
+                .delete(wipe_secrets),
         )
         .route("/api/bot/start", post(start_bot))
         .route("/api/bot/stop", post(stop_bot))
@@ -585,6 +593,23 @@ fn resolve_singleton_live() -> Result<TradingBotRecord, ApiError> {
     let bot =
         resolve_singleton().map_err(|(status, message)| ApiError::message(status, message))?;
     ensure_live_sandbox(bot)
+}
+
+/// Instance mode provisions against a pre-existing singleton vault, but the
+/// shared cloud provision flow persists `factory:{address}` placeholders until
+/// a factory-created vault can be resolved later. Normalize the stored record
+/// back to the actual singleton vault address so validator signing and
+/// activation both see a plain EVM address.
+pub fn persist_instance_singleton_vault_address(
+    bot_id: &str,
+    vault_address: blueprint_sdk::alloy::primitives::Address,
+) -> Result<(), String> {
+    state::bots()?
+        .update(&state::bot_key(bot_id), |bot| {
+            bot.vault_address = format!("{vault_address:#x}");
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn ensure_live_sandbox(bot: TradingBotRecord) -> Result<TradingBotRecord, ApiError> {
@@ -910,17 +935,16 @@ fn fallback_trade_value_usd(t: &serde_json::Value) -> Option<f64> {
     Some(quantity * price)
 }
 
-fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
-    let trades = fallback_trade_dataset(bot);
-    synthesize_metrics(bot, &trades)
-        .into_iter()
-        .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
-        .collect()
-}
-
 fn fallback_metrics_snapshots(bot: &TradingBotRecord) -> Vec<MetricsSnapshotResponse> {
     let trades = fallback_trade_dataset(bot);
     synthesize_metrics(bot, &trades)
+}
+
+fn fallback_metrics_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
+    fallback_metrics_snapshots(bot)
+        .into_iter()
+        .map(|snapshot| serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null))
+        .collect()
 }
 
 fn parse_metrics_snapshots(
@@ -1862,6 +1886,8 @@ async fn provision_bot(
     // Resolve bot_id and store singleton reference
     let bot = trading_blueprint_lib::state::find_bot_by_sandbox(&output.sandbox_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    persist_instance_singleton_vault_address(&bot.id, vault_address)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     set_instance_bot_id(bot.id.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     tracing::info!(
@@ -2237,6 +2263,26 @@ async fn configure_secrets(
     }))
 }
 
+async fn get_secrets(
+    SessionAuth(caller): SessionAuth,
+) -> Result<Json<GetSecretsResponse>, (StatusCode, String)> {
+    let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
+
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let env_json = if sandbox.user_env_json.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        serde_json::from_str(&sandbox.user_env_json).unwrap_or_default()
+    };
+
+    Ok(Json(GetSecretsResponse {
+        sandbox_id: sandbox.id,
+        env_json,
+    }))
+}
+
 async fn wipe_secrets(
     SessionAuth(caller): SessionAuth,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
@@ -2467,17 +2513,69 @@ async fn get_bot_metrics(
     SessionAuth(_caller): SessionAuth,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
-    let trades = fallback_trade_dataset(&bot);
+    let metrics_history = match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
+        Ok(Some(payload)) => extract_json_array(payload, "snapshots")
+            .and_then(parse_metrics_snapshots)
+            .unwrap_or_else(|err| {
+                tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
+                fallback_metrics_snapshots(&bot)
+            }),
+        Ok(None) => fallback_metrics_snapshots(&bot),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api metrics request failed, using fallback: {err}");
+            fallback_metrics_snapshots(&bot)
+        }
+    };
+    let latest_snapshot = metrics_history.last();
+    let trades =
+        match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
+            Ok(Some(payload)) => extract_json_array(payload, "trades")
+                .unwrap_or_else(|_| fallback_trade_dataset(&bot)),
+            Ok(None) | Err(_) => fallback_trade_dataset(&bot),
+        };
 
     let total_pnl: f64 = trades
         .iter()
         .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
         .sum();
 
+    let fallback_portfolio = || {
+        fallback_portfolio_state(&bot)
+            .total_value_usd
+            .unwrap_or(0.0)
+    };
+    let portfolio_value_usd = match fetch_trading_api_json_with_method(
+        &bot,
+        reqwest::Method::POST,
+        "/portfolio/state",
+        &[],
+    )
+    .await
+    {
+        Ok(Some(payload)) => map_trading_api_portfolio(payload)
+            .ok()
+            .map(|portfolio| {
+                if portfolio.has_unpriced_positions {
+                    0.0
+                } else {
+                    portfolio.total_value_usd.unwrap_or(0.0)
+                }
+            })
+            .or_else(|| latest_snapshot.map(|snapshot| snapshot.account_value_usd))
+            .unwrap_or_else(fallback_portfolio),
+        Ok(None) | Err(_) => latest_snapshot
+            .map(|snapshot| snapshot.account_value_usd)
+            .unwrap_or_else(fallback_portfolio),
+    };
+
     Ok(Json(BotMetricsResponse {
-        portfolio_value_usd: 10_000.0 + total_pnl,
-        total_pnl,
-        trade_count: trades.len() as u32,
+        portfolio_value_usd,
+        total_pnl: latest_snapshot
+            .map(|snapshot| snapshot.realized_pnl + snapshot.unrealized_pnl)
+            .unwrap_or(total_pnl),
+        trade_count: latest_snapshot
+            .map(|snapshot| snapshot.trade_count)
+            .unwrap_or(trades.len() as u32),
     }))
 }
 
@@ -2488,16 +2586,16 @@ async fn get_bot_metrics_history(
     match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
         Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
             Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
-            Ok(_) => Ok(Json(Vec::new())),
+            Ok(_) => Ok(Json(fallback_metrics_history(&bot))),
             Err(err) => {
                 tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");
-                Ok(Json(Vec::new()))
+                Ok(Json(fallback_metrics_history(&bot)))
             }
         },
-        Ok(None) => Ok(Json(Vec::new())),
+        Ok(None) => Ok(Json(fallback_metrics_history(&bot))),
         Err(err) => {
             tracing::warn!(bot_id = %bot.id, "trading api metrics request failed: {err}");
-            Ok(Json(Vec::new()))
+            Ok(Json(fallback_metrics_history(&bot)))
         }
     }
 }

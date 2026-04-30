@@ -287,7 +287,7 @@ Protected endpoints (require `Authorization: Bearer <token>`):
 | POST | `/api/bots/{id}/stop` | Stop trading |
 | POST | `/api/bots/{id}/run-now` | Trigger immediate tick |
 | PATCH | `/api/bots/{id}/config` | Update configuration |
-| POST | `/api/bots/{id}/wipe-secrets` | Clear secrets |
+| DELETE | `/api/bots/{id}/secrets` | Clear secrets |
 
 ## Trading HTTP API
 

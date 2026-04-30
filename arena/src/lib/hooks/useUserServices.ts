@@ -44,26 +44,33 @@ export function useUserServices(userAddress: Address | undefined) {
 
     setIsLoading(true);
     try {
-      // Discover service IDs from ServiceActivated events across all configured blueprints
-      const allLogs = await Promise.all(
-        ALL_BLUEPRINT_IDS.map((bpId) =>
-          publicClient.getLogs({
-            address: addresses.tangle,
-            event: {
-              type: 'event',
-              name: 'ServiceActivated',
-              inputs: [
-                { name: 'serviceId', type: 'uint64', indexed: true },
-                { name: 'requestId', type: 'uint64', indexed: true },
-                { name: 'blueprintId', type: 'uint64', indexed: true },
-              ],
-            },
-            args: { blueprintId: bpId },
-            fromBlock: 0n,
-            toBlock: 'latest',
-          }),
-        ),
-      );
+      // Discover service IDs from ServiceActivated events across all configured blueprints.
+      // Fork RPC providers may reject wide getLogs ranges, so this must not block
+      // env-configured local services or operator-backed bot sync.
+      let allLogs: unknown[][] = [];
+      try {
+        allLogs = await Promise.all(
+          ALL_BLUEPRINT_IDS.map((bpId) =>
+            publicClient.getLogs({
+              address: addresses.tangle,
+              event: {
+                type: 'event',
+                name: 'ServiceActivated',
+                inputs: [
+                  { name: 'serviceId', type: 'uint64', indexed: true },
+                  { name: 'requestId', type: 'uint64', indexed: true },
+                  { name: 'blueprintId', type: 'uint64', indexed: true },
+                ],
+              },
+              args: { blueprintId: bpId },
+              fromBlock: 0n,
+              toBlock: 'latest',
+            }),
+          ),
+        );
+      } catch (err) {
+        console.warn('[useUserServices] Service event discovery failed; falling back to configured service IDs:', err);
+      }
       type ActivatedLog = { args: { serviceId?: bigint; requestId?: bigint; blueprintId?: bigint } };
       const logs = allLogs.flat() as ActivatedLog[];
 

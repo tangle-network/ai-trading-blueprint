@@ -109,6 +109,68 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'DEX',
       description: 'DEX strategy',
       providers: ['Uniswap'],
+      executionMode: 'single-chain',
+      supportedChainIds: [84532, 31339],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'yield',
+      name: 'Yield',
+      description: 'Yield strategy',
+      providers: ['Aave', 'Morpho'],
+      executionMode: 'single-chain',
+      supportedChainIds: [1, 8453],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'prediction',
+      name: 'Prediction',
+      description: 'Prediction strategy',
+      providers: ['Polymarket'],
+      executionMode: 'single-chain',
+      supportedChainIds: [137],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'perp',
+      name: 'Perp',
+      description: 'Perp strategy',
+      providers: ['GMX'],
+      executionMode: 'single-chain',
+      supportedChainIds: [42161],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'volatility',
+      name: 'Volatility',
+      description: 'Volatility strategy',
+      providers: ['Polymarket', 'GMX'],
+      executionMode: 'paper-only',
+      supportedChainIds: [],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'multi',
+      name: 'Cross-Strategy',
+      description: 'Multi strategy',
+      providers: ['All protocols'],
+      executionMode: 'none',
+      supportedChainIds: [],
       cron: '* * * * *',
       maxTurns: 1,
       timeoutMs: 1000,
@@ -160,10 +222,14 @@ describe('provision runtime backend helpers', () => {
         customExpertKnowledge: 'expert notes',
         customInstructions: 'custom prompt',
         paperTrade: false,
+        protocolChainId: 1,
+        availableProtocols: ['gmx_v2', 'vertex'],
       }),
     ).toEqual({
       runtime_backend: 'docker',
       paper_trade: false,
+      protocol_chain_id: 1,
+      available_protocols: ['gmx_v2', 'vertex'],
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
@@ -182,6 +248,7 @@ describe('provision runtime backend helpers', () => {
         vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
         assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
         paperTrade: false,
+        protocolChainId: 1,
       }),
     ).toEqual({
       chainId: 31339n,
@@ -189,7 +256,61 @@ describe('provision runtime backend helpers', () => {
       vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
       assetAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
       paperTrade: false,
+      protocolChainId: 1,
     });
+  });
+
+  it('defaults enabled execution targets to live mode when paper mode is omitted', async () => {
+    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    const config = resolveExecutionTargetProvisionConfig({
+      id: 'ethereum',
+      label: 'Ethereum Fork (Local Live)',
+      description: 'Local fork',
+      enabled: true,
+      chainId: 31339,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+      assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    });
+
+    expect(config).toMatchObject({
+      paperTrade: false,
+    });
+  });
+
+  it('uses execution target config when the target is compatible with the strategy', async () => {
+    const { strategyUsesExecutionTarget } = await import('../provision');
+    const ethereumTarget = {
+      id: 'ethereum',
+      label: 'Ethereum Fork (Local Live)',
+      description: 'Local fork',
+      enabled: true,
+      chainId: 31339,
+      protocolChainId: 1,
+    } as const;
+    const arbitrumForkTarget = {
+      id: 'arbitrum-fork',
+      label: 'Arbitrum Fork',
+      description: 'Local Arbitrum fork',
+      enabled: true,
+      chainId: 31340,
+      protocolChainId: 42161,
+    } as const;
+    const baseTarget = {
+      id: 'base',
+      label: 'Base Sepolia',
+      description: 'Base',
+      enabled: true,
+      chainId: 84532,
+    } as const;
+
+    expect(strategyUsesExecutionTarget('dex', baseTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('dex', ethereumTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('perp', arbitrumForkTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('perp', ethereumTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('yield', baseTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(false);
   });
 
   it('rejects incomplete execution targets', async () => {
@@ -348,5 +469,60 @@ describe('provision runtime backend helpers', () => {
         ],
       )?.id,
     ).toBe('instance-11');
+  });
+
+  it('filters execution targets by selected strategy chain support', async () => {
+    const { executionTargetsForStrategy } = await import('../provision');
+    const targets = [
+      { id: 'base', label: 'Base Sepolia', description: 'Base test', enabled: true, chainId: 84532 },
+      { id: 'polygon', label: 'Polygon', description: 'Polygon', enabled: true, chainId: 137 },
+      { id: 'arbitrum-fork', label: 'Arbitrum Fork', description: 'Arbitrum fork', enabled: true, chainId: 31340, protocolChainId: 42161 },
+      { id: 'arbitrum-one', label: 'Arbitrum One', description: 'Arbitrum', enabled: true, chainId: 42161 },
+    ] as const;
+
+    expect(executionTargetsForStrategy('dex', [...targets]).map((target) => target.id)).toEqual(['base']);
+    expect(executionTargetsForStrategy('prediction', [...targets]).map((target) => target.id)).toEqual(['polygon']);
+    expect(executionTargetsForStrategy('perp', [...targets]).map((target) => target.id)).toEqual(['arbitrum-fork', 'arbitrum-one']);
+    expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
+  });
+
+  it('returns GMX and Vertex as the Arbitrum perp protocols', async () => {
+    const { availableProtocolsForStrategyTarget } = await import('../provision');
+    expect(
+      availableProtocolsForStrategyTarget('perp', {
+        id: 'arbitrum-fork',
+        label: 'Arbitrum Fork',
+        description: 'Local Arbitrum fork',
+        enabled: true,
+        chainId: 31340,
+        protocolChainId: 42161,
+      }),
+    ).toEqual(['gmx_v2', 'vertex']);
+    expect(
+      availableProtocolsForStrategyTarget('perp', {
+        id: 'ethereum',
+        label: 'Ethereum Fork',
+        description: 'Local Ethereum fork',
+        enabled: true,
+        chainId: 31339,
+        protocolChainId: 1,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('validates paper-only and unsupported single-chain strategies', async () => {
+    const { validateStrategyExecutionSelection } = await import('../provision');
+    const target = {
+      id: 'base',
+      label: 'Base Sepolia',
+      description: 'Base test',
+      enabled: true,
+      chainId: 84532,
+    } as const;
+
+    expect(validateStrategyExecutionSelection('volatility', target, true)).toEqual({ ok: true });
+    expect(validateStrategyExecutionSelection('volatility', target, false)).toMatchObject({ ok: false });
+    expect(validateStrategyExecutionSelection('multi', target, true)).toMatchObject({ ok: false });
+    expect(validateStrategyExecutionSelection('prediction', target, true)).toMatchObject({ ok: false });
   });
 });

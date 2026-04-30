@@ -38,10 +38,12 @@ const servicesState = {
   isLoading: false,
 };
 
+const defaultServices = servicesState.services;
+
 const botsState = {
   bots: [] as any[],
   isLoading: false,
-  operatorDataState: 'locked' as const,
+  operatorDataState: 'locked' as 'locked' | 'ready',
 };
 
 let provisionsState: TrackedProvision[] = [];
@@ -177,6 +179,8 @@ vi.mock('~/components/motion/AnimatedNumber', () => ({
 
 describe('dashboard auth-aware rendering', () => {
   beforeEach(() => {
+    servicesState.services = defaultServices;
+    servicesState.isLoading = false;
     botsState.bots = [];
     botsState.isLoading = false;
     botsState.operatorDataState = 'locked';
@@ -323,5 +327,39 @@ describe('dashboard auth-aware rendering', () => {
     expect(screen.queryByText('provisioning-0-failed-1')).not.toBeInTheDocument();
     expect(screen.queryByText('provisioning-0-failed-0')).not.toBeInTheDocument();
     expect(screen.getByText('bot-bot1')).toBeInTheDocument();
+  });
+
+  it('shows operator-backed bots submitted by the connected wallet even without service ownership', async () => {
+    servicesState.services = [];
+    botsState.operatorDataState = 'ready';
+    botsState.bots = [
+      {
+        id: 'bot-submitted-1',
+        serviceId: 99,
+        name: 'submitted-bot',
+        operatorAddress: '0x0000000000000000000000000000000000000002',
+        submitterAddress: accountState.address,
+        vaultAddress: '0x00000000000000000000000000000000000000bb',
+        strategyType: 'dex',
+        status: 'active',
+        createdAt: 1,
+        pnlPercent: 0,
+        pnlAbsolute: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        tvl: 0,
+        avgValidatorScore: 0,
+        sparklineData: [],
+        source: 'operator',
+      },
+    ];
+
+    const { default: HomePage } = await import('../dashboard');
+    render(<HomePage />);
+
+    expect(screen.getByText('bot-submitted-bot')).toBeInTheDocument();
+    expect(screen.queryByText('No services or bots yet')).not.toBeInTheDocument();
   });
 });

@@ -4,6 +4,14 @@ use serde_json::json;
 use crate::state::{bot_key, find_bot_by_sandbox};
 use crate::{JsonResponse, TradingControlRequest};
 
+fn workflow_group_ids(workflow_id: u64) -> [u64; 3] {
+    [
+        workflow_id,
+        workflow_id.saturating_add(1),
+        workflow_id.saturating_add(2),
+    ]
+}
+
 fn sync_workflow_target(
     workflow_id: u64,
     record: Option<&sandbox_runtime::SandboxRecord>,
@@ -12,6 +20,14 @@ fn sync_workflow_target(
     ai_agent_sandbox_blueprint_lib::workflows::workflows()?
         .update(&key, |entry| {
             entry.active = true;
+            if entry.next_run_at.is_none() {
+                entry.next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+                    &entry.trigger_type,
+                    &entry.trigger_config,
+                    None,
+                )
+                .unwrap_or(None);
+            }
             if let Some(record) = record {
                 entry.target_kind =
                     ai_agent_sandbox_blueprint_lib::workflows::WORKFLOW_TARGET_SANDBOX;
@@ -61,7 +77,9 @@ pub async fn start_core(sandbox_id: &str, skip_docker: bool) -> Result<JsonRespo
 
     // Activate workflow
     if let Some(wf_id) = workflow_id {
-        sync_workflow_target(wf_id, latest_record.as_ref())?;
+        for id in workflow_group_ids(wf_id) {
+            sync_workflow_target(id, latest_record.as_ref())?;
+        }
     }
 
     // Set trading_active

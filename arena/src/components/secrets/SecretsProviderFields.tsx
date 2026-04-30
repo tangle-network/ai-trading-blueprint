@@ -20,6 +20,11 @@ interface SecretsProviderFieldsProps {
   envIdRef: MutableRefObject<number>;
   defaultProvider: AiProvider;
   variant?: SecretsProviderFieldsVariant;
+  revealValues?: boolean;
+  showRevealToggle?: boolean;
+  revealBusy?: boolean;
+  revealDisabled?: boolean;
+  onToggleReveal?: () => void;
 }
 
 const VARIANT_STYLES = {
@@ -45,6 +50,11 @@ export function SecretsProviderFields({
   envIdRef,
   defaultProvider,
   variant = 'card',
+  revealValues = false,
+  showRevealToggle = false,
+  revealBusy = false,
+  revealDisabled = false,
+  onToggleReveal,
 }: SecretsProviderFieldsProps) {
   const providerConfig = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0];
   const styles = VARIANT_STYLES[variant];
@@ -85,13 +95,36 @@ export function SecretsProviderFields({
         <label htmlFor="secrets-api-key" className="text-sm font-display font-medium text-arena-elements-textPrimary block mb-1.5">
           API Key <span className="text-crimson-400">*</span>
         </label>
-        <Input
-          id="secrets-api-key"
-          type="password"
-          placeholder={providerConfig.placeholder}
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
+        <div className="relative">
+          <Input
+            id="secrets-api-key"
+            type={revealValues ? 'text' : 'password'}
+            placeholder={providerConfig.placeholder}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            className={showRevealToggle ? 'pr-10' : undefined}
+          />
+          {showRevealToggle && (
+            <button
+              type="button"
+              onClick={onToggleReveal}
+              disabled={revealDisabled || revealBusy}
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-md flex items-center justify-center text-arena-elements-textTertiary hover:text-arena-elements-textPrimary hover:bg-arena-elements-background-depth-3 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={revealValues ? 'Hide secrets' : 'Show secrets'}
+              aria-label={revealValues ? 'Hide secrets' : 'Show secrets'}
+            >
+              <div
+                className={`text-sm ${
+                  revealBusy
+                    ? 'i-ph:circle-notch animate-spin'
+                    : revealValues
+                      ? 'i-ph:eye'
+                      : 'i-ph:eye-slash'
+                }`}
+              />
+            </button>
+          )}
+        </div>
         {apiKey && DEFAULT_AI_API_KEY && apiKey === DEFAULT_AI_API_KEY && (
           <p className="text-xs text-emerald-500 mt-1">Pre-filled from local config</p>
         )}
@@ -111,7 +144,7 @@ export function SecretsProviderFields({
             aria-label={`Environment variable ${i + 1} key`}
           />
           <Input
-            type="password"
+            type={revealValues ? 'text' : 'password'}
             placeholder="value"
             value={env.value}
             onChange={(e) => {
