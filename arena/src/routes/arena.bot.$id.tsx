@@ -23,6 +23,7 @@ import {
 import { ChatTab } from "~/components/bot-detail/ChatTab";
 import { RunsTab } from "~/components/bot-detail/RunsTab";
 import { ControlsTab } from "~/components/bot-detail/ControlsTab";
+import { SecretsTab } from "~/components/bot-detail/SecretsTab";
 import { TerminalTab } from "~/components/bot-detail/TerminalTab";
 import {
   SecretsModal,
@@ -288,6 +289,7 @@ export default function BotDetailPage() {
             {operatorMeta?.features.terminal && (
               <TabsTrigger value="terminal">Terminal</TabsTrigger>
             )}
+            <TabsTrigger value="secrets">Secrets</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
@@ -389,6 +391,12 @@ export default function BotDetailPage() {
               </ErrorBoundary>
             </TabsContent>
           )}
+
+          <TabsContent value="secrets" className="mt-6">
+            <ErrorBoundary>
+              <SecretsTab bot={bot} />
+            </ErrorBoundary>
+          </TabsContent>
 
           <TabsContent value="controls" className="mt-6">
             <ControlsTab
