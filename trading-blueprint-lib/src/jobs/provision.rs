@@ -429,13 +429,9 @@ pub async fn provision_core(
             name: request.name.clone(),
             image: std::env::var("SIDECAR_IMAGE")
                 .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
-            stack: String::new(),
             agent_identifier: format!("trading-{}", request.strategy_type),
             env_json,
             metadata_json,
-            ssh_enabled: false,
-            ssh_public_key: String::new(),
-            web_terminal_enabled: false,
             max_lifetime_seconds: {
                 let days = if request.max_lifetime_days == 0 {
                     30
@@ -448,11 +444,7 @@ pub async fn provision_core(
             cpu_cores: request.cpu_cores,
             memory_mb: request.memory_mb,
             disk_gb: 10,
-            tee_config: None,
-            service_id: None,
-            owner: String::new(),
-            user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
-            port_mappings: Vec::new(),
+            ..Default::default()
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
