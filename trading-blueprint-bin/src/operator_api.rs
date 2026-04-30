@@ -588,7 +588,9 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
-            get(get_secrets).post(configure_secrets).delete(wipe_secrets),
+            get(get_secrets)
+                .post(configure_secrets)
+                .delete(wipe_secrets),
         )
         .route("/api/bots/{bot_id}/start", post(start_bot))
         .route("/api/bots/{bot_id}/stop", post(stop_bot))

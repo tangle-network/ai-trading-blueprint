@@ -10,6 +10,64 @@ use crate::wind_down::should_initiate_wind_down;
 use ai_agent_sandbox_blueprint_lib::workflows::{workflow_key, workflows};
 use blueprint_sdk::tangle::extract::TangleResult;
 
+fn workflow_group_ids(workflow_id: u64) -> [u64; 3] {
+    [
+        workflow_id,
+        workflow_id.saturating_add(1),
+        workflow_id.saturating_add(2),
+    ]
+}
+
+fn workflow_name_belongs_to_bot(name: &str, bot_id: &str) -> bool {
+    [
+        format!("fast-tick-{bot_id}"),
+        format!("research-tick-{bot_id}"),
+        format!("conversation-tick-{bot_id}"),
+        format!("trading-loop-{bot_id}"),
+    ]
+    .iter()
+    .any(|expected| name == expected)
+}
+
+fn disable_stopped_bot_workflows(
+    all_bots: &[crate::state::TradingBotRecord],
+) -> Result<(), String> {
+    let store = workflows()?;
+    let all_workflows = store.values().map_err(|e| e.to_string())?;
+
+    for bot in all_bots.iter().filter(|bot| !bot.trading_active) {
+        let group_ids = bot.workflow_id.map(workflow_group_ids);
+        for workflow in &all_workflows {
+            let belongs_to_bot = group_ids.is_some_and(|ids| ids.contains(&workflow.id))
+                || workflow_name_belongs_to_bot(&workflow.name, &bot.id);
+
+            if !belongs_to_bot || (!workflow.active && workflow.next_run_at.is_none()) {
+                continue;
+            }
+
+            let key = workflow_key(workflow.id);
+            store
+                .update(&key, |entry| {
+                    entry.active = false;
+                    entry.next_run_at = None;
+                })
+                .map_err(|e| {
+                    format!(
+                        "Failed to disable workflow {} for stopped bot {}: {e}",
+                        workflow.id, bot.id
+                    )
+                })?;
+            tracing::info!(
+                workflow_id = workflow.id,
+                bot_id = %bot.id,
+                "Disabled workflow for stopped bot before scheduler tick"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Trading-aware workflow tick.
 ///
 /// Before running the standard workflow tick, checks all active bots for
@@ -24,6 +82,8 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     // 1. Check all active bots for wind-down eligibility
     let all_bots = bots()?.values().map_err(|e| e.to_string())?;
     tracing::info!("Found {} bots", all_bots.len());
+
+    disable_stopped_bot_workflows(&all_bots)?;
 
     for bot in &all_bots {
         if !should_initiate_wind_down(bot) {

@@ -30,6 +30,8 @@ sol! {
         function deposit(uint256 assets, address receiver) external returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
         function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+        function previewRedeemInKind(uint256 shares) external view returns (address[] memory tokens, uint256[] memory amounts);
+        function redeemInKind(uint256 shares, address receiver, address owner) external returns (address[] memory tokens, uint256[] memory amounts);
         function convertToShares(uint256 assets) external view returns (uint256);
         function convertToAssets(uint256 shares) external view returns (uint256);
         function execute(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores) external;
@@ -120,9 +122,9 @@ sol! {
         function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external;
         function validateWithSignatures(
             bytes32 intentHash, address vault, bytes[] calldata signatures,
-            uint256[] calldata scores, uint256 deadline
+            uint256[] calldata scores, uint256 deadline, uint256 actionKind
         ) external view returns (bool approved, uint256 validCount);
-        function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline) external view returns (bytes32);
+        function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
         function getVaultSigners(address vault) external view returns (address[] memory);
         function getRequiredSignatures(address vault) external view returns (uint256);
     }

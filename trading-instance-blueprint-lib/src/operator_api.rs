@@ -507,7 +507,9 @@ pub fn build_instance_router() -> Router {
         .route("/api/bot", get(get_bot))
         .route(
             "/api/bot/secrets",
-            get(get_secrets).post(configure_secrets).delete(wipe_secrets),
+            get(get_secrets)
+                .post(configure_secrets)
+                .delete(wipe_secrets),
         )
         .route("/api/bot/start", post(start_bot))
         .route("/api/bot/stop", post(stop_bot))

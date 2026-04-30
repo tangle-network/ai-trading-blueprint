@@ -46,7 +46,7 @@ sol! {
         function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external;
         function validateWithSignatures(
             bytes32 intentHash, address vault, bytes[] calldata signatures,
-            uint256[] calldata scores, uint256 deadline
+            uint256[] calldata scores, uint256 deadline, uint256 actionKind
         ) external view returns (bool approved, uint256 validCount);
         function getRequiredSignatures(address vault) external view returns (uint256);
     }
@@ -235,6 +235,7 @@ async fn test_multisig_validator_fanout() {
             signatures,
             scores,
             U256::from(deadline),
+            U256::ZERO,
         )
         .call()
         .await

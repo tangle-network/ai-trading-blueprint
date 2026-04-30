@@ -9,7 +9,7 @@ use blueprint_sdk::alloy::primitives::{Address, U256};
 use blueprint_sdk::alloy::sol_types::SolValue;
 use trading_blueprint_lib::jobs::{
     activate_bot_with_secrets, configure_core, deprovision_core, extend_core, provision_core,
-    start_core, status_core, stop_core, wipe_bot_secrets,
+    start_core, status_core, stop_core, wipe_bot_secrets, workflow_tick,
 };
 use trading_blueprint_lib::prompts::{
     PROFILE_INSTRUCTIONS_PATH, build_generic_agent_profile, build_loop_prompt,
@@ -466,6 +466,13 @@ async fn test_stop_deactivates_workflow() {
 
     fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xEE", Some(wf_id));
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+    fixtures::seed_workflow(wf_id + 1, "http://127.0.0.1:8080", "tok", "0 2,32 * * * *");
+    fixtures::seed_workflow(
+        wf_id + 2,
+        "http://127.0.0.1:8080",
+        "tok",
+        "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+    );
 
     let response = stop_core(sandbox_id, true).await.unwrap();
     let json: serde_json::Value = serde_json::from_str(&response.json).unwrap();
@@ -475,15 +482,20 @@ async fn test_stop_deactivates_workflow() {
     let bot = find_bot_by_sandbox(sandbox_id).unwrap();
     assert!(!bot.trading_active);
 
-    // Workflow should be deactivated
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .get(&wf_key)
-        .unwrap()
-        .unwrap();
-    assert!(!wf.active);
-    assert!(wf.next_run_at.is_none());
+    // Split-tick workflows should all be deactivated.
+    for id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key)
+            .unwrap()
+            .unwrap();
+        assert!(!wf.active, "workflow {id} should be inactive");
+        assert!(
+            wf.next_run_at.is_none(),
+            "workflow {id} should be unscheduled"
+        );
+    }
 }
 
 #[tokio::test]
@@ -501,16 +513,25 @@ async fn test_start_reactivates_workflow() {
         .update(&bot_key(bot_id), |b| b.trading_active = false)
         .unwrap();
     fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+    fixtures::seed_workflow(wf_id + 1, "http://127.0.0.1:8080", "tok", "0 2,32 * * * *");
+    fixtures::seed_workflow(
+        wf_id + 2,
+        "http://127.0.0.1:8080",
+        "tok",
+        "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+    );
 
-    // Deactivate workflow first
-    let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(wf_id);
-    ai_agent_sandbox_blueprint_lib::workflows::workflows()
-        .unwrap()
-        .update(&wf_key, |e| {
-            e.active = false;
-            e.next_run_at = None;
-        })
-        .unwrap();
+    // Deactivate split-tick workflows first, matching the stopped lifecycle state.
+    for id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .update(&wf_key, |e| {
+                e.active = false;
+                e.next_run_at = None;
+            })
+            .unwrap();
+    }
 
     let response = start_core(sandbox_id, true).await.unwrap();
     let json: serde_json::Value = serde_json::from_str(&response.json).unwrap();
@@ -520,13 +541,62 @@ async fn test_start_reactivates_workflow() {
     let bot = find_bot_by_sandbox(sandbox_id).unwrap();
     assert!(bot.trading_active);
 
-    // Workflow should be reactivated
-    let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+    // Split-tick workflows should all be reactivated and rescheduled.
+    for id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key)
+            .unwrap()
+            .unwrap();
+        assert!(wf.active, "workflow {id} should be active");
+        assert!(
+            wf.next_run_at.is_some(),
+            "workflow {id} should be scheduled"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_workflow_tick_disables_stopped_bot_workflows() {
+    let _dir = common::init_test_env();
+
+    let sandbox_id = "sb-stopped-tick-1";
+    let bot_id = "trading-stopped-tick-1";
+    let wf_id = 77777u64;
+
+    fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xAA", Some(wf_id));
+    bots()
         .unwrap()
-        .get(&wf_key)
-        .unwrap()
+        .update(&bot_key(bot_id), |b| b.trading_active = false)
         .unwrap();
-    assert!(wf.active);
+    fixtures::seed_workflow(wf_id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+    fixtures::seed_workflow(wf_id + 1, "http://127.0.0.1:8080", "tok", "0 2,32 * * * *");
+    fixtures::seed_workflow(
+        wf_id + 2,
+        "http://127.0.0.1:8080",
+        "tok",
+        "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+    );
+
+    workflow_tick().await.unwrap();
+
+    for id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&wf_key)
+            .unwrap()
+            .unwrap();
+        assert!(
+            !wf.active,
+            "workflow {id} should be disabled for stopped bot"
+        );
+        assert!(
+            wf.next_run_at.is_none(),
+            "workflow {id} should be unscheduled for stopped bot"
+        );
+    }
 }
 
 #[tokio::test]
