@@ -16,6 +16,8 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
       name: 'DEX Swing',
       description: 'Swing trading on DEXes',
       providers: ['Uniswap', 'Sushiswap'],
+      executionMode: 'single-chain' as const,
+      supportedChainIds: [1, 8453],
       cron: '0 */6 * * *',
       maxTurns: 40,
       timeoutMs: 120000,

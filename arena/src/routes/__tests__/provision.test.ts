@@ -109,6 +109,68 @@ vi.mock('~/lib/blueprints', () => ({
       name: 'DEX',
       description: 'DEX strategy',
       providers: ['Uniswap'],
+      executionMode: 'single-chain',
+      supportedChainIds: [84532, 31339],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'yield',
+      name: 'Yield',
+      description: 'Yield strategy',
+      providers: ['Aave', 'Morpho'],
+      executionMode: 'single-chain',
+      supportedChainIds: [1, 8453],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'prediction',
+      name: 'Prediction',
+      description: 'Prediction strategy',
+      providers: ['Polymarket'],
+      executionMode: 'single-chain',
+      supportedChainIds: [137],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'perp',
+      name: 'Perp',
+      description: 'Perp strategy',
+      providers: ['GMX'],
+      executionMode: 'single-chain',
+      supportedChainIds: [42161],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'volatility',
+      name: 'Volatility',
+      description: 'Volatility strategy',
+      providers: ['Polymarket', 'GMX'],
+      executionMode: 'paper-only',
+      supportedChainIds: [],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
+      id: 'multi',
+      name: 'Cross-Strategy',
+      description: 'Multi strategy',
+      providers: ['All protocols'],
+      executionMode: 'none',
+      supportedChainIds: [],
       cron: '* * * * *',
       maxTurns: 1,
       timeoutMs: 1000,
@@ -392,5 +454,35 @@ describe('provision runtime backend helpers', () => {
         ],
       )?.id,
     ).toBe('instance-11');
+  });
+
+  it('filters execution targets by selected strategy chain support', async () => {
+    const { executionTargetsForStrategy } = await import('../provision');
+    const targets = [
+      { id: 'base', label: 'Base Sepolia', description: 'Base test', enabled: true, chainId: 84532 },
+      { id: 'polygon', label: 'Polygon', description: 'Polygon', enabled: true, chainId: 137 },
+      { id: 'arbitrum-one', label: 'Arbitrum One', description: 'Arbitrum', enabled: true, chainId: 42161 },
+    ] as const;
+
+    expect(executionTargetsForStrategy('dex', [...targets]).map((target) => target.id)).toEqual(['base']);
+    expect(executionTargetsForStrategy('prediction', [...targets]).map((target) => target.id)).toEqual(['polygon']);
+    expect(executionTargetsForStrategy('perp', [...targets]).map((target) => target.id)).toEqual(['arbitrum-one']);
+    expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
+  });
+
+  it('validates paper-only and unsupported single-chain strategies', async () => {
+    const { validateStrategyExecutionSelection } = await import('../provision');
+    const target = {
+      id: 'base',
+      label: 'Base Sepolia',
+      description: 'Base test',
+      enabled: true,
+      chainId: 84532,
+    } as const;
+
+    expect(validateStrategyExecutionSelection('volatility', target, true)).toEqual({ ok: true });
+    expect(validateStrategyExecutionSelection('volatility', target, false)).toMatchObject({ ok: false });
+    expect(validateStrategyExecutionSelection('multi', target, true)).toMatchObject({ ok: false });
+    expect(validateStrategyExecutionSelection('prediction', target, true)).toMatchObject({ ok: false });
   });
 });

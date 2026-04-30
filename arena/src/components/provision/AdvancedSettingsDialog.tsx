@@ -41,6 +41,8 @@ interface AdvancedSettingsDialogProps {
   executionTargetId: string;
   setExecutionTargetId: (v: string) => void;
   selectedExecutionTarget?: ExecutionTargetOption;
+  executionChainMessage?: string | null;
+  liveModeDisabled?: boolean;
   provisionPaperTrade: boolean;
   setProvisionPaperTrade: (v: boolean) => void;
   onOpenInfrastructure: () => void;
@@ -69,6 +71,8 @@ export function AdvancedSettingsDialog({
   executionTargetId,
   setExecutionTargetId,
   selectedExecutionTarget,
+  executionChainMessage,
+  liveModeDisabled = false,
   provisionPaperTrade,
   setProvisionPaperTrade,
   onOpenInfrastructure,
@@ -185,6 +189,7 @@ export function AdvancedSettingsDialog({
                 <select
                   id="execution-chain"
                   value={executionTargetId}
+                  disabled={executionTargets.length === 0}
                   onChange={(e) => setExecutionTargetId(e.target.value)}
                   className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary"
                 >
@@ -195,7 +200,7 @@ export function AdvancedSettingsDialog({
                   ))}
                 </select>
                 <p className="text-xs text-arena-elements-textTertiary mt-1.5">
-                  Choose where strategies run. The selected chain sets the default trading mode, but you can override it below.
+                  {executionChainMessage ?? 'Choose where strategies run. The selected chain sets the default trading mode, but you can override it below.'}
                 </p>
                 {selectedExecutionTarget && (
                   <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
@@ -251,11 +256,16 @@ export function AdvancedSettingsDialog({
                   <button
                     type="button"
                     aria-pressed={!provisionPaperTrade}
-                    onClick={() => setProvisionPaperTrade(false)}
+                    disabled={liveModeDisabled}
+                    onClick={() => {
+                      if (!liveModeDisabled) setProvisionPaperTrade(false);
+                    }}
                     className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                       !provisionPaperTrade
                         ? 'bg-violet-500 text-white shadow-sm'
-                        : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+                        : liveModeDisabled
+                          ? 'text-arena-elements-textTertiary cursor-not-allowed opacity-60'
+                          : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
                     }`}
                   >
                     Live

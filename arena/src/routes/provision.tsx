@@ -88,7 +88,15 @@ interface StrategyConfigOptions {
   protocolChainId?: number;
 }
 
-type DexExecutionTargetId = 'ethereum' | 'arbitrum' | 'base';
+type DexExecutionTargetId =
+  | 'ethereum'
+  | 'ethereum-mainnet'
+  | 'base'
+  | 'base-mainnet'
+  | 'arbitrum'
+  | 'arbitrum-one'
+  | 'polygon'
+  | 'optimism';
 
 interface DexExecutionTargetOption {
   id: DexExecutionTargetId;
@@ -106,6 +114,21 @@ interface DexExecutionTargetOption {
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const ETHEREUM_USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const POLYGON_USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
+const OPTIMISM_USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
+
+const CHAIN_NAMES: Record<number, string> = {
+  1: 'Ethereum',
+  10: 'Optimism',
+  137: 'Polygon',
+  8453: 'Base',
+  84532: 'Base Sepolia',
+  31339: 'Ethereum Fork',
+  42161: 'Arbitrum One',
+  421614: 'Arbitrum Sepolia',
+};
 
 function resolveEnvBoolean(value: string | undefined, fallback: boolean): boolean {
   if (!value) return fallback;
@@ -136,6 +159,22 @@ const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_PAPER_TRADE, true),
 };
 
+const DEFAULT_BASE_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'base-mainnet',
+  label: 'Base',
+  description: 'Uses Base mainnet for live EVM execution.',
+  modeLabel: 'Live EVM execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_MAINNET_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_BASE_MAINNET_CHAIN_ID, 8453),
+  rpcUrl: import.meta.env.VITE_DEX_BASE_MAINNET_RPC_URL ?? 'https://mainnet.base.org',
+  vaultAddress:
+    import.meta.env.VITE_DEX_BASE_MAINNET_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_BASE_MAINNET_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_BASE_MAINNET_ASSET_TOKEN ?? BASE_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_MAINNET_PAPER_TRADE, false),
+};
+
 const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'ethereum',
   label: 'Ethereum Fork (Local Live)',
@@ -153,6 +192,22 @@ const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_PAPER_TRADE, false),
 };
 
+const DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'ethereum-mainnet',
+  label: 'Ethereum',
+  description: 'Uses Ethereum mainnet for live EVM execution.',
+  modeLabel: 'Live EVM execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_CHAIN_ID, 1),
+  rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_MAINNET_RPC_URL ?? 'https://ethereum-rpc.publicnode.com',
+  vaultAddress:
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_ETHEREUM_MAINNET_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ASSET_TOKEN ?? ETHEREUM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_PAPER_TRADE, false),
+};
+
 const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum',
   label: 'Arbitrum Sepolia',
@@ -167,6 +222,54 @@ const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
     ?? ZERO_ADDRESS,
   assetToken: import.meta.env.VITE_DEX_ARBITRUM_ASSET_TOKEN ?? ZERO_ADDRESS,
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_PAPER_TRADE, true),
+};
+
+const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'arbitrum-one',
+  label: 'Arbitrum One',
+  description: 'Uses Arbitrum One for live GMX, Hyperliquid bridge, and Vertex execution.',
+  modeLabel: 'Live EVM execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ONE_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_ONE_CHAIN_ID, 42161),
+  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_ONE_RPC_URL ?? 'https://arb1.arbitrum.io/rpc',
+  vaultAddress:
+    import.meta.env.VITE_DEX_ARBITRUM_ONE_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_ARBITRUM_ONE_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_ARBITRUM_ONE_ASSET_TOKEN ?? ZERO_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ONE_PAPER_TRADE, false),
+};
+
+const DEFAULT_POLYGON_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'polygon',
+  label: 'Polygon',
+  description: 'Uses Polygon for Polymarket prediction market execution.',
+  modeLabel: 'Prediction market execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_POLYGON_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_POLYGON_CHAIN_ID, 137),
+  rpcUrl: import.meta.env.VITE_POLYGON_RPC_URL ?? 'https://polygon-rpc.com',
+  vaultAddress:
+    import.meta.env.VITE_POLYGON_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_POLYGON_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_POLYGON_ASSET_TOKEN ?? POLYGON_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_POLYGON_PAPER_TRADE, true),
+};
+
+const DEFAULT_OPTIMISM_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'optimism',
+  label: 'Optimism',
+  description: 'Uses Optimism for live EVM execution.',
+  modeLabel: 'Live EVM execution',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_OPTIMISM_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_OPTIMISM_CHAIN_ID, 10),
+  rpcUrl: import.meta.env.VITE_DEX_OPTIMISM_RPC_URL ?? 'https://mainnet.optimism.io',
+  vaultAddress:
+    import.meta.env.VITE_DEX_OPTIMISM_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_OPTIMISM_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_OPTIMISM_ASSET_TOKEN ?? OPTIMISM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_OPTIMISM_PAPER_TRADE, false),
 };
 
 export function resolveSelectedProvisionNetwork(selectedChainId: number | undefined | null) {
@@ -237,7 +340,70 @@ export function strategyUsesExecutionTarget(
   target: DexExecutionTargetOption | undefined,
   paperTrade = true,
 ): boolean {
+  const pack = strategyPacks.find((p) => p.id === strategyType);
+  if (pack?.executionMode !== 'single-chain') return false;
   return !paperTrade || strategyType === 'dex' || strategyType === 'yield' || target?.id === 'ethereum';
+}
+
+function chainLabel(chainId: number): string {
+  return CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
+}
+
+function formatSupportedChains(chainIds: number[]): string {
+  return chainIds.map((id) => `${chainLabel(id)} (${id})`).join(', ');
+}
+
+export function executionTargetsForStrategy(
+  strategyType: string,
+  targets: DexExecutionTargetOption[],
+): DexExecutionTargetOption[] {
+  const pack = strategyPacks.find((p) => p.id === strategyType);
+  if (!pack || pack.executionMode !== 'single-chain') return [];
+  const supported = new Set(pack.supportedChainIds);
+  return targets.filter((target) => target.chainId != null && supported.has(target.chainId));
+}
+
+export function validateStrategyExecutionSelection(
+  strategyType: string,
+  target: DexExecutionTargetOption | undefined,
+  paperTrade: boolean,
+): { ok: true } | { ok: false; message: string } {
+  const pack = strategyPacks.find((p) => p.id === strategyType);
+  if (!pack) {
+    return { ok: false, message: 'Select a valid strategy profile before provisioning.' };
+  }
+
+  if (pack.executionMode === 'none') {
+    return {
+      ok: false,
+      message: `${pack.name} requires multi-chain orchestration and cannot be provisioned from the single-chain flow yet.`,
+    };
+  }
+
+  if (pack.executionMode === 'paper-only') {
+    if (!paperTrade) {
+      return {
+        ok: false,
+        message: `${pack.name} is paper-trading only until multi-chain execution is supported.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  if (!target?.chainId || !pack.supportedChainIds.includes(target.chainId)) {
+    return {
+      ok: false,
+      message: `${pack.name} supports ${formatSupportedChains(pack.supportedChainIds)}.`,
+    };
+  }
+  if (!target.enabled) {
+    return {
+      ok: false,
+      message: `${target.label} is supported for ${pack.name}, but it is not enabled in this deployment.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 export function buildServiceActivationAttemptKey(
@@ -341,25 +507,30 @@ export default function ProvisionPage() {
   const executionTargets = useMemo<DexExecutionTargetOption[]>(() => {
     return [
       DEFAULT_BASE_EXECUTION_TARGET,
+      DEFAULT_BASE_MAINNET_EXECUTION_TARGET,
       DEFAULT_ETHEREUM_EXECUTION_TARGET,
+      DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_EXECUTION_TARGET,
+      DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET,
+      DEFAULT_POLYGON_EXECUTION_TARGET,
+      DEFAULT_OPTIMISM_EXECUTION_TARGET,
     ];
   }, []);
   const [executionTargetId, setExecutionTargetId] = useState<DexExecutionTargetId>(
     import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base',
   );
-  const selectedExecutionTarget = useMemo(
+  const configuredExecutionTarget = useMemo(
     () =>
       executionTargets.find((target) => target.id === executionTargetId)
       ?? executionTargets[0],
     [executionTargetId, executionTargets],
   );
   const [provisionPaperTrade, setProvisionPaperTrade] = useState(
-    selectedExecutionTarget?.paperTrade ?? false,
+    configuredExecutionTarget?.paperTrade ?? false,
   );
   useEffect(() => {
-    setProvisionPaperTrade(selectedExecutionTarget?.paperTrade ?? false);
-  }, [selectedExecutionTarget?.id, selectedExecutionTarget?.paperTrade]);
+    setProvisionPaperTrade(configuredExecutionTarget?.paperTrade ?? false);
+  }, [configuredExecutionTarget?.id, configuredExecutionTarget?.paperTrade]);
   const localFeeOverrides = useMemo(
     () =>
       import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' && targetChain.id === localChainId
@@ -514,6 +685,50 @@ export default function ProvisionPage() {
   const [useOperatorKey, setUseOperatorKey] = useState(false);
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
+  const compatibleExecutionTargets = useMemo(
+    () => executionTargetsForStrategy(strategyType, executionTargets),
+    [strategyType, executionTargets],
+  );
+  const enabledCompatibleExecutionTargets = useMemo(
+    () => compatibleExecutionTargets.filter((target) => target.enabled),
+    [compatibleExecutionTargets],
+  );
+  const selectedExecutionTarget = useMemo(
+    () => {
+      if (selectedPack.executionMode !== 'single-chain') return undefined;
+      return compatibleExecutionTargets.find((target) => target.id === executionTargetId)
+        ?? enabledCompatibleExecutionTargets[0]
+        ?? compatibleExecutionTargets[0];
+    },
+    [
+      compatibleExecutionTargets,
+      enabledCompatibleExecutionTargets,
+      executionTargetId,
+      selectedPack.executionMode,
+    ],
+  );
+  const strategyExecutionValidation = validateStrategyExecutionSelection(
+    strategyType,
+    selectedExecutionTarget,
+    provisionPaperTrade,
+  );
+  const hasEnabledExecutionTarget =
+    selectedPack.executionMode !== 'single-chain' || enabledCompatibleExecutionTargets.length > 0;
+  const strategyExecutionNotice = (() => {
+    if (selectedPack.executionMode === 'paper-only') {
+      return `${selectedPack.name} is paper-trading only until multi-chain execution is supported.`;
+    }
+    if (selectedPack.executionMode === 'none') {
+      return `${selectedPack.name} requires multi-chain orchestration and cannot be provisioned from this single-chain flow yet.`;
+    }
+    if (enabledCompatibleExecutionTargets.length === 0) {
+      return `${selectedPack.name} supports ${formatSupportedChains(selectedPack.supportedChainIds)}, but none are enabled in this deployment.`;
+    }
+    if (!selectedExecutionTarget?.enabled) {
+      return `${selectedPack.name} supports ${formatSupportedChains(selectedPack.supportedChainIds)}. Enable one of those targets in the deployment config.`;
+    }
+    return null;
+  })();
   const effectiveExpert = customExpertKnowledge || selectedPack.expertKnowledge;
   const effectiveCron = customCron || selectedPack.cron;
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
@@ -534,11 +749,23 @@ export default function ProvisionPage() {
   }, [isInstance]);
 
   useEffect(() => {
-    const selected = executionTargets.find((target) => target.id === executionTargetId);
+    if (selectedPack.executionMode !== 'single-chain') return;
+    const selected = compatibleExecutionTargets.find((target) => target.id === executionTargetId);
     if (selected?.enabled) return;
-    const firstEnabled = executionTargets.find((target) => target.enabled);
+    const firstEnabled = enabledCompatibleExecutionTargets[0];
     if (firstEnabled) setExecutionTargetId(firstEnabled.id);
-  }, [executionTargetId, executionTargets]);
+  }, [
+    compatibleExecutionTargets,
+    enabledCompatibleExecutionTargets,
+    executionTargetId,
+    selectedPack.executionMode,
+  ]);
+
+  useEffect(() => {
+    if (selectedPack.executionMode === 'paper-only' && !provisionPaperTrade) {
+      setProvisionPaperTrade(true);
+    }
+  }, [provisionPaperTrade, selectedPack.executionMode]);
 
   useEffect(() => {
     if (selectedBlueprint?.isTee) {
@@ -717,6 +944,15 @@ export default function ProvisionPage() {
               const n = parseInt(defaultId, 10);
               return !isNaN(n) && n > 0 ? [n] : [];
             })();
+
+        const strategyExecution = validateStrategyExecutionSelection(
+          strategyType,
+          selectedExecutionTarget,
+          provisionPaperTrade,
+        );
+        if (!strategyExecution.ok) {
+          throw new Error(strategyExecution.message);
+        }
 
         const usesExecutionTarget = strategyUsesExecutionTarget(
           strategyType,
@@ -1138,6 +1374,16 @@ export default function ProvisionPage() {
       return;
     }
 
+    const strategyExecution = validateStrategyExecutionSelection(
+      strategyType,
+      selectedExecutionTarget,
+      provisionPaperTrade,
+    );
+    if (!strategyExecution.ok) {
+      toast.error(strategyExecution.message);
+      return;
+    }
+
     const requiresExecutionTarget = strategyUsesExecutionTarget(
       strategyType,
       selectedExecutionTarget,
@@ -1274,6 +1520,15 @@ export default function ProvisionPage() {
 
   const handleDeployNewService = async () => {
     if (!(await ensureCorrectChain()) || !userAddress) return;
+    const strategyExecution = validateStrategyExecutionSelection(
+      strategyType,
+      selectedExecutionTarget,
+      provisionPaperTrade,
+    );
+    if (!strategyExecution.ok) {
+      toast.error(strategyExecution.message);
+      return;
+    }
     if (quotes.length === 0) {
       toast.error('No quotes available — select operators first');
       return;
@@ -1413,7 +1668,10 @@ export default function ProvisionPage() {
       case 'blueprint':
         return !!selectedBlueprint;
       case 'configure':
-        return !!name.trim() && (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker');
+        return !!name.trim()
+          && (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker')
+          && strategyExecutionValidation.ok
+          && hasEnabledExecutionTarget;
       case 'deploy':
         return false;
     }
@@ -2009,6 +2267,7 @@ export default function ProvisionPage() {
             serviceError={serviceError}
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
+            strategyExecutionNotice={strategyExecutionNotice}
             collateralCapPct={collateralCapPct}
             setCollateralCapPct={setCollateralCapPct}
             canNext={canNext ?? false}
@@ -2128,10 +2387,12 @@ export default function ProvisionPage() {
         setRuntimeBackend={setRuntimeBackend}
         firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
         isTeeBlueprint={!!selectedBlueprint?.isTee}
-        executionTargets={executionTargets}
-        executionTargetId={executionTargetId}
+        executionTargets={compatibleExecutionTargets}
+        executionTargetId={selectedExecutionTarget?.id ?? executionTargetId}
         setExecutionTargetId={(value) => setExecutionTargetId(value as DexExecutionTargetId)}
         selectedExecutionTarget={selectedExecutionTarget}
+        executionChainMessage={strategyExecutionNotice}
+        liveModeDisabled={selectedPack.executionMode === 'paper-only' || selectedPack.executionMode === 'none'}
         provisionPaperTrade={provisionPaperTrade}
         setProvisionPaperTrade={setProvisionPaperTrade}
         onOpenInfrastructure={() => {

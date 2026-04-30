@@ -30,6 +30,7 @@ interface ConfigureStepProps {
   serviceError: string | null;
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
+  strategyExecutionNotice?: string | null;
   collateralCapPct: string;
   setCollateralCapPct: (v: string) => void;
   canNext: boolean;
@@ -49,6 +50,7 @@ export function ConfigureStep({
   serviceError,
   selectedOperators,
   setShowAdvanced,
+  strategyExecutionNotice,
   collateralCapPct,
   setCollateralCapPct,
   canNext,
@@ -154,6 +156,11 @@ export function ConfigureStep({
           <p className="text-xs text-arena-elements-textTertiary">
             Runtime backend and infrastructure controls are available in Advanced Settings.
           </p>
+          {strategyExecutionNotice && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {strategyExecutionNotice}
+            </p>
+          )}
         </CardContent>
       </Card>
 
