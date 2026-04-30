@@ -45,6 +45,7 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
+        capabilities_json: String::new(),
     }
 }
 

@@ -227,6 +227,7 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
             tee_attestation_json: None,
+            capabilities_json: String::new(),
         };
 
         let mut user_env = serde_json::Map::new();
@@ -765,6 +766,7 @@ fn mock_sandbox_record(id: &str) -> sandbox_runtime::SandboxRecord {
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
+        capabilities_json: String::new(),
     }
 }
 

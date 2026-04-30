@@ -2268,7 +2268,7 @@ mod tests {
     #[test]
     fn test_perp_pack_has_cross_venue_methodology() {
         let pack = get_pack("perp").unwrap();
-        assert!(pack.system_prompt.contains("Cross-Venue"));
+        assert!(pack.system_prompt.contains("Execution Across Venues"));
         assert!(pack.system_prompt.contains("Funding Rate Arbitrage"));
     }
 
@@ -2337,10 +2337,7 @@ mod tests {
     #[test]
     fn test_yield_pack_mentions_aave_reserve_status_tool() {
         let pack = get_pack("yield").unwrap();
-        let profile = pack.build_agent_profile(&test_config());
-        let content = profile["resources"]["instructions"]["content"]
-            .as_str()
-            .unwrap();
+        let content = render_pack_agent_instructions(&pack, &test_config());
 
         assert!(
             content.contains("aave-reserve-status.js"),

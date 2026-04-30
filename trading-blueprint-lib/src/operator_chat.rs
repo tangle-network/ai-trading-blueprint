@@ -554,6 +554,7 @@ mod tests {
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
             tee_attestation_json: None,
+            capabilities_json: String::new(),
         };
 
         sandbox_runtime::runtime::sandboxes()

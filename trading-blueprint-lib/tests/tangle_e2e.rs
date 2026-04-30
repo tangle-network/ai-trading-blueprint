@@ -224,6 +224,7 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
             tee_attestation_json: None,
+            capabilities_json: String::new(),
         };
         let mut user_env = serde_json::Map::new();
         user_env.insert(
