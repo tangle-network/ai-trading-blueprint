@@ -2281,10 +2281,7 @@ async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
     assert_eq!(json["warnings"], serde_json::json!([]));
     assert_eq!(json["has_unpriced_positions"], false);
     assert_eq!(positions.len(), 1);
-    assert_eq!(
-        positions[0]["token"],
-        "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-    );
+    assert_eq!(positions[0]["token"], "USDC");
     assert_eq!(positions[0]["amount"], "10000");
     assert_eq!(positions[0]["value_usd"], "10000");
 }
