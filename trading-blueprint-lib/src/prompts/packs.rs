@@ -548,7 +548,7 @@ fn yield_pack() -> StrategyPack {
 }
 
 fn perp_pack() -> StrategyPack {
-    let providers = vec!["gmx_v2", "hyperliquid", "vertex", "coingecko"];
+    let providers = vec!["gmx_v2", "vertex", "coingecko"];
     let methodology = PERP_STRATEGY_METHODOLOGY;
     StrategyPack {
         strategy_type: "perp".into(),
@@ -667,13 +667,15 @@ fn multi_pack() -> StrategyPack {
 // any single provider.
 // ---------------------------------------------------------------------------
 
-const PERP_STRATEGY_METHODOLOGY: &str = r#"## Cross-Venue Perpetual Futures Strategy
+const PERP_STRATEGY_METHODOLOGY: &str = r#"## Vault-Based EVM Perpetual Futures Strategy
 
 ### Market Selection
 
-Focus on majors first — ETH and BTC have the deepest liquidity and tightest spreads across all venues. Secondary markets (ARB, SOL, LINK on GMX; broader menu on Hyperliquid) are viable for smaller positions but require wider stops due to thinner books.
+Focus on majors first — ETH and BTC have the deepest liquidity and tightest spreads across GMX v2 and Vertex. Secondary markets such as ARB, SOL, and LINK are viable for smaller positions but require wider stops due to thinner books.
 
-Scan funding rates across GMX, Hyperliquid, and Vertex every iteration. Store them in the signals table for cross-venue comparison.
+Scan funding rates across GMX v2 and Vertex every iteration. Store them in the signals table for cross-venue comparison.
+
+This strategy is restricted to vault-based EVM execution on Arbitrum-compatible targets. Use only `target_protocol: "gmx_v2"` or `target_protocol: "vertex"`. Do not use Hyperliquid native endpoints from this strategy; Hyperliquid requires a separate native/API execution mode.
 
 ### Signal Framework
 
@@ -688,7 +690,7 @@ When 8h funding rates diverge between venues:
 
 #### 2. Momentum / Trend Following
 
-Use 4h candles from Hyperliquid:
+Use 4h candles from GMX, Vertex, or CoinGecko:
 - Enter long when EMA(12) crosses above EMA(26) AND RSI(14) < 70
 - Enter short when EMA(12) crosses below EMA(26) AND RSI(14) > 30
 - Confirm with volume: entry only if volume exceeds 20-period average
@@ -705,7 +707,7 @@ After a >5% move in 4 hours:
 
 #### 4. Liquidation Cascade
 
-Monitor Hyperliquid for liquidation events:
+Monitor GMX and Vertex for liquidation events:
 - After a cascade, wait for volatility to settle (at least one iteration)
 - Then look for mean-reversion entries at key support/resistance levels
 - Smaller position size (1% max) — cascades can extend further than expected
@@ -714,8 +716,7 @@ Monitor Hyperliquid for liquidation events:
 
 Route orders to the venue offering best execution:
 - **GMX V2**: Deeper liquidity, use for larger positions (accept ~0.1% price impact)
-- **Hyperliquid**: Faster entries, real-time order book, tighter spreads for majors
-- **Vertex**: Secondary venue — use when its funding rate creates arb opportunity with the others
+- **Vertex**: Secondary venue — use when its funding rate creates an arb opportunity versus GMX or when its order book offers better execution
 
 Always compare execution cost (fees + expected slippage) across venues before routing.
 
@@ -1482,6 +1483,19 @@ fn build_profile_instructions(
         .get("custom_instructions")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let available_protocols = config
+        .strategy_config
+        .get("available_protocols")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty());
 
     // Use override if provided, otherwise use pack expert prompt
     let effective_expert = if expert_override.is_empty() {
@@ -1611,6 +1625,7 @@ Endpoints:
 - Vault Address: {vault}
 - Chain ID: {chain_id}
 - Strategy: {strategy_type}
+{available_protocols_line}
 
 ## Risk Parameters
 
@@ -1637,6 +1652,12 @@ Endpoints:
         token = config.trading_api_token,
         vault = config.vault_address,
         chain_id = config.chain_id,
+        available_protocols_line = available_protocols
+            .map(|protocols| format!(
+                "- Available Protocols: {}\n- Do not use any `target_protocol` outside this list.",
+                protocols.join(", ")
+            ))
+            .unwrap_or_default(),
         iteration_protocol = iteration_protocol,
         core_workflow_tools = core_workflow_tools,
         typical_iteration = typical_iteration,
@@ -2213,7 +2234,6 @@ mod tests {
         assert!(!providers.is_empty());
         let ids: Vec<_> = providers.iter().map(|p| p.id()).collect();
         assert!(ids.contains(&"gmx_v2"));
-        assert!(ids.contains(&"hyperliquid"));
         assert!(ids.contains(&"vertex"));
     }
 

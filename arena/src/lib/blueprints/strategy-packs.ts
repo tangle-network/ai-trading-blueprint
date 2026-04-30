@@ -275,8 +275,8 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
   {
     id: 'perp',
     name: 'Perpetual Futures',
-    providers: ['GMX V2', 'Hyperliquid', 'Vertex', 'CoinGecko'],
-    description: 'Cross-venue perpetual futures with funding rate arbitrage.',
+    providers: ['GMX V2', 'Vertex', 'CoinGecko'],
+    description: 'Vault-based EVM perpetual futures on Arbitrum via GMX v2 and Vertex.',
     executionMode: 'single-chain',
     supportedChainIds: [42161],
     cron: '0 */2 * * * *',
@@ -286,19 +286,18 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
 - Router: 0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8
 - Reader: 0xf60becbba223EEA9495Da3f606753867eC10d139
 
-### Hyperliquid
-- REST: https://api.hyperliquid.xyz
-- WebSocket: wss://api.hyperliquid.xyz/ws
-- POST /info for meta, funding, positions
-- POST /exchange for orders
-
 ### Vertex
 - REST: https://prod.vertexprotocol-backend.com
 - Query engine for positions, orderbook
 
-### Cross-Venue Funding Rate Arbitrage
+### EVM Perp Execution
 
-When funding rates diverge between GMX and Hyperliquid:
+This bot is restricted to vault-based EVM perp execution on Arbitrum-compatible
+targets. It may set \`target_protocol\` to "gmx_v2" or "vertex" only. Do not use
+Hyperliquid native endpoints from this strategy; Hyperliquid requires a separate
+native/API execution mode.
+
+When funding rates diverge between GMX and Vertex:
 1. Long on the venue with negative funding (you get paid)
 2. Short on the venue with positive funding (you get paid)
 3. Net delta-neutral, collect funding from both sides

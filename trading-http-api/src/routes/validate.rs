@@ -476,6 +476,8 @@ async fn validate_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Body read failed: {e}")))?;
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
+    crate::validate_protocol_available(&bot.strategy_config, &req.target_protocol)
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     let protocol_chain_id =
         crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);

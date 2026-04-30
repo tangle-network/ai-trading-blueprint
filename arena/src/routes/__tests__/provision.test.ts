@@ -223,11 +223,13 @@ describe('provision runtime backend helpers', () => {
         customInstructions: 'custom prompt',
         paperTrade: false,
         protocolChainId: 1,
+        availableProtocols: ['gmx_v2', 'vertex'],
       }),
     ).toEqual({
       runtime_backend: 'docker',
       paper_trade: false,
       protocol_chain_id: 1,
+      available_protocols: ['gmx_v2', 'vertex'],
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
     });
@@ -276,26 +278,39 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
-  it('uses execution target config for every strategy on the Ethereum fork', async () => {
+  it('uses execution target config when the target is compatible with the strategy', async () => {
     const { strategyUsesExecutionTarget } = await import('../provision');
     const ethereumTarget = {
       id: 'ethereum',
       label: 'Ethereum Fork (Local Live)',
       description: 'Local fork',
       enabled: true,
+      chainId: 31339,
+      protocolChainId: 1,
+    } as const;
+    const arbitrumForkTarget = {
+      id: 'arbitrum-fork',
+      label: 'Arbitrum Fork',
+      description: 'Local Arbitrum fork',
+      enabled: true,
+      chainId: 31340,
+      protocolChainId: 42161,
     } as const;
     const baseTarget = {
       id: 'base',
       label: 'Base Sepolia',
       description: 'Base',
       enabled: true,
+      chainId: 84532,
     } as const;
 
-    expect(strategyUsesExecutionTarget('prediction', ethereumTarget)).toBe(true);
-    expect(strategyUsesExecutionTarget('perp', ethereumTarget)).toBe(true);
-    expect(strategyUsesExecutionTarget('yield', baseTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('dex', baseTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('dex', ethereumTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('perp', arbitrumForkTarget)).toBe(true);
+    expect(strategyUsesExecutionTarget('perp', ethereumTarget)).toBe(false);
+    expect(strategyUsesExecutionTarget('yield', baseTarget)).toBe(false);
     expect(strategyUsesExecutionTarget('prediction', baseTarget)).toBe(false);
-    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(true);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(false);
   });
 
   it('rejects incomplete execution targets', async () => {
@@ -461,13 +476,38 @@ describe('provision runtime backend helpers', () => {
     const targets = [
       { id: 'base', label: 'Base Sepolia', description: 'Base test', enabled: true, chainId: 84532 },
       { id: 'polygon', label: 'Polygon', description: 'Polygon', enabled: true, chainId: 137 },
+      { id: 'arbitrum-fork', label: 'Arbitrum Fork', description: 'Arbitrum fork', enabled: true, chainId: 31340, protocolChainId: 42161 },
       { id: 'arbitrum-one', label: 'Arbitrum One', description: 'Arbitrum', enabled: true, chainId: 42161 },
     ] as const;
 
     expect(executionTargetsForStrategy('dex', [...targets]).map((target) => target.id)).toEqual(['base']);
     expect(executionTargetsForStrategy('prediction', [...targets]).map((target) => target.id)).toEqual(['polygon']);
-    expect(executionTargetsForStrategy('perp', [...targets]).map((target) => target.id)).toEqual(['arbitrum-one']);
+    expect(executionTargetsForStrategy('perp', [...targets]).map((target) => target.id)).toEqual(['arbitrum-fork', 'arbitrum-one']);
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
+  });
+
+  it('returns GMX and Vertex as the Arbitrum perp protocols', async () => {
+    const { availableProtocolsForStrategyTarget } = await import('../provision');
+    expect(
+      availableProtocolsForStrategyTarget('perp', {
+        id: 'arbitrum-fork',
+        label: 'Arbitrum Fork',
+        description: 'Local Arbitrum fork',
+        enabled: true,
+        chainId: 31340,
+        protocolChainId: 42161,
+      }),
+    ).toEqual(['gmx_v2', 'vertex']);
+    expect(
+      availableProtocolsForStrategyTarget('perp', {
+        id: 'ethereum',
+        label: 'Ethereum Fork',
+        description: 'Local Ethereum fork',
+        enabled: true,
+        chainId: 31339,
+        protocolChainId: 1,
+      }),
+    ).toBeUndefined();
   });
 
   it('validates paper-only and unsupported single-chain strategies', async () => {

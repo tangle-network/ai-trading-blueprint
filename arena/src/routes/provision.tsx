@@ -86,6 +86,7 @@ interface StrategyConfigOptions {
   firecrackerRuntimeSupported?: boolean;
   paperTrade?: boolean;
   protocolChainId?: number;
+  availableProtocols?: string[];
 }
 
 type DexExecutionTargetId =
@@ -93,6 +94,7 @@ type DexExecutionTargetId =
   | 'ethereum-mainnet'
   | 'base'
   | 'base-mainnet'
+  | 'arbitrum-fork'
   | 'arbitrum'
   | 'arbitrum-one'
   | 'polygon'
@@ -118,6 +120,7 @@ const ETHEREUM_USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const POLYGON_USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const OPTIMISM_USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
+const ARBITRUM_USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
 
 const CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',
@@ -126,6 +129,7 @@ const CHAIN_NAMES: Record<number, string> = {
   8453: 'Base',
   84532: 'Base Sepolia',
   31339: 'Ethereum Fork',
+  31340: 'Arbitrum Fork',
   42161: 'Arbitrum One',
   421614: 'Arbitrum Sepolia',
 };
@@ -224,10 +228,27 @@ const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_PAPER_TRADE, true),
 };
 
+const DEFAULT_ARBITRUM_FORK_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'arbitrum-fork',
+  label: 'Arbitrum Fork (Local Live)',
+  description: 'Uses a local Arbitrum One fork for GMX v2 and Vertex EVM perp execution.',
+  modeLabel: 'Local Arbitrum fork',
+  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_FORK_ENABLED, false),
+  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_FORK_CHAIN_ID, 31340),
+  protocolChainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_FORK_PROTOCOL_CHAIN_ID, 42161),
+  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_FORK_RPC_URL ?? 'http://127.0.0.1:42546',
+  vaultAddress:
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_VAULT_FACTORY_ADDRESS
+    ?? import.meta.env.VITE_DEX_ARBITRUM_FORK_VAULT_ADDRESS
+    ?? ZERO_ADDRESS,
+  assetToken: import.meta.env.VITE_DEX_ARBITRUM_FORK_ASSET_TOKEN ?? ARBITRUM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE, false),
+};
+
 const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum-one',
   label: 'Arbitrum One',
-  description: 'Uses Arbitrum One for live GMX, Hyperliquid bridge, and Vertex execution.',
+  description: 'Uses Arbitrum One for live GMX v2 and Vertex EVM perp execution.',
   modeLabel: 'Live EVM execution',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ONE_ENABLED, false),
   chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_ONE_CHAIN_ID, 42161),
@@ -295,6 +316,7 @@ export function buildStrategyConfigForProvision({
   firecrackerRuntimeSupported,
   paperTrade,
   protocolChainId,
+  availableProtocols,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -307,6 +329,7 @@ export function buildStrategyConfigForProvision({
   if (protocolChainId != null && Number.isFinite(protocolChainId) && protocolChainId > 0) {
     config.protocol_chain_id = protocolChainId;
   }
+  if (availableProtocols?.length) config.available_protocols = availableProtocols;
   if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
   return config;
@@ -338,11 +361,13 @@ export function resolveExecutionTargetProvisionConfig(
 export function strategyUsesExecutionTarget(
   strategyType: string,
   target: DexExecutionTargetOption | undefined,
-  paperTrade = true,
+  _paperTrade = true,
 ): boolean {
   const pack = strategyPacks.find((p) => p.id === strategyType);
   if (pack?.executionMode !== 'single-chain') return false;
-  return !paperTrade || strategyType === 'dex' || strategyType === 'yield' || target?.id === 'ethereum';
+  if (!target) return false;
+  const effectiveChainId = target.protocolChainId ?? target.chainId;
+  return Boolean(effectiveChainId && pack.supportedChainIds.includes(effectiveChainId));
 }
 
 function chainLabel(chainId: number): string {
@@ -360,7 +385,21 @@ export function executionTargetsForStrategy(
   const pack = strategyPacks.find((p) => p.id === strategyType);
   if (!pack || pack.executionMode !== 'single-chain') return [];
   const supported = new Set(pack.supportedChainIds);
-  return targets.filter((target) => target.chainId != null && supported.has(target.chainId));
+  return targets.filter((target) => {
+    const effectiveChainId = target.protocolChainId ?? target.chainId;
+    return effectiveChainId != null && supported.has(effectiveChainId);
+  });
+}
+
+export function availableProtocolsForStrategyTarget(
+  strategyType: string,
+  target: DexExecutionTargetOption | undefined,
+): string[] | undefined {
+  const effectiveChainId = target?.protocolChainId ?? target?.chainId;
+  if (strategyType === 'perp' && effectiveChainId === 42161) {
+    return ['gmx_v2', 'vertex'];
+  }
+  return undefined;
 }
 
 export function validateStrategyExecutionSelection(
@@ -390,7 +429,15 @@ export function validateStrategyExecutionSelection(
     return { ok: true };
   }
 
-  if (!target?.chainId || !pack.supportedChainIds.includes(target.chainId)) {
+  if (!target) {
+    return {
+      ok: false,
+      message: `${pack.name} supports ${formatSupportedChains(pack.supportedChainIds)}.`,
+    };
+  }
+
+  const effectiveChainId = target.protocolChainId ?? target.chainId;
+  if (!effectiveChainId || !pack.supportedChainIds.includes(effectiveChainId)) {
     return {
       ok: false,
       message: `${pack.name} supports ${formatSupportedChains(pack.supportedChainIds)}.`,
@@ -510,6 +557,7 @@ export default function ProvisionPage() {
       DEFAULT_BASE_MAINNET_EXECUTION_TARGET,
       DEFAULT_ETHEREUM_EXECUTION_TARGET,
       DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET,
+      DEFAULT_ARBITRUM_FORK_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET,
       DEFAULT_POLYGON_EXECUTION_TARGET,
@@ -975,6 +1023,9 @@ export default function ProvisionPage() {
               customInstructions,
               paperTrade: provisionPaperTrade,
               protocolChainId: usesExecutionTarget ? executionConfig?.protocolChainId : undefined,
+              availableProtocols: usesExecutionTarget
+                ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+                : undefined,
             }),
           ),
           risk_params_json: '{}',
@@ -1402,6 +1453,9 @@ export default function ProvisionPage() {
       customInstructions,
       paperTrade: provisionPaperTrade,
       protocolChainId: requiresExecutionTarget ? executionConfig?.protocolChainId : undefined,
+      availableProtocols: requiresExecutionTarget
+        ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+        : undefined,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];

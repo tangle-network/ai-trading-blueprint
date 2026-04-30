@@ -153,6 +153,65 @@ pub fn protocol_chain_id_from_env(execution_chain_id: u64) -> u64 {
         .unwrap_or(execution_chain_id)
 }
 
+pub fn available_protocols_from_config(strategy_config: &serde_json::Value) -> Option<Vec<String>> {
+    let value = strategy_config.get("available_protocols")?;
+    let protocols = match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>(),
+        serde_json::Value::String(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    (!protocols.is_empty()).then_some(protocols)
+}
+
+pub fn validate_protocol_available(
+    strategy_config: &serde_json::Value,
+    target_protocol: &str,
+) -> Result<(), String> {
+    let Some(protocols) = available_protocols_from_config(strategy_config) else {
+        return Ok(());
+    };
+
+    if protocols.iter().any(|protocol| protocol == target_protocol) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Protocol {target_protocol} is not available for this bot. Available protocols: {}",
+        protocols.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn protocol_allow_list_accepts_configured_protocols() {
+        let config = json!({ "available_protocols": ["gmx_v2", "vertex"] });
+        assert!(validate_protocol_available(&config, "gmx_v2").is_ok());
+        assert!(validate_protocol_available(&config, "vertex").is_ok());
+        assert!(validate_protocol_available(&config, "hyperliquid").is_err());
+    }
+
+    #[test]
+    fn missing_protocol_allow_list_is_unrestricted() {
+        assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
+    }
+}
+
 /// Build a multi-bot trading HTTP API router.
 ///
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.

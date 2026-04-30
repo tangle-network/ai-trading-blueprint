@@ -12,6 +12,7 @@ interface ExecutionTargetOption {
   modeLabel?: string;
   enabled: boolean;
   chainId?: number;
+  protocolChainId?: number;
   rpcUrl?: string;
   vaultAddress?: string;
   assetToken?: string;
@@ -214,6 +215,12 @@ export function AdvancedSettingsDialog({
                       <div className="flex justify-between gap-3">
                         <span>Chain ID</span>
                         <span className="text-arena-elements-textPrimary">{selectedExecutionTarget.chainId}</span>
+                      </div>
+                    )}
+                    {selectedExecutionTarget.protocolChainId != null && selectedExecutionTarget.protocolChainId !== selectedExecutionTarget.chainId && (
+                      <div className="flex justify-between gap-3">
+                        <span>Protocol Chain</span>
+                        <span className="text-arena-elements-textPrimary">{selectedExecutionTarget.protocolChainId}</span>
                       </div>
                     )}
                     {selectedExecutionTarget.rpcUrl && (
