@@ -1386,7 +1386,7 @@ fn strategy_core_workflow_tools(strategy_type: &str) -> String {
 |------|-------|--------------|
 | `analyze-opportunities.js` | `node tools/analyze-opportunities.js` | Scans Gamma API, fetches CLOB prices, filters to tradeable markets. Outputs compact summary. |
 | `get-portfolio.js` | `node tools/get-portfolio.js` | Shows positions, recent trades, iteration state. |
-| `submit-trade.js` | `node tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. Use `--action sell` to reduce/exit an existing outcome position. |
+| `submit-trade.js` | `node tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --reason "..."` | Full trade pipeline: circuit-breaker → validate → execute → log. Use `--action sell` only to reduce/exit outcome shares already held. If an outcome is overpriced and you do not hold it, buy the opposite side or skip. |
 | `manage-collateral.js` | `node tools/manage-collateral.js --action status` | CLOB collateral: release vault funds, return funds, check status. Actions: status, release, return, return-all. |
 | `write-metrics.js` | `node tools/write-metrics.js '{{"portfolio_value_usd":10000}}'` | Write iteration metrics. |"#
             .to_string(),
@@ -1417,7 +1417,7 @@ Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`
         _ => r#"1. Run `analyze-opportunities.js` — read the opportunities list
 2. Run `get-portfolio.js` — check current positions
 3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
-4. For markets with edge > 5%: run `submit-trade.js --action buy` to increase a position, or `--action sell` to reduce/exit an existing outcome position
+4. For markets with edge > 5%: run `submit-trade.js --action buy` to increase a position. For negative edge, only run `--action sell` when reducing/exiting an existing outcome position; otherwise buy the opposite side when available or skip. Never sell outcome shares you do not hold.
 5. Run `write-metrics.js` to update state"#
             .to_string(),
     }

@@ -107,6 +107,28 @@ function apiCall(config, method, path, body) {
   });
 }
 
+async function getOutcomeHolding(config, tokenId) {
+  try {
+    const result = await apiCall(config, 'POST', '/portfolio/state', {});
+    const positions = result.body && Array.isArray(result.body.positions)
+      ? result.body.positions
+      : [];
+    const target = String(tokenId || '').trim().toLowerCase();
+
+    return positions
+      .filter((position) => {
+        const token = String(position.token || '').trim().toLowerCase();
+        const protocol = String(position.protocol || '').trim().toLowerCase();
+        const positionType = String(position.position_type || '').trim().toLowerCase();
+        return token === target
+          && (protocol === 'polymarket_clob' || positionType === 'conditional_token');
+      })
+      .reduce((sum, position) => sum + Number(position.amount || 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
 function log(entry) {
   try {
     fs.mkdirSync('/home/agent/logs', { recursive: true });
@@ -146,6 +168,24 @@ async function main() {
 
   const config = loadConfig();
   const USDC = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'; // Polygon USDC
+
+  if (action === 'sell') {
+    const held = await getOutcomeHolding(config, tokenId);
+    if (held + 1e-9 < amount) {
+      const result = {
+        action: 'blocked',
+        reason: 'Insufficient outcome inventory for sell',
+        condition_id: conditionId,
+        side,
+        requested_amount: amount,
+        held_amount: held,
+        guidance: 'Sell only reduces an existing outcome position. If the outcome is overpriced and you hold none, buy the opposite side when available or skip.',
+      };
+      log(result);
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+  }
 
   // Fetch midpoint price from trading HTTP API if not provided
   if (price <= 0) {

@@ -100,8 +100,10 @@ pub fn build_pack_loop_prompt(
                 If no collateral released yet and CLOB trades needed: `--action release --amount <amount>`\n\
              4. `node /home/agent/tools/check-orders.js --cancel-stale 4` — check fills on open orders, flag stale orders older than 4h\n\
              5. For each opportunity with edge: estimate your probability, calculate edge = your_prob - market_price. If |edge| > 5%, trade:\n\
-                Buy/increase: `node /home/agent/tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
-                Sell/reduce: `node /home/agent/tools/submit-trade.js --action sell --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Positive edge: buy/increase that outcome, e.g. `node /home/agent/tools/submit-trade.js --action buy --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Negative edge: only sell/reduce if you already hold that exact outcome. If you do not hold it, buy the opposite side when available or skip.\n\
+                Reduce/exit existing holdings only: `node /home/agent/tools/submit-trade.js --action sell --condition-id <id> --side YES --amount 100 --price 0.65 --reason \"<your reasoning>\"`\n\
+                Never sell outcome shares you do not hold.\n\
                 (price is optional — auto-fetched from CLOB midpoint if omitted)\n\
              6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
              If no edge found, skip step 5. Be decisive — you have {max_turns} turns.",
@@ -580,6 +582,10 @@ mod tests {
         assert!(
             prompt.contains("write-metrics.js"),
             "loop prompt must reference write-metrics tool"
+        );
+        assert!(
+            prompt.contains("Never sell outcome shares you do not hold"),
+            "loop prompt must forbid inventory-less prediction sells"
         );
         assert!(
             prompt.contains("30 turns"),

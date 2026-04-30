@@ -1653,6 +1653,74 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
 }
 
 #[tokio::test]
+async fn test_single_bot_paper_clob_sell_without_inventory_is_rejected() {
+    let mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+    let bot_id = format!("paper-prediction-no-inventory-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
+    let app = build_router(state);
+
+    let execute_body = serde_json::to_string(&serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "sell",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "48328953829",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.585,
+                "condition_id": "0xcondition-paper",
+                "outcome_label": "YES",
+                "outcome_index": 0
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 88,
+            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "validator_responses": [
+                {
+                    "validator": "0xValidator1",
+                    "score": 88,
+                    "reasoning": "Good paper prediction trade",
+                    "signature": TEST_SIG
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(execute_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("Cannot sell 100.0 shares"),
+        "unexpected rejection body: {text}"
+    );
+
+    let trades = trading_http_api::trade_store::trades_for_bot(&bot_id, 10, 0)
+        .expect("paper clob trades")
+        .trades;
+    assert!(trades.is_empty());
+}
+
+#[tokio::test]
 async fn test_single_bot_paper_clob_trade_records_partial_fill() {
     let mock = MockServer::start().await;
     let clob_mock = MockServer::start().await;

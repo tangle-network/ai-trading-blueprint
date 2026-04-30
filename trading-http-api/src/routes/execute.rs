@@ -674,6 +674,92 @@ struct PaperClobExecution {
     fill_valuation: Option<TradeValuationSnapshot>,
 }
 
+fn clob_inventory_trade_size(trade: &TradeRecord) -> Option<Decimal> {
+    match trade.execution_status {
+        Some(TradeExecutionStatus::Filled)
+        | Some(TradeExecutionStatus::Partial)
+        | Some(TradeExecutionStatus::Paper)
+        | Some(TradeExecutionStatus::Confirmed)
+        | None => {}
+        Some(TradeExecutionStatus::Submitted) | Some(TradeExecutionStatus::NoFill) => {
+            return None;
+        }
+    }
+
+    trade
+        .filled_amount
+        .as_deref()
+        .or(trade.amount_out.as_deref())
+        .and_then(|value| value.parse::<Decimal>().ok())
+}
+
+fn clob_trade_matches_token(trade: &TradeRecord, token_id: &str) -> bool {
+    let target = token_id.trim().to_ascii_lowercase();
+    let token_out = trade.token_out.trim().to_ascii_lowercase();
+    let metadata_token = trade
+        .prediction_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.token_id.as_deref())
+        .map(|value| value.trim().to_ascii_lowercase());
+
+    token_out == target || metadata_token.as_deref() == Some(target.as_str())
+}
+
+fn clob_outcome_inventory(bot_id: &str, token_id: &str) -> Result<Decimal, String> {
+    let trades = trade_store::trades_for_bot(bot_id, 10_000, 0)?.trades;
+    let mut inventory = Decimal::ZERO;
+
+    for trade in trades {
+        if !matches!(
+            trade.target_protocol.trim().to_ascii_lowercase().as_str(),
+            "polymarket_clob" | "polymarket"
+        ) || !clob_trade_matches_token(&trade, token_id)
+        {
+            continue;
+        }
+
+        let Some(size) = clob_inventory_trade_size(&trade) else {
+            continue;
+        };
+
+        match trade.action.trim().to_ascii_lowercase().as_str() {
+            "buy" => inventory += size,
+            "sell" => inventory -= size,
+            _ => {}
+        }
+    }
+
+    Ok(inventory.max(Decimal::ZERO))
+}
+
+fn ensure_clob_sell_inventory(
+    bot_id: &str,
+    params: &polymarket_clob::ClobOrderParams,
+) -> Result<(), (StatusCode, String)> {
+    if params.side != Side::Sell {
+        return Ok(());
+    }
+
+    let held = clob_outcome_inventory(bot_id, &params.token_id).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Could not verify CLOB outcome inventory before sell: {error}"),
+        )
+    })?;
+
+    if held < params.size {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Cannot sell {} shares of outcome token {}: only {} held. Sell only reduces an existing outcome position; buy the opposite side or skip when you hold none.",
+                params.size, params.token_id, held
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
 fn parse_book_level(level: &PriceLevel) -> Option<(Decimal, Decimal)> {
     let price = level.price.parse::<Decimal>().ok()?;
     let size = level.size.parse::<Decimal>().ok()?;
@@ -1492,6 +1578,13 @@ async fn execute(
                 "Polymarket CLOB client not configured".into(),
             )
         })?;
+        let clob_params = polymarket_clob::extract_clob_params(
+            &normalized_request.intent.action,
+            &normalized_request.intent.amount_in,
+            &normalized_request.intent.metadata,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
+        ensure_clob_sell_inventory(&state.bot_id, &clob_params)?;
         let result =
             execute_paper_clob_trade(&state.bot_id, clob, &normalized_request, stored_validation)
                 .await?;
@@ -1651,6 +1744,13 @@ async fn execute_multi_bot(
                 "Polymarket CLOB client not configured".into(),
             )
         })?;
+        let clob_params = polymarket_clob::extract_clob_params(
+            &normalized_req.intent.action,
+            &normalized_req.intent.amount_in,
+            &normalized_req.intent.metadata,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
+        ensure_clob_sell_inventory(&bot.bot_id, &clob_params)?;
         let result =
             execute_paper_clob_trade(&bot.bot_id, clob, &normalized_req, stored_validation).await?;
         if let Err(error) =
