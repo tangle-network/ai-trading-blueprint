@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { decodeEventLog, formatUnits } from 'viem';
 import type { Address, Log } from 'viem';
+import { useAccount } from 'wagmi';
 import { Skeleton } from '@tangle-network/blueprint-ui/components';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
@@ -23,6 +24,7 @@ interface VaultActivityItem {
 
 interface VaultActivityProps {
   vaultAddress: Address;
+  assetToken?: Address;
   targetChainId: number;
   assetSymbol: string;
   assetDecimals: number;
@@ -37,6 +39,20 @@ const LOCAL_BOOTSTRAP_SCAN_BLOCKS = 500n;
 const MAX_ACTIVITY_ITEMS = 20;
 const LOCAL_CHAIN_IDS = new Set([31337, 31338, 31339]);
 const CHUNK_CONCURRENCY = 16;
+
+const erc20TransferEvent = {
+  type: 'event',
+  name: 'Transfer',
+  inputs: [
+    { name: 'from', type: 'address', indexed: true },
+    { name: 'to', type: 'address', indexed: true },
+    { name: 'value', type: 'uint256', indexed: false },
+  ],
+} as const;
+
+function isSameAddress(a: string | undefined, b: string | undefined) {
+  return a != null && b != null && a.toLowerCase() === b.toLowerCase();
+}
 
 function eventToActivity(log: Log): VaultActivityItem | null {
   try {
@@ -218,6 +234,63 @@ async function attachTimestamps(
   }));
 }
 
+async function attachRedeemAssetAmounts(
+  client: ReturnType<typeof getChainPublicClient>,
+  vaultAddress: Address,
+  assetToken: Address | undefined,
+  items: VaultActivityItem[],
+) {
+  if (!assetToken) return items;
+
+  const redeemItems = items.filter((item) => item.type === 'redeem_in_kind' && item.assets == null);
+  if (redeemItems.length === 0) return items;
+
+  const amounts = new Map<string, bigint>();
+
+  await Promise.all(redeemItems.map(async (item) => {
+    if (!item.secondaryAddress) return;
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: item.txHash });
+      let received = 0n;
+
+      for (const log of receipt.logs) {
+        if (!isSameAddress(log.address, assetToken)) continue;
+
+        try {
+          const decoded = decodeEventLog({
+            abi: [erc20TransferEvent],
+            data: log.data,
+            topics: log.topics,
+          });
+          const args = decoded.args as unknown as {
+            from: Address;
+            to: Address;
+            value: bigint;
+          };
+
+          if (isSameAddress(args.from, vaultAddress) && isSameAddress(args.to, item.secondaryAddress)) {
+            received += args.value;
+          }
+        } catch {
+          // Ignore unrelated logs from the same receipt.
+        }
+      }
+
+      if (received > 0n) amounts.set(item.id, received);
+    } catch {
+      // Receipt-derived asset amounts are best effort for basket withdrawals.
+    }
+  }));
+
+  if (amounts.size === 0) return items;
+
+  return items.map((item) => ({
+    ...item,
+    assets: amounts.get(item.id) ?? item.assets,
+  }));
+}
+
 function formatAmount(value: bigint, decimals: number) {
   const amount = Number(formatUnits(value, decimals));
   if (!Number.isFinite(amount)) return formatUnits(value, decimals);
@@ -234,33 +307,53 @@ function activityCopy(type: VaultActivityType) {
         label: 'Deposit',
         icon: 'i-ph:arrow-down-right',
         color: 'text-arena-elements-icon-success',
-        sign: '+',
+        shareSign: '+',
+        assetSuffix: 'deposited',
       };
     case 'withdraw':
       return {
         label: 'Withdraw',
         icon: 'i-ph:arrow-up-right',
         color: 'text-crimson-600 dark:text-crimson-400',
-        sign: '-',
+        shareSign: '-',
+        assetSuffix: 'received',
       };
     case 'redeem_in_kind':
       return {
         label: 'Basket withdrawal',
         icon: 'i-ph:basket',
         color: 'text-crimson-600 dark:text-crimson-400',
-        sign: '-',
+        shareSign: '-',
+        assetSuffix: 'received',
       };
+  }
+}
+
+function actorText(item: VaultActivityItem, currentUser: Address | undefined) {
+  const actor = isSameAddress(item.primaryAddress, currentUser)
+    ? 'You'
+    : truncateAddress(item.primaryAddress);
+
+  switch (item.type) {
+    case 'deposit':
+      return `${actor} deposited`;
+    case 'withdraw':
+      return `${actor} withdrew`;
+    case 'redeem_in_kind':
+      return `${actor} withdrew a basket`;
   }
 }
 
 export function VaultActivity({
   vaultAddress,
+  assetToken,
   targetChainId,
   assetSymbol,
   assetDecimals,
   shareDecimals,
   refreshKey,
 }: VaultActivityProps) {
+  const { address: currentUser } = useAccount();
   const [items, setItems] = useState<VaultActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -284,7 +377,8 @@ export function VaultActivity({
           })
           .slice(0, MAX_ACTIVITY_ITEMS);
 
-        const withTimestamps = await attachTimestamps(client, decoded, targetChainId);
+        const withAssets = await attachRedeemAssetAmounts(client, vaultAddress, assetToken, decoded);
+        const withTimestamps = await attachTimestamps(client, withAssets, targetChainId);
         if (!cancelled) setItems(withTimestamps);
       } catch (err) {
         if (!cancelled) {
@@ -300,7 +394,7 @@ export function VaultActivity({
     return () => {
       cancelled = true;
     };
-  }, [vaultAddress, targetChainId, refreshKey]);
+  }, [vaultAddress, assetToken, targetChainId, refreshKey]);
 
   return (
     <div className="glass-card rounded-xl p-6">
@@ -340,10 +434,10 @@ export function VaultActivity({
         <div className="divide-y divide-arena-elements-dividerColor/60">
           {items.map((item) => {
             const copy = activityCopy(item.type);
-            const value = item.assets != null
-              ? `${copy.sign}${formatAmount(item.assets, assetDecimals)} ${assetSymbol}`
-              : `${copy.sign}${formatAmount(item.shares, shareDecimals)} shares`;
-            const shares = formatAmount(item.shares, shareDecimals);
+            const shareDelta = `${copy.shareSign}${formatAmount(item.shares, shareDecimals)} shares`;
+            const assetDetail = item.assets != null
+              ? `${formatAmount(item.assets, assetDecimals)} ${assetSymbol} ${copy.assetSuffix}`
+              : 'Basket received';
 
             return (
               <div key={item.id} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
@@ -355,17 +449,20 @@ export function VaultActivity({
                     <span className="text-sm font-display font-semibold text-arena-elements-textPrimary">
                       {copy.label}
                     </span>
-                    <span className="text-xs font-data text-arena-elements-textTertiary truncate">
-                      {truncateAddress(item.primaryAddress)}
-                    </span>
+                  </div>
+                  <div className="text-sm text-arena-elements-textSecondary mt-0.5 truncate">
+                    {actorText(item, currentUser)}
                   </div>
                   <div className="text-xs font-data text-arena-elements-textTertiary mt-0.5 truncate">
-                    {shares} shares · block {item.blockNumber.toString()} · {item.txHash.slice(0, 10)}...{item.txHash.slice(-6)}
+                    Block {item.blockNumber.toString()} · Tx {item.txHash.slice(0, 10)}...{item.txHash.slice(-6)}
                   </div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className={`text-sm font-data font-semibold ${copy.color}`}>
-                    {value}
+                    {shareDelta}
+                  </div>
+                  <div className="text-xs font-data font-semibold text-arena-elements-textPrimary mt-0.5">
+                    {assetDetail}
                   </div>
                   <div className="text-xs font-data text-arena-elements-textTertiary mt-0.5">
                     {item.timestamp ? timeAgo(item.timestamp) : 'confirmed'}

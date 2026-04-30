@@ -264,6 +264,7 @@ export default function VaultPage() {
 
         <VaultActivity
           vaultAddress={vaultAddress}
+          assetToken={vault.assetToken}
           targetChainId={targetChainId}
           assetSymbol={vault.assetSymbol}
           assetDecimals={vault.assetDecimals}
