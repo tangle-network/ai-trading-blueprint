@@ -18,7 +18,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -81,6 +81,7 @@ pub struct StrategyState {
 
 async fn tick(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<crate::BotContext>,
     Json(req): Json<TickRequest>,
 ) -> Result<Json<TickResponse>, (StatusCode, String)> {
     // Initialize runner if needed
@@ -128,6 +129,12 @@ async fn tick(
     {
         match protocol.as_str() {
             "hyperliquid" => {
+                if !bot.paper_trade {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        "Live Hyperliquid strategy auto-execution is disabled; submit live trades through /execute so PerTrade or signed Envelope authorization can be verified".into(),
+                    ));
+                }
                 if let Ok(client) = super::hyperliquid::get_hl_client(&state) {
                     for entry in &signals.entries {
                         let result = execute_hl_entry(client, entry, &req.candle.token).await;

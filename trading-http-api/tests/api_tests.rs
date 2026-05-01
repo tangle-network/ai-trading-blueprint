@@ -16,7 +16,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
-use trading_runtime::execution_hash::{format_b256, hash_clob_order};
+use trading_runtime::execution_hash::{format_b256, hash_clob_order, hash_hyperliquid_order};
+use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+use trading_runtime::signed_envelope::SignedTradingEnvelope;
+use trading_runtime::trading_envelope::TradingEnvelope;
 
 /// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
 const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -272,6 +275,34 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
             }
             Err(_) => test_zero_hash(),
         }
+    } else if protocol == "hyperliquid" && execution_chain_id.is_some() {
+        let intent_hash_bytes = hex::decode(intent_hash.trim_start_matches("0x")).unwrap();
+        let intent_hash_b256 = alloy::primitives::B256::from_slice(&intent_hash_bytes);
+        let metadata = intent_json
+            .get("metadata")
+            .unwrap_or(&serde_json::Value::Null);
+        let asset = metadata
+            .get("asset")
+            .and_then(|value| value.as_str())
+            .unwrap_or(intent_json["token_out"].as_str().expect("token_out"));
+        let action = intent_json["action"].as_str().expect("action");
+        let order = PlaceOrderRequest {
+            asset: AssetId::Symbol(asset.to_string()),
+            is_buy: matches!(action, "open_long" | "buy" | "close_short"),
+            size: intent_json["amount_in"]
+                .as_str()
+                .expect("amount_in")
+                .to_string(),
+            order_type: HlOrderType::Market,
+            reduce_only: matches!(action, "close_long" | "close_short"),
+            cloid: None,
+        };
+        format_b256(hash_hyperliquid_order(
+            &order,
+            intent_hash_b256,
+            alloy::primitives::U256::from(deadline),
+            execution_chain_id.unwrap_or(intent_chain_id),
+        ))
     } else {
         test_zero_hash()
     };
@@ -1383,6 +1414,203 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
     })
+}
+
+fn live_bot_with_trust(
+    bot_id: &str,
+    validation_trust: trading_runtime::ValidationTrust,
+) -> BotContext {
+    BotContext {
+        bot_id: bot_id.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        paper_trade: false,
+        chain_id: 31337,
+        rpc_url: "http://localhost:8545".to_string(),
+        strategy_config: serde_json::json!({}),
+        validator_endpoints: vec![],
+        validation_trust,
+    }
+}
+
+fn signed_envelope_for_bot(bot: &BotContext) -> SignedTradingEnvelope {
+    let mut signed = SignedTradingEnvelope {
+        version: 1,
+        bot_id: bot.bot_id.clone(),
+        vault_address: bot.vault_address.clone(),
+        chain_id: bot.chain_id,
+        protocol: "hyperliquid".to_string(),
+        envelope: TradingEnvelope {
+            allowed_assets: vec!["ETH".to_string()],
+            max_position_usd: 1000.0,
+            max_total_exposure_usd: 3000.0,
+            max_leverage: 5,
+            max_drawdown_pct: 0.10,
+            max_stop_loss_distance: 0.05,
+            min_stop_loss_distance: 0.01,
+            can_open_positions: true,
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            approved_by: "operator".to_string(),
+            approved_at: chrono::Utc::now().timestamp(),
+        },
+        approval_signers: vec![],
+        min_signatures: 1,
+        issued_at: chrono::Utc::now().timestamp(),
+        expires_at: chrono::Utc::now().timestamp() + 3600,
+        nonce: 1,
+        signatures: vec![],
+    };
+    let signer = signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+    signed.approval_signers = vec![signer];
+    signed.signatures.clear();
+    signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+    signed
+}
+
+fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "intent": {
+            "strategy_id": strategy_id,
+            "action": "open_long",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "0",
+            "target_protocol": "hyperliquid",
+            "metadata": {
+                "asset": "ETH",
+                "leverage": 2,
+                "stop_loss_pct": 3.0
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 100,
+            "validator_responses": []
+        }
+    });
+    attach_validation_hashes(&mut body, Some(31337));
+    body
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope() {
+    ensure_state_dir();
+    let bot_id = format!("bot-envelope-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-token-envelope", bot.clone());
+    let app = build_multi_bot_router(state);
+    let signed = signed_envelope_for_bot(&bot);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/hyperliquid/envelope")
+                .header("authorization", "Bearer bot-token-envelope")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn test_live_envelope_execute_requires_signed_envelope() {
+    ensure_state_dir();
+    let bot_id = format!("bot-envelope-missing-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-token-envelope-missing", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-envelope-missing")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn test_live_direct_hyperliquid_order_route_rejects() {
+    ensure_state_dir();
+    let bot_id = format!("bot-direct-hl-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-token-direct-hl", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hyperliquid/order")
+                .header("authorization", "Bearer bot-token-direct-hl")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "asset": "ETH",
+                        "is_buy": true,
+                        "size": "0.1",
+                        "order_type": {"type": "market"}
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_live_self_operated_execute_rejects_by_default() {
+    ensure_state_dir();
+    let bot_id = format!("bot-self-operated-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::SelfOperated);
+    let state = multi_bot_state_for_bot("bot-token-self-operated", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-self-operated")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 403);
 }
 
 #[tokio::test]

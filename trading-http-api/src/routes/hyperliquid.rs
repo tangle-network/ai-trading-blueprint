@@ -4,20 +4,22 @@
 //! native REST API (not the on-chain bridge). Supports market/limit/stop/TP
 //! orders, leverage management, and position queries.
 
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::{
     Json, Router,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use trading_runtime::hyperliquid::{
     AccountInfo, CancelOrderRequest, PlaceOrderRequest, SetLeverageRequest,
 };
+use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 
-use crate::MultiBotTradingState;
+use crate::{BotContext, MultiBotTradingState};
 
 // ── Lazy-initialized client ─────────────────────────────────────────────────
 
@@ -54,38 +56,47 @@ pub(crate) fn get_hl_client(
 
 // ── Trading envelope ────────────────────────────────────────────────────────
 
-use std::sync::RwLock;
-use trading_runtime::trading_envelope::TradingEnvelope;
-
-static ENVELOPE: std::sync::LazyLock<RwLock<TradingEnvelope>> = std::sync::LazyLock::new(|| {
-    // Load from state dir if available, otherwise use default
-    let state_dir = sandbox_runtime::store::state_dir();
-    let path = state_dir.join("trading-envelope.json");
-    let env = if path.exists() {
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        TradingEnvelope::default()
-    };
-    RwLock::new(env)
-});
-
-pub(crate) fn get_envelope(_state: &MultiBotTradingState) -> TradingEnvelope {
-    ENVELOPE.read().unwrap().clone()
+fn envelope_dir() -> PathBuf {
+    sandbox_runtime::store::state_dir().join("trading-envelopes")
 }
 
-fn set_envelope(env: TradingEnvelope) {
-    // Persist to disk
-    let state_dir = sandbox_runtime::store::state_dir();
-    let path = state_dir.join("trading-envelope.json");
-    if let Ok(json) = serde_json::to_string_pretty(&env)
-        && let Err(e) = std::fs::write(&path, json)
-    {
-        tracing::error!(error = %e, "Failed to persist trading envelope");
+fn envelope_path(bot_id: &str) -> PathBuf {
+    let safe_bot_id = bot_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    envelope_dir().join(format!("{safe_bot_id}.json"))
+}
+
+pub(crate) fn get_signed_envelope(bot_id: &str) -> Option<SignedTradingEnvelope> {
+    std::fs::read_to_string(envelope_path(bot_id))
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+}
+
+fn set_signed_envelope(bot_id: &str, env: &SignedTradingEnvelope) -> Result<(), String> {
+    std::fs::create_dir_all(envelope_dir())
+        .map_err(|e| format!("Failed to create envelope directory: {e}"))?;
+    let json = serde_json::to_string_pretty(env)
+        .map_err(|e| format!("Failed to serialize trading envelope: {e}"))?;
+    std::fs::write(envelope_path(bot_id), json)
+        .map_err(|e| format!("Failed to persist trading envelope: {e}"))
+}
+
+fn reject_live_direct_hyperliquid(bot: &BotContext) -> Result<(), (StatusCode, String)> {
+    if bot.paper_trade {
+        return Ok(());
     }
-    *ENVELOPE.write().unwrap() = env;
+    Err((
+        StatusCode::FORBIDDEN,
+        "Live Hyperliquid direct routes are disabled; submit live trades through /execute so PerTrade or signed Envelope authorization can be verified".into(),
+    ))
 }
 
 // ── Request/Response types ──────────────────────────────────────────────────
@@ -109,8 +120,10 @@ pub struct OrderResponse {
 
 async fn place_order(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
     Json(req): Json<PlaceOrderRequest>,
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
+    reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
     let resp = client
         .place_order(&req)
@@ -124,8 +137,10 @@ async fn place_order(
 
 async fn place_bracket(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
     Json(req): Json<BracketOrderRequest>,
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
+    reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
     let resp = client
         .place_bracket(&req.entry, req.stop_loss.as_ref(), req.take_profit.as_ref())
@@ -139,8 +154,10 @@ async fn place_bracket(
 
 async fn cancel_order(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
     Json(req): Json<CancelOrderRequest>,
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
+    reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
     let resp = client
         .cancel_order(req.asset, req.order_id)
@@ -154,8 +171,10 @@ async fn cancel_order(
 
 async fn set_leverage(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
     Json(req): Json<SetLeverageRequest>,
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
+    reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
     let resp = client
         .set_leverage(req.asset, req.leverage, req.is_cross)
@@ -192,43 +211,30 @@ async fn get_prices(
 // ── Envelope endpoints ──────────────────────────────────────────────────────
 
 async fn get_envelope_handler(
-    State(state): State<Arc<MultiBotTradingState>>,
-) -> Json<TradingEnvelope> {
-    Json(get_envelope(&state))
+    Extension(bot): Extension<BotContext>,
+) -> Json<Option<SignedTradingEnvelope>> {
+    Json(get_signed_envelope(&bot.bot_id))
 }
 
 async fn update_envelope_handler(
-    State(_state): State<Arc<MultiBotTradingState>>,
-    Json(env): Json<TradingEnvelope>,
-) -> Result<Json<TradingEnvelope>, (StatusCode, String)> {
-    // Validate envelope constraints
-    if env.max_leverage == 0 {
-        return Err((StatusCode::BAD_REQUEST, "max_leverage must be > 0".into()));
-    }
-    if env.max_position_usd <= 0.0 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "max_position_usd must be > 0".into(),
-        ));
-    }
-    if env.allowed_assets.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "allowed_assets must be non-empty".into(),
-        ));
-    }
-    if env.max_drawdown_pct <= 0.0 || env.max_drawdown_pct > 1.0 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "max_drawdown_pct must be in (0, 1]".into(),
-        ));
-    }
-
-    set_envelope(env.clone());
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+    Json(env): Json<SignedTradingEnvelope>,
+) -> Result<Json<SignedTradingEnvelope>, (StatusCode, String)> {
+    let binding = EnvelopeBinding {
+        bot_id: &bot.bot_id,
+        vault_address: &bot.vault_address,
+        chain_id: bot.chain_id,
+        protocol: "hyperliquid",
+    };
+    env.verify(&binding, &state.trusted_envelope_signers())
+        .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+    set_signed_envelope(&bot.bot_id, &env).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     tracing::info!(
-        assets = ?env.allowed_assets,
-        max_pos = env.max_position_usd,
-        max_lev = env.max_leverage,
+        bot_id = %bot.bot_id,
+        assets = ?env.envelope.allowed_assets,
+        max_pos = env.envelope.max_position_usd,
+        max_lev = env.envelope.max_leverage,
         "Trading envelope updated"
     );
     Ok(Json(env))
