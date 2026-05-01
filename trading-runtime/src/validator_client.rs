@@ -156,7 +156,15 @@ impl ValidatorClient {
         execution_context: Option<ExecutionContext>,
         require_simulation: bool,
     ) -> Result<ValidationResult, TradingError> {
-        let intent_hash = hash_intent(intent);
+        let mut intent = intent.clone();
+        if deadline > i64::MAX as u64 {
+            return Err(TradingError::ValidatorError(format!(
+                "Invalid deadline: {deadline}"
+            )));
+        }
+        intent.deadline = chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0)
+            .ok_or_else(|| TradingError::ValidatorError(format!("Invalid deadline: {deadline}")))?;
+        let intent_hash = hash_intent(&intent);
         let execution_hash = execution_context
             .as_ref()
             .map(|ctx| ctx.execution_hash.clone())
