@@ -133,6 +133,18 @@ fn paper_mode_bypass_response(
     }
 }
 
+fn zero_hash() -> String {
+    format!("0x{}", "00".repeat(32))
+}
+
+fn uses_direct_non_vault_execution(protocol: &str) -> bool {
+    matches!(protocol, "polymarket_clob" | "hyperliquid")
+}
+
+fn requires_execution_context(protocol: &str) -> bool {
+    !uses_direct_non_vault_execution(protocol)
+}
+
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new().route("/validate", post(validate))
 }
@@ -268,16 +280,14 @@ async fn validate(
     );
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
 
+    let intent_hash = hash_intent(&parsed.intent);
     if state.paper_trade && state.validator_endpoints.is_empty() {
-        let intent_hash = hash_intent(&parsed.intent);
-        let execution_hash = format!("0x{}", "00".repeat(32));
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
-            execution_hash,
+            zero_hash(),
             parsed.deadline,
         )));
     }
-    let intent_hash = hash_intent(&parsed.intent);
 
     let execution_context = build_execution_context(
         &request.target_protocol,
@@ -292,14 +302,16 @@ async fn validate(
         state.chain_id.unwrap_or(parsed.intent.chain_id),
         &intent_hash,
         parsed.deadline,
+        &request.metadata,
     )
-    .await
-    .ok_or_else(|| {
-        (
+    .await;
+
+    if requires_execution_context(&request.target_protocol) && execution_context.is_none() {
+        return Err((
             StatusCode::BAD_REQUEST,
             "Could not build execution context for validator signing".to_string(),
-        )
-    })?;
+        ));
+    }
 
     let result = state
         .validator_client
@@ -307,7 +319,7 @@ async fn validate(
             &parsed.intent,
             &state.vault_address,
             parsed.deadline,
-            Some(execution_context),
+            execution_context,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -340,7 +352,12 @@ async fn build_execution_context(
     execution_chain_id: u64,
     intent_hash: &str,
     deadline: u64,
+    metadata: &serde_json::Value,
 ) -> Option<ExecutionContext> {
+    if uses_direct_non_vault_execution(protocol) {
+        return None;
+    }
+
     let adapter = get_adapter(protocol, chain_id).ok()?;
 
     let token_in_addr: alloy::primitives::Address = token_in.parse().ok()?;
@@ -356,7 +373,7 @@ async fn build_execution_context(
         token_out: token_out_addr,
         amount,
         min_output: min_out,
-        extra: serde_json::Value::Null,
+        extra: metadata.clone(),
         vault_address: vault_addr,
     };
 
@@ -396,6 +413,7 @@ async fn build_execution_context(
 
     Some(ExecutionContext {
         execution_hash: format_b256(execution_hash),
+        chain_id: execution_chain_id,
         target: format!("{}", encoded.target),
         calldata: format!("0x{}", hex::encode(&encoded.calldata)),
         calldata_decoded,
@@ -550,16 +568,14 @@ async fn validate_multi_bot(
 
     // Paper-trade bypass: if no validators configured and bot is in paper mode,
     // return synthetic approval so the trading loop can proceed.
+    let intent_hash = hash_intent(&parsed.intent);
     if bot.paper_trade && validator_endpoints.is_empty() {
-        let intent_hash = hash_intent(&parsed.intent);
-        let execution_hash = format!("0x{}", "00".repeat(32));
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
-            execution_hash,
+            zero_hash(),
             parsed.deadline,
         )));
     }
-    let intent_hash = hash_intent(&parsed.intent);
 
     // Build execution context for validators (with simulation if RPC available)
     let execution_context = build_execution_context(
@@ -575,14 +591,16 @@ async fn validate_multi_bot(
         bot.chain_id,
         &intent_hash,
         parsed.deadline,
+        &req.metadata,
     )
-    .await
-    .ok_or_else(|| {
-        (
+    .await;
+
+    if requires_execution_context(&req.target_protocol) && execution_context.is_none() {
+        return Err((
             StatusCode::BAD_REQUEST,
             "Could not build execution context for validator signing".to_string(),
-        )
-    })?;
+        ));
+    }
 
     // Real validation: fan out to validator endpoints
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
@@ -591,7 +609,7 @@ async fn validate_multi_bot(
             &parsed.intent,
             &bot.vault_address,
             parsed.deadline,
-            Some(execution_context),
+            execution_context,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -701,6 +719,7 @@ mod tests {
             31337,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             9999999999,
+            &serde_json::Value::Null,
         )
         .await;
         assert!(result.is_none());
@@ -721,6 +740,7 @@ mod tests {
             31337,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             9999999999,
+            &serde_json::Value::Null,
         )
         .await;
         let ctx = result.expect("should build context for uniswap_v3 swap");
@@ -744,6 +764,7 @@ mod tests {
             31339,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             9999999999,
+            &serde_json::Value::Null,
         )
         .await;
 
@@ -772,6 +793,7 @@ mod tests {
             31337,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             9999999999,
+            &serde_json::Value::Null,
         )
         .await;
         assert!(result.is_none());

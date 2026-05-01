@@ -448,6 +448,10 @@ mod tests {
             calldata: "0x414bf389".into(),
             calldata_decoded: "exactInputSingle(tokenIn=0xA, tokenOut=0xB)".into(),
             value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
                 success: true,
                 gas_used: 150000,

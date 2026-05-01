@@ -20,6 +20,7 @@ use trading_runtime::PortfolioState;
 /// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
 const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 use trading_runtime::executor::TradeExecutor;
+use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::validator_client::ValidatorClient;
 
@@ -177,10 +178,85 @@ fn auth_header() -> String {
     format!("Bearer {TEST_TOKEN}")
 }
 
-fn execute_body() -> String {
-    // Unique intent hash per call to avoid dedup collisions across tests.
-    let unique_hash = format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
-    serde_json::to_string(&serde_json::json!({
+fn parse_test_action(action: &str) -> trading_runtime::Action {
+    match action {
+        "swap" => trading_runtime::Action::Swap,
+        "supply" => trading_runtime::Action::Supply,
+        "borrow" => trading_runtime::Action::Borrow,
+        "withdraw" => trading_runtime::Action::Withdraw,
+        "repay" => trading_runtime::Action::Repay,
+        "open_long" => trading_runtime::Action::OpenLong,
+        "open_short" => trading_runtime::Action::OpenShort,
+        "close_long" => trading_runtime::Action::CloseLong,
+        "close_short" => trading_runtime::Action::CloseShort,
+        "buy" => trading_runtime::Action::Buy,
+        "sell" => trading_runtime::Action::Sell,
+        "redeem" => trading_runtime::Action::Redeem,
+        "collateral_release" => trading_runtime::Action::CollateralRelease,
+        other => panic!("unsupported test action: {other}"),
+    }
+}
+
+fn test_zero_hash() -> String {
+    format!("0x{}", "00".repeat(32))
+}
+
+fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Option<u64>) {
+    let intent_json = body["intent"].clone();
+    let validation = body
+        .get_mut("validation")
+        .and_then(|value| value.as_object_mut())
+        .expect("validation object");
+    let deadline = validation
+        .get("deadline")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1_999_999_999);
+    validation.insert("deadline".into(), serde_json::json!(deadline));
+
+    let protocol = intent_json["target_protocol"].as_str().expect("protocol");
+    let adapter_chain_id = execution_chain_id.map(trading_http_api::protocol_chain_id_from_env);
+    let intent_chain_id = adapter_chain_id.unwrap_or(42161);
+    let mut intent = trading_runtime::TradeIntentBuilder::new()
+        .strategy_id(intent_json["strategy_id"].as_str().expect("strategy_id"))
+        .action(parse_test_action(
+            intent_json["action"].as_str().expect("action"),
+        ))
+        .token_in(intent_json["token_in"].as_str().expect("token_in"))
+        .token_out(intent_json["token_out"].as_str().expect("token_out"))
+        .amount_in(
+            intent_json["amount_in"]
+                .as_str()
+                .expect("amount_in")
+                .parse()
+                .expect("amount_in decimal"),
+        )
+        .min_amount_out(
+            intent_json["min_amount_out"]
+                .as_str()
+                .expect("min_amount_out")
+                .parse()
+                .expect("min_amount_out decimal"),
+        )
+        .target_protocol(protocol)
+        .chain_id(intent_chain_id)
+        .metadata(
+            intent_json
+                .get("metadata")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+        .build()
+        .expect("test intent");
+    intent.deadline =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).expect("deadline");
+
+    let intent_hash = hash_intent(&intent);
+    validation.insert("intent_hash".into(), serde_json::json!(intent_hash));
+    validation.insert("execution_hash".into(), serde_json::json!(test_zero_hash()));
+}
+
+fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
+    let mut body = serde_json::json!({
         "intent": {
             "strategy_id": "test-strat",
             "action": "swap",
@@ -188,12 +264,14 @@ fn execute_body() -> String {
             "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             "amount_in": "1.5",
             "min_amount_out": "3000",
-            "target_protocol": "uniswap_v3"
+            "target_protocol": "uniswap_v3",
+            "metadata": {
+                "test_nonce": uuid::Uuid::new_v4().to_string()
+            }
         },
         "validation": {
             "approved": true,
             "aggregate_score": 85,
-            "intent_hash": unique_hash,
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -209,8 +287,13 @@ fn execute_body() -> String {
                 }
             ]
         }
-    }))
-    .unwrap()
+    });
+    attach_validation_hashes(&mut body, execution_chain_id);
+    serde_json::to_string(&body).unwrap()
+}
+
+fn execute_body() -> String {
+    execute_body_for_chain(None)
 }
 
 // ── Existing tests ──────────────────────────────────────────────────────────
@@ -776,7 +859,7 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
     let state = test_state_with_chain_id(&format!("{}/api/v3", mock.uri()), 84532).await;
     let app = build_router(state);
 
-    let body = serde_json::to_string(&serde_json::json!({
+    let mut body_json = serde_json::json!({
         "intent": {
             "strategy_id": "test-strat",
             "action": "swap",
@@ -790,7 +873,6 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
         "validation": {
             "approved": true,
             "aggregate_score": 100,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "paper-mode",
@@ -800,8 +882,9 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut body_json, Some(84532));
+    let body = serde_json::to_string(&body_json).unwrap();
 
     let exec_response = app
         .clone()
@@ -859,7 +942,7 @@ async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placehold
     let state = test_state_with_chain_id(&format!("{}/api/v3", mock.uri()), 84532).await;
     let app = build_router(state);
 
-    let body = serde_json::to_string(&serde_json::json!({
+    let mut body_json = serde_json::json!({
         "intent": {
             "strategy_id": "qa-stochastic-test",
             "action": "swap",
@@ -873,7 +956,6 @@ async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placehold
         "validation": {
             "approved": true,
             "aggregate_score": 100,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "paper-mode",
@@ -883,8 +965,9 @@ async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placehold
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut body_json, Some(84532));
+    let body = serde_json::to_string(&body_json).unwrap();
 
     let exec_response = app
         .clone()
@@ -1520,7 +1603,7 @@ async fn test_multi_bot_execute_paper_trade() {
                 .uri("/execute")
                 .header("authorization", "Bearer bot-token-abc")
                 .header("content-type", "application/json")
-                .body(Body::from(execute_body()))
+                .body(Body::from(execute_body_for_chain(Some(31337))))
                 .unwrap(),
         )
         .await
@@ -1564,7 +1647,7 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
     let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
     let app = build_router(state);
 
-    let execute_body = serde_json::to_string(&serde_json::json!({
+    let mut execute_body_json = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -1586,7 +1669,6 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
         "validation": {
             "approved": true,
             "aggregate_score": 88,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -1596,8 +1678,9 @@ async fn test_single_bot_paper_clob_trade_persists_prediction_metadata() {
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut execute_body_json, None);
+    let execute_body = serde_json::to_string(&execute_body_json).unwrap();
 
     let response = app
         .oneshot(
@@ -1660,7 +1743,7 @@ async fn test_single_bot_paper_clob_sell_without_inventory_is_rejected() {
     let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
     let app = build_router(state);
 
-    let execute_body = serde_json::to_string(&serde_json::json!({
+    let mut execute_body_json = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "sell",
@@ -1680,7 +1763,6 @@ async fn test_single_bot_paper_clob_sell_without_inventory_is_rejected() {
         "validation": {
             "approved": true,
             "aggregate_score": 88,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -1690,8 +1772,9 @@ async fn test_single_bot_paper_clob_sell_without_inventory_is_rejected() {
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut execute_body_json, None);
+    let execute_body = serde_json::to_string(&execute_body_json).unwrap();
 
     let response = app
         .oneshot(
@@ -1748,7 +1831,7 @@ async fn test_single_bot_paper_clob_trade_records_partial_fill() {
     let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
     let app = build_router(state);
 
-    let execute_body = serde_json::to_string(&serde_json::json!({
+    let mut execute_body_json = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -1767,7 +1850,6 @@ async fn test_single_bot_paper_clob_trade_records_partial_fill() {
         "validation": {
             "approved": true,
             "aggregate_score": 88,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -1777,8 +1859,9 @@ async fn test_single_bot_paper_clob_trade_records_partial_fill() {
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut execute_body_json, None);
+    let execute_body = serde_json::to_string(&execute_body_json).unwrap();
 
     let response = app
         .oneshot(
@@ -1839,7 +1922,7 @@ async fn test_single_bot_paper_clob_trade_records_no_fill() {
     let state = test_state_with_bot_id_and_clob(&mock.uri(), &bot_id, &clob_mock.uri()).await;
     let app = build_router(state);
 
-    let execute_body = serde_json::to_string(&serde_json::json!({
+    let mut execute_body_json = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -1858,7 +1941,6 @@ async fn test_single_bot_paper_clob_trade_records_no_fill() {
         "validation": {
             "approved": true,
             "aggregate_score": 88,
-            "intent_hash": format!("0x{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
             "validator_responses": [
                 {
                     "validator": "0xValidator1",
@@ -1868,8 +1950,9 @@ async fn test_single_bot_paper_clob_trade_records_no_fill() {
                 }
             ]
         }
-    }))
-    .unwrap();
+    });
+    attach_validation_hashes(&mut execute_body_json, None);
+    let execute_body = serde_json::to_string(&execute_body_json).unwrap();
 
     let response = app
         .oneshot(
@@ -1933,7 +2016,7 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
                 .uri("/execute")
                 .header("authorization", format!("Bearer {auth_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(execute_body()))
+                .body(Body::from(execute_body_for_chain(Some(31337))))
                 .unwrap(),
         )
         .await
@@ -3280,7 +3363,7 @@ async fn test_multi_bot_clob_execute() {
 
     let app = build_multi_bot_router(state);
 
-    let execute_body = serde_json::json!({
+    let mut execute_body = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -3298,10 +3381,10 @@ async fn test_multi_bot_clob_execute() {
         "validation": {
             "approved": true,
             "aggregate_score": 75,
-            "intent_hash": format!("0x{}", "ab".repeat(32)),
             "validator_responses": []
         }
     });
+    attach_validation_hashes(&mut execute_body, Some(137));
 
     let response = app
         .oneshot(
@@ -3371,7 +3454,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
 
     let app = build_multi_bot_router(state);
 
-    let execute_body = serde_json::json!({
+    let mut execute_body = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -3388,10 +3471,10 @@ async fn test_multi_bot_clob_execute_not_configured() {
         "validation": {
             "approved": true,
             "aggregate_score": 75,
-            "intent_hash": format!("0x{}", "de".repeat(32)),
             "validator_responses": []
         }
     });
+    attach_validation_hashes(&mut execute_body, Some(137));
 
     let response = app
         .oneshot(
@@ -3457,7 +3540,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
     let app = build_multi_bot_router(state);
 
     // Missing metadata.token_id
-    let execute_body = serde_json::json!({
+    let mut execute_body = serde_json::json!({
         "intent": {
             "strategy_id": "prediction-strat",
             "action": "buy",
@@ -3473,10 +3556,10 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
         "validation": {
             "approved": true,
             "aggregate_score": 75,
-            "intent_hash": format!("0x{}", "ff".repeat(32)),
             "validator_responses": []
         }
     });
+    attach_validation_hashes(&mut execute_body, Some(137));
 
     let response = app
         .oneshot(
