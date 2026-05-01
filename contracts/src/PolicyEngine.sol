@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title PolicyEngine
 /// @notice Per-vault hard policy enforcement for trading operations
@@ -294,7 +295,8 @@ contract PolicyEngine is Ownable2Step {
         }
 
         uint256 limit = positionLimit[vault][token];
-        if (limit > 0 && amount > limit) {
+        uint256 currentExposure = IERC20(token).balanceOf(vault);
+        if (limit > 0 && currentExposure + amount > limit) {
             emit TradeRejected(vault, token, amount, REJECT_POSITION_LIMIT);
             return false;
         }

@@ -1,3 +1,4 @@
+use crate::live_portfolio::{LiveRiskInput, reconcile_live_portfolio};
 use crate::metrics_store;
 use crate::{MultiBotTradingState, TradingApiState};
 use axum::{Extension, Json, Router, extract::State, routing::post};
@@ -52,6 +53,15 @@ async fn check(
 ) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
     let max_drawdown = parse_max_drawdown_pct(&request.max_drawdown_pct)?;
 
+    if !state.paper_trade {
+        let input = LiveRiskInput::from_state(&state)?;
+        let snapshot = reconcile_live_portfolio(&input).await?;
+        return Ok(Json(CircuitBreakerResponse {
+            should_break: snapshot.drawdown_pct >= max_drawdown,
+            current_drawdown_pct: snapshot.drawdown_pct.to_string(),
+        }));
+    }
+
     let portfolio = state.portfolio.read().await;
     let should_break = portfolio.should_circuit_break(max_drawdown);
 
@@ -73,10 +83,20 @@ async fn check(
 }
 
 async fn check_multi_bot(
+    State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<crate::BotContext>,
     Json(request): Json<CircuitBreakerRequest>,
 ) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
     let max_drawdown = parse_max_drawdown_pct(&request.max_drawdown_pct)?;
+    if !bot.paper_trade {
+        let input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
+        let snapshot = reconcile_live_portfolio(&input).await?;
+        return Ok(Json(CircuitBreakerResponse {
+            should_break: snapshot.drawdown_pct >= max_drawdown,
+            current_drawdown_pct: snapshot.drawdown_pct.to_string(),
+        }));
+    }
+
     let current_drawdown = metrics_store::latest_snapshot_for_bot(&bot.bot_id)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
         .and_then(|snapshot| snapshot.drawdown_pct.parse::<Decimal>().ok())

@@ -7,6 +7,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::live_portfolio::{LiveRiskInput, reconcile_live_portfolio, snapshot_to_metric};
 use crate::metrics_store::{self, MetricSnapshot};
 use crate::routes::portfolio::{PortfolioResponse, build_multi_bot_portfolio_response};
 use crate::trade_store;
@@ -185,6 +186,17 @@ pub(crate) async fn capture_metrics_snapshot_for_bot(
     bot: &crate::BotContext,
     market_data_base_url: &str,
 ) -> Result<MetricSnapshot, String> {
+    if !bot.paper_trade {
+        let input = LiveRiskInput::from_bot(bot, market_data_base_url);
+        let live = reconcile_live_portfolio(&input)
+            .await
+            .map_err(|(_, message)| message)?;
+        let trade_count = trade_store::trades_for_bot(&bot.bot_id, 1, 0)?.total as u32;
+        let snapshot = snapshot_to_metric(&live, trade_count);
+        metrics_store::record_snapshot(snapshot.clone())?;
+        return Ok(snapshot);
+    }
+
     let portfolio = build_multi_bot_portfolio_response(bot, market_data_base_url).await;
     let previous = metrics_store::latest_snapshot_for_bot(&bot.bot_id)?;
     let trade_count = trade_store::trades_for_bot(&bot.bot_id, 1, 0)?.total as u32;
@@ -286,6 +298,9 @@ mod tests {
             warnings: Vec::new(),
             has_unpriced_positions: false,
             has_value_only_positions: false,
+            source: Some("test".to_string()),
+            observed_at: None,
+            stale: false,
         }
     }
 

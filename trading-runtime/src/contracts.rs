@@ -39,6 +39,8 @@ sol! {
         function asset() external view returns (address);
         function share() external view returns (address);
         function totalAssets() external view returns (uint256);
+        function isNavSafe() external view returns (bool);
+        function getHeldTokens() external view returns (address[] memory);
         function deposit(uint256 assets, address receiver) external returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
         function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);

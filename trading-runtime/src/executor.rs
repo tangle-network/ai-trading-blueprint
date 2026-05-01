@@ -4,13 +4,13 @@
 //! Includes pre-submission transaction simulation to detect malicious payloads
 //! before they hit the chain.
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::providers::Provider;
 
 use crate::adapters::{
     ActionParams, EncodedAction, ProtocolAdapter, aave_v3::AaveV3Adapter,
     aerodrome::AerodromeAdapter, gmx_v2::GmxV2Adapter, hyperliquid::HyperliquidAdapter,
-    morpho::MorphoAdapter, polymarket::PolymarketAdapter, twap::TwapAdapter,
+    morpho::MorphoVaultAdapter, polymarket::PolymarketAdapter, twap::TwapAdapter,
     uniswap_v3::UniswapV3Adapter, vertex::VertexAdapter,
 };
 use crate::chain::ChainClient;
@@ -40,6 +40,8 @@ pub struct TransactionOutcome {
     pub tx_hash: String,
     pub block_number: Option<u64>,
     pub gas_used: Option<u128>,
+    pub output_token: Option<Address>,
+    pub output_gained: Option<U256>,
 }
 
 /// Wires adapter encoding → simulation → vault execute encoding → chain transaction submission.
@@ -240,6 +242,11 @@ impl TradeExecutor {
 
             match simulator.simulate(sim_request).await {
                 Ok(sim_result) => {
+                    let mut known_protocol_addresses = adapter.known_addresses();
+                    if intent.target_protocol == "morpho_vault" {
+                        known_protocol_addresses.push(encoded.target);
+                    }
+
                     let risk = analyze_simulation(
                         &sim_result,
                         &TradeContext {
@@ -248,7 +255,7 @@ impl TradeExecutor {
                             token_out,
                             amount_in: params.amount,
                             min_output: params.min_output,
-                            known_protocol_addresses: adapter.known_addresses(),
+                            known_protocol_addresses,
                         },
                     );
 
@@ -308,12 +315,37 @@ impl TradeExecutor {
             .await
             .map_err(|e| TradingError::VaultError(format!("Receipt fetch failed: {e}")))?;
 
+        let (output_token, output_gained) =
+            parse_trade_executed_event(&receipt).unwrap_or((None, None));
+
         Ok(TransactionOutcome {
             tx_hash,
             block_number: Some(receipt.block_number.unwrap_or(0)),
             gas_used: Some(receipt.gas_used.into()),
+            output_token,
+            output_gained,
         })
     }
+}
+
+fn parse_trade_executed_event(
+    receipt: &alloy::rpc::types::TransactionReceipt,
+) -> Option<(Option<Address>, Option<U256>)> {
+    let signature = keccak256("TradeExecuted(address,uint256,uint256,address,bytes32)".as_bytes());
+    for log in receipt.inner.logs() {
+        let topics = log.topics();
+        if topics.first().copied() != Some(signature) {
+            continue;
+        }
+        let data = log.data().data.as_ref();
+        if data.len() < 96 {
+            return None;
+        }
+        let output_gained = U256::from_be_slice(&data[32..64]);
+        let output_token = Address::from_word(B256::from_slice(&data[64..96]));
+        return Some((Some(output_token), Some(output_gained)));
+    }
+    None
 }
 
 fn build_execution_tx(
@@ -428,7 +460,13 @@ pub fn get_adapter(
         "uniswap_v3" => Ok(Box::new(UniswapV3Adapter::new())),
         "aave_v3" => Ok(Box::new(AaveV3Adapter::for_chain(chain_id.unwrap_or(1))?)),
         "gmx_v2" => Ok(Box::new(GmxV2Adapter::new())),
-        "morpho" => Ok(Box::new(MorphoAdapter::new())),
+        "morpho" => Err(TradingError::AdapterError {
+            protocol: "morpho".into(),
+            message:
+                "Protocol 'morpho' is ambiguous and disabled for execution; use 'morpho_vault'"
+                    .into(),
+        }),
+        "morpho_vault" => Ok(Box::new(MorphoVaultAdapter::new())),
         "vertex" => Ok(Box::new(VertexAdapter::new())),
         "hyperliquid" => Ok(Box::new(HyperliquidAdapter::new())),
         "aerodrome" => Ok(Box::new(AerodromeAdapter::new())),

@@ -1,3 +1,4 @@
+use crate::live_portfolio::{LiveRiskInput, reconcile_live_portfolio};
 use crate::metrics_store;
 use crate::trade_store;
 use crate::{MultiBotTradingState, TradingApiState};
@@ -5,8 +6,8 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::{SolCall, SolValue};
-use axum::{Extension, Json, Router, extract::State, routing::post};
-use chrono::Utc;
+use axum::{Extension, Json, Router, extract::State, http::StatusCode, routing::post};
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -17,7 +18,7 @@ use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::token_metadata::known_token_decimals;
 use trading_runtime::types::{PositionType, PriceData, ValuationStatus};
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PortfolioResponse {
     pub positions: Vec<PositionEntry>,
     pub total_value_usd: String,
@@ -29,9 +30,15 @@ pub struct PortfolioResponse {
     pub warnings: Vec<String>,
     pub has_unpriced_positions: bool,
     pub has_value_only_positions: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub stale: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PositionEntry {
     pub token: String,
     pub amount: String,
@@ -62,7 +69,15 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
 /// For CLOB (ConditionalToken) positions: fetches midpoint from ClobClient.
 /// Price fetch failures are logged but don't block the response — stale prices are better
 /// than no portfolio at all.
-async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioResponse> {
+async fn get_state(
+    State(state): State<Arc<TradingApiState>>,
+) -> Result<Json<PortfolioResponse>, (StatusCode, String)> {
+    if !state.paper_trade {
+        let input = LiveRiskInput::from_state(&state)?;
+        let snapshot = reconcile_live_portfolio(&input).await?;
+        return Ok(Json(snapshot.portfolio));
+    }
+
     // Collect tokens that need price refresh (under read lock, briefly).
     let tokens_to_refresh: Vec<(String, PositionType)> = {
         let portfolio = state.portfolio.read().await;
@@ -144,7 +159,7 @@ async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioR
         .map(position_entry_from_runtime)
         .collect();
 
-    Json(PortfolioResponse {
+    Ok(Json(PortfolioResponse {
         total_value_usd: portfolio.total_value_usd.to_string(),
         cash_balance: None,
         unrealized_pnl: portfolio.unrealized_pnl.to_string(),
@@ -153,14 +168,25 @@ async fn get_state(State(state): State<Arc<TradingApiState>>) -> Json<PortfolioR
         warnings: portfolio_warnings(has_unpriced_positions, has_value_only_positions),
         has_unpriced_positions,
         has_value_only_positions,
-    })
+        source: Some("memory".to_string()),
+        observed_at: portfolio.last_updated,
+        stale: false,
+    }))
 }
 
 async fn get_state_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<crate::BotContext>,
-) -> Json<PortfolioResponse> {
-    Json(build_multi_bot_portfolio_response(&bot, &state.market_data_base_url).await)
+) -> Result<Json<PortfolioResponse>, (StatusCode, String)> {
+    if !bot.paper_trade {
+        let input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
+        let snapshot = reconcile_live_portfolio(&input).await?;
+        return Ok(Json(snapshot.portfolio));
+    }
+
+    Ok(Json(
+        build_multi_bot_portfolio_response(&bot, &state.market_data_base_url).await,
+    ))
 }
 
 pub(crate) async fn build_multi_bot_portfolio_response(
@@ -255,6 +281,9 @@ pub(crate) async fn build_multi_bot_portfolio_response(
         warnings,
         has_unpriced_positions,
         has_value_only_positions,
+        source: Some("synthetic_trade_history".to_string()),
+        observed_at: latest_snapshot.as_ref().map(|snapshot| snapshot.timestamp),
+        stale: false,
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::live_portfolio::{LiveRiskInput, enforce_live_risk, max_drawdown_from_strategy_config};
 use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
     self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
@@ -1195,6 +1196,69 @@ async fn check_circuit_breaker(
     Ok(())
 }
 
+async fn enforce_hyperliquid_live_risk(
+    state: &MultiBotTradingState,
+    bot: &crate::BotContext,
+    max_drawdown_pct: Decimal,
+) -> Result<(), (StatusCode, String)> {
+    let client = super::hyperliquid::get_hl_client(state)?;
+    let account = client.get_account().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid account refresh failed: {e}"),
+        )
+    })?;
+    let account_value = account.account_value.parse::<Decimal>().map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid account value is invalid: {e}"),
+        )
+    })?;
+    let previous = crate::metrics_store::latest_snapshot_for_bot(&bot.bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let baseline = decimal_strategy_value(&bot.strategy_config, "initial_capital_usd")
+        .or_else(|| decimal_strategy_value(&bot.strategy_config, "initial_capital"))
+        .or_else(|| decimal_strategy_value(&bot.strategy_config, "cash_balance"))
+        .unwrap_or(account_value);
+    let previous_hwm = previous
+        .as_ref()
+        .and_then(|snapshot| snapshot.high_water_mark.parse::<Decimal>().ok())
+        .unwrap_or(baseline.max(account_value));
+    let high_water_mark = previous_hwm.max(account_value).max(baseline);
+    let drawdown_pct = if high_water_mark > Decimal::ZERO {
+        ((high_water_mark - account_value) / high_water_mark) * Decimal::new(100, 0)
+    } else {
+        Decimal::ZERO
+    };
+    if drawdown_pct >= max_drawdown_pct {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Circuit breaker: live Hyperliquid drawdown {drawdown_pct}% exceeds {max_drawdown_pct}% threshold"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+async fn enforce_clob_live_reconciliation(clob: &ClobClient) -> Result<(), (StatusCode, String)> {
+    clob.get_open_orders(None, None).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Polymarket CLOB state refresh failed: {e}"),
+        )
+    })?;
+    Ok(())
+}
+
+fn decimal_strategy_value(strategy_config: &serde_json::Value, key: &str) -> Option<Decimal> {
+    strategy_config.get(key).and_then(|value| match value {
+        serde_json::Value::Number(number) => number.to_string().parse().ok(),
+        serde_json::Value::String(raw) => raw.parse().ok(),
+        _ => None,
+    })
+}
+
 /// Update portfolio state after a successful trade.
 ///
 /// For buy/open actions: adds a position.
@@ -1443,6 +1507,7 @@ async fn execute_real_trade(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let trade_id = uuid::Uuid::new_v4().to_string();
+    let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
     let record = TradeRecord {
         id: trade_id,
         bot_id: bot_id.to_string(),
@@ -1459,14 +1524,18 @@ async fn execute_real_trade(
         paper_trade: false,
         execution_status: Some(TradeExecutionStatus::Confirmed),
         clob_order_id: None,
-        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        amount_out: confirmed_amount_out
+            .clone()
+            .or_else(|| valuation.amount_out.map(|value| value.to_string())),
         entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         requested_price_usd: None,
         filled_price_usd: None,
-        filled_amount: None,
+        filled_amount: confirmed_amount_out,
         slippage_bps: None,
-        execution_reason: None,
+        execution_reason: outcome
+            .output_gained
+            .map(|_| "Confirmed from TradingVault TradeExecuted event outputGained".to_string()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
@@ -1805,6 +1874,16 @@ async fn execute(
     let normalized_intent = normalize_intent_payload(request.intent.clone(), protocol_chain_id);
     let mut normalized_request = request.clone();
     normalized_request.intent = normalized_intent;
+    crate::validate_morpho_protocol_request(
+        &serde_json::Value::Null,
+        protocol_chain_id.unwrap_or(state.chain_id.unwrap_or(42161)),
+        &normalized_request.intent.target_protocol,
+        &normalized_request.intent.action,
+        &normalized_request.intent.token_in,
+        &normalized_request.intent.token_out,
+        &normalized_request.intent.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     if state.paper_trade {
         ensure_paper_validation_consistency(&request.validation)?;
@@ -1848,9 +1927,15 @@ async fn execute(
     }
 
     // Circuit breaker check before any execution.
-    // Use max_drawdown_pct from risk_params if available, default 10%.
+    // Live production trades must refresh source-of-truth chain state; paper
+    // trades keep the in-memory portfolio path.
     let max_drawdown = Decimal::new(10, 0);
-    check_circuit_breaker(&state.portfolio, max_drawdown).await?;
+    if state.paper_trade {
+        check_circuit_breaker(&state.portfolio, max_drawdown).await?;
+    } else {
+        let input = LiveRiskInput::from_state(&state)?;
+        enforce_live_risk(&input, max_drawdown).await?;
+    }
 
     let valuation = resolve_market_valuation(
         &state.market_client,
@@ -1970,6 +2055,16 @@ async fn execute_multi_bot(
     let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(protocol_chain_id));
     let mut normalized_req = req.clone();
     normalized_req.intent = normalized_intent;
+    crate::validate_morpho_protocol_request(
+        &bot.strategy_config,
+        protocol_chain_id,
+        &normalized_req.intent.target_protocol,
+        &normalized_req.intent.action,
+        &normalized_req.intent.token_in,
+        &normalized_req.intent.token_out,
+        &normalized_req.intent.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     if bot.paper_trade {
         ensure_paper_validation_consistency(&req.validation)?;
@@ -2028,6 +2123,22 @@ async fn execute_multi_bot(
                     "Live SelfOperated trust mode is disabled until exact-action authorization is implemented".into(),
                 ));
             }
+        }
+
+        let max_drawdown = max_drawdown_from_strategy_config(&bot.strategy_config);
+        if normalized_req.intent.target_protocol == "hyperliquid" {
+            enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
+        } else if is_clob_trade {
+            let clob = state.clob_client.as_ref().ok_or_else(|| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Polymarket CLOB client not configured".to_string(),
+                )
+            })?;
+            enforce_clob_live_reconciliation(clob).await?;
+        } else {
+            let live_input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
+            enforce_live_risk(&live_input, max_drawdown).await?;
         }
     }
 
