@@ -251,7 +251,24 @@ fn parse_validate_request(
     let token_in = normalize_protocol_token(&req.target_protocol, chain_id, &req.token_in);
     let token_out = normalize_protocol_token(&req.target_protocol, chain_id, &req.token_out);
 
-    let intent = TradeIntentBuilder::new()
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let deadline = now.checked_add(req.deadline_secs).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Validation deadline overflow".to_string(),
+        )
+    })?;
+    if deadline > i64::MAX as u64 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Invalid validation deadline: {deadline}"),
+        ));
+    }
+
+    let mut intent = TradeIntentBuilder::new()
         .strategy_id(&req.strategy_id)
         .action(action.clone())
         .token_in(&token_in)
@@ -263,12 +280,13 @@ fn parse_validate_request(
         .metadata(req.metadata.clone())
         .build()
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let deadline = now + req.deadline_secs;
+    intent.deadline = chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid validation deadline: {deadline}"),
+            )
+        })?;
 
     Ok(ParsedValidateRequest {
         action,
@@ -950,6 +968,7 @@ mod tests {
         let parsed = parse_validate_request(&req, Some(1)).unwrap();
         assert!(matches!(parsed.action, Action::Swap));
         assert!(parsed.deadline > 0);
+        assert_eq!(parsed.intent.deadline.timestamp(), parsed.deadline as i64);
     }
 
     #[test]

@@ -402,6 +402,12 @@ fn parse_execute_request(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     if let Some(deadline) = req.validation.deadline {
+        if deadline > i64::MAX as u64 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid validation deadline: {deadline}"),
+            ));
+        }
         intent.deadline =
             chrono::DateTime::<Utc>::from_timestamp(deadline as i64, 0).ok_or_else(|| {
                 (
@@ -536,7 +542,10 @@ fn ensure_validation_hash_binding(
         bind_execution_payload,
     )?;
 
-    if validation.intent_hash != expected_intent_hash {
+    if !validation
+        .intent_hash
+        .eq_ignore_ascii_case(&expected_intent_hash)
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             format!(
@@ -546,7 +555,10 @@ fn ensure_validation_hash_binding(
         ));
     }
 
-    if validation.execution_hash != expected_execution_hash {
+    if !validation
+        .execution_hash
+        .eq_ignore_ascii_case(&expected_execution_hash)
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             format!(
@@ -2266,6 +2278,49 @@ mod tests {
             true,
         )
         .expect_err("mutated request should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
+    }
+
+    #[test]
+    fn validation_hash_binding_rejects_mutated_metadata() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.intent.metadata = serde_json::json!({"pool_fee": 3000, "route": ["weth", "usdc"]});
+        attach_expected_hashes(&mut req, Some(1), 1);
+        req.intent.metadata = serde_json::json!({"pool_fee": 500, "route": ["weth", "usdc"]});
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+
+        let err = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(1),
+            1,
+            true,
+        )
+        .expect_err("mutated metadata should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
+    }
+
+    #[test]
+    fn validation_hash_binding_rejects_mutated_deadline() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        attach_expected_hashes(&mut req, Some(1), 1);
+        req.validation.deadline = Some(2_000_000_000);
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+
+        let err = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(1),
+            1,
+            true,
+        )
+        .expect_err("mutated deadline should be rejected");
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));

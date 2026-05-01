@@ -3,6 +3,7 @@ use crate::types::*;
 use chrono::Utc;
 use rust_decimal::Decimal;
 use sha3::{Digest, Keccak256};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub struct TradeIntentBuilder {
@@ -123,19 +124,77 @@ impl Default for TradeIntentBuilder {
     }
 }
 
-/// Hash a trade intent for signing
+fn canonical_json_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json_value).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let sorted = map
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_json_value(value)))
+                .collect::<BTreeMap<_, _>>();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn update_hash_field(hasher: &mut Keccak256, name: &str, value: &[u8]) {
+    hasher.update(name.as_bytes());
+    hasher.update([0]);
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value);
+}
+
+/// Hash a trade intent for signing.
+///
+/// This is the canonical logical trade hash. It intentionally excludes random
+/// identifiers and creation time, and includes the signed deadline.
 pub fn hash_intent(intent: &TradeIntent) -> String {
     let mut hasher = Keccak256::new();
-    hasher.update(format!("{:?}", intent.action).as_bytes());
-    hasher.update(intent.strategy_id.as_bytes());
-    hasher.update(intent.token_in.as_bytes());
-    hasher.update(intent.token_out.as_bytes());
-    hasher.update(intent.amount_in.to_string().as_bytes());
-    hasher.update(intent.min_amount_out.to_string().as_bytes());
-    hasher.update(intent.target_protocol.as_bytes());
-    hasher.update(intent.chain_id.to_be_bytes());
-    let metadata = serde_json::to_vec(&intent.metadata).unwrap_or_default();
-    hasher.update(metadata);
+    update_hash_field(&mut hasher, "version", b"trade-intent-v1");
+    update_hash_field(
+        &mut hasher,
+        "action",
+        serde_json::to_string(&intent.action)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    update_hash_field(&mut hasher, "strategy_id", intent.strategy_id.as_bytes());
+    update_hash_field(
+        &mut hasher,
+        "token_in",
+        intent.token_in.to_ascii_lowercase().as_bytes(),
+    );
+    update_hash_field(
+        &mut hasher,
+        "token_out",
+        intent.token_out.to_ascii_lowercase().as_bytes(),
+    );
+    update_hash_field(
+        &mut hasher,
+        "amount_in",
+        intent.amount_in.normalize().to_string().as_bytes(),
+    );
+    update_hash_field(
+        &mut hasher,
+        "min_amount_out",
+        intent.min_amount_out.normalize().to_string().as_bytes(),
+    );
+    update_hash_field(
+        &mut hasher,
+        "target_protocol",
+        intent.target_protocol.to_ascii_lowercase().as_bytes(),
+    );
+    update_hash_field(&mut hasher, "chain_id", &intent.chain_id.to_be_bytes());
+    update_hash_field(
+        &mut hasher,
+        "deadline",
+        intent.deadline.timestamp().to_string().as_bytes(),
+    );
+    let metadata = serde_json::to_vec(&canonical_json_value(&intent.metadata)).unwrap_or_default();
+    update_hash_field(&mut hasher, "metadata", &metadata);
     let result = hasher.finalize();
     format!("0x{}", hex::encode(result))
 }
@@ -185,5 +244,62 @@ mod tests {
         let hash2 = hash_intent(&intent);
         assert_eq!(hash1, hash2);
         assert!(hash1.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_hash_intent_same_fields_same_hash_across_rebuilds() {
+        let deadline = chrono::DateTime::<Utc>::from_timestamp(1_999_999_999, 0).unwrap();
+        let metadata_a = serde_json::json!({"b": 2, "a": {"y": true, "x": "same"}});
+        let metadata_b = serde_json::json!({"a": {"x": "same", "y": true}, "b": 2});
+
+        let mut intent_a = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(1000, 1))
+            .min_amount_out(Decimal::new(990, 1))
+            .target_protocol("Uniswap_V3")
+            .chain_id(42161)
+            .metadata(metadata_a)
+            .build()
+            .unwrap();
+        let mut intent_b = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xa")
+            .token_out("0xb")
+            .amount_in(Decimal::new(100, 0))
+            .min_amount_out(Decimal::new(99, 0))
+            .target_protocol("uniswap_v3")
+            .chain_id(42161)
+            .metadata(metadata_b)
+            .build()
+            .unwrap();
+        intent_a.deadline = deadline;
+        intent_b.deadline = deadline;
+
+        assert_ne!(intent_a.id, intent_b.id);
+        assert_ne!(intent_a.created_at, intent_b.created_at);
+        assert_eq!(hash_intent(&intent_a), hash_intent(&intent_b));
+    }
+
+    #[test]
+    fn test_hash_intent_changes_when_deadline_changes() {
+        let deadline = chrono::DateTime::<Utc>::from_timestamp(1_999_999_999, 0).unwrap();
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+        intent.deadline = deadline;
+        let mut changed = intent.clone();
+        changed.deadline = deadline + chrono::Duration::seconds(1);
+
+        assert_ne!(hash_intent(&intent), hash_intent(&changed));
     }
 }

@@ -259,6 +259,22 @@ async fn handle_validate(
         |signer| format!("0x{}", hex::encode(signer.address().as_slice())),
     );
 
+    let canonical_intent = match intent_with_deadline(&request.intent, request.deadline) {
+        Ok(intent) => intent,
+        Err(e) => {
+            tracing::warn!(error = %e, "Rejecting validation request with invalid deadline");
+            return Json(ValidateResponse {
+                score: 0,
+                signature: format!("0x{}", "00".repeat(65)),
+                reasoning: format!("{reasoning}; signature error: invalid deadline: {e}"),
+                validator: validator_address,
+                chain_id: signer_chain_id,
+                verifying_contract: signer_contract,
+                validated_at,
+            });
+        }
+    };
+    request.intent = canonical_intent;
     let expected_intent_hash = hash_intent(&request.intent);
     if !hashes_match(&request.intent_hash, &expected_intent_hash) {
         tracing::warn!(
@@ -436,6 +452,19 @@ fn zero_hash() -> String {
     format!("0x{}", "00".repeat(32))
 }
 
+fn intent_with_deadline(
+    intent: &trading_runtime::TradeIntent,
+    deadline: u64,
+) -> Result<trading_runtime::TradeIntent, String> {
+    if deadline > i64::MAX as u64 {
+        return Err(format!("deadline out of range: {deadline}"));
+    }
+    let mut intent = intent.clone();
+    intent.deadline = chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0)
+        .ok_or_else(|| format!("deadline out of range: {deadline}"))?;
+    Ok(intent)
+}
+
 fn parse_u256_decimal(value: &str, field_name: &str) -> Result<U256, String> {
     U256::from_str_radix(value, 10).map_err(|e| format!("invalid {field_name}: {e}"))
 }
@@ -594,7 +623,8 @@ mod tests {
 
         let app = server.router();
 
-        let intent = TradeIntentBuilder::new()
+        let deadline = 9999999999u64;
+        let mut intent = TradeIntentBuilder::new()
             .strategy_id("test")
             .action(Action::Swap)
             .token_in("0xA")
@@ -604,6 +634,8 @@ mod tests {
             .target_protocol("uniswap_v3")
             .build()
             .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
 
         let intent_hash = trading_runtime::intent::hash_intent(&intent);
         let execution_hash = zero_hash();
@@ -614,7 +646,7 @@ mod tests {
             "intent_hash": intent_hash,
             "execution_hash": execution_hash,
             "vault_address": vault_address,
-            "deadline": 9999999999u64,
+            "deadline": deadline,
         });
 
         let response = app

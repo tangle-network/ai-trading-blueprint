@@ -197,7 +197,10 @@ impl TradeExecutor {
             self.vault_client.chain_id,
         );
         let expected_execution_hash_hex = format_b256(expected_execution_hash);
-        if validation.execution_hash != expected_execution_hash_hex {
+        if !validation
+            .execution_hash
+            .eq_ignore_ascii_case(&expected_execution_hash_hex)
+        {
             return Err(TradingError::ValidatorError(format!(
                 "execution_hash mismatch: validation {}, expected {}",
                 validation.execution_hash, expected_execution_hash_hex
