@@ -1,6 +1,7 @@
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
+use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
@@ -11,12 +12,17 @@ use std::str::FromStr;
 use crate::metrics_store;
 use crate::routes::portfolio::{PortfolioResponse, PositionEntry};
 use crate::{BotContext, TradingApiState};
+use trading_runtime::aave_v3_registry::{market_for_chain, reserve_by_a_token};
 use trading_runtime::contracts::ITradingVault;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::token_metadata::{known_token_decimals, token_metadata_for_chain};
 use trading_runtime::types::ValuationStatus;
 
 const LIVE_PORTFOLIO_STALE_SECS: i64 = 30;
+
+sol! {
+    function balanceOf(address account) external view returns (uint256);
+}
 
 #[derive(Clone, Debug)]
 pub struct LivePortfolioSnapshot {
@@ -158,11 +164,13 @@ pub async fn reconcile_live_portfolio(
     })?;
 
     let total_assets_decimal = u256_to_decimal(total_assets, asset_decimals)?;
-    let account_value_usd = total_assets_decimal * asset_price;
+    let mut account_value_usd = total_assets_decimal * asset_price;
     let mut positions = Vec::new();
     let mut warnings = Vec::new();
     let has_value_only_positions = true;
     let mut has_unpriced_positions = false;
+    let protocol_chain_id =
+        crate::protocol_chain_id_from_config(input.chain_id, &input.strategy_config);
 
     let cash_raw = eth_call_u256(
         &provider,
@@ -194,17 +202,28 @@ pub async fn reconcile_live_portfolio(
             continue;
         }
         let token = format!("{token_addr:#x}");
+        let aave_reserve = reserve_by_a_token(protocol_chain_id, &token);
         let metadata = token_metadata_for_chain(Some(input.chain_id), &token);
-        let symbol = metadata
-            .map(|metadata| metadata.symbol.to_string())
+        let symbol = aave_reserve
+            .map(|reserve| reserve.symbol.to_string())
+            .or_else(|| metadata.map(|metadata| metadata.symbol.to_string()))
             .unwrap_or_else(|| token.clone());
-        let decimals = metadata
-            .map(|metadata| metadata.decimals)
+        let decimals = aave_reserve
+            .map(|reserve| reserve.decimals)
+            .or_else(|| metadata.map(|metadata| metadata.decimals))
             .unwrap_or_else(|| known_token_decimals(Some(input.chain_id), &token).unwrap_or(18));
         let amount = u256_to_decimal(raw_balance, decimals)?;
-        let mut price = price_for_token(&market_client, input.chain_id, &token).await;
+        let price_token = aave_reserve
+            .map(|reserve| reserve.underlying)
+            .unwrap_or(token.as_str());
+        let price_chain_id = if aave_reserve.is_some() {
+            protocol_chain_id
+        } else {
+            input.chain_id
+        };
+        let mut price = price_for_token(&market_client, price_chain_id, price_token).await;
         if price.is_none() && symbol != token {
-            price = price_for_token(&market_client, input.chain_id, &symbol).await;
+            price = price_for_token(&market_client, price_chain_id, &symbol).await;
         }
         let (value_usd, current_price, valuation_status) = match price {
             Some(price) => (
@@ -227,10 +246,72 @@ pub async fn reconcile_live_portfolio(
             entry_price: None,
             current_price,
             unrealized_pnl: None,
-            protocol: "vault".to_string(),
-            position_type: "spot".to_string(),
+            protocol: aave_reserve
+                .map(|_| "aave_v3")
+                .unwrap_or("vault")
+                .to_string(),
+            position_type: aave_reserve
+                .map(|_| "lending")
+                .unwrap_or("spot")
+                .to_string(),
             valuation_status,
         });
+    }
+
+    if let Some(market) = market_for_chain(protocol_chain_id) {
+        for reserve in market.reserves {
+            let debt_token: Address = reserve.variable_debt_token.parse().map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Invalid Aave debt token in registry: {e}"),
+                )
+            })?;
+            let debt_raw = erc20_balance_of(&provider, debt_token, vault_addr)
+                .await
+                .unwrap_or(U256::ZERO);
+            if debt_raw.is_zero() {
+                continue;
+            }
+
+            let amount = u256_to_decimal(debt_raw, reserve.decimals)?;
+            let mut price =
+                price_for_token(&market_client, protocol_chain_id, reserve.underlying).await;
+            if price.is_none() {
+                price = price_for_token(&market_client, protocol_chain_id, reserve.symbol).await;
+            }
+
+            let (value_usd, current_price, valuation_status) = match price {
+                Some(price) => {
+                    let value = amount * price;
+                    account_value_usd -= value;
+                    (
+                        Some(format!("-{value}")),
+                        Some(price.to_string()),
+                        ValuationStatus::ValueOnly,
+                    )
+                }
+                None => {
+                    has_unpriced_positions = true;
+                    warnings.push(format!(
+                        "Live Aave debt token {} is owed on-chain but has no market price.",
+                        reserve.symbol
+                    ));
+                    (None, None, ValuationStatus::Unpriced)
+                }
+            };
+
+            positions.push(PositionEntry {
+                token: reserve.symbol.to_string(),
+                amount: format!("-{amount}"),
+                value_usd,
+                entry_price: None,
+                current_price,
+                unrealized_pnl: None,
+                protocol: "aave_v3".to_string(),
+                position_type: "borrowing".to_string(),
+                valuation_status,
+            });
+        }
     }
 
     if !outstanding_collateral.is_zero() {
@@ -447,6 +528,14 @@ async fn eth_call_bool(
             format!("Failed to decode live bool response: {e}"),
         )
     })
+}
+
+async fn erc20_balance_of(
+    provider: &impl Provider,
+    token: Address,
+    account: Address,
+) -> Result<U256, (StatusCode, String)> {
+    eth_call_u256(provider, token, balanceOfCall { account }.abi_encode()).await
 }
 
 async fn eth_call(
