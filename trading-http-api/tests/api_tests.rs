@@ -1055,8 +1055,7 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
     Mock::given(method("GET"))
         .and(path("/api/v3/simple/price"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "ethereum": { "usd": 2320.69 },
-            "usd-coin": { "usd": 1.0 }
+            "ethereum": { "usd": 2320.69 }
         })))
         .mount(&mock)
         .await;
@@ -1068,7 +1067,7 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
         "intent": {
             "strategy_id": "test-strat",
             "action": "swap",
-            "token_in": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+            "token_in": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
             "token_out": "0x4200000000000000000000000000000000000006",
             "amount_in": "1000000000",
             "min_amount_out": "429000000000000000",
