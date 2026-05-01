@@ -26,6 +26,7 @@ use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
+use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 use trading_runtime::token_metadata::{
     address_chain_mismatch, chain_display_name, known_token_decimals,
 };
@@ -308,15 +309,16 @@ fn build_validation_result(v: &ValidationPayload) -> ValidationResult {
 /// for vault trades — paper trades and CLOB trades have no on-chain check, so this
 /// off-chain verification is their only defense.
 ///
-/// Skipped when there are no validator responses (e.g. the validation was a dry-run
-/// or the intent was pre-approved without validators).
 fn verify_signatures_offchain(
     validation: &ValidationPayload,
     vault_address: &str,
     action_kind: u64,
 ) -> Result<(), (StatusCode, String)> {
     if validation.validator_responses.is_empty() {
-        return Ok(());
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Live execution requires validator signatures unless signed Envelope authorization is active".into(),
+        ));
     }
 
     let deadline = validation.deadline.unwrap_or(0);
@@ -913,6 +915,39 @@ fn resolve_clob_valuation(size: Decimal, price: Decimal) -> TradeValuationSnapsh
         return TradeValuationSnapshot::unpriced(size, None);
     }
     TradeValuationSnapshot::priced(size, None, price)
+}
+
+fn extract_stop_loss_distance(metadata: &serde_json::Value) -> Option<f64> {
+    metadata
+        .get("stop_loss_distance")
+        .and_then(serde_json::Value::as_f64)
+        .or_else(|| {
+            metadata
+                .get("stop_loss_distance_pct")
+                .and_then(serde_json::Value::as_f64)
+                .map(|value| value / 100.0)
+        })
+        .or_else(|| {
+            metadata
+                .get("stop_loss_pct")
+                .and_then(serde_json::Value::as_f64)
+                .map(|value| value / 100.0)
+        })
+}
+
+fn current_hyperliquid_exposure_usd(
+    account: &trading_runtime::hyperliquid::AccountInfo,
+) -> Result<f64, (StatusCode, String)> {
+    let total = account.total_ntl_pos.trim().parse::<f64>().map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "HL account total_ntl_pos '{}' is not numeric: {e}",
+                account.total_ntl_pos
+            ),
+        )
+    })?;
+    Ok(total.abs())
 }
 
 #[derive(Clone, Debug)]
@@ -1669,6 +1704,7 @@ async fn execute_hyperliquid_trade(
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
+    signed_envelope: Option<&SignedTradingEnvelope>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
@@ -1678,16 +1714,15 @@ async fn execute_hyperliquid_trade(
     let action = parse_action(&req.intent.action)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
 
-    // Envelope check — replaces validator signatures for HL trades.
-    // Cancels and closes always pass. Opens are checked against the envelope.
+    // Signed Envelope mode replaces validator signatures for HL opens.
     let is_open = matches!(
         action,
         trading_runtime::types::Action::OpenLong
             | trading_runtime::types::Action::OpenShort
             | trading_runtime::types::Action::Buy
     );
-    if is_open {
-        let envelope = super::hyperliquid::get_envelope(state);
+    if is_open && let Some(signed_envelope) = signed_envelope {
+        let envelope = &signed_envelope.envelope;
         let asset = req
             .intent
             .metadata
@@ -1703,8 +1738,29 @@ async fn execute_hyperliquid_trade(
             .get("leverage")
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as u32;
-        // Approximate current exposure from HL account (best-effort)
-        let current_exposure = 0.0; // TODO: pull from position ledger
+        let stop_loss_distance = extract_stop_loss_distance(&req.intent.metadata).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Signed Envelope execution requires stop_loss_distance or stop_loss_pct metadata".to_string(),
+            )
+        })?;
+        let stop_loss_check = envelope.check_stop_loss(stop_loss_distance);
+        if !stop_loss_check.allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "Trade rejected by envelope stop-loss bounds: {}",
+                    stop_loss_check.reason.unwrap_or_default()
+                ),
+            ));
+        }
+        let account = hl_client.get_account().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("HL account lookup failed: {e}"),
+            )
+        })?;
+        let current_exposure = current_hyperliquid_exposure_usd(&account)?;
         let check = envelope.check_trade(
             asset,
             size_usd.try_into().unwrap_or(0.0),
@@ -2106,21 +2162,42 @@ async fn execute_multi_bot(
     // - Envelope: trades within approved bounds skip validators (instant)
     // - SelfOperated: no external validation, local policy only (instant)
     use trading_runtime::ValidationTrust;
+    let mut signed_envelope = None;
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
                 verify_signatures_offchain(&req.validation, &bot.vault_address, action_kind)?;
             }
             ValidationTrust::Envelope => {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "Live Envelope trust mode is disabled until signed envelope authorization is implemented".into(),
-                ));
+                if normalized_req.intent.target_protocol != "hyperliquid" {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        "Live Envelope trust mode is only implemented for Hyperliquid; non-Hyperliquid live trades require PerTrade validation".into(),
+                    ));
+                }
+                let envelope =
+                    super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+                        (
+                            StatusCode::FORBIDDEN,
+                            "Live Envelope trust mode requires a signed per-bot envelope approval"
+                                .to_string(),
+                        )
+                    })?;
+                let binding = EnvelopeBinding {
+                    bot_id: &bot.bot_id,
+                    vault_address: &bot.vault_address,
+                    chain_id: bot.chain_id,
+                    protocol: "hyperliquid",
+                };
+                envelope
+                    .verify(&binding, &state.trusted_envelope_signers())
+                    .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+                signed_envelope = Some(envelope);
             }
             ValidationTrust::SelfOperated => {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    "Live SelfOperated trust mode is disabled until exact-action authorization is implemented".into(),
+                    "Live SelfOperated trust mode is disabled until exact-action production authorization is implemented".into(),
                 ));
             }
         }
@@ -2237,6 +2314,7 @@ async fn execute_multi_bot(
             &normalized_req,
             stored_validation,
             &valuation,
+            signed_envelope.as_ref(),
         )
         .await?;
         if let Err(error) =

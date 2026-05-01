@@ -123,6 +123,35 @@ pub struct MultiBotTradingState {
     pub chain_client_chain_id: Option<u64>,
 }
 
+impl MultiBotTradingState {
+    pub fn trusted_envelope_signers(&self) -> Vec<String> {
+        let mut signers = Vec::new();
+        if let Ok(operator) = operator_address_from_private_key(&self.operator_private_key) {
+            signers.push(operator);
+        }
+        if let Ok(raw) = std::env::var("TRADING_ENVELOPE_TRUSTED_SIGNERS") {
+            signers.extend(
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+            );
+        }
+        signers.sort();
+        signers.dedup();
+        signers
+    }
+}
+
+pub fn operator_address_from_private_key(private_key: &str) -> Result<String, String> {
+    use alloy::signers::local::PrivateKeySigner;
+
+    let signer: PrivateKeySigner = private_key
+        .parse()
+        .map_err(|e| format!("Invalid operator private key: {e}"))?;
+    Ok(format!("{:#x}", signer.address()))
+}
+
 fn positive_u64_from_value(value: Option<&serde_json::Value>) -> Option<u64> {
     match value {
         Some(serde_json::Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
