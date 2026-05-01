@@ -77,6 +77,8 @@ struct ValidateRequest {
     vault_address: String,
     /// Unix timestamp deadline for the validation signature
     deadline: u64,
+    /// Whether validator approval requires a successful transaction simulation.
+    require_simulation: bool,
     /// Optional execution context (target, calldata, simulation results)
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_context: Option<ExecutionContext>,
@@ -138,7 +140,7 @@ impl ValidatorClient {
         vault_address: &str,
         deadline: u64,
     ) -> Result<ValidationResult, TradingError> {
-        self.validate_with_context(intent, vault_address, deadline, None)
+        self.validate_with_context(intent, vault_address, deadline, None, false)
             .await
     }
 
@@ -152,6 +154,7 @@ impl ValidatorClient {
         vault_address: &str,
         deadline: u64,
         execution_context: Option<ExecutionContext>,
+        require_simulation: bool,
     ) -> Result<ValidationResult, TradingError> {
         let intent_hash = hash_intent(intent);
         let execution_hash = execution_context
@@ -164,6 +167,7 @@ impl ValidatorClient {
             execution_hash: execution_hash.clone(),
             vault_address: vault_address.to_string(),
             deadline,
+            require_simulation,
             execution_context,
         };
 

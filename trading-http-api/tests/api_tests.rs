@@ -2842,6 +2842,22 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
 fn validate_body() -> String {
     serde_json::to_string(&serde_json::json!({
         "strategy_id": "test-strat",
+        "action": "open_long",
+        "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "amount_in": "1.5",
+        "min_amount_out": "3000",
+        "target_protocol": "hyperliquid"
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_multi_bot_validate_live_vault_trade_requires_simulation() {
+    let state = multi_bot_state_with_validators(vec![]);
+    let app = build_multi_bot_router(state);
+    let body = serde_json::to_string(&serde_json::json!({
+        "strategy_id": "test-strat",
         "action": "swap",
         "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -2849,7 +2865,28 @@ fn validate_body() -> String {
         "min_amount_out": "3000",
         "target_protocol": "uniswap_v3"
     }))
-    .unwrap()
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 502);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(
+        body_str.contains("Simulation is required"),
+        "Expected required simulation error, got: {body_str}"
+    );
 }
 
 /// Two mock validators return scores 80 and 90 → average 85 >= threshold 50 → approved.

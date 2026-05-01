@@ -52,6 +52,9 @@ pub enum TradingError {
         risk_score: u32,
         warnings: Vec<String>,
     },
+
+    #[error("Simulation unavailable: {0}")]
+    SimulationUnavailable(String),
 }
 
 impl From<reqwest::Error> for TradingError {

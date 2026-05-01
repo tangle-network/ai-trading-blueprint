@@ -39,6 +39,9 @@ pub struct ValidateRequest {
     /// valid protocols, expected metadata fields).
     #[serde(default)]
     pub strategy_type: Option<String>,
+    /// Require a successful simulation before producing a positive approval.
+    #[serde(default)]
+    pub require_simulation: bool,
     /// Optional execution context (target, calldata, simulation results).
     /// Provided by the HTTP API after adapter encoding + simulation.
     #[serde(default)]
@@ -229,6 +232,7 @@ async fn handle_validate(
         server.ai_provider.as_ref(),
         strategy_context.as_deref(),
         request.execution_context.as_ref(),
+        request.require_simulation,
     )
     .await;
 
@@ -793,11 +797,13 @@ mod tests {
             "execution_hash": format!("0x{}", "cd".repeat(32)),
             "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             "deadline": 9999999999u64,
-            "strategy_type": "dex"
+            "strategy_type": "dex",
+            "require_simulation": true
         });
 
         let req: ValidateRequest = serde_json::from_value(json).unwrap();
         assert_eq!(req.strategy_type.as_deref(), Some("dex"));
+        assert!(req.require_simulation);
     }
 
     #[test]
@@ -814,6 +820,10 @@ mod tests {
         assert!(
             req.strategy_type.is_none(),
             "strategy_type should default to None"
+        );
+        assert!(
+            !req.require_simulation,
+            "require_simulation should default to false"
         );
     }
 }

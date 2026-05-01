@@ -93,6 +93,31 @@ fn simulation_score(ctx: &ExecutionContext) -> u32 {
     penalty.min(100)
 }
 
+fn required_simulation_failure(execution_context: Option<&ExecutionContext>) -> Option<String> {
+    let ctx = execution_context?;
+    let Some(sim) = ctx.simulation_result.as_ref() else {
+        return Some("required simulation result is missing".to_string());
+    };
+
+    if !sim.success {
+        return Some("required simulation did not succeed".to_string());
+    }
+    if sim.risk_score > 0 {
+        return Some(format!(
+            "required simulation reported risk score {}",
+            sim.risk_score
+        ));
+    }
+    if !sim.warnings.is_empty() {
+        return Some(format!(
+            "required simulation reported warnings: {}",
+            sim.warnings.join("; ")
+        ));
+    }
+
+    None
+}
+
 /// Compute composite score: policy (fast) + AI (optional) + simulation (optional).
 ///
 /// Blending weights:
@@ -107,6 +132,7 @@ pub async fn compute_score(
     ai_provider: Option<&AiProvider>,
     strategy_context: Option<&str>,
     execution_context: Option<&ExecutionContext>,
+    require_simulation: bool,
 ) -> Result<ScoringResult, String> {
     let start = std::time::Instant::now();
     let policy = policy_score(intent);
@@ -117,11 +143,31 @@ pub async fn compute_score(
         return Ok(policy);
     }
 
-    // Compute simulation penalty (0 if no execution context)
+    if require_simulation {
+        if execution_context.is_none() {
+            record_metrics(0, start.elapsed().as_millis() as u64, false);
+            return Ok(ScoringResult {
+                score: 0,
+                reasoning: "Required simulation context is missing".to_string(),
+            });
+        }
+
+        if let Some(reason) = required_simulation_failure(execution_context) {
+            record_metrics(0, start.elapsed().as_millis() as u64, false);
+            return Ok(ScoringResult {
+                score: 0,
+                reasoning: format!("Required simulation failed closed: {reason}"),
+            });
+        }
+    }
+
+    // Compute simulation penalty (0 if no execution context or simulation result)
     let sim_penalty = execution_context.map(simulation_score).unwrap_or(0);
     let sim_score = 100u32.saturating_sub(sim_penalty);
 
-    let has_sim = execution_context.is_some();
+    let has_sim = execution_context
+        .and_then(|ctx| ctx.simulation_result.as_ref())
+        .is_some();
 
     // If AI provider is available, get AI score and blend
     let result = if let Some(provider) = ai_provider {
@@ -231,7 +277,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None, None, None).await.unwrap();
+        let result = compute_score(&intent, None, None, None, false)
+            .await
+            .unwrap();
         assert_eq!(result.score, 100);
     }
 
@@ -247,7 +295,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None, None, None).await.unwrap();
+        let result = compute_score(&intent, None, None, None, false)
+            .await
+            .unwrap();
         assert_eq!(result.score, 80); // -20 for no min output
     }
 
@@ -263,7 +313,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = compute_score(&intent, None, None, None).await.unwrap();
+        let result = compute_score(&intent, None, None, None, false)
+            .await
+            .unwrap();
         assert_eq!(result.score, 0);
     }
 
@@ -348,10 +400,99 @@ mod tests {
         };
 
         // Policy=100, sim_penalty=0, sim_score=100 → (100*70 + 100*30)/100 = 100
-        let result = compute_score(&intent, None, None, Some(&ctx))
+        let result = compute_score(&intent, None, None, Some(&ctx), false)
             .await
             .unwrap();
         assert_eq!(result.score, 100);
+    }
+
+    #[tokio::test]
+    async fn test_required_simulation_missing_context_scores_zero() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .min_amount_out(Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        let result = compute_score(&intent, None, None, None, true)
+            .await
+            .unwrap();
+        assert_eq!(result.score, 0);
+        assert!(result.reasoning.contains("Required simulation"));
+    }
+
+    #[tokio::test]
+    async fn test_required_simulation_missing_result_scores_zero() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .min_amount_out(Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+        let ctx = ExecutionContext {
+            target: "0x0000000000000000000000000000000000000001".into(),
+            calldata: "0xdeadbeef".into(),
+            calldata_decoded: "unknown()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
+            simulation_result: None,
+        };
+
+        let result = compute_score(&intent, None, None, Some(&ctx), true)
+            .await
+            .unwrap();
+        assert_eq!(result.score, 0);
+        assert!(result.reasoning.contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn test_required_simulation_warning_scores_zero() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .min_amount_out(Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+        let ctx = ExecutionContext {
+            target: "0x0000000000000000000000000000000000000001".into(),
+            calldata: "0xdeadbeef".into(),
+            calldata_decoded: "unknown()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
+            simulation_result: Some(crate::server::SimulationSummary {
+                success: true,
+                gas_used: 21000,
+                output_amount: "0".into(),
+                balance_changes: Vec::new(),
+                warnings: vec!["UnexpectedApproval: token=0x1 spender=0x2 amount=3".into()],
+                risk_score: 0,
+            }),
+        };
+
+        let result = compute_score(&intent, None, None, Some(&ctx), true)
+            .await
+            .unwrap();
+        assert_eq!(result.score, 0);
+        assert!(result.reasoning.contains("warnings"));
     }
 
     #[test]
