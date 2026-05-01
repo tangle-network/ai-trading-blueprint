@@ -16,8 +16,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::adapters::ActionParams;
-use trading_runtime::execution_hash::{format_b256, hash_execution_payload};
+use trading_runtime::execution_hash::{
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
+    hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
+};
 use trading_runtime::executor::{TradeExecutor, get_adapter};
+use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
@@ -308,6 +312,7 @@ fn build_validation_result(v: &ValidationPayload) -> ValidationResult {
 fn verify_signatures_offchain(
     validation: &ValidationPayload,
     vault_address: &str,
+    action_kind: u64,
 ) -> Result<(), (StatusCode, String)> {
     if validation.validator_responses.is_empty() {
         return Ok(());
@@ -342,6 +347,7 @@ fn verify_signatures_offchain(
         &validation.execution_hash,
         vault_address,
         deadline,
+        action_kind,
     )
     .map_err(|e| {
         tracing::warn!(
@@ -435,6 +441,14 @@ fn uses_direct_non_vault_execution(protocol: &str) -> bool {
     matches!(protocol, "polymarket_clob" | "hyperliquid")
 }
 
+fn action_kind_for_protocol(protocol: &str) -> u64 {
+    match protocol {
+        "polymarket_clob" => ACTION_KIND_CLOB_ORDER,
+        "hyperliquid" => ACTION_KIND_HYPERLIQUID_ORDER,
+        _ => ACTION_KIND_VAULT_EXECUTE,
+    }
+}
+
 fn parse_hash_hex(
     hash: &str,
     field_name: &str,
@@ -469,6 +483,87 @@ fn decimal_to_u256_for_hash(
     })
 }
 
+fn format_action(action: &trading_runtime::types::Action) -> String {
+    match action {
+        trading_runtime::types::Action::Swap => "swap",
+        trading_runtime::types::Action::Supply => "supply",
+        trading_runtime::types::Action::Withdraw => "withdraw",
+        trading_runtime::types::Action::Borrow => "borrow",
+        trading_runtime::types::Action::Repay => "repay",
+        trading_runtime::types::Action::OpenLong => "open_long",
+        trading_runtime::types::Action::OpenShort => "open_short",
+        trading_runtime::types::Action::CloseLong => "close_long",
+        trading_runtime::types::Action::CloseShort => "close_short",
+        trading_runtime::types::Action::Buy => "buy",
+        trading_runtime::types::Action::Sell => "sell",
+        trading_runtime::types::Action::Redeem => "redeem",
+        trading_runtime::types::Action::CollateralRelease => "collateral_release",
+    }
+    .to_string()
+}
+
+fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
+    let is_buy = matches!(
+        intent.action,
+        trading_runtime::types::Action::OpenLong
+            | trading_runtime::types::Action::Buy
+            | trading_runtime::types::Action::CloseShort
+    );
+    let reduce_only = matches!(
+        intent.action,
+        trading_runtime::types::Action::CloseLong | trading_runtime::types::Action::CloseShort
+    );
+
+    let order_type = if let Some(trigger_px) = intent
+        .metadata
+        .get("trigger_price")
+        .and_then(|v| v.as_str())
+    {
+        let is_market = intent
+            .metadata
+            .get("is_market")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let tpsl = intent
+            .metadata
+            .get("tpsl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sl");
+        if tpsl == "tp" {
+            HlOrderType::TakeProfit {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        } else {
+            HlOrderType::StopLoss {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        }
+    } else if let Some(price) = intent.metadata.get("limit_price").and_then(|v| v.as_str()) {
+        HlOrderType::Limit {
+            price: price.to_string(),
+        }
+    } else {
+        HlOrderType::Market
+    };
+
+    let asset = if let Some(asset_str) = intent.metadata.get("asset").and_then(|v| v.as_str()) {
+        AssetId::Symbol(asset_str.to_string())
+    } else {
+        AssetId::Symbol(intent.token_out.clone())
+    };
+
+    PlaceOrderRequest {
+        asset,
+        is_buy,
+        size: intent.amount_in.to_string(),
+        order_type,
+        reduce_only,
+        cloid: None,
+    }
+}
+
 fn expected_validation_hashes(
     intent: &TradeIntent,
     vault_address: &str,
@@ -478,8 +573,29 @@ fn expected_validation_hashes(
 ) -> Result<(String, String), (StatusCode, String)> {
     let expected_intent_hash = hash_intent(intent);
 
-    if !bind_execution_payload || uses_direct_non_vault_execution(&intent.target_protocol) {
+    if !bind_execution_payload {
         return Ok((expected_intent_hash, zero_hash()));
+    }
+
+    let intent_hash = parse_hash_hex(&expected_intent_hash, "intent_hash")?;
+    let deadline = alloy::primitives::U256::from(intent.deadline.timestamp().max(0) as u64);
+
+    if intent.target_protocol == "polymarket_clob" {
+        let params = polymarket_clob::extract_clob_params(
+            &format_action(&intent.action),
+            &intent.amount_in.to_string(),
+            &intent.metadata,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        let execution_hash = hash_clob_order(&params, intent_hash, deadline, execution_chain_id);
+        return Ok((expected_intent_hash, format_b256(execution_hash)));
+    }
+
+    if intent.target_protocol == "hyperliquid" {
+        let order = hyperliquid_order_from_intent(intent);
+        let execution_hash =
+            hash_hyperliquid_order(&order, intent_hash, deadline, execution_chain_id);
+        return Ok((expected_intent_hash, format_b256(execution_hash)));
     }
 
     let adapter = get_adapter(&intent.target_protocol, adapter_chain_id)
@@ -515,8 +631,6 @@ fn expected_validation_hashes(
     let encoded = adapter
         .encode_action(&params)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let intent_hash = parse_hash_hex(&expected_intent_hash, "intent_hash")?;
-    let deadline = alloy::primitives::U256::from(intent.deadline.timestamp().max(0) as u64);
     let execution_hash =
         hash_execution_payload(&encoded, intent_hash, deadline, execution_chain_id);
 
@@ -1697,6 +1811,15 @@ async fn execute(
     }
 
     let intent = parse_execute_request(&normalized_request, protocol_chain_id)?;
+    if !state.paper_trade
+        && !uses_direct_non_vault_execution(&normalized_request.intent.target_protocol)
+        && intent.min_amount_out <= Decimal::ZERO
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Live vault-backed execution requires min_amount_out > 0".to_string(),
+        ));
+    }
     let canonical_intent_hash = ensure_validation_hash_binding(
         &request.validation,
         &intent,
@@ -1716,12 +1839,12 @@ async fn execute(
     let stored_validation = build_stored_validation(&request.validation);
 
     let is_clob_trade = normalized_request.intent.target_protocol == "polymarket_clob";
+    let action_kind = action_kind_for_protocol(&normalized_request.intent.target_protocol);
 
-    // Off-chain signature verification — prevents fabricated validator signatures
-    // from reaching any vault-backed execution path. Paper trades are exempt,
-    // and CLOB trades bypass the vault executor entirely.
-    if !state.paper_trade && !is_clob_trade {
-        verify_signatures_offchain(&request.validation, &state.vault_address)?;
+    // Off-chain signature verification prevents fabricated validator signatures
+    // from reaching direct exchange paths and fails early before vault execution.
+    if !state.paper_trade {
+        verify_signatures_offchain(&request.validation, &state.vault_address, action_kind)?;
     }
 
     // Circuit breaker check before any execution.
@@ -1853,6 +1976,15 @@ async fn execute_multi_bot(
     }
 
     let intent = parse_execute_request(&normalized_req, Some(protocol_chain_id))?;
+    if !bot.paper_trade
+        && !uses_direct_non_vault_execution(&normalized_req.intent.target_protocol)
+        && intent.min_amount_out <= Decimal::ZERO
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Live vault-backed execution requires min_amount_out > 0".to_string(),
+        ));
+    }
     let canonical_intent_hash = ensure_validation_hash_binding(
         &req.validation,
         &intent,
@@ -1872,6 +2004,7 @@ async fn execute_multi_bot(
     let stored_validation = build_stored_validation(&req.validation);
 
     let is_clob_trade = normalized_req.intent.target_protocol == "polymarket_clob";
+    let action_kind = action_kind_for_protocol(&normalized_req.intent.target_protocol);
 
     // Validation trust level determines which authorization path fires:
     // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
@@ -1881,18 +2014,19 @@ async fn execute_multi_bot(
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
-                // CLOB trades bypass the vault executor entirely.
-                if !is_clob_trade {
-                    verify_signatures_offchain(&req.validation, &bot.vault_address)?;
-                }
+                verify_signatures_offchain(&req.validation, &bot.vault_address, action_kind)?;
             }
             ValidationTrust::Envelope => {
-                // Envelope check happens in execute_hyperliquid_trade or is
-                // skipped for closes/cancels. No validator round-trip needed.
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Live Envelope trust mode is disabled until signed envelope authorization is implemented".into(),
+                ));
             }
             ValidationTrust::SelfOperated => {
-                // Operator trusts themselves. No external validation.
-                // Envelope bounds still enforced for risk management.
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Live SelfOperated trust mode is disabled until exact-action authorization is implemented".into(),
+                ));
             }
         }
     }
@@ -2321,6 +2455,78 @@ mod tests {
             true,
         )
         .expect_err("mutated deadline should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
+    }
+
+    #[test]
+    fn validation_hash_binding_rejects_mutated_clob_order() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.intent.action = "buy".to_string();
+        req.intent.target_protocol = "polymarket_clob".to_string();
+        req.intent.token_in = "USDC".to_string();
+        req.intent.token_out = "YES".to_string();
+        req.intent.amount_in = "10".to_string();
+        req.intent.min_amount_out = "0".to_string();
+        req.intent.metadata = serde_json::json!({
+            "token_id": "123",
+            "price": "0.65",
+            "order_type": "GTC"
+        });
+        attach_expected_hashes(&mut req, Some(137), 137);
+
+        req.intent.metadata = serde_json::json!({
+            "token_id": "123",
+            "price": "0.66",
+            "order_type": "GTC"
+        });
+        let intent = parse_execute_request(&req, Some(137)).expect("intent");
+
+        let err = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(137),
+            137,
+            true,
+        )
+        .expect_err("mutated CLOB order should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
+    }
+
+    #[test]
+    fn validation_hash_binding_rejects_mutated_hyperliquid_order() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.intent.action = "open_long".to_string();
+        req.intent.target_protocol = "hyperliquid".to_string();
+        req.intent.token_in = "USDC".to_string();
+        req.intent.token_out = "ETH".to_string();
+        req.intent.amount_in = "100".to_string();
+        req.intent.min_amount_out = "0".to_string();
+        req.intent.metadata = serde_json::json!({
+            "asset": "ETH",
+            "limit_price": "3000"
+        });
+        attach_expected_hashes(&mut req, Some(42161), 42161);
+
+        req.intent.metadata = serde_json::json!({
+            "asset": "ETH",
+            "limit_price": "3100"
+        });
+        let intent = parse_execute_request(&req, Some(42161)).expect("intent");
+
+        let err = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(42161),
+            42161,
+            true,
+        )
+        .expect_err("mutated Hyperliquid order should be rejected");
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));

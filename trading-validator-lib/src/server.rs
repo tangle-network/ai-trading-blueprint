@@ -8,8 +8,14 @@ use std::sync::Arc;
 use crate::risk_evaluator::AiProvider;
 use crate::scoring;
 use crate::signer::ValidatorSigner;
-use trading_runtime::execution_hash::{format_b256, hash_approvals, hash_execution_payload_parts};
+use trading_runtime::execution_hash::{
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
+    hash_approvals, hash_clob_order, hash_execution_payload_parts, hash_hyperliquid_order,
+};
+use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
+use trading_runtime::polymarket_clob;
+use trading_runtime::types::Action;
 
 #[derive(Debug, Clone)]
 pub struct ValidatorServer {
@@ -34,6 +40,9 @@ pub struct ValidateRequest {
     pub vault_address: String,
     /// Unix timestamp deadline for the validation signature
     pub deadline: u64,
+    /// Action kind signed into the EIP-712 approval.
+    #[serde(default)]
+    pub action_kind: u64,
     /// Optional strategy type for protocol-aware scoring context.
     /// When set, the AI evaluator gets strategy-specific context (e.g.
     /// valid protocols, expected metadata fields).
@@ -384,15 +393,13 @@ async fn handle_validate(
             }
         };
 
-        // action_kind=0 (execute) — the validate endpoint only signs for trade executions.
-        // Collateral releases use a separate signing flow.
         match signer.sign_validation(
             intent_hash,
             execution_hash,
             vault,
             score as u64,
             request.deadline,
-            0,
+            request.action_kind,
         ) {
             Ok((sig_bytes, addr)) => {
                 return Json(ValidateResponse {
@@ -470,6 +477,41 @@ fn parse_u256_decimal(value: &str, field_name: &str) -> Result<U256, String> {
 }
 
 fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Result<String, String> {
+    let intent_hash = parse_b256(intent_hash)?;
+    let deadline = U256::from(request.deadline);
+
+    if request.action_kind == ACTION_KIND_CLOB_ORDER
+        || request.intent.target_protocol == "polymarket_clob"
+    {
+        let params = polymarket_clob::extract_clob_params(
+            &format_action(&request.intent.action),
+            &request.intent.amount_in.to_string(),
+            &request.intent.metadata,
+        )?;
+        return Ok(format_b256(hash_clob_order(
+            &params,
+            intent_hash,
+            deadline,
+            request.intent.chain_id,
+        )));
+    }
+
+    if request.action_kind == ACTION_KIND_HYPERLIQUID_ORDER
+        || request.intent.target_protocol == "hyperliquid"
+    {
+        let order = hyperliquid_order_from_intent(&request.intent)?;
+        return Ok(format_b256(hash_hyperliquid_order(
+            &order,
+            intent_hash,
+            deadline,
+            request.intent.chain_id,
+        )));
+    }
+
+    if request.action_kind != ACTION_KIND_VAULT_EXECUTE {
+        return Err(format!("unsupported action_kind {}", request.action_kind));
+    }
+
     let Some(ctx) = request.execution_context.as_ref() else {
         return Ok(zero_hash());
     };
@@ -487,8 +529,6 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
         .output_token
         .parse()
         .map_err(|e| format!("invalid output_token: {e}"))?;
-    let intent_hash = parse_b256(intent_hash)?;
-    let deadline = U256::from(request.deadline);
     let chain_id = if ctx.chain_id == 0 {
         request.intent.chain_id
     } else {
@@ -526,6 +566,84 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
     );
 
     Ok(format_b256(hash))
+}
+
+fn format_action(action: &Action) -> String {
+    match action {
+        Action::Swap => "swap",
+        Action::Supply => "supply",
+        Action::Withdraw => "withdraw",
+        Action::Borrow => "borrow",
+        Action::Repay => "repay",
+        Action::OpenLong => "open_long",
+        Action::OpenShort => "open_short",
+        Action::CloseLong => "close_long",
+        Action::CloseShort => "close_short",
+        Action::Buy => "buy",
+        Action::Sell => "sell",
+        Action::Redeem => "redeem",
+        Action::CollateralRelease => "collateral_release",
+    }
+    .to_string()
+}
+
+fn hyperliquid_order_from_intent(
+    intent: &trading_runtime::TradeIntent,
+) -> Result<PlaceOrderRequest, String> {
+    let is_buy = matches!(
+        intent.action,
+        Action::OpenLong | Action::Buy | Action::CloseShort
+    );
+    let reduce_only = matches!(intent.action, Action::CloseLong | Action::CloseShort);
+
+    let order_type = if let Some(trigger_px) = intent
+        .metadata
+        .get("trigger_price")
+        .and_then(|v| v.as_str())
+    {
+        let is_market = intent
+            .metadata
+            .get("is_market")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let tpsl = intent
+            .metadata
+            .get("tpsl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sl");
+        if tpsl == "tp" {
+            HlOrderType::TakeProfit {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        } else {
+            HlOrderType::StopLoss {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        }
+    } else if let Some(price) = intent.metadata.get("limit_price").and_then(|v| v.as_str()) {
+        HlOrderType::Limit {
+            price: price.to_string(),
+        }
+    } else {
+        HlOrderType::Market
+    };
+
+    let asset = if let Some(asset_str) = intent.metadata.get("asset").and_then(|v| v.as_str()) {
+        AssetId::Symbol(asset_str.to_string())
+    } else {
+        AssetId::Symbol(intent.token_out.clone())
+    };
+
+    Ok(PlaceOrderRequest {
+        asset,
+        is_buy,
+        size: intent.amount_in.to_string(),
+        order_type,
+        reduce_only,
+        cloid: None,
+    })
 }
 
 /// Run an independent eth_call simulation using the validator's own RPC connection.
@@ -686,6 +804,110 @@ mod tests {
             Some("0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string())
         );
         assert!(!resp.validated_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_signer_uses_direct_action_kind() {
+        use trading_runtime::execution_hash::{
+            ACTION_KIND_CLOB_ORDER, format_b256, hash_clob_order,
+        };
+        use trading_runtime::intent::TradeIntentBuilder;
+        use trading_runtime::{Action, signature_verify};
+
+        let contract_addr: Address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            .parse()
+            .unwrap();
+        let server = ValidatorServer::new(9090)
+            .with_signer(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                31337,
+                contract_addr,
+            )
+            .unwrap();
+        let app = server.router();
+
+        let deadline = 9999999999u64;
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Buy)
+            .token_in("USDC")
+            .token_out("YES")
+            .amount_in(rust_decimal::Decimal::new(10, 0))
+            .min_amount_out(rust_decimal::Decimal::ZERO)
+            .target_protocol("polymarket_clob")
+            .chain_id(137)
+            .metadata(serde_json::json!({
+                "token_id": "123",
+                "price": "0.65",
+                "order_type": "GTC"
+            }))
+            .build()
+            .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
+
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let intent_hash_b256 = parse_b256(&intent_hash).unwrap();
+        let params = polymarket_clob::extract_clob_params(
+            "buy",
+            &intent.amount_in.to_string(),
+            &intent.metadata,
+        )
+        .unwrap();
+        let execution_hash = format_b256(hash_clob_order(
+            &params,
+            intent_hash_b256,
+            U256::from(deadline),
+            intent.chain_id,
+        ));
+        let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": vault_address,
+            "deadline": deadline,
+            "action_kind": ACTION_KIND_CLOB_ORDER,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ValidateResponse = serde_json::from_slice(&body_bytes).unwrap();
+        assert_ne!(resp.signature, format!("0x{}", "00".repeat(65)));
+
+        let response = trading_runtime::ValidatorResponse {
+            validator: resp.validator,
+            score: resp.score,
+            signature: resp.signature,
+            reasoning: resp.reasoning,
+            chain_id: resp.chain_id,
+            verifying_contract: resp.verifying_contract,
+            validated_at: Some(resp.validated_at),
+        };
+        signature_verify::verify_validator_signature(
+            &response,
+            req_body["intent_hash"].as_str().unwrap(),
+            req_body["execution_hash"].as_str().unwrap(),
+            vault_address,
+            deadline,
+            ACTION_KIND_CLOB_ORDER,
+        )
+        .expect("signature must verify with CLOB action kind");
     }
 
     #[tokio::test]

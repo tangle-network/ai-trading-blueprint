@@ -77,6 +77,8 @@ struct ValidateRequest {
     vault_address: String,
     /// Unix timestamp deadline for the validation signature
     deadline: u64,
+    /// Action kind signed into the EIP-712 approval.
+    action_kind: u64,
     /// Whether validator approval requires a successful transaction simulation.
     require_simulation: bool,
     /// Optional execution context (target, calldata, simulation results)
@@ -140,7 +142,7 @@ impl ValidatorClient {
         vault_address: &str,
         deadline: u64,
     ) -> Result<ValidationResult, TradingError> {
-        self.validate_with_context(intent, vault_address, deadline, None, false)
+        self.validate_with_context(intent, vault_address, deadline, None, false, None, 0)
             .await
     }
 
@@ -155,6 +157,8 @@ impl ValidatorClient {
         deadline: u64,
         execution_context: Option<ExecutionContext>,
         require_simulation: bool,
+        execution_hash_override: Option<String>,
+        action_kind: u64,
     ) -> Result<ValidationResult, TradingError> {
         let mut intent = intent.clone();
         if deadline > i64::MAX as u64 {
@@ -168,6 +172,7 @@ impl ValidatorClient {
         let execution_hash = execution_context
             .as_ref()
             .map(|ctx| ctx.execution_hash.clone())
+            .or(execution_hash_override)
             .unwrap_or_else(|| format!("0x{}", "00".repeat(32)));
         let request = ValidateRequest {
             intent: intent.clone(),
@@ -175,6 +180,7 @@ impl ValidatorClient {
             execution_hash: execution_hash.clone(),
             vault_address: vault_address.to_string(),
             deadline,
+            action_kind,
             require_simulation,
             execution_context,
         };
