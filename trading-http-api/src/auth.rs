@@ -16,7 +16,11 @@ pub async fn auth_middleware(
     let path = request.uri().path();
 
     // Skip auth for health check and session auth endpoints
-    if path == "/health" || path == "/session/auth/challenge" || path == "/session/auth/verify" {
+    if path == "/health"
+        || path == "/ready"
+        || path == "/session/auth/challenge"
+        || path == "/session/auth/verify"
+    {
         return Ok(next.run(request).await);
     }
 
@@ -66,7 +70,7 @@ pub async fn multi_bot_auth_middleware(
     let path = request.uri().path();
 
     // Skip auth for health check
-    if path == "/health" {
+    if path == "/health" || path == "/ready" {
         return Ok(next.run(request).await);
     }
 

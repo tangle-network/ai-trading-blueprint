@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use axum::body::Body;
+use axum::http::StatusCode;
 use http_body_util::BodyExt;
 use hyper::Request;
 use tower::ServiceExt;
@@ -378,6 +379,17 @@ async fn test_health_no_auth_required() {
     assert_eq!(json["validator_quorum_ready"], true);
     assert_eq!(json["simulation_ready"], true);
     assert_eq!(json["vault_ready"], true);
+
+    let ready_response = build_router(test_state(&mock.uri()).await)
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready_response.status(), 200);
 }
 
 #[tokio::test]
@@ -410,6 +422,18 @@ async fn test_health_reports_degraded_live_dependencies() {
         clob_client: None,
     });
     let app = build_router(state);
+
+    let ready_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready_response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
     let response = app
         .oneshot(
@@ -1636,6 +1660,17 @@ async fn test_multi_bot_health_no_auth() {
     assert_eq!(json["rpc_ready"], false);
     assert_eq!(json["simulation_ready"], false);
     assert!(json["validator_count"].is_null());
+
+    let ready_response = build_multi_bot_router(multi_bot_state())
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready_response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
