@@ -313,6 +313,7 @@ fn verify_signatures_offchain(
     validation: &ValidationPayload,
     vault_address: &str,
     action_kind: u64,
+    min_aggregate_score: Option<u32>,
 ) -> Result<(), (StatusCode, String)> {
     if validation.validator_responses.is_empty() {
         return Err((
@@ -328,6 +329,7 @@ fn verify_signatures_offchain(
             "Validation deadline is required for signature verification".into(),
         ));
     }
+    ensure_validation_score_binding(validation, min_aggregate_score)?;
 
     // Convert to runtime types for the verifier
     let responses: Vec<ValidatorResponse> = validation
@@ -363,6 +365,52 @@ fn verify_signatures_offchain(
             format!("Signature verification failed: {e}"),
         )
     })?;
+
+    Ok(())
+}
+
+fn ensure_validation_score_binding(
+    validation: &ValidationPayload,
+    min_aggregate_score: Option<u32>,
+) -> Result<(), (StatusCode, String)> {
+    let mut total_score = 0u32;
+    for response in &validation.validator_responses {
+        if response.score > 100 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Validator score from {} is out of range: {}",
+                    response.validator, response.score
+                ),
+            ));
+        }
+        total_score = total_score.saturating_add(response.score);
+    }
+
+    let computed = total_score
+        .checked_div(validation.validator_responses.len() as u32)
+        .unwrap_or(0);
+    if validation.aggregate_score != computed {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Validation aggregate_score does not match signed validator scores: got {}, expected {}",
+                validation.aggregate_score, computed
+            ),
+        ));
+    }
+
+    if let Some(min_score) = min_aggregate_score
+        && computed < min_score
+    {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            format!(
+                "Validation aggregate_score {} is below required {}",
+                computed, min_score
+            ),
+        ));
+    }
 
     Ok(())
 }
@@ -1986,7 +2034,7 @@ async fn execute(
     // Off-chain signature verification prevents fabricated validator signatures
     // from reaching direct exchange paths and fails early before vault execution.
     if !state.paper_trade {
-        verify_signatures_offchain(&request.validation, &state.vault_address, action_kind)?;
+        verify_signatures_offchain(&request.validation, &state.vault_address, action_kind, None)?;
     }
 
     // Circuit breaker check before any execution.
@@ -2180,7 +2228,12 @@ async fn execute_multi_bot(
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
-                verify_signatures_offchain(&req.validation, &bot.vault_address, action_kind)?;
+                verify_signatures_offchain(
+                    &req.validation,
+                    &bot.vault_address,
+                    action_kind,
+                    Some(state.min_validator_score),
+                )?;
             }
             ValidationTrust::Envelope => {
                 if normalized_req.intent.target_protocol != "hyperliquid" {
@@ -2542,6 +2595,44 @@ mod tests {
         .expect("hashes");
         req.validation.intent_hash = intent_hash;
         req.validation.execution_hash = execution_hash;
+    }
+
+    fn validator_response(score: u32) -> ValidatorResponsePayload {
+        ValidatorResponsePayload {
+            validator: "0x0000000000000000000000000000000000000001".to_string(),
+            score,
+            reasoning: "test".to_string(),
+            signature: format!("0x{}", "11".repeat(65)),
+            chain_id: Some(1),
+            verifying_contract: Some("0x0000000000000000000000000000000000000002".to_string()),
+            validated_at: None,
+        }
+    }
+
+    #[test]
+    fn validation_score_binding_rejects_tampered_aggregate() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.validation.aggregate_score = 100;
+        req.validation.validator_responses = vec![validator_response(40), validator_response(60)];
+
+        let err = ensure_validation_score_binding(&req.validation, Some(50))
+            .expect_err("tampered aggregate should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("aggregate_score"));
+    }
+
+    #[test]
+    fn validation_score_binding_rejects_below_threshold() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.validation.aggregate_score = 49;
+        req.validation.validator_responses = vec![validator_response(49)];
+
+        let err = ensure_validation_score_binding(&req.validation, Some(50))
+            .expect_err("low signed score should be rejected");
+
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+        assert!(err.1.contains("below required"));
     }
 
     #[test]

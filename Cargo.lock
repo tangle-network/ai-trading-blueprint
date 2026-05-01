@@ -12825,6 +12825,7 @@ dependencies = [
  "tower-http 0.6.8",
  "tracing",
  "trading-runtime",
+ "trading-validator-lib",
  "uuid 1.22.0",
  "wiremock",
 ]

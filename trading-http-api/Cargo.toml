@@ -29,6 +29,7 @@ futures-util = "0.3"
 bytes = "1"
 
 [dev-dependencies]
+trading-validator-lib = { path = "../trading-validator-lib" }
 http-body-util = "0.1"
 hyper = "1"
 serde_json = "1"
