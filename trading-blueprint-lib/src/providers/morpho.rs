@@ -8,11 +8,11 @@ impl TradingProvider for MorphoProvider {
     }
 
     fn name(&self) -> &'static str {
-        "Morpho Blue Lending"
+        "MetaMorpho Vault Yield"
     }
 
     fn protocol_adapters(&self) -> &[&'static str] {
-        &["morpho"]
+        &["morpho_vault"]
     }
 
     fn expert_prompt(&self) -> &'static str {
@@ -36,10 +36,10 @@ impl TradingProvider for MorphoProvider {
             "rate_change" => Some(format!(
                 "MORPHO RATE CHANGE.\n\
                  Data: {data}\n\n\
-                 Morpho market rates have changed. Steps:\n\
-                 1. Compare new vault APYs with current positions\n\
+                 MetaMorpho vault rates have changed. Steps:\n\
+                 1. Compare allowlisted vault APYs with current positions\n\
                  2. Check DeFiLlama for cross-protocol yield comparison\n\
-                 3. If Morpho offers >1% APY improvement over current position, rebalance\n\
+                 3. If an allowlisted MetaMorpho vault offers >1% APY improvement over current position, rebalance\n\
                  4. Verify gas cost < 10% of annual yield improvement before acting",
                 data = ctx.data,
             )),
@@ -48,25 +48,28 @@ impl TradingProvider for MorphoProvider {
     }
 }
 
-pub(crate) const MORPHO_EXPERT_PROMPT: &str = r#"## Morpho Protocol Knowledge
+pub(crate) const MORPHO_EXPERT_PROMPT: &str = r#"## MetaMorpho Vault Knowledge
 
-### Morpho Blue (Ethereum Mainnet)
-- Morpho Blue: 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb
+### Production Scope
 
-Morpho aggregates lending/borrowing across multiple markets. Check vault APYs via the Morpho API or directly from vault contracts.
+Use MetaMorpho ERC-4626 vaults only. Do not submit `target_protocol: "morpho"` or direct Morpho Blue market trades.
+
+Only use vaults listed in the bot's `strategy_config.morpho_vaults`. Each trade must include `metadata.vault_address` for the chosen allowlisted vault.
 
 ### Trading Methodology
 
-1. **Yield Scanning**: Compare Morpho vault APYs with Aave V3 for the same assets. Factor in:
+1. **Yield Scanning**: Compare allowlisted MetaMorpho vault APYs with Aave V3 for the same assets. Factor in:
    - Base APY
-   - Protocol risk (Morpho uses isolated markets — different risk profile than Aave's shared pool)
+   - Vault curator and allocation risk
    - Smart contract risk
 
 2. **Trade Intent Format**: Submit through Trading HTTP API with:
    - `action`: "supply" or "withdraw"
-   - `target_protocol`: "morpho"
+   - `target_protocol`: "morpho_vault"
    - `token_in`: asset address
+   - `token_out`: asset address
    - `amount_in`: amount as string (in token decimals)
+   - `metadata.vault_address`: selected allowlisted MetaMorpho vault address
 "#;
 
 #[cfg(test)]
@@ -75,10 +78,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_morpho_expert_prompt_has_address() {
+    fn test_morpho_expert_prompt_uses_vault_protocol() {
         let p = MorphoProvider;
+        assert!(p.expert_prompt().contains("morpho_vault"));
         assert!(
-            p.expert_prompt()
+            !p.expert_prompt()
                 .contains("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb")
         );
     }

@@ -478,7 +478,7 @@ mod tests {
         data.extend_from_slice(&amount);
         data.extend_from_slice(&[0u8; 32]); // receiver
 
-        let result = decode_calldata(&data, "morpho");
+        let result = decode_calldata(&data, "morpho_vault");
         assert!(result.starts_with("deposit("));
         assert!(result.contains("amount=200"));
     }
@@ -491,7 +491,7 @@ mod tests {
         data.extend_from_slice(&amount);
         data.extend_from_slice(&[0u8; 32]); // receiver
 
-        let result = decode_calldata(&data, "morpho");
+        let result = decode_calldata(&data, "morpho_vault");
         assert!(result.starts_with("withdraw("));
         assert!(result.contains("amount=150"));
     }

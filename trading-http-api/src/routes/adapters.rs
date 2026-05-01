@@ -22,7 +22,7 @@ async fn list_adapters() -> Json<AdaptersResponse> {
             "uniswap_v3".into(),
             "aave_v3".into(),
             "gmx_v2".into(),
-            "morpho".into(),
+            "morpho_vault".into(),
             "vertex".into(),
             "polymarket".into(),
         ],
