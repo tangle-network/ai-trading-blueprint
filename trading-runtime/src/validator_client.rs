@@ -66,6 +66,10 @@ const MAX_SCORE: u32 = 100;
 /// Expected length of a hex-encoded EIP-712 signature (0x + 130 hex chars = 65 bytes).
 const EXPECTED_SIG_LEN: usize = 132;
 
+fn zero_signature() -> String {
+    format!("0x{}", "00".repeat(65))
+}
+
 #[derive(Debug, Serialize)]
 struct ValidateRequest {
     intent: TradeIntent,
@@ -243,6 +247,13 @@ impl ValidatorClient {
                     validator = %result.validator,
                     sig_len = result.signature.len(),
                     "Validator signature has invalid format (expected 0x + 130 hex chars), skipping"
+                );
+                continue;
+            }
+            if result.signature.eq_ignore_ascii_case(&zero_signature()) {
+                tracing::warn!(
+                    validator = %result.validator,
+                    "Validator returned zero signature, skipping"
                 );
                 continue;
             }
@@ -529,6 +540,49 @@ mod tests {
             .await;
         // Should fail — only response had invalid signature, so 0 valid responses.
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_zero_signature_rejected() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/validate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "score": 0,
+                "signature": zero_signature(),
+                "reasoning": "Rejected",
+                "validator": "0xValidator1"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = ValidatorClient::new(vec![mock_server.uri()], 50);
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        let result = client
+            .validate(
+                &intent,
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+                9999999999,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No validators responded")
+        );
     }
 
     #[tokio::test]

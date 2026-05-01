@@ -219,14 +219,52 @@ async fn handle_validate(
     State(server): State<Arc<ValidatorServer>>,
     Json(mut request): Json<ValidateRequest>,
 ) -> Json<ValidateResponse> {
-    // Independent simulation: if we have an RPC URL and execution context
-    // with target+calldata but no simulation result, run our own eth_call.
-    if let (Some(rpc_url), Some(ctx)) =
+    let validated_at = chrono::Utc::now().to_rfc3339();
+
+    // Extract EIP-712 domain metadata from the signer (if present)
+    let (signer_chain_id, signer_contract) = server.signer.as_ref().map_or((None, None), |s| {
+        (
+            Some(s.chain_id()),
+            Some(format!("{}", s.verifying_contract())),
+        )
+    });
+
+    let validator_address = server.signer.as_ref().map_or_else(
+        || "0x0000000000000000000000000000000000000000".to_string(),
+        |signer| format!("0x{}", hex::encode(signer.address().as_slice())),
+    );
+
+    // Independent simulation: if the validator has its own RPC URL, always run
+    // its own eth_call for executable context. A required simulation must fail
+    // closed if the validator cannot independently simulate.
+    let independent_simulation_rejection = if let (Some(rpc_url), Some(ctx)) =
         (server.rpc_url.as_ref(), request.execution_context.as_mut())
-        && ctx.simulation_result.is_none()
-        && let Some(sim) = run_independent_simulation(rpc_url, ctx).await
     {
-        ctx.simulation_result = Some(sim);
+        match run_independent_simulation(rpc_url, ctx).await {
+            Some(sim) => {
+                ctx.simulation_result = Some(sim);
+                None
+            }
+            None if request.require_simulation => {
+                Some("validator independent simulation failed".to_string())
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(reason) =
+        independent_simulation_rejection.or_else(|| required_simulation_rejection(&request))
+    {
+        return Json(reject_response(
+            0,
+            format!("Validation rejected: {reason}"),
+            validator_address,
+            signer_chain_id,
+            signer_contract,
+            validated_at,
+        ));
     }
 
     // Look up strategy context for protocol-aware scoring
@@ -245,42 +283,20 @@ async fn handle_validate(
     )
     .await;
 
-    let (score, reasoning) = match score_result {
-        Ok(result) => (result.score, result.reasoning),
-        Err(e) => {
-            tracing::warn!("Scoring failed: {e}");
-            (50, format!("Scoring error: {e}"))
-        }
-    };
-
-    let validated_at = chrono::Utc::now().to_rfc3339();
-
-    // Extract EIP-712 domain metadata from the signer (if present)
-    let (signer_chain_id, signer_contract) = server.signer.as_ref().map_or((None, None), |s| {
-        (
-            Some(s.chain_id()),
-            Some(format!("{}", s.verifying_contract())),
-        )
-    });
-
-    let validator_address = server.signer.as_ref().map_or_else(
-        || "0x0000000000000000000000000000000000000000".to_string(),
-        |signer| format!("0x{}", hex::encode(signer.address().as_slice())),
-    );
+    let (score, reasoning) = scoring_outcome(score_result);
 
     let canonical_intent = match intent_with_deadline(&request.intent, request.deadline) {
         Ok(intent) => intent,
         Err(e) => {
             tracing::warn!(error = %e, "Rejecting validation request with invalid deadline");
-            return Json(ValidateResponse {
-                score: 0,
-                signature: format!("0x{}", "00".repeat(65)),
-                reasoning: format!("{reasoning}; signature error: invalid deadline: {e}"),
-                validator: validator_address,
-                chain_id: signer_chain_id,
-                verifying_contract: signer_contract,
+            return Json(reject_response(
+                0,
+                format!("{reasoning}; signature error: invalid deadline: {e}"),
+                validator_address,
+                signer_chain_id,
+                signer_contract,
                 validated_at,
-            });
+            ));
         }
     };
     request.intent = canonical_intent;
@@ -291,17 +307,16 @@ async fn handle_validate(
             expected = %expected_intent_hash,
             "Rejecting validation request with mismatched intent_hash"
         );
-        return Json(ValidateResponse {
-            score: 0,
-            signature: format!("0x{}", "00".repeat(65)),
-            reasoning: format!(
+        return Json(reject_response(
+            0,
+            format!(
                 "{reasoning}; signature error: intent_hash mismatch, expected {expected_intent_hash}"
             ),
-            validator: validator_address,
-            chain_id: signer_chain_id,
-            verifying_contract: signer_contract,
+            validator_address,
+            signer_chain_id,
+            signer_contract,
             validated_at,
-        });
+        ));
     }
 
     let expected_execution_hash = match expected_execution_hash(
@@ -311,15 +326,14 @@ async fn handle_validate(
         Ok(hash) => hash,
         Err(e) => {
             tracing::warn!(error = %e, "Rejecting validation request with invalid execution context");
-            return Json(ValidateResponse {
-                score: 0,
-                signature: format!("0x{}", "00".repeat(65)),
-                reasoning: format!("{reasoning}; signature error: invalid execution context: {e}"),
-                validator: validator_address,
-                chain_id: signer_chain_id,
-                verifying_contract: signer_contract,
+            return Json(reject_response(
+                0,
+                format!("{reasoning}; signature error: invalid execution context: {e}"),
+                validator_address,
+                signer_chain_id,
+                signer_contract,
                 validated_at,
-            });
+            ));
         }
     };
     if !hashes_match(&request.execution_hash, &expected_execution_hash) {
@@ -328,17 +342,27 @@ async fn handle_validate(
             expected = %expected_execution_hash,
             "Rejecting validation request with mismatched execution_hash"
         );
-        return Json(ValidateResponse {
-            score: 0,
-            signature: format!("0x{}", "00".repeat(65)),
-            reasoning: format!(
+        return Json(reject_response(
+            0,
+            format!(
                 "{reasoning}; signature error: execution_hash mismatch, expected {expected_execution_hash}"
             ),
-            validator: validator_address,
-            chain_id: signer_chain_id,
-            verifying_contract: signer_contract,
+            validator_address,
+            signer_chain_id,
+            signer_contract,
             validated_at,
-        });
+        ));
+    }
+
+    if score == 0 {
+        return Json(reject_response(
+            0,
+            format!("Validation rejected: {reasoning}"),
+            validator_address,
+            signer_chain_id,
+            signer_contract,
+            validated_at,
+        ));
     }
 
     // If we have a signer, produce a real EIP-712 signature
@@ -457,6 +481,70 @@ fn hashes_match(supplied: &str, expected: &str) -> bool {
 
 fn zero_hash() -> String {
     format!("0x{}", "00".repeat(32))
+}
+
+fn zero_signature() -> String {
+    format!("0x{}", "00".repeat(65))
+}
+
+fn reject_response(
+    score: u32,
+    reasoning: String,
+    validator: String,
+    chain_id: Option<u64>,
+    verifying_contract: Option<String>,
+    validated_at: String,
+) -> ValidateResponse {
+    ValidateResponse {
+        score,
+        signature: zero_signature(),
+        reasoning,
+        validator,
+        chain_id,
+        verifying_contract,
+        validated_at,
+    }
+}
+
+fn required_simulation_rejection(request: &ValidateRequest) -> Option<String> {
+    if !request.require_simulation {
+        return None;
+    }
+
+    let Some(ctx) = request.execution_context.as_ref() else {
+        return Some("required simulation context is missing".to_string());
+    };
+    let Some(sim) = ctx.simulation_result.as_ref() else {
+        return Some("required simulation result is missing".to_string());
+    };
+
+    if !sim.success {
+        return Some("required simulation did not succeed".to_string());
+    }
+    if sim.risk_score > 0 {
+        return Some(format!(
+            "required simulation reported risk score {}",
+            sim.risk_score
+        ));
+    }
+    if !sim.warnings.is_empty() {
+        return Some(format!(
+            "required simulation reported warnings: {}",
+            sim.warnings.join("; ")
+        ));
+    }
+
+    None
+}
+
+fn scoring_outcome(score_result: Result<scoring::ScoringResult, String>) -> (u32, String) {
+    match score_result {
+        Ok(result) => (result.score, result.reasoning),
+        Err(e) => {
+            tracing::warn!("Scoring failed: {e}");
+            (0, format!("Scoring error rejected: {e}"))
+        }
+    }
 }
 
 fn intent_with_deadline(
@@ -720,6 +808,314 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    fn test_contract_addr() -> Address {
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            .parse()
+            .unwrap()
+    }
+
+    fn test_signing_server() -> ValidatorServer {
+        ValidatorServer::new(9090)
+            .with_signer(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                31337,
+                test_contract_addr(),
+            )
+            .unwrap()
+    }
+
+    fn test_intent(
+        deadline: u64,
+        amount_in: rust_decimal::Decimal,
+    ) -> trading_runtime::TradeIntent {
+        use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
+
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(amount_in)
+            .min_amount_out(rust_decimal::Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
+        intent
+    }
+
+    fn simulation_summary(
+        success: bool,
+        risk_score: u32,
+        warnings: Vec<String>,
+    ) -> SimulationSummary {
+        SimulationSummary {
+            success,
+            gas_used: 21000,
+            output_amount: "0".into(),
+            balance_changes: Vec::new(),
+            warnings,
+            risk_score,
+        }
+    }
+
+    fn execution_context_for(
+        intent_hash: &str,
+        deadline: u64,
+        simulation_result: Option<SimulationSummary>,
+    ) -> (String, serde_json::Value) {
+        let target: Address = "0x0000000000000000000000000000000000000001"
+            .parse()
+            .unwrap();
+        let calldata = Bytes::from(hex::decode("deadbeef").unwrap());
+        let min_output = U256::ZERO;
+        let output_token: Address = "0x0000000000000000000000000000000000000000"
+            .parse()
+            .unwrap();
+        let intent_hash_b256 = parse_b256(intent_hash).unwrap();
+        let execution_hash = format_b256(hash_execution_payload_parts(
+            target,
+            &calldata,
+            U256::ZERO,
+            min_output,
+            output_token,
+            intent_hash_b256,
+            U256::from(deadline),
+            31337,
+            hash_approvals(&[]),
+        ));
+
+        let ctx = serde_json::json!({
+            "chain_id": 31337,
+            "target": format!("{target}"),
+            "calldata": "0xdeadbeef",
+            "calldata_decoded": "unknown()",
+            "value": "0",
+            "min_output": "0",
+            "output_token": format!("{output_token}"),
+            "approvals": [],
+            "simulation_result": simulation_result,
+        });
+
+        (execution_hash, ctx)
+    }
+
+    async fn post_validate(app: axum::Router, req_body: serde_json::Value) -> ValidateResponse {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body_bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_simulation_missing_context_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": zero_hash(),
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("simulation context is missing"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_simulation_missing_result_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let (execution_hash, execution_context) =
+            execution_context_for(&intent_hash, deadline, None);
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+            "execution_context": execution_context,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("simulation result is missing"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_simulation_failed_result_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let (execution_hash, execution_context) = execution_context_for(
+            &intent_hash,
+            deadline,
+            Some(simulation_summary(false, 0, Vec::new())),
+        );
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+            "execution_context": execution_context,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("did not succeed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_simulation_warning_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let (execution_hash, execution_context) = execution_context_for(
+            &intent_hash,
+            deadline,
+            Some(simulation_summary(
+                true,
+                0,
+                vec!["UnexpectedApproval: token=0x1 spender=0x2 amount=3".into()],
+            )),
+        );
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+            "execution_context": execution_context,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("warnings"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_simulation_risk_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let (execution_hash, execution_context) = execution_context_for(
+            &intent_hash,
+            deadline,
+            Some(simulation_summary(true, 10, Vec::new())),
+        );
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+            "execution_context": execution_context,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("risk score 10"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_required_independent_simulation_failure_returns_zero_signature() {
+        let app = test_signing_server()
+            .with_rpc_url("http://127.0.0.1:9".into())
+            .router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let (execution_hash, execution_context) = execution_context_for(
+            &intent_hash,
+            deadline,
+            Some(simulation_summary(true, 0, Vec::new())),
+        );
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+            "require_simulation": true,
+            "execution_context": execution_context,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("independent simulation failed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_zero_score_returns_zero_signature() {
+        let app = test_signing_server().router();
+        let deadline = 9999999999u64;
+        let intent = test_intent(deadline, rust_decimal::Decimal::ZERO);
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": zero_hash(),
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": deadline,
+        });
+
+        let resp = post_validate(app, req_body).await;
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.reasoning.contains("Zero trade amount"));
+    }
+
+    #[test]
+    fn test_scoring_error_returns_zero_score() {
+        let (score, reasoning) = scoring_outcome(Err("boom".into()));
+
+        assert_eq!(score, 0);
+        assert!(reasoning.contains("Scoring error rejected: boom"));
     }
 
     #[tokio::test]
