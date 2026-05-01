@@ -171,6 +171,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, router, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::Buy => {
@@ -195,6 +196,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     min_output: params.amount,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, router, amount_in_max)],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

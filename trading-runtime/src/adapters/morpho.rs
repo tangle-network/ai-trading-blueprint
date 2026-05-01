@@ -98,6 +98,7 @@ impl ProtocolAdapter for MorphoAdapter {
                     min_output: params.amount,
                     output_token: params.token_in,
                     approvals: vec![approval(params.token_in, morpho_vault, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::Withdraw => {
@@ -109,6 +110,7 @@ impl ProtocolAdapter for MorphoAdapter {
                     min_output: params.min_output,
                     output_token: params.token_in,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

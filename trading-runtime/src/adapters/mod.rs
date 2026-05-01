@@ -61,6 +61,16 @@ pub struct EncodedAction {
     pub min_output: U256,
     pub output_token: Address,
     pub approvals: Vec<Approval>,
+    pub debt_reduction: Option<DebtReductionPostcondition>,
+}
+
+/// Success condition for actions that reduce protocol debt instead of receiving output tokens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebtReductionPostcondition {
+    pub input_token: Address,
+    pub max_input: U256,
+    pub debt_token: Address,
+    pub min_debt_decrease: U256,
 }
 
 /// Describe an atomic vault-held token approval to apply during execution.

@@ -18,6 +18,16 @@ pub struct ExecutionContext {
     #[serde(default)]
     pub output_token: String,
     #[serde(default)]
+    pub postcondition_kind: String,
+    #[serde(default)]
+    pub input_token: String,
+    #[serde(default)]
+    pub max_input: String,
+    #[serde(default)]
+    pub debt_token: String,
+    #[serde(default)]
+    pub min_debt_decrease: String,
+    #[serde(default)]
     pub approvals: Vec<ExecutionApproval>,
     #[serde(default)]
     pub simulation_result: Option<SimulationSummary>,

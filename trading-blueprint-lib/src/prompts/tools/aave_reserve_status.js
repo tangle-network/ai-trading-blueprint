@@ -8,6 +8,7 @@ const https = require('https');
 
 const CONFIG_FILE = '/home/agent/config/api.json';
 const GET_CONFIGURATION_SELECTOR = '0xc44b11f7';
+const GET_RESERVE_DATA_SELECTOR = '0x35ea6a75';
 
 const POOL_BY_CHAIN = {
   1: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
@@ -138,6 +139,11 @@ function wordToBool(word) {
   return wordToBigInt(word) !== 0n;
 }
 
+function wordToAddress(word) {
+  const normalized = (word || '').padStart(64, '0');
+  return `0x${normalized.slice(24)}`;
+}
+
 function decodeReserveConfiguration(hex) {
   const words = chunkWords(hex);
   if (words.length < 1 || !words[0]) {
@@ -209,13 +215,24 @@ async function fetchReserveStatus(rpcUrl, chainId, asset) {
     },
     'latest',
   ]);
+  const reserveDataResult = await rpcCall(rpcUrl, 'eth_call', [
+    {
+      to: pool,
+      data: `${GET_RESERVE_DATA_SELECTOR}${encodeAddress(asset.address)}`,
+    },
+    'latest',
+  ]);
 
   const decoded = decodeReserveConfiguration(result);
+  const reserveWords = chunkWords(reserveDataResult);
   const availability = summarizeAvailability(decoded);
 
   return {
     ...asset,
     ...decoded,
+    a_token_address: wordToAddress(reserveWords[8]),
+    stable_debt_token_address: wordToAddress(reserveWords[9]),
+    variable_debt_token_address: wordToAddress(reserveWords[10]),
     ...availability,
   };
 }

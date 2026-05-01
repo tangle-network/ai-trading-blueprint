@@ -450,6 +450,11 @@ mod tests {
             value: "0".into(),
             min_output: "0".into(),
             output_token: "0x0000000000000000000000000000000000000000".into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
             approvals: Vec::new(),
             chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {

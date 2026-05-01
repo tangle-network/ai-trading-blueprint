@@ -2,7 +2,10 @@ use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 
-use super::{ActionParams, EncodedAction, ProtocolAdapter, approval, validate_vault_address};
+use super::{
+    ActionParams, DebtReductionPostcondition, EncodedAction, ProtocolAdapter, approval,
+    validate_vault_address,
+};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -144,6 +147,33 @@ impl AaveV3Adapter {
         };
         Bytes::from(call.abi_encode())
     }
+
+    fn debt_token_from_metadata(&self, params: &ActionParams) -> Result<Address, TradingError> {
+        let raw = params
+            .extra
+            .get("debt_token")
+            .or_else(|| params.extra.get("debtToken"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: "Aave repay requires metadata.debt_token".into(),
+            })?;
+
+        let debt_token = raw
+            .parse::<Address>()
+            .map_err(|e| TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!("Invalid Aave debt token address '{raw}': {e}"),
+            })?;
+        if debt_token == Address::ZERO {
+            return Err(TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: "Aave repay debt_token must not be zero".into(),
+            });
+        }
+
+        Ok(debt_token)
+    }
 }
 
 impl Default for AaveV3Adapter {
@@ -194,6 +224,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     min_output: params.min_output,
                     output_token,
                     approvals: vec![approval(params.token_in, self.pool_address, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::Withdraw => {
@@ -206,6 +237,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     min_output: params.min_output,
                     output_token: params.token_in,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             Action::Borrow => {
@@ -222,9 +254,19 @@ impl ProtocolAdapter for AaveV3Adapter {
                     min_output: params.amount,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             Action::Repay => {
+                if params.min_output == U256::ZERO {
+                    return Err(TradingError::AdapterError {
+                        protocol: "aave_v3".into(),
+                        message:
+                            "Aave repay requires non-zero min_amount_out as minimum debt decrease"
+                                .into(),
+                    });
+                }
+                let debt_token = self.debt_token_from_metadata(params)?;
                 let calldata = self.encode_repay(
                     params.token_in,
                     params.amount,
@@ -238,6 +280,12 @@ impl ProtocolAdapter for AaveV3Adapter {
                     min_output: U256::ZERO,
                     output_token: params.token_in,
                     approvals: vec![approval(params.token_in, self.pool_address, params.amount)],
+                    debt_reduction: Some(DebtReductionPostcondition {
+                        input_token: params.token_in,
+                        max_input: params.amount,
+                        debt_token,
+                        min_debt_decrease: params.min_output,
+                    }),
                 })
             }
             _ => Err(TradingError::AdapterError {
@@ -304,6 +352,56 @@ mod tests {
         assert_eq!(
             result.target,
             AAVE_V3_POOL_ETHEREUM.parse::<Address>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_encode_repay_uses_debt_reduction_postcondition() {
+        let adapter = AaveV3Adapter::new();
+        let debt_token: Address = "0x0000000000000000000000000000000000000dEb"
+            .parse()
+            .unwrap();
+        let params = ActionParams {
+            action: Action::Repay,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_USDC.parse().unwrap(),
+            amount: U256::from(500_000u64),
+            min_output: U256::from(499_000u64),
+            extra: serde_json::json!({"rate_mode": 2, "debt_token": format!("{debt_token}")}),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params).unwrap();
+        let debt_reduction = result
+            .debt_reduction
+            .expect("repay should use debt decrease postcondition");
+        assert_eq!(result.min_output, U256::ZERO);
+        assert_eq!(
+            debt_reduction.input_token,
+            TOKEN_USDC.parse::<Address>().unwrap()
+        );
+        assert_eq!(debt_reduction.max_input, U256::from(500_000u64));
+        assert_eq!(debt_reduction.debt_token, debt_token);
+        assert_eq!(debt_reduction.min_debt_decrease, U256::from(499_000u64));
+    }
+
+    #[test]
+    fn test_encode_repay_requires_debt_token() {
+        let adapter = AaveV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Repay,
+            token_in: TOKEN_USDC.parse().unwrap(),
+            token_out: TOKEN_USDC.parse().unwrap(),
+            amount: U256::from(500_000u64),
+            min_output: U256::from(499_000u64),
+            extra: serde_json::json!({"rate_mode": 2}),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let err = adapter.encode_action(&params).unwrap_err();
+        assert!(
+            err.to_string().contains("metadata.debt_token"),
+            "unexpected error: {err}"
         );
     }
 

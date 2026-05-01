@@ -177,6 +177,13 @@ impl TradeExecutor {
 
         // 3. Encode the action
         let encoded: EncodedAction = adapter.encode_action(&params)?;
+        let simulation_tokens = {
+            let mut tokens = vec![token_in, token_out];
+            if let Some(debt_reduction) = &encoded.debt_reduction {
+                tokens.push(debt_reduction.debt_token);
+            }
+            tokens
+        };
 
         // 4. Collect validator signatures and scores before simulation so the
         // simulated payload matches the final submitted transaction.
@@ -227,7 +234,7 @@ impl TradeExecutor {
                 data: alloy::primitives::Bytes::from(tx.data.clone()),
                 value: tx_value,
                 block_number: None,
-                token_addresses: vec![token_in, token_out],
+                token_addresses: simulation_tokens,
                 balance_check_account: Some(vault_address),
             };
 
@@ -317,6 +324,33 @@ fn build_execution_tx(
     scores: Vec<U256>,
     deadline: U256,
 ) -> Result<EncodedTransaction, TradingError> {
+    let approvals = encoded
+        .approvals
+        .iter()
+        .map(|approval| VaultApproval {
+            token: format!("{}", approval.token),
+            spender: format!("{}", approval.spender),
+            amount: approval.amount.to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(debt_reduction) = &encoded.debt_reduction {
+        return vault_client.encode_execute_debt_reduction_with_approvals(
+            &format!("{}", encoded.target),
+            &encoded.calldata,
+            &encoded.value.to_string(),
+            &format!("{}", debt_reduction.input_token),
+            &debt_reduction.max_input.to_string(),
+            &format!("{}", debt_reduction.debt_token),
+            &debt_reduction.min_debt_decrease.to_string(),
+            intent_hash,
+            &approvals,
+            signatures,
+            scores,
+            deadline,
+        );
+    }
+
     if encoded.approvals.is_empty() {
         vault_client.encode_execute(
             &format!("{}", encoded.target),
@@ -330,15 +364,6 @@ fn build_execution_tx(
             deadline,
         )
     } else {
-        let approvals = encoded
-            .approvals
-            .iter()
-            .map(|approval| VaultApproval {
-                token: format!("{}", approval.token),
-                spender: format!("{}", approval.spender),
-                amount: approval.amount.to_string(),
-            })
-            .collect::<Vec<_>>();
         vault_client.encode_execute_with_approvals(
             &format!("{}", encoded.target),
             &encoded.calldata,
@@ -742,6 +767,7 @@ mod tests {
                 .parse::<Address>()
                 .unwrap(),
             approvals: vec![],
+            debt_reduction: None,
         };
 
         let tx = build_execution_tx(
@@ -783,6 +809,7 @@ mod tests {
                     .unwrap(),
                 amount: U256::from(42u64),
             }],
+            debt_reduction: None,
         };
 
         let tx = build_execution_tx(
@@ -798,6 +825,60 @@ mod tests {
         assert_eq!(
             &tx.data[..4],
             &ITradingVault::executeWithApprovalsCall::SELECTOR[..]
+        );
+    }
+
+    #[test]
+    fn test_build_execution_tx_with_debt_reduction_uses_debt_path() {
+        let vault_client = VaultClient::new(
+            "0x0000000000000000000000000000000000000001".into(),
+            "http://localhost:8545".into(),
+            42161,
+        );
+        let encoded = EncodedAction {
+            target: "0x0000000000000000000000000000000000000002"
+                .parse::<Address>()
+                .unwrap(),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::ZERO,
+            output_token: "0x0000000000000000000000000000000000000003"
+                .parse::<Address>()
+                .unwrap(),
+            approvals: vec![crate::adapters::Approval {
+                token: "0x0000000000000000000000000000000000000004"
+                    .parse::<Address>()
+                    .unwrap(),
+                spender: "0x0000000000000000000000000000000000000002"
+                    .parse::<Address>()
+                    .unwrap(),
+                amount: U256::from(42u64),
+            }],
+            debt_reduction: Some(crate::adapters::DebtReductionPostcondition {
+                input_token: "0x0000000000000000000000000000000000000004"
+                    .parse::<Address>()
+                    .unwrap(),
+                max_input: U256::from(42u64),
+                debt_token: "0x0000000000000000000000000000000000000005"
+                    .parse::<Address>()
+                    .unwrap(),
+                min_debt_decrease: U256::from(40u64),
+            }),
+        };
+
+        let tx = build_execution_tx(
+            &vault_client,
+            &encoded,
+            [0x11; 32],
+            vec![vec![0xaa; 65]],
+            vec![U256::from(80u64)],
+            U256::from(123u64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            &tx.data[..4],
+            &ITradingVault::executeDebtReductionWithApprovalsCall::SELECTOR[..]
         );
     }
 
