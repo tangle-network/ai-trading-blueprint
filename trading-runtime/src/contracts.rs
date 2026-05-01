@@ -48,6 +48,8 @@ sol! {
 
         // CLOB collateral management
         function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function computeExecutionHash(ExecuteParams calldata params, ApprovalCall[] calldata approvals) external view returns (bytes32);
+        function computeCollateralReleaseHash(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline) external view returns (bytes32);
         function returnCollateral(uint256 amount) external;
         function writeDownCollateral(address operator, uint256 amount) external;
         function setMaxCollateralBps(uint256 bps) external;
@@ -121,10 +123,10 @@ sol! {
     interface ITradeValidator {
         function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external;
         function validateWithSignatures(
-            bytes32 intentHash, address vault, bytes[] calldata signatures,
+            bytes32 intentHash, bytes32 executionHash, address vault, bytes[] calldata signatures,
             uint256[] calldata scores, uint256 deadline, uint256 actionKind
         ) external view returns (bool approved, uint256 validCount);
-        function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
+        function computeDigest(bytes32 intentHash, bytes32 executionHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
         function getVaultSigners(address vault) external view returns (address[] memory);
         function getRequiredSignatures(address vault) external view returns (uint256);
     }

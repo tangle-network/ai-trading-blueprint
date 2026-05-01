@@ -102,13 +102,6 @@ contract FullLifecycleTest is Setup {
             keccak256(abi.encodePacked(address(tokenA), uint256(1000 ether), address(mockTarget), uint256(20000)));
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes[] memory signatures = new bytes[](2);
-        uint256[] memory scores = new uint256[](2);
-        scores[0] = 85;
-        scores[1] = 75;
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
-
         bytes memory swapData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), expectedOutput);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
@@ -120,6 +113,13 @@ contract FullLifecycleTest is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
+        bytes[] memory signatures = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        scores[0] = 85;
+        scores[1] = 75;
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        signatures[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vault.execute(params, signatures, scores);

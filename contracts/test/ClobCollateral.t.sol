@@ -45,13 +45,24 @@ contract ClobCollateralTest is Setup {
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
     {
+        return _createCollateralSigs(1000 ether, operator, intentHash, deadline);
+    }
+
+    function _createCollateralSigs(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline)
+        internal
+        view
+        returns (bytes[] memory signatures, uint256[] memory scores)
+    {
         signatures = new bytes[](2);
         scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
         // actionKind=1 (ACTION_KIND_RELEASE_COLLATERAL) so signatures bind to releaseCollateral
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline, 1);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline, 1);
+        bytes32 executionHash = vault.computeCollateralReleaseHash(amount, recipient, intentHash, deadline);
+        signatures[0] =
+            _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline, 1);
+        signatures[1] =
+            _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline, 1);
     }
 
     function _releaseCollateral(uint256 amount, bytes32 intentHash)
@@ -59,7 +70,8 @@ contract ClobCollateralTest is Setup {
         returns (uint256 deadline)
     {
         deadline = block.timestamp + 1 hours;
-        (bytes[] memory sigs, uint256[] memory scores) = _createCollateralSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) =
+            _createCollateralSigs(amount, operator, intentHash, deadline);
         vm.prank(operator);
         vault.releaseCollateral(amount, operator, intentHash, deadline, sigs, scores);
     }
@@ -118,7 +130,9 @@ contract ClobCollateralTest is Setup {
         bytes[] memory sigs = new bytes[](1);
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline, 1);
+        bytes32 executionHash = vault.computeCollateralReleaseHash(1000 ether, operator, intentHash, deadline);
+        sigs[0] =
+            _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline, 1);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
@@ -432,7 +446,8 @@ contract ClobCollateralTest is Setup {
         // Operator 2 releases 500
         bytes32 hash2 = keccak256("op2-release");
         uint256 deadline2 = block.timestamp + 1 hours;
-        (bytes[] memory sigs2, uint256[] memory scores2) = _createCollateralSigs(hash2, deadline2);
+        (bytes[] memory sigs2, uint256[] memory scores2) =
+            _createCollateralSigs(500 ether, operator2, hash2, deadline2);
         vm.prank(operator2);
         vault.releaseCollateral(500 ether, operator2, hash2, deadline2, sigs2, scores2);
 

@@ -51,6 +51,55 @@ fn load_bytecode(contract_name: &str) -> Vec<u8> {
     hex::decode(bytecode_hex).expect("invalid bytecode hex")
 }
 
+fn compute_validation_digest(
+    intent_hash: FixedBytes<32>,
+    execution_hash: FixedBytes<32>,
+    vault: Address,
+    score: U256,
+    deadline: U256,
+    action_kind: U256,
+    chain_id: u64,
+    trade_validator: Address,
+) -> FixedBytes<32> {
+    let domain_typehash = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    );
+    let domain_separator = keccak256(
+        [
+            domain_typehash.as_slice(),
+            keccak256("TradeValidator".as_bytes()).as_slice(),
+            keccak256("1".as_bytes()).as_slice(),
+            &U256::from(chain_id).to_be_bytes::<32>(),
+            &FixedBytes::<32>::left_padding_from(trade_validator.as_slice()).0,
+        ]
+        .concat(),
+    );
+    let validation_typehash = keccak256(
+        "TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)",
+    );
+    let struct_hash = keccak256(
+        [
+            validation_typehash.as_slice(),
+            intent_hash.as_slice(),
+            execution_hash.as_slice(),
+            &FixedBytes::<32>::left_padding_from(vault.as_slice()).0,
+            &score.to_be_bytes::<32>(),
+            &deadline.to_be_bytes::<32>(),
+            &action_kind.to_be_bytes::<32>(),
+        ]
+        .concat(),
+    );
+
+    keccak256(
+        [
+            [0x19u8, 0x01].as_slice(),
+            domain_separator.as_slice(),
+            struct_hash.as_slice(),
+        ]
+        .concat(),
+    )
+}
+
 // ABI-only bindings for contracts we deploy via raw bytecode
 sol! {
     #[sol(rpc)]
@@ -131,9 +180,16 @@ sol! {
             uint256 deadline;
         }
 
+        struct ApprovalCall {
+            address token;
+            address spender;
+            uint256 amount;
+        }
+
         function deposit(uint256 assets, address receiver) external returns (uint256 shares);
         function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
         function execute(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function computeExecutionHash(ExecuteParams calldata params, ApprovalCall[] calldata approvals) external view returns (bytes32);
         function totalAssets() external view returns (uint256);
         function getBalance(address token) external view returns (uint256);
         function convertToAssets(uint256 shares) external view returns (uint256);
@@ -142,6 +198,7 @@ sol! {
 
         // CLOB collateral management
         function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function computeCollateralReleaseHash(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline) external view returns (bytes32);
         function returnCollateral(uint256 amount) external;
         function setMaxCollateralBps(uint256 bps) external;
         function totalOutstandingCollateral() external view returns (uint256);
@@ -717,27 +774,6 @@ async fn test_full_lifecycle_on_anvil() {
 
     let scores = vec![U256::from(85u64), U256::from(75u64)];
 
-    // Compute EIP-712 digest using on-chain computeDigest
-    let tv = TradeValidator::new(trade_validator_addr, &deployer_provider);
-    let digest1: FixedBytes<32> = tv
-        .computeDigest(intent_hash, vault_addr, scores[0], deadline, U256::ZERO)
-        .call()
-        .await
-        .unwrap();
-    let digest2: FixedBytes<32> = tv
-        .computeDigest(intent_hash, vault_addr, scores[1], deadline, U256::ZERO)
-        .call()
-        .await
-        .unwrap();
-
-    // Sign digests with validator private keys
-    use alloy::signers::SignerSync;
-    let sig1 = validator1_key.sign_hash_sync(&digest1).unwrap();
-    let sig2 = validator2_key.sign_hash_sync(&digest2).unwrap();
-
-    let sig1_bytes = Bytes::from(sig1.as_bytes().to_vec());
-    let sig2_bytes = Bytes::from(sig2.as_bytes().to_vec());
-
     // Build swap calldata: MockTarget.swap(vault_addr, expectedOutput)
     let swap_call = MockTarget::swapCall {
         to: vault_addr,
@@ -754,6 +790,42 @@ async fn test_full_lifecycle_on_anvil() {
         intentHash: intent_hash,
         deadline,
     };
+
+    let vault_read = TradingVault::new(vault_addr, &deployer_provider);
+    let execution_hash: FixedBytes<32> = vault_read
+        .computeExecutionHash(params.clone(), vec![])
+        .call()
+        .await
+        .unwrap();
+    let chain_id = deployer_provider.get_chain_id().await.unwrap();
+    let digest1 = compute_validation_digest(
+        intent_hash,
+        execution_hash,
+        vault_addr,
+        scores[0],
+        deadline,
+        U256::ZERO,
+        chain_id,
+        trade_validator_addr,
+    );
+    let digest2 = compute_validation_digest(
+        intent_hash,
+        execution_hash,
+        vault_addr,
+        scores[1],
+        deadline,
+        U256::ZERO,
+        chain_id,
+        trade_validator_addr,
+    );
+
+    // Sign digests with validator private keys
+    use alloy::signers::SignerSync;
+    let sig1 = validator1_key.sign_hash_sync(&digest1).unwrap();
+    let sig2 = validator2_key.sign_hash_sync(&digest2).unwrap();
+
+    let sig1_bytes = Bytes::from(sig1.as_bytes().to_vec());
+    let sig2_bytes = Bytes::from(sig2.as_bytes().to_vec());
 
     // Execute as operator
     let operator_wallet = EthereumWallet::from(operator_key.clone());
@@ -2254,29 +2326,37 @@ async fn test_collateral_roundtrip_on_anvil() {
     let deadline = U256::from(block_info.header.timestamp + 3600);
 
     let scores = vec![U256::from(80u64), U256::from(75u64)];
-    let tv = TradeValidator::new(setup.trade_validator_addr, &setup.deployer_provider);
-    let digest1: FixedBytes<32> = tv
-        .computeDigest(
+    let execution_hash: FixedBytes<32> = vault_read
+        .computeCollateralReleaseHash(
+            release_amount,
+            setup.operator_key.address(),
             intent_hash,
-            setup.vault_addr,
-            scores[0],
             deadline,
-            U256::from(1u64),
         )
         .call()
         .await
         .unwrap();
-    let digest2: FixedBytes<32> = tv
-        .computeDigest(
-            intent_hash,
-            setup.vault_addr,
-            scores[1],
-            deadline,
-            U256::from(1u64),
-        )
-        .call()
-        .await
-        .unwrap();
+    let chain_id = setup.deployer_provider.get_chain_id().await.unwrap();
+    let digest1 = compute_validation_digest(
+        intent_hash,
+        execution_hash,
+        setup.vault_addr,
+        scores[0],
+        deadline,
+        U256::from(1u64),
+        chain_id,
+        setup.trade_validator_addr,
+    );
+    let digest2 = compute_validation_digest(
+        intent_hash,
+        execution_hash,
+        setup.vault_addr,
+        scores[1],
+        deadline,
+        U256::from(1u64),
+        chain_id,
+        setup.trade_validator_addr,
+    );
 
     use alloy::signers::SignerSync;
     let sig1 = setup.validator1_key.sign_hash_sync(&digest1).unwrap();

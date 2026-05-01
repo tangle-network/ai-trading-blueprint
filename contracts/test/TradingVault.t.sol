@@ -71,19 +71,35 @@ contract TradingVaultTest is Setup {
         });
     }
 
-    /// @dev Create validator signatures for a trade
-    function _createValidatorSigs(bytes32 intentHash, uint256 deadline)
+    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
+        approvals = new TradingVault.ApprovalCall[](0);
+    }
+
+    /// @dev Create validator signatures for an exact trade payload
+    function _createValidatorSigs(TradingVault.ExecuteParams memory params, uint256 deadline)
         internal
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
+    {
+        return _createValidatorSigs(params, _emptyApprovals(), deadline);
+    }
+
+    function _createValidatorSigs(
+        TradingVault.ExecuteParams memory params,
+        TradingVault.ApprovalCall[] memory approvals,
+        uint256 deadline
+    ) internal view returns (bytes[] memory signatures, uint256[] memory scores)
     {
         signatures = new bytes[](2);
         scores = new uint256[](2);
 
         scores[0] = 80;
         scores[1] = 75;
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, approvals);
+        signatures[0] =
+            _signValidation(validator1Key, params.intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] =
+            _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
     function _buildApprovalCalls(address token, address spender, uint256 amount)
@@ -206,7 +222,7 @@ contract TradingVaultTest is Setup {
 
         TradingVault.ExecuteParams memory params =
             _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vault.execute(params, sigs, scores);
@@ -228,7 +244,7 @@ contract TradingVaultTest is Setup {
             _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
         TradingVault.ApprovalCall[] memory approvals =
             _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, approvals, deadline);
 
         vm.prank(operator);
         vault.executeWithApprovals(params, approvals, sigs, scores);
@@ -246,7 +262,7 @@ contract TradingVaultTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
@@ -263,7 +279,7 @@ contract TradingVaultTest is Setup {
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         TradingVault.ApprovalCall[] memory approvals =
             _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, approvals, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
@@ -286,7 +302,14 @@ contract TradingVaultTest is Setup {
         bytes[] memory sigs = new bytes[](1);
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+        sigs[0] = _signValidation(
+            validator1Key,
+            intentHash,
+            vault.computeExecutionHash(params, _emptyApprovals()),
+            address(vault),
+            scores[0],
+            deadline
+        );
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
@@ -308,7 +331,14 @@ contract TradingVaultTest is Setup {
         bytes[] memory sigs = new bytes[](1);
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+        sigs[0] = _signValidation(
+            validator1Key,
+            intentHash,
+            vault.computeExecutionHash(params, approvals),
+            address(vault),
+            scores[0],
+            deadline
+        );
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
@@ -328,7 +358,7 @@ contract TradingVaultTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(actualOutput, minOutput, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput));
@@ -348,7 +378,7 @@ contract TradingVaultTest is Setup {
         TradingVault.ExecuteParams memory params = _buildExecuteParams(actualOutput, minOutput, intentHash, deadline);
         TradingVault.ApprovalCall[] memory approvals =
             _buildApprovalCalls(address(tokenA), address(mockTarget), 123 ether);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, approvals, deadline);
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.MinOutputNotMet.selector, actualOutput, minOutput));
@@ -400,7 +430,7 @@ contract TradingVaultTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         // Non-operator (user) tries to execute
         bytes32 operatorRole = vault.OPERATOR_ROLE();
@@ -452,7 +482,7 @@ contract TradingVaultTest is Setup {
 
         TradingVault.ExecuteParams memory params =
             _buildExecuteParams(expectedOutput, expectedOutput, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         // First execution succeeds
         vm.prank(operator);
@@ -476,7 +506,7 @@ contract TradingVaultTest is Setup {
         // Trade 1
         bytes32 hash1 = keccak256("trade 1");
         TradingVault.ExecuteParams memory params1 = _buildExecuteParams(expectedOutput, expectedOutput, hash1, deadline);
-        (bytes[] memory sigs1, uint256[] memory scores1) = _createValidatorSigs(hash1, deadline);
+        (bytes[] memory sigs1, uint256[] memory scores1) = _createValidatorSigs(params1, deadline);
 
         vm.prank(operator);
         vault.execute(params1, sigs1, scores1);
@@ -484,7 +514,7 @@ contract TradingVaultTest is Setup {
         // Trade 2 with different hash — should succeed
         bytes32 hash2 = keccak256("trade 2");
         TradingVault.ExecuteParams memory params2 = _buildExecuteParams(expectedOutput, expectedOutput, hash2, deadline);
-        (bytes[] memory sigs2, uint256[] memory scores2) = _createValidatorSigs(hash2, deadline);
+        (bytes[] memory sigs2, uint256[] memory scores2) = _createValidatorSigs(params2, deadline);
 
         vm.prank(operator);
         vault.execute(params2, sigs2, scores2);
@@ -782,7 +812,7 @@ contract TradingVaultTest is Setup {
         bytes32 intentHash = keccak256("paused trade");
         uint256 deadline = block.timestamp + 1 hours;
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(Pausable.EnforcedPause.selector);
@@ -825,7 +855,7 @@ contract TradingVaultTest is Setup {
             deadline: deadline
         });
 
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         uint256 vaultETHBefore = address(vault).balance;
 
@@ -849,7 +879,7 @@ contract TradingVaultTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(outputAmount, outputAmount, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectEmit(true, false, false, true);

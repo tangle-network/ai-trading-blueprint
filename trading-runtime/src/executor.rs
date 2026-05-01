@@ -4,7 +4,7 @@
 //! Includes pre-submission transaction simulation to detect malicious payloads
 //! before they hit the chain.
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, B256, U256};
 use alloy::providers::Provider;
 
 use crate::adapters::{
@@ -15,6 +15,7 @@ use crate::adapters::{
 };
 use crate::chain::ChainClient;
 use crate::error::TradingError;
+use crate::execution_hash::{format_b256, hash_execution_payload};
 use crate::simulator::{
     SimulationRequest, TransactionSimulator,
     risk_analyzer::{TradeContext, analyze_simulation},
@@ -184,8 +185,24 @@ impl TradeExecutor {
         // 5. Parse intent_hash → [u8; 32]
         let intent_hash = parse_intent_hash(&validation.intent_hash)?;
 
+        let intent_hash_b256 = B256::from(intent_hash);
+
         // 6. Compute deadline as U256
         let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
+
+        let expected_execution_hash = hash_execution_payload(
+            &encoded,
+            intent_hash_b256,
+            deadline,
+            self.vault_client.chain_id,
+        );
+        let expected_execution_hash_hex = format_b256(expected_execution_hash);
+        if validation.execution_hash != expected_execution_hash_hex {
+            return Err(TradingError::ValidatorError(format!(
+                "execution_hash mismatch: validation {}, expected {}",
+                validation.execution_hash, expected_execution_hash_hex
+            )));
+        }
 
         // 7. Encode the final vault transaction, with approvals folded into the
         // same on-chain call when the adapter requires them.
@@ -603,6 +620,7 @@ mod tests {
                 },
             ],
             intent_hash: format!("0x{}", "cc".repeat(32)),
+            execution_hash: format!("0x{}", "dd".repeat(32)),
         };
 
         let (sigs, scores) = collect_validator_data(&validation).unwrap();

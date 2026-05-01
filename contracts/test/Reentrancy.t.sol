@@ -160,7 +160,11 @@ contract ReentrancyTest is Setup {
     }
 
     /// @dev Create 2-of-3 validator signatures.
-    function _createSigs(bytes32 intentHash, uint256 deadline)
+    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
+        approvals = new TradingVault.ApprovalCall[](0);
+    }
+
+    function _createSigs(TradingVault.ExecuteParams memory params, uint256 deadline)
         internal
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
@@ -170,8 +174,11 @@ contract ReentrancyTest is Setup {
 
         scores[0] = 80;
         scores[1] = 75;
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        signatures[0] =
+            _signValidation(validator1Key, params.intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] =
+            _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -189,7 +196,7 @@ contract ReentrancyTest is Setup {
         bytes32 innerIntentHash = keccak256("inner reentrant trade");
         TradingVault.ExecuteParams memory innerParams =
             _buildParams(address(malicious), 100 ether, innerIntentHash, deadline);
-        (bytes[] memory innerSigs, uint256[] memory innerScores) = _createSigs(innerIntentHash, deadline);
+        (bytes[] memory innerSigs, uint256[] memory innerScores) = _createSigs(innerParams, deadline);
 
         // Store inner payload in the malicious contract
         malicious.setReentrantPayload(innerParams, innerSigs, innerScores);
@@ -198,7 +205,7 @@ contract ReentrancyTest is Setup {
         bytes32 outerIntentHash = keccak256("outer trade");
         TradingVault.ExecuteParams memory outerParams =
             _buildParams(address(malicious), 100 ether, outerIntentHash, deadline);
-        (bytes[] memory outerSigs, uint256[] memory outerScores) = _createSigs(outerIntentHash, deadline);
+        (bytes[] memory outerSigs, uint256[] memory outerScores) = _createSigs(outerParams, deadline);
 
         // Record balances before
         uint256 vaultTokenABefore = tokenA.balanceOf(address(vault));
@@ -235,7 +242,7 @@ contract ReentrancyTest is Setup {
         bytes32 intentHash = keccak256("deposit reentrant trade");
 
         TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createSigs(params, deadline);
 
         // Record balances before
         uint256 vaultTokenABefore = tokenA.balanceOf(address(vault));
@@ -271,7 +278,7 @@ contract ReentrancyTest is Setup {
         bytes32 intentHash = keccak256("withdraw reentrant trade");
 
         TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createSigs(params, deadline);
 
         // Record balances before
         uint256 vaultTokenABefore = tokenA.balanceOf(address(vault));
@@ -330,7 +337,7 @@ contract ReentrancyTest is Setup {
         bytes32 maliciousHash = keccak256("malicious trade");
         TradingVault.ExecuteParams memory maliciousParams =
             _buildParams(address(malicious), 100 ether, maliciousHash, deadline);
-        (bytes[] memory mSigs, uint256[] memory mScores) = _createSigs(maliciousHash, deadline);
+        (bytes[] memory mSigs, uint256[] memory mScores) = _createSigs(maliciousParams, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
@@ -341,7 +348,7 @@ contract ReentrancyTest is Setup {
         bytes32 legitHash = keccak256("legit trade");
         TradingVault.ExecuteParams memory legitParams =
             _buildParams(address(legitimateTarget), outputAmount, legitHash, deadline);
-        (bytes[] memory lSigs, uint256[] memory lScores) = _createSigs(legitHash, deadline);
+        (bytes[] memory lSigs, uint256[] memory lScores) = _createSigs(legitParams, deadline);
 
         vm.prank(operator);
         vault.execute(legitParams, lSigs, lScores);

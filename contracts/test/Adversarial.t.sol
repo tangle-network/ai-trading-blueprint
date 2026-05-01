@@ -38,6 +38,20 @@ contract AdversarialTest is Setup {
         vm.stopPrank();
     }
 
+    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
+        approvals = new TradingVault.ApprovalCall[](0);
+    }
+
+    function _signExecuteParams(TradingVault.ExecuteParams memory params, uint256 score)
+        internal
+        view
+        returns (bytes memory sig1, bytes memory sig2)
+    {
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sig1 = _signValidation(validator1Key, params.intentHash, executionHash, address(vault), score, params.deadline);
+        sig2 = _signValidation(validator2Key, params.intentHash, executionHash, address(vault), score, params.deadline);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // C-1: approveSpender() bypasses validator signatures
     // ═══════════════════════════════════════════════════════════════════════════
@@ -73,12 +87,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = sig1;
-        sigs[1] = sig2;
 
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
@@ -94,6 +104,9 @@ contract AdversarialTest is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
+        (bytes memory sig1, bytes memory sig2) = _signExecuteParams(params, 80);
+        sigs[0] = sig1;
+        sigs[1] = sig2;
 
         vm.prank(operator);
         vault.execute(params, sigs, scores);
@@ -115,21 +128,22 @@ contract AdversarialTest is Setup {
     // H-3: intentHash not bound to trade parameters on-chain
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice H-3: Operator gets validators to sign for trade A,
-    ///         then submits different trade parameters (target2, data2). The intentHash
-    ///         is the same but the on-chain target differs. This test documents that
-    ///         the current typehash does NOT bind target+calldata — the intentHash is
-    ///         the off-chain binding. The execute still succeeds because signatures
-    ///         validate against (intentHash, vault, score, deadline) only.
-    ///         TODO: C-8 will add actionKind discriminator; full target binding is a
-    ///         future protocol version.
+    /// @notice H-3 fixed: signatures for one exact target/calldata cannot be replayed
+    ///         with different whitelisted execution parameters.
     function test_ATTACK_intentHashTradeSubstitution() public {
         bytes32 intentHash = keccak256("legitimate-looking-trade");
         uint256 deadline = block.timestamp + 300;
 
-        // Validators sign the intentHash (current typehash doesn't bind target/calldata)
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 90, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 90, deadline);
+        TradingVault.ExecuteParams memory signedParams = TradingVault.ExecuteParams({
+            target: address(target),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether),
+            value: 0,
+            minOutput: 1 ether,
+            outputToken: address(tokenB),
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        (bytes memory sig1, bytes memory sig2) = _signExecuteParams(signedParams, 90);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -138,8 +152,7 @@ contract AdversarialTest is Setup {
         scores[0] = 90;
         scores[1] = 90;
 
-        // Operator submits using a different target than what validators "intended"
-        // but since target isn't in the typehash, the signatures are still valid.
+        // Operator submits using a different target than what validators signed.
         MockTarget target2 = new MockTarget(tokenB);
 
         // Whitelist the second target
@@ -159,8 +172,8 @@ contract AdversarialTest is Setup {
             deadline: deadline
         });
 
-        // Current contract: signatures validate (intentHash matches, target not bound)
         vm.prank(operator);
+        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -255,12 +268,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = sig1;
-        sigs[1] = sig2;
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 80;
@@ -274,6 +283,9 @@ contract AdversarialTest is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
+        (bytes memory sig1, bytes memory sig2) = _signExecuteParams(params, 80);
+        sigs[0] = sig1;
+        sigs[1] = sig2;
 
         // First execution succeeds
         vm.prank(operator);
@@ -294,12 +306,7 @@ contract AdversarialTest is Setup {
         bytes32 intentHash = keccak256("expired-deadline");
         uint256 deadline = block.timestamp + 1; // 1 second from now
 
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
-
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = sig1;
-        sigs[1] = sig2;
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 80;
@@ -316,6 +323,9 @@ contract AdversarialTest is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
+        (bytes memory sig1, bytes memory sig2) = _signExecuteParams(params, 80);
+        sigs[0] = sig1;
+        sigs[1] = sig2;
 
         vm.prank(operator);
         vm.expectRevert(TradeValidator.DeadlineExpired.selector);
@@ -363,8 +373,9 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         // actionKind=1 (release collateral) so signatures bind to this code path
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, 1);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline, 1);
+        bytes32 executionHash = vault.computeCollateralReleaseHash(1000 ether, operator, intentHash, deadline);
+        bytes memory sig1 = _signValidation(validator1Key, intentHash, executionHash, address(vault), 80, deadline, 1);
+        bytes memory sig2 = _signValidation(validator2Key, intentHash, executionHash, address(vault), 80, deadline, 1);
 
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = sig1;
@@ -400,12 +411,8 @@ contract AdversarialTest is Setup {
         uint256 deadline = block.timestamp + 300;
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether);
-        bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline);
-        bytes memory sig2 = _signValidation(validator2Key, intentHash, address(vault), 80, deadline);
 
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = sig1;
-        sigs[1] = sig2;
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 80;
@@ -419,6 +426,9 @@ contract AdversarialTest is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
+        (bytes memory sig1, bytes memory sig2) = _signExecuteParams(params, 80);
+        sigs[0] = sig1;
+        sigs[1] = sig2;
 
         // Random user tries to execute — should fail
         vm.prank(user);
