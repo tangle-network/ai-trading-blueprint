@@ -1,3 +1,4 @@
+pub mod aave_v3_registry;
 pub mod adapters;
 pub mod backtest;
 pub mod calldata_decoder;
@@ -15,6 +16,7 @@ pub mod market_data;
 pub mod polymarket_clob;
 pub mod portfolio;
 pub mod signature_verify;
+pub mod signed_envelope;
 pub mod simulator;
 pub mod strategy;
 pub mod token_metadata;
