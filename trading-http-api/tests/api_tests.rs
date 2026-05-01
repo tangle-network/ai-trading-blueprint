@@ -16,6 +16,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
+use trading_runtime::execution_hash::{format_b256, hash_clob_order};
 
 /// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
 const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -251,8 +252,31 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
         chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).expect("deadline");
 
     let intent_hash = hash_intent(&intent);
+    let execution_hash = if protocol == "polymarket_clob" && execution_chain_id.is_some() {
+        match trading_runtime::polymarket_clob::extract_clob_params(
+            intent_json["action"].as_str().expect("action"),
+            intent_json["amount_in"].as_str().expect("amount_in"),
+            intent_json
+                .get("metadata")
+                .unwrap_or(&serde_json::Value::Null),
+        ) {
+            Ok(params) => {
+                let intent_hash_bytes = hex::decode(intent_hash.trim_start_matches("0x")).unwrap();
+                let intent_hash_b256 = alloy::primitives::B256::from_slice(&intent_hash_bytes);
+                format_b256(hash_clob_order(
+                    &params,
+                    intent_hash_b256,
+                    alloy::primitives::U256::from(deadline),
+                    execution_chain_id.unwrap_or(intent_chain_id),
+                ))
+            }
+            Err(_) => test_zero_hash(),
+        }
+    } else {
+        test_zero_hash()
+    };
     validation.insert("intent_hash".into(), serde_json::json!(intent_hash));
-    validation.insert("execution_hash".into(), serde_json::json!(test_zero_hash()));
+    validation.insert("execution_hash".into(), serde_json::json!(execution_hash));
 }
 
 fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
@@ -3411,6 +3435,17 @@ async fn test_multi_bot_clob_execute() {
             "takingAmount": "65",
             "transactionHashes": [],
             "tradeIds": []
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/data/orders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [],
+            "next_cursor": "LTE=",
+            "limit": 50,
+            "count": 0
         })))
         .mount(&clob_mock)
         .await;

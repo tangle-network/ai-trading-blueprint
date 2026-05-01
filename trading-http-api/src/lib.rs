@@ -1,6 +1,7 @@
 pub mod amounts;
 pub mod auth;
 pub mod candle_store;
+pub mod live_portfolio;
 pub mod metrics_store;
 pub mod routes;
 pub mod session_auth;

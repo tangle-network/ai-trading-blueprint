@@ -62,6 +62,10 @@ impl MarketDataClient {
         }
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Fetch price for a single token
     pub async fn get_price(&self, token: &str) -> Result<PriceData, TradingError> {
         self.get_price_for_chain(None, token).await

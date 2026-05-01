@@ -214,6 +214,20 @@ contract PolicyEngineTest is Setup {
         assertFalse(valid);
     }
 
+    function test_positionLimitIncludesCurrentVaultExposure() public {
+        _initVault(testVault);
+        _setupWhitelists(testVault);
+
+        tokenA.mint(testVault, 75 ether);
+        pe.setPositionLimit(testVault, testToken, 100 ether);
+
+        bool valid = pe.validateTrade(testVault, testToken, 20 ether, testTarget, 0);
+        assertTrue(valid);
+
+        valid = pe.validateTrade(testVault, testToken, 30 ether, testTarget, 0);
+        assertFalse(valid);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // LEVERAGE CAP TESTS
     // ═══════════════════════════════════════════════════════════════════════════
