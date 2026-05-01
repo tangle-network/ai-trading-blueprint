@@ -8,8 +8,8 @@ use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use trading_runtime::adapters::ActionParams;
 use trading_runtime::aave_v3_registry::market_for_chain;
+use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
@@ -199,8 +199,8 @@ async fn require_current_aave_health(
                 "Aave borrow/withdraw requires min_aave_health_factor_wad metadata".to_string(),
             )
         })?;
-    let min_health_factor =
-        alloy::primitives::U256::from_str_radix(min_health_factor_raw, 10).map_err(|e| {
+    let min_health_factor = alloy::primitives::U256::from_str_radix(min_health_factor_raw, 10)
+        .map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
                 format!("Invalid min_aave_health_factor_wad: {e}"),
@@ -232,14 +232,12 @@ async fn require_current_aave_health(
     })?);
     let result = provider
         .call(
-            TransactionRequest::default()
-                .to(pool)
-                .input(
-                    alloy::primitives::Bytes::from(
-                        IAavePoolHealth::getUserAccountDataCall { user: account }.abi_encode(),
-                    )
-                    .into(),
-                ),
+            TransactionRequest::default().to(pool).input(
+                alloy::primitives::Bytes::from(
+                    IAavePoolHealth::getUserAccountDataCall { user: account }.abi_encode(),
+                )
+                .into(),
+            ),
         )
         .await
         .map_err(|e| {
@@ -796,6 +794,16 @@ async fn build_execution_context(
 
     let simulation_result = match rpc_url {
         Some(rpc) => {
+            let mut simulation_tokens = vec![token_in_addr, token_out_addr, encoded.output_token];
+            for approval in &encoded.approvals {
+                simulation_tokens.push(approval.token);
+            }
+            if let Some(debt_reduction) = &encoded.debt_reduction {
+                simulation_tokens.push(debt_reduction.input_token);
+                simulation_tokens.push(debt_reduction.debt_token);
+            }
+            simulation_tokens.sort();
+            simulation_tokens.dedup();
             run_simulation(
                 rpc,
                 chain_id.unwrap_or(1),
@@ -803,9 +811,10 @@ async fn build_execution_context(
                 &encoded.calldata,
                 encoded.target,
                 token_in_addr,
-                token_out_addr,
+                encoded.output_token,
                 amount,
-                min_out,
+                encoded.min_output,
+                simulation_tokens,
                 &known_addresses,
             )
             .await
@@ -863,6 +872,7 @@ async fn run_simulation(
     token_out: alloy::primitives::Address,
     amount_in: alloy::primitives::U256,
     min_output: alloy::primitives::U256,
+    token_addresses: Vec<alloy::primitives::Address>,
     known_protocol_addresses: &[alloy::primitives::Address],
 ) -> Option<SimulationSummary> {
     use trading_runtime::simulator::{
@@ -880,7 +890,7 @@ async fn run_simulation(
         data: calldata.clone(),
         value: alloy::primitives::U256::ZERO,
         block_number: None,
-        token_addresses: vec![token_in, token_out],
+        token_addresses,
         balance_check_account: Some(vault_address),
     };
 

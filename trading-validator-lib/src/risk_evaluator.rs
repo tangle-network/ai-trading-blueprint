@@ -455,6 +455,9 @@ mod tests {
             max_input: String::new(),
             debt_token: String::new(),
             min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
             approvals: Vec::new(),
             chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
