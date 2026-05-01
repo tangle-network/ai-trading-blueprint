@@ -100,6 +100,7 @@ impl ProtocolAdapter for MorphoVaultAdapter {
                     output_token: morpho_vault,
                     approvals: vec![approval(params.token_in, morpho_vault, params.amount)],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             Action::Withdraw => {
@@ -112,6 +113,7 @@ impl ProtocolAdapter for MorphoVaultAdapter {
                     output_token: params.token_out,
                     approvals: vec![],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

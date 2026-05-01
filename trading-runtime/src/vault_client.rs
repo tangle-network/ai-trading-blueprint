@@ -309,6 +309,70 @@ impl VaultClient {
         })
     }
 
+    /// Encode a health-factor-checked execution call with atomic vault approvals.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_execute_health_factor_with_approvals(
+        &self,
+        target: &str,
+        calldata: &[u8],
+        value: &str,
+        min_output: &str,
+        output_token: &str,
+        pool: &str,
+        account: &str,
+        min_health_factor: &str,
+        intent_hash: [u8; 32],
+        approvals: &[Approval],
+        signatures: Vec<Vec<u8>>,
+        scores: Vec<U256>,
+        deadline: U256,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let target_addr = Self::parse_address(target)?;
+        let tx_value = Self::parse_u256(value)?;
+        let min_output_amount = Self::parse_u256(min_output)?;
+        let output_token_addr = Self::parse_address(output_token)?;
+        let pool_addr = Self::parse_address(pool)?;
+        let account_addr = Self::parse_address(account)?;
+        let min_health_factor_amount = Self::parse_u256(min_health_factor)?;
+        let sig_bytes: Vec<Bytes> = signatures.into_iter().map(Bytes::from).collect();
+        let encoded_approvals = approvals
+            .iter()
+            .map(|approval| {
+                Ok(ITradingVault::ApprovalCall {
+                    token: Self::parse_address(&approval.token)?,
+                    spender: Self::parse_address(&approval.spender)?,
+                    amount: Self::parse_u256(&approval.amount)?,
+                })
+            })
+            .collect::<Result<Vec<_>, TradingError>>()?;
+
+        let params = ITradingVault::HealthFactorParams {
+            target: target_addr,
+            data: Bytes::from(calldata.to_vec()),
+            value: tx_value,
+            minOutput: min_output_amount,
+            outputToken: output_token_addr,
+            pool: pool_addr,
+            account: account_addr,
+            minHealthFactor: min_health_factor_amount,
+            intentHash: FixedBytes::from(intent_hash),
+            deadline,
+        };
+
+        let call = ITradingVault::executeHealthFactorWithApprovalsCall {
+            params,
+            approvals: encoded_approvals,
+            signatures: sig_bytes,
+            scores,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: value.into(),
+        })
+    }
+
     /// Encode an emergency withdraw call: `emergencyWithdraw(address token, address to)`
     pub fn encode_emergency_withdraw(
         &self,

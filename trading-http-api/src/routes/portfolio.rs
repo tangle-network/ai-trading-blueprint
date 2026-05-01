@@ -989,6 +989,7 @@ mod tests {
             chain_id: 31337,
             rpc_url: "http://localhost:8545".to_string(),
             strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };
@@ -1005,6 +1006,7 @@ mod tests {
             chain_id: 31337,
             rpc_url: "http://localhost:8545".to_string(),
             strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };
@@ -1015,6 +1017,7 @@ mod tests {
             chain_id: 31337,
             rpc_url: "http://localhost:8545".to_string(),
             strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };
@@ -1037,6 +1040,7 @@ mod tests {
                 "initial_capital_usd": "10000",
                 "asset_token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
             }),
+            risk_params: serde_json::json!({}),
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };

@@ -146,6 +146,25 @@ contract TradingVaultTest is Setup {
             _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
+    function _createHealthFactorSigs(TradingVault.HealthFactorParams memory params, uint256 deadline)
+        internal
+        view
+        returns (bytes[] memory signatures, uint256[] memory scores)
+    {
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+
+        signatures = new bytes[](2);
+        scores = new uint256[](2);
+
+        scores[0] = 80;
+        scores[1] = 75;
+        bytes32 executionHash = vault.computeHealthFactorHash(params, approvals);
+        signatures[0] =
+            _signValidation(validator1Key, params.intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] =
+            _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // DEPOSIT TESTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -542,6 +561,86 @@ contract TradingVaultTest is Setup {
         params.minDebtDecrease = 499 ether;
 
         assertTrue(baseHash != vault.computeDebtReductionHash(params, approvals));
+    }
+
+    function test_executeHealthFactorWithApprovals() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        bytes32 intentHash = keccak256("health factor execution");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(tokenB.balanceOf(address(vault)), 500 ether);
+    }
+
+    function test_executeHealthFactorRevertsWhenHealthTooLow() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(1.2 ether);
+        bytes32 intentHash = keccak256("low health factor");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.HealthFactorTooLow.selector, 1.2 ether, 1.5 ether));
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+    }
+
+    function test_healthFactorHashChangesWhenThresholdChanges() public {
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: keccak256("hash health factor"),
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+
+        bytes32 baseHash = vault.computeHealthFactorHash(params, approvals);
+        params.minHealthFactor = 1.4 ether;
+
+        assertTrue(baseHash != vault.computeHealthFactorHash(params, approvals));
     }
 
     function test_emergencyWithdraw() public {
@@ -1117,5 +1216,32 @@ contract MockDebtRepayTarget {
         if (debtDecrease > 0) {
             debtToken.burn(vault, debtDecrease);
         }
+    }
+}
+
+contract MockAavePoolHealth {
+    uint256 public healthFactor;
+
+    constructor(uint256 _healthFactor) {
+        healthFactor = _healthFactor;
+    }
+
+    function setHealthFactor(uint256 _healthFactor) external {
+        healthFactor = _healthFactor;
+    }
+
+    function getUserAccountData(address)
+        external
+        view
+        returns (
+            uint256 totalCollateralBase,
+            uint256 totalDebtBase,
+            uint256 availableBorrowsBase,
+            uint256 currentLiquidationThreshold,
+            uint256 ltv,
+            uint256 returnedHealthFactor
+        )
+    {
+        return (0, 0, 0, 0, 0, healthFactor);
     }
 }

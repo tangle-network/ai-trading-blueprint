@@ -7,6 +7,7 @@ use crate::polymarket_clob::{ClobOrderParams, Side};
 
 const EXECUTION_PAYLOAD_TYPE: &str = "ExecutionPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)";
 const DEBT_REDUCTION_PAYLOAD_TYPE: &str = "DebtReductionPayload(address target,bytes32 dataHash,uint256 value,address inputToken,uint256 maxInput,address debtToken,uint256 minDebtDecrease,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)";
+const HEALTH_FACTOR_PAYLOAD_TYPE: &str = "HealthFactorPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,address pool,address account,uint256 minHealthFactor,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)";
 const APPROVAL_CALL_TYPE: &str = "ApprovalCall(address token,address spender,uint256 amount)";
 const COLLATERAL_RELEASE_TYPE: &str = "CollateralRelease(uint256 amount,address recipient,bytes32 intentHash,uint256 deadline,uint256 chainId)";
 const CLOB_ORDER_TYPE: &str = "ClobOrder(bytes32 tokenIdHash,bytes32 sideHash,bytes32 priceHash,bytes32 sizeHash,bytes32 orderTypeHash,uint256 expiration,bytes32 intentHash,uint256 deadline,uint256 chainId)";
@@ -23,6 +24,10 @@ pub fn execution_payload_typehash() -> B256 {
 
 pub fn debt_reduction_payload_typehash() -> B256 {
     keccak256(DEBT_REDUCTION_PAYLOAD_TYPE.as_bytes())
+}
+
+pub fn health_factor_payload_typehash() -> B256 {
+    keccak256(HEALTH_FACTOR_PAYLOAD_TYPE.as_bytes())
 }
 
 pub fn approval_call_typehash() -> B256 {
@@ -77,6 +82,22 @@ pub fn hash_execution_payload(
             approvals_hash,
         );
     }
+    if let Some(health_factor) = &encoded.health_factor {
+        return hash_health_factor_payload_parts(
+            encoded.target,
+            &encoded.calldata,
+            encoded.value,
+            encoded.min_output,
+            encoded.output_token,
+            health_factor.pool,
+            health_factor.account,
+            health_factor.min_health_factor,
+            intent_hash,
+            deadline,
+            chain_id,
+            approvals_hash,
+        );
+    }
 
     hash_execution_payload_parts(
         encoded.target,
@@ -89,6 +110,38 @@ pub fn hash_execution_payload(
         chain_id,
         approvals_hash,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn hash_health_factor_payload_parts(
+    target: Address,
+    calldata: &Bytes,
+    value: U256,
+    min_output: U256,
+    output_token: Address,
+    pool: Address,
+    account: Address,
+    min_health_factor: U256,
+    intent_hash: B256,
+    deadline: U256,
+    chain_id: u64,
+    approvals_hash: B256,
+) -> B256 {
+    keccak256(SolValue::abi_encode(&(
+        health_factor_payload_typehash(),
+        target,
+        keccak256(calldata),
+        value,
+        min_output,
+        output_token,
+        pool,
+        account,
+        min_health_factor,
+        intent_hash,
+        deadline,
+        U256::from(chain_id),
+        approvals_hash,
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -317,6 +370,7 @@ mod tests {
             output_token: Address::from([2u8; 20]),
             approvals: vec![],
             debt_reduction: None,
+            health_factor: None,
         };
         let mut changed = base.clone();
         changed.calldata = Bytes::from(vec![1, 2, 4]);
@@ -342,10 +396,38 @@ mod tests {
                 debt_token: Address::from([4u8; 20]),
                 min_debt_decrease: U256::from(9),
             }),
+            health_factor: None,
         };
         let original = hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337);
 
         base.debt_reduction.as_mut().unwrap().min_debt_decrease = U256::from(8);
+
+        assert_ne!(
+            original,
+            hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337)
+        );
+    }
+
+    #[test]
+    fn execution_hash_changes_for_health_factor_postcondition() {
+        let mut base = EncodedAction {
+            target: Address::from([1u8; 20]),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::from(10),
+            output_token: Address::from([2u8; 20]),
+            approvals: vec![],
+            debt_reduction: None,
+            health_factor: Some(crate::adapters::HealthFactorPostcondition {
+                pool: Address::from([3u8; 20]),
+                account: Address::from([4u8; 20]),
+                min_health_factor: U256::from(1_500_000_000_000_000_000u128),
+            }),
+        };
+        let original = hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337);
+
+        base.health_factor.as_mut().unwrap().min_health_factor =
+            U256::from(1_400_000_000_000_000_000u128);
 
         assert_ne!(
             original,

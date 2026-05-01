@@ -28,6 +28,12 @@ pub struct ExecutionContext {
     #[serde(default)]
     pub min_debt_decrease: String,
     #[serde(default)]
+    pub health_pool: String,
+    #[serde(default)]
+    pub health_account: String,
+    #[serde(default)]
+    pub min_health_factor: String,
+    #[serde(default)]
     pub approvals: Vec<ExecutionApproval>,
     #[serde(default)]
     pub simulation_result: Option<SimulationSummary>,

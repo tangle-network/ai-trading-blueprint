@@ -71,7 +71,7 @@ Key metrics to monitor:
 - Supply APY (variable rate)
 - Borrow APY (variable + stable rates)
 - Utilization rate (high utilization = higher rates but more risk)
-- Health factor (MUST stay above 1.5 for safety, liquidation at 1.0)
+- Health factor (MUST stay above configured risk_params.min_aave_health_factor; default 1.5, liquidation at 1.0)
 
 ### DeFiLlama Yields API
 

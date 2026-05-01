@@ -375,6 +375,7 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     chain_id: bot.chain_id,
                     rpc_url: bot.rpc_url,
                     strategy_config: bot.strategy_config,
+                    risk_params: bot.risk_params,
                     validator_endpoints: validator_eps.clone(),
                     validation_trust: bot.validation_trust,
                 })

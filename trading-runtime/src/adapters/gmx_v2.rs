@@ -194,6 +194,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                         params.amount,
                     )],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             Action::OpenShort => {
@@ -218,6 +219,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                         params.amount,
                     )],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             Action::CloseLong => {
@@ -238,6 +240,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     output_token: params.token_out,
                     approvals: vec![],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             Action::CloseShort => {
@@ -258,6 +261,7 @@ impl ProtocolAdapter for GmxV2Adapter {
                     output_token: params.token_out,
                     approvals: vec![],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

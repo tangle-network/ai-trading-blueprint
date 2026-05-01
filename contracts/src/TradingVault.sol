@@ -14,6 +14,20 @@ import "./PolicyEngine.sol";
 import "./FeeDistributor.sol";
 import "./interfaces/IAssetValuator.sol";
 
+interface IAavePoolHealth {
+    function getUserAccountData(address user)
+        external
+        view
+        returns (
+            uint256 totalCollateralBase,
+            uint256 totalDebtBase,
+            uint256 availableBorrowsBase,
+            uint256 currentLiquidationThreshold,
+            uint256 ltv,
+            uint256 healthFactor
+        );
+}
+
 /// @title TradingVault
 /// @notice ERC-7575 multi-asset vault for AI trading agents
 /// @dev Each vault handles one deposit asset but shares a VaultShare token with sibling vaults.
@@ -52,6 +66,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Canonical hash type for debt-reduction execution payloads.
     bytes32 public constant DEBT_REDUCTION_PAYLOAD_TYPEHASH = keccak256(
         "DebtReductionPayload(address target,bytes32 dataHash,uint256 value,address inputToken,uint256 maxInput,address debtToken,uint256 minDebtDecrease,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)"
+    );
+
+    /// @notice Canonical hash type for executions that must preserve Aave-style account health.
+    bytes32 public constant HEALTH_FACTOR_PAYLOAD_TYPEHASH = keccak256(
+        "HealthFactorPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,address pool,address account,uint256 minHealthFactor,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)"
     );
 
     /// @notice Canonical hash type for atomic approval calls.
@@ -96,6 +115,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error UnsupportedValuationAsset(address token, address asset);
     error OutstandingCollateralActive(uint256 amount);
     error DebtDecreaseNotMet(uint256 actual, uint256 required);
+    error HealthFactorTooLow(uint256 actual, uint256 required);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -455,6 +475,20 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 deadline;
     }
 
+    /// @notice Parameters for executions whose success requires account health to remain above a threshold.
+    struct HealthFactorParams {
+        address target;
+        bytes data;
+        uint256 value;
+        uint256 minOutput;
+        address outputToken;
+        address pool;
+        address account;
+        uint256 minHealthFactor;
+        bytes32 intentHash;
+        uint256 deadline;
+    }
+
     /// @notice Atomic approval updates applied immediately before a trade executes.
     struct ApprovalCall {
         address token;
@@ -505,6 +539,18 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareDebtReduction(params, signatures, scores, _hashApprovals(approvals));
         _applyApprovals(approvals, params.target);
         _executeDebtReduction(params);
+    }
+
+    /// @notice Execute a validated action and require Aave-style health factor to remain above the signed threshold.
+    function executeHealthFactorWithApprovals(
+        HealthFactorParams calldata params,
+        ApprovalCall[] calldata approvals,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _prepareHealthFactor(params, signatures, scores, _hashApprovals(approvals));
+        _applyApprovals(approvals, params.target);
+        _executeHealthFactor(params);
     }
 
     function _prepareExecution(
@@ -561,6 +607,28 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
+    function _prepareHealthFactor(
+        HealthFactorParams calldata params,
+        bytes[] calldata signatures,
+        uint256[] calldata scores,
+        bytes32 approvalsHash
+    ) internal {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (params.target == address(0) || params.outputToken == address(0) || params.pool == address(0) || params.account == address(0)) {
+            revert ZeroAddress();
+        }
+        if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
+        _requireValuableOutputToken(params.outputToken);
+
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+
+        _checkPolicy(params.outputToken, params.minOutput, params.target);
+
+        bytes32 executionHash = _computeHealthFactorHash(params, approvalsHash);
+        _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
+    }
+
     function _checkPolicy(address outputToken, uint256 minOutput, address target) internal {
         if (!policyEngine.validateTrade(address(this), outputToken, minOutput, target, 0)) {
             revert PolicyCheckFailed();
@@ -599,6 +667,15 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         return _computeDebtReductionHash(params, _hashApprovals(approvals));
     }
 
+    /// @notice Compute the exact execution hash validators must sign for health-factor paths.
+    function computeHealthFactorHash(HealthFactorParams calldata params, ApprovalCall[] calldata approvals)
+        external
+        view
+        returns (bytes32)
+    {
+        return _computeHealthFactorHash(params, _hashApprovals(approvals));
+    }
+
     function _computeExecutionHash(ExecuteParams calldata params, bytes32 approvalsHash)
         internal
         view
@@ -635,6 +712,30 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 params.maxInput,
                 params.debtToken,
                 params.minDebtDecrease,
+                params.intentHash,
+                params.deadline,
+                block.chainid,
+                approvalsHash
+            )
+        );
+    }
+
+    function _computeHealthFactorHash(HealthFactorParams calldata params, bytes32 approvalsHash)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                HEALTH_FACTOR_PAYLOAD_TYPEHASH,
+                params.target,
+                keccak256(params.data),
+                params.value,
+                params.minOutput,
+                params.outputToken,
+                params.pool,
+                params.account,
+                params.minHealthFactor,
                 params.intentHash,
                 params.deadline,
                 block.chainid,
@@ -710,6 +811,32 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         emit DebtReductionExecuted(
             params.target, params.value, params.inputToken, debtDecreased, params.debtToken, params.intentHash
         );
+    }
+
+    function _executeHealthFactor(HealthFactorParams calldata params) internal {
+        uint256 balanceBefore = IERC20(params.outputToken).balanceOf(address(this));
+
+        (bool success,) = params.target.call{value: params.value}(params.data);
+        if (!success) revert ExecutionFailed();
+
+        uint256 balanceAfter = IERC20(params.outputToken).balanceOf(address(this));
+        uint256 outputGained = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+        if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
+
+        _addHeldToken(params.outputToken);
+
+        (,,,,, uint256 healthFactor) = IAavePoolHealth(params.pool).getUserAccountData(params.account);
+        if (healthFactor < params.minHealthFactor) {
+            revert HealthFactorTooLow(healthFactor, params.minHealthFactor);
+        }
+
+        if (depositAssetReserveBps > 0) {
+            uint256 total = totalAssets();
+            uint256 depositBalance = IERC20(asset()).balanceOf(address(this));
+            if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
+        }
+
+        emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
