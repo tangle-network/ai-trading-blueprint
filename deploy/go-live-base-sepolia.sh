@@ -7,6 +7,12 @@ SERVER_IP="${1:?Usage: go-live-base-sepolia.sh <server-ip> <operator-private-key
 PRIVATE_KEY="${2:?Usage: go-live-base-sepolia.sh <server-ip> <operator-private-key> [manifest-path] }"
 MANIFEST_PATH="${3:-${TNT_CORE_DEPLOYMENT_MANIFEST:-$ROOT_DIR/deploy/manifests/base-sepolia/tnt-core.latest.json}}"
 SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
+REQUIRE_PRODUCTION_PREFLIGHT="${REQUIRE_PRODUCTION_PREFLIGHT:-0}"
+
+if [[ "$REQUIRE_PRODUCTION_PREFLIGHT" == "1" && "$SKIP_PREFLIGHT" == "1" ]]; then
+  echo "ERROR: SKIP_PREFLIGHT=1 is blocked when REQUIRE_PRODUCTION_PREFLIGHT=1" >&2
+  exit 1
+fi
 
 export TNT_CORE_DEPLOYMENT_MANIFEST="$MANIFEST_PATH"
 export PRIVATE_KEY
@@ -22,7 +28,9 @@ fi
 # shellcheck source=/dev/null
 source "$ROOT_DIR/scripts/load-base-sepolia-env.sh" "$MANIFEST_PATH"
 
-if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
+if [[ "$REQUIRE_PRODUCTION_PREFLIGHT" == "1" ]]; then
+  "$SCRIPT_DIR/preflight.sh" production
+elif [[ "$SKIP_PREFLIGHT" != "1" ]]; then
   "$SCRIPT_DIR/preflight.sh" live
 fi
 

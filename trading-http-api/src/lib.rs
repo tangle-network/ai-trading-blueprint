@@ -220,10 +220,7 @@ mod tests {
 pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     use axum::routing::get;
     Router::new()
-        .route(
-            "/health",
-            get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
-        )
+        .route("/health", get(multi_bot_health))
         .merge(routes::market_data::multi_bot_router())
         .merge(routes::portfolio::multi_bot_router())
         .merge(routes::validate::multi_bot_router())
@@ -244,4 +241,25 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         ))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
         .with_state(state)
+}
+
+async fn multi_bot_health(
+    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
+) -> axum::Json<serde_json::Value> {
+    let rpc_ready = state
+        .chain_client_rpc_url
+        .as_ref()
+        .is_some_and(|url| !url.trim().is_empty())
+        || state.chain_client.is_some();
+    let simulation_ready = rpc_ready;
+
+    axum::Json(serde_json::json!({
+        "status": if rpc_ready { "ok" } else { "degraded" },
+        "mode": "multi",
+        "rpc_ready": rpc_ready,
+        "validator_count": serde_json::Value::Null,
+        "validator_quorum_ready": serde_json::Value::Null,
+        "simulation_ready": simulation_ready,
+        "vault_ready": serde_json::Value::Null,
+    }))
 }
