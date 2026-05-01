@@ -167,7 +167,7 @@ pub async fn compute_score(
 
     let has_sim = execution_context
         .and_then(|ctx| ctx.simulation_result.as_ref())
-        .is_some();
+        .is_some_and(|sim| sim.success);
 
     // If AI provider is available, get AI score and blend
     let result = if let Some(provider) = ai_provider {
@@ -493,6 +493,44 @@ mod tests {
             .unwrap();
         assert_eq!(result.score, 0);
         assert!(result.reasoning.contains("warnings"));
+    }
+
+    #[tokio::test]
+    async fn test_required_simulation_failed_result_scores_zero() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(Decimal::new(100, 0))
+            .min_amount_out(Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+        let ctx = ExecutionContext {
+            target: "0x0000000000000000000000000000000000000001".into(),
+            calldata: "0xdeadbeef".into(),
+            calldata_decoded: "unknown()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
+            simulation_result: Some(crate::server::SimulationSummary {
+                success: false,
+                gas_used: 21000,
+                output_amount: "0".into(),
+                balance_changes: Vec::new(),
+                warnings: Vec::new(),
+                risk_score: 0,
+            }),
+        };
+
+        let result = compute_score(&intent, None, None, Some(&ctx), true)
+            .await
+            .unwrap();
+        assert_eq!(result.score, 0);
+        assert!(result.reasoning.contains("did not succeed"));
     }
 
     #[test]
