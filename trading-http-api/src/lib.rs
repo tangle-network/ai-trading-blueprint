@@ -499,7 +499,10 @@ mod tests {
         .unwrap();
         assert_eq!(metadata["rate_mode"], 2);
         assert_eq!(metadata["min_aave_health_factor"], "1.6");
-        assert_eq!(metadata["min_aave_health_factor_wad"], "1600000000000000000");
+        assert_eq!(
+            metadata["min_aave_health_factor_wad"],
+            "1600000000000000000"
+        );
     }
 }
 

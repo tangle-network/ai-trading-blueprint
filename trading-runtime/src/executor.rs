@@ -180,10 +180,13 @@ impl TradeExecutor {
         // 3. Encode the action
         let encoded: EncodedAction = adapter.encode_action(&params)?;
         let simulation_tokens = {
-            let mut tokens = vec![token_in, token_out];
+            let mut tokens = vec![token_in, token_out, encoded.output_token];
             if let Some(debt_reduction) = &encoded.debt_reduction {
+                tokens.push(debt_reduction.input_token);
                 tokens.push(debt_reduction.debt_token);
             }
+            tokens.sort();
+            tokens.dedup();
             tokens
         };
 
@@ -252,9 +255,9 @@ impl TradeExecutor {
                         &TradeContext {
                             vault_address,
                             token_in,
-                            token_out,
+                            token_out: encoded.output_token,
                             amount_in: params.amount,
-                            min_output: params.min_output,
+                            min_output: encoded.min_output,
                             known_protocol_addresses,
                         },
                     );
@@ -331,19 +334,34 @@ impl TradeExecutor {
 fn parse_trade_executed_event(
     receipt: &alloy::rpc::types::TransactionReceipt,
 ) -> Option<(Option<Address>, Option<U256>)> {
-    let signature = keccak256("TradeExecuted(address,uint256,uint256,address,bytes32)".as_bytes());
+    let trade_signature =
+        keccak256("TradeExecuted(address,uint256,uint256,address,bytes32)".as_bytes());
+    let debt_signature = keccak256(
+        "DebtReductionExecuted(address,uint256,address,uint256,address,bytes32)".as_bytes(),
+    );
     for log in receipt.inner.logs() {
         let topics = log.topics();
-        if topics.first().copied() != Some(signature) {
-            continue;
+        match topics.first().copied() {
+            Some(signature) if signature == trade_signature => {
+                let data = log.data().data.as_ref();
+                if data.len() < 96 {
+                    return None;
+                }
+                let output_gained = U256::from_be_slice(&data[32..64]);
+                let output_token = Address::from_word(B256::from_slice(&data[64..96]));
+                return Some((Some(output_token), Some(output_gained)));
+            }
+            Some(signature) if signature == debt_signature => {
+                let data = log.data().data.as_ref();
+                if data.len() < 64 || topics.len() < 4 {
+                    return None;
+                }
+                let debt_decreased = U256::from_be_slice(&data[32..64]);
+                let debt_token = Address::from_word(topics[3]);
+                return Some((Some(debt_token), Some(debt_decreased)));
+            }
+            _ => continue,
         }
-        let data = log.data().data.as_ref();
-        if data.len() < 96 {
-            return None;
-        }
-        let output_gained = U256::from_be_slice(&data[32..64]);
-        let output_token = Address::from_word(B256::from_slice(&data[64..96]));
-        return Some((Some(output_token), Some(output_gained)));
     }
     None
 }

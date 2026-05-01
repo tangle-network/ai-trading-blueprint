@@ -11,7 +11,7 @@ use crate::signer::ValidatorSigner;
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_approvals, hash_clob_order, hash_debt_reduction_payload_parts,
-    hash_execution_payload_parts, hash_hyperliquid_order,
+    hash_execution_payload_parts, hash_health_factor_payload_parts, hash_hyperliquid_order,
 };
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
@@ -80,7 +80,7 @@ pub struct ExecutionContext {
     /// Output token bound in the executable payload
     #[serde(default)]
     pub output_token: String,
-    /// Execution postcondition kind: output_increase or debt_decrease.
+    /// Execution postcondition kind: output_increase, debt_decrease, or health_factor.
     #[serde(default)]
     pub postcondition_kind: String,
     /// Input token spent by a debt-reduction execution.
@@ -95,6 +95,15 @@ pub struct ExecutionContext {
     /// Minimum debt-token balance decrease required.
     #[serde(default)]
     pub min_debt_decrease: String,
+    /// Aave pool used for a health-factor postcondition.
+    #[serde(default)]
+    pub health_pool: String,
+    /// Account whose health factor must remain above the signed minimum.
+    #[serde(default)]
+    pub health_account: String,
+    /// Minimum health factor signed for a health-factor execution.
+    #[serde(default)]
+    pub min_health_factor: String,
     /// Approval calls folded into the final execution
     #[serde(default)]
     pub approvals: Vec<ExecutionApproval>,
@@ -678,6 +687,36 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
             chain_id,
             approvals_hash,
         )
+    } else if ctx.postcondition_kind == "health_factor" {
+        let min_output = parse_u256_decimal(&ctx.min_output, "min_output")?;
+        let output_token: Address = ctx
+            .output_token
+            .parse()
+            .map_err(|e| format!("invalid output_token: {e}"))?;
+        let pool: Address = ctx
+            .health_pool
+            .parse()
+            .map_err(|e| format!("invalid health_pool: {e}"))?;
+        let account: Address = ctx
+            .health_account
+            .parse()
+            .map_err(|e| format!("invalid health_account: {e}"))?;
+        let min_health_factor = parse_u256_decimal(&ctx.min_health_factor, "min_health_factor")?;
+
+        hash_health_factor_payload_parts(
+            target,
+            &calldata,
+            value,
+            min_output,
+            output_token,
+            pool,
+            account,
+            min_health_factor,
+            intent_hash,
+            deadline,
+            chain_id,
+            approvals_hash,
+        )
     } else {
         let min_output = parse_u256_decimal(&ctx.min_output, "min_output")?;
         let output_token: Address = ctx
@@ -836,6 +875,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+    use trading_runtime::TradeIntentBuilder;
 
     #[tokio::test]
     async fn test_health_endpoint() {
@@ -1000,6 +1040,90 @@ mod tests {
                 max_input: "100".into(),
                 debt_token: format!("{debt_token}"),
                 min_debt_decrease: "95".into(),
+                health_pool: String::new(),
+                health_account: String::new(),
+                min_health_factor: String::new(),
+                approvals: Vec::new(),
+                simulation_result: None,
+            }),
+        };
+
+        assert_eq!(
+            expected_execution_hash(&request, &intent_hash).unwrap(),
+            execution_hash
+        );
+    }
+
+    #[test]
+    fn test_expected_execution_hash_health_factor_context() {
+        let deadline = 1_900_000_000;
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Borrow)
+            .token_in("0x0000000000000000000000000000000000000002")
+            .token_out("0x0000000000000000000000000000000000000003")
+            .amount_in(rust_decimal::Decimal::new(100, 0))
+            .min_amount_out(rust_decimal::Decimal::new(95, 0))
+            .target_protocol("aave_v3")
+            .chain_id(31337)
+            .build()
+            .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
+        let intent_hash = hash_intent(&intent);
+        let intent_hash_b256 = parse_b256(&intent_hash).unwrap();
+        let target: Address = "0x0000000000000000000000000000000000000001"
+            .parse()
+            .unwrap();
+        let output_token: Address = "0x0000000000000000000000000000000000000003"
+            .parse()
+            .unwrap();
+        let pool: Address = "0x0000000000000000000000000000000000000004"
+            .parse()
+            .unwrap();
+        let account: Address = "0x0000000000000000000000000000000000000005"
+            .parse()
+            .unwrap();
+        let calldata = Bytes::from(hex::decode("deadbeef").unwrap());
+        let execution_hash = format_b256(hash_health_factor_payload_parts(
+            target,
+            &calldata,
+            U256::ZERO,
+            U256::from(95u64),
+            output_token,
+            pool,
+            account,
+            U256::from(1_500_000_000_000_000_000u128),
+            intent_hash_b256,
+            U256::from(deadline),
+            31337,
+            hash_approvals(&[]),
+        ));
+        let request = ValidateRequest {
+            intent,
+            intent_hash: intent_hash.clone(),
+            execution_hash: execution_hash.clone(),
+            vault_address: format!("{}", test_contract_addr()),
+            deadline,
+            action_kind: ACTION_KIND_VAULT_EXECUTE,
+            strategy_type: None,
+            require_simulation: false,
+            execution_context: Some(ExecutionContext {
+                chain_id: 31337,
+                target: format!("{target}"),
+                calldata: "0xdeadbeef".into(),
+                calldata_decoded: "borrow(...)".into(),
+                value: "0".into(),
+                min_output: "95".into(),
+                output_token: format!("{output_token}"),
+                postcondition_kind: "health_factor".into(),
+                input_token: String::new(),
+                max_input: String::new(),
+                debt_token: String::new(),
+                min_debt_decrease: String::new(),
+                health_pool: format!("{pool}"),
+                health_account: format!("{account}"),
+                min_health_factor: "1500000000000000000".into(),
                 approvals: Vec::new(),
                 simulation_result: None,
             }),

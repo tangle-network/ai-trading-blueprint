@@ -1590,6 +1590,10 @@ async fn execute_real_trade(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let trade_id = uuid::Uuid::new_v4().to_string();
+    let confirmed_output_token = outcome
+        .output_token
+        .map(|token| format!("{token}"))
+        .unwrap_or_else(|| req.intent.token_out.clone());
     let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
     let record = TradeRecord {
         id: trade_id,
@@ -1597,7 +1601,7 @@ async fn execute_real_trade(
         timestamp: Utc::now(),
         action: req.intent.action.clone(),
         token_in: req.intent.token_in.clone(),
-        token_out: req.intent.token_out.clone(),
+        token_out: confirmed_output_token,
         amount_in: req.intent.amount_in.clone(),
         min_amount_out: req.intent.min_amount_out.clone(),
         target_protocol: req.intent.target_protocol.clone(),
@@ -1618,7 +1622,7 @@ async fn execute_real_trade(
         slippage_bps: None,
         execution_reason: outcome
             .output_gained
-            .map(|_| "Confirmed from TradingVault TradeExecuted event outputGained".to_string()),
+            .map(|_| "Confirmed from TradingVault execution event".to_string()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,

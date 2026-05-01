@@ -1473,6 +1473,7 @@ fn multi_bot_state_with_strategy_config_and_bot(
                     chain_id,
                     rpc_url: "http://localhost:8545".to_string(),
                     strategy_config: strategy_config.clone(),
+                    risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -1521,6 +1522,7 @@ fn live_bot_with_trust(
         chain_id: 31337,
         rpc_url: "http://localhost:8545".to_string(),
         strategy_config: serde_json::json!({}),
+        risk_params: serde_json::json!({}),
         validator_endpoints: vec![],
         validation_trust,
     }
@@ -2554,6 +2556,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
                         chain_id: 31337,
                         rpc_url: "http://127.0.0.1:1".to_string(),
                         strategy_config: serde_json::json!({}),
+                        risk_params: serde_json::json!({}),
                         validator_endpoints: vec![],
                         validation_trust: trading_runtime::ValidationTrust::PerTrade,
                     })
@@ -2965,6 +2968,7 @@ async fn test_multi_bot_execute_rejects_paper_trade_with_no_usable_signatures() 
             chain_id: 31337,
             rpc_url: "http://localhost:8545".to_string(),
             strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
             validator_endpoints: vec!["http://validator-1".to_string()],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         },
@@ -3242,6 +3246,7 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
                     chain_id: 31337,
                     rpc_url: "http://localhost:8545".to_string(),
                     strategy_config: serde_json::json!({}),
+                    risk_params: serde_json::json!({}),
                     validator_endpoints: validator_uris.clone(),
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -3813,6 +3818,7 @@ async fn test_multi_bot_clob_execute() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     strategy_config: serde_json::json!({}),
+                    risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -3909,6 +3915,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     strategy_config: serde_json::json!({}),
+                    risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
@@ -3999,6 +4006,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
                     chain_id: 137,
                     rpc_url: "http://localhost:8545".to_string(),
                     strategy_config: serde_json::json!({}),
+                    risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
                     validation_trust: trading_runtime::ValidationTrust::PerTrade,
                 })
