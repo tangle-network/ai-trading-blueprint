@@ -6,9 +6,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
-use trading_runtime::execution_hash::{format_b256, hash_execution_payload};
+use trading_runtime::execution_hash::{
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
+    hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
+};
 use trading_runtime::executor::get_adapter;
+use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
+use trading_runtime::polymarket_clob;
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
 use trading_runtime::validator_client::ValidatorClient;
@@ -141,6 +146,14 @@ fn uses_direct_non_vault_execution(protocol: &str) -> bool {
     matches!(protocol, "polymarket_clob" | "hyperliquid")
 }
 
+fn action_kind_for_protocol(protocol: &str) -> u64 {
+    match protocol {
+        "polymarket_clob" => ACTION_KIND_CLOB_ORDER,
+        "hyperliquid" => ACTION_KIND_HYPERLIQUID_ORDER,
+        _ => ACTION_KIND_VAULT_EXECUTE,
+    }
+}
+
 fn requires_execution_context(protocol: &str) -> bool {
     !uses_direct_non_vault_execution(protocol)
 }
@@ -190,6 +203,125 @@ fn require_successful_simulation(
     }
 
     Ok(())
+}
+
+fn build_direct_execution_hash(
+    protocol: &str,
+    intent: &TradeIntent,
+    intent_hash: &str,
+    deadline: u64,
+    chain_id: u64,
+) -> Result<Option<String>, (StatusCode, String)> {
+    let intent_hash = parse_b256(intent_hash).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Could not parse intent hash for direct execution binding".to_string(),
+        )
+    })?;
+    let deadline = alloy::primitives::U256::from(deadline);
+
+    match protocol {
+        "polymarket_clob" => {
+            let params = polymarket_clob::extract_clob_params(
+                &format_action(&intent.action),
+                &intent.amount_in.to_string(),
+                &intent.metadata,
+            )
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            Ok(Some(format_b256(hash_clob_order(
+                &params,
+                intent_hash,
+                deadline,
+                chain_id,
+            ))))
+        }
+        "hyperliquid" => {
+            let order = hyperliquid_order_from_intent(intent);
+            Ok(Some(format_b256(hash_hyperliquid_order(
+                &order,
+                intent_hash,
+                deadline,
+                chain_id,
+            ))))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn format_action(action: &Action) -> String {
+    match action {
+        Action::Swap => "swap",
+        Action::Supply => "supply",
+        Action::Withdraw => "withdraw",
+        Action::Borrow => "borrow",
+        Action::Repay => "repay",
+        Action::OpenLong => "open_long",
+        Action::OpenShort => "open_short",
+        Action::CloseLong => "close_long",
+        Action::CloseShort => "close_short",
+        Action::Buy => "buy",
+        Action::Sell => "sell",
+        Action::Redeem => "redeem",
+        Action::CollateralRelease => "collateral_release",
+    }
+    .to_string()
+}
+
+fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
+    let is_buy = matches!(
+        intent.action,
+        Action::OpenLong | Action::Buy | Action::CloseShort
+    );
+    let reduce_only = matches!(intent.action, Action::CloseLong | Action::CloseShort);
+
+    let order_type = if let Some(trigger_px) = intent
+        .metadata
+        .get("trigger_price")
+        .and_then(|v| v.as_str())
+    {
+        let is_market = intent
+            .metadata
+            .get("is_market")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let tpsl = intent
+            .metadata
+            .get("tpsl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sl");
+        if tpsl == "tp" {
+            HlOrderType::TakeProfit {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        } else {
+            HlOrderType::StopLoss {
+                trigger_price: trigger_px.to_string(),
+                is_market,
+            }
+        }
+    } else if let Some(price) = intent.metadata.get("limit_price").and_then(|v| v.as_str()) {
+        HlOrderType::Limit {
+            price: price.to_string(),
+        }
+    } else {
+        HlOrderType::Market
+    };
+
+    let asset = if let Some(asset_str) = intent.metadata.get("asset").and_then(|v| v.as_str()) {
+        AssetId::Symbol(asset_str.to_string())
+    } else {
+        AssetId::Symbol(intent.token_out.clone())
+    };
+
+    PlaceOrderRequest {
+        asset,
+        is_buy,
+        size: intent.amount_in.to_string(),
+        order_type,
+        reduce_only,
+        cloid: None,
+    }
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
@@ -346,6 +478,15 @@ async fn validate(
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
 
     let intent_hash = hash_intent(&parsed.intent);
+    if !state.paper_trade
+        && requires_execution_context(&request.target_protocol)
+        && parsed.min_amount_out <= rust_decimal::Decimal::ZERO
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Live vault-backed validation requires min_amount_out > 0".to_string(),
+        ));
+    }
     if state.paper_trade && state.validator_endpoints.is_empty() {
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
@@ -380,6 +521,14 @@ async fn validate(
     let require_simulation =
         requires_production_simulation(&request.target_protocol, state.paper_trade);
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
+    let execution_hash_override = build_direct_execution_hash(
+        &request.target_protocol,
+        &parsed.intent,
+        &intent_hash,
+        parsed.deadline,
+        state.chain_id.unwrap_or(parsed.intent.chain_id),
+    )?;
+    let action_kind = action_kind_for_protocol(&request.target_protocol);
 
     let result = state
         .validator_client
@@ -389,6 +538,8 @@ async fn validate(
             parsed.deadline,
             execution_context,
             require_simulation,
+            execution_hash_override,
+            action_kind,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -639,6 +790,15 @@ async fn validate_multi_bot(
     // Paper-trade bypass: if no validators configured and bot is in paper mode,
     // return synthetic approval so the trading loop can proceed.
     let intent_hash = hash_intent(&parsed.intent);
+    if !bot.paper_trade
+        && requires_execution_context(&req.target_protocol)
+        && parsed.min_amount_out <= rust_decimal::Decimal::ZERO
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Live vault-backed validation requires min_amount_out > 0".to_string(),
+        ));
+    }
     if bot.paper_trade && validator_endpoints.is_empty() {
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
@@ -673,6 +833,14 @@ async fn validate_multi_bot(
     }
     let require_simulation = requires_production_simulation(&req.target_protocol, bot.paper_trade);
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
+    let execution_hash_override = build_direct_execution_hash(
+        &req.target_protocol,
+        &parsed.intent,
+        &intent_hash,
+        parsed.deadline,
+        bot.chain_id,
+    )?;
+    let action_kind = action_kind_for_protocol(&req.target_protocol);
 
     // Real validation: fan out to validator endpoints
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
@@ -683,6 +851,8 @@ async fn validate_multi_bot(
             parsed.deadline,
             execution_context,
             require_simulation,
+            execution_hash_override,
+            action_kind,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;

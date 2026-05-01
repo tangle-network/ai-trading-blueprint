@@ -108,6 +108,7 @@ pub fn verify_validator_signature(
     execution_hash_hex: &str,
     vault_address: &str,
     deadline: u64,
+    action_kind: u64,
 ) -> Result<Address, TradingError> {
     // Check deadline expiry
     {
@@ -197,15 +198,13 @@ pub fn verify_validator_signature(
 
     // Compute the EIP-712 digest
     let domain_separator = compute_domain_separator(chain_id, verifying_contract);
-    // Default to actionKind=0 (execute). The off-chain verifier is only called from
-    // the execute HTTP handler, which always uses the execute action kind.
     let struct_hash = compute_struct_hash(
         intent_hash,
         execution_hash,
         vault,
         response.score as u64,
         deadline,
-        0,
+        action_kind,
     );
     let digest = compute_eip712_digest(domain_separator, struct_hash);
 
@@ -260,6 +259,7 @@ pub fn verify_all_signatures(
     execution_hash: &str,
     vault_address: &str,
     deadline: u64,
+    action_kind: u64,
 ) -> Result<Vec<Address>, TradingError> {
     if responses.is_empty() {
         return Err(TradingError::ValidatorError(
@@ -275,6 +275,7 @@ pub fn verify_all_signatures(
             execution_hash,
             vault_address,
             deadline,
+            action_kind,
         )?;
         verified.push(addr);
     }
@@ -361,6 +362,7 @@ mod tests {
             &execution_hash_hex,
             &vault_str,
             deadline,
+            0,
         )
         .unwrap();
         assert_eq!(recovered, addr);
@@ -383,8 +385,14 @@ mod tests {
         let execution_hash = format!("0x{}", "dd".repeat(32));
         let vault = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-        let result =
-            verify_validator_signature(&response, &intent_hash, &execution_hash, vault, 9999999999);
+        let result = verify_validator_signature(
+            &response,
+            &intent_hash,
+            &execution_hash,
+            vault,
+            9999999999,
+            0,
+        );
         assert!(result.is_err(), "Tampered signature should be rejected");
     }
 
@@ -405,8 +413,14 @@ mod tests {
         let execution_hash = format!("0x{}", "dd".repeat(32));
         let vault = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-        let result =
-            verify_validator_signature(&response, &intent_hash, &execution_hash, vault, 9999999999);
+        let result = verify_validator_signature(
+            &response,
+            &intent_hash,
+            &execution_hash,
+            vault,
+            9999999999,
+            0,
+        );
         assert!(result.is_err(), "Missing chain_id should fail");
     }
 
@@ -419,6 +433,7 @@ mod tests {
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             9999999999,
+            0,
         );
         assert!(result.is_err());
     }
