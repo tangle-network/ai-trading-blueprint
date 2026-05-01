@@ -310,8 +310,7 @@ function StatusCard({
         <div className="flex justify-between">
           <span className="text-arena-elements-textTertiary">Sandbox</span>
           <span className="font-data text-xs">
-            {detail.sandbox_state ? `${detail.sandbox_state} · ` : ''}
-            {detail.sandbox_id.slice(0, 16)}...
+            {detail.sandbox_id}
           </span>
         </div>
       </div>
@@ -517,16 +516,16 @@ function LifetimeCard({
           )}
         </div>
         {service && (
-          <div className="space-y-1 text-xs text-arena-elements-textTertiary">
-            <div className="flex justify-between">
-              <span>Owner</span>
-              <span className="font-data">{service.owner.slice(0, 6)}...{service.owner.slice(-4)}</span>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-arena-elements-textTertiary">Owner</span>
+              <span className="font-data text-arena-elements-textTertiary">{service.owner.slice(0, 6)}...{service.owner.slice(-4)}</span>
             </div>
-            <div className="flex justify-between">
-              <span>TTL (blocks)</span>
-              <span className="font-data">{service.ttl.toLocaleString()}</span>
+            <div className="flex justify-between gap-4">
+              <span className="text-arena-elements-textTertiary">TTL (blocks)</span>
+              <span className="font-data text-arena-elements-textTertiary">{service.ttl.toLocaleString()}</span>
             </div>
-            <p className="mt-2 italic">
+            <p className="text-xs text-arena-elements-textTertiary italic">
               Service TTL is set at creation and cannot be extended on-chain yet.
             </p>
           </div>
