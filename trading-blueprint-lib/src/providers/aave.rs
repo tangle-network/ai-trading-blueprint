@@ -60,9 +60,9 @@ impl TradingProvider for AaveV3Provider {
 
 pub(crate) const AAVE_EXPERT_PROMPT: &str = r#"## Aave V3 Protocol Knowledge
 
-### Aave V3 (Ethereum Mainnet)
-- Pool: 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2
-- Pool Data Provider: 0x7B4EB56E7CD4b454BA8ff71E4518426c96956482
+### Aave V3
+- Supported execution chains: Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche
+- Use `aave-reserve-status.js` for the current chain's pool, reserve assets, aTokens, and variable debt tokens.
 
 Actions: supply, withdraw, borrow, repay
 Each action requires the asset address and amount.
@@ -114,9 +114,10 @@ Write a monitoring script that checks health factor every iteration:
    - `action`: "supply", "withdraw", "borrow", or "repay"
    - `target_protocol`: "aave_v3"
    - `token_in`: asset address
-   - `amount_in`: amount as string (in token decimals)
+   - `amount_in`: amount as string in base units
+   - `amount_format`: "base_units"
    - `min_amount_out`: for repay, minimum debt reduction
-   - `metadata.debt_token`: for repay, use the matching stable/variable debt token from `aave-reserve-status.js`
+   - `metadata.debt_token`: for repay, use the matching variable debt token from `aave-reserve-status.js`
    - `metadata.on_behalf_of`: vault address (for Aave)
 
 5. **Rebalancing Frequency**: Yields change slowly — evaluate every 15 minutes. Only rebalance if the gas cost is <10% of the yield improvement (annualized over expected holding period).
@@ -130,10 +131,7 @@ mod tests {
     #[test]
     fn test_aave_expert_prompt_has_addresses() {
         let p = AaveV3Provider;
-        assert!(
-            p.expert_prompt()
-                .contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
-        );
+        assert!(p.expert_prompt().contains("aave-reserve-status.js"));
     }
 
     #[test]

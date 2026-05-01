@@ -1,3 +1,7 @@
+use crate::aave_v3_registry::{
+    AAVE_V3_MARKETS, AaveReserve, reserve_by_any_token, reserve_by_symbol,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenMetadata {
     pub symbol: &'static str,
@@ -97,6 +101,10 @@ pub fn chain_display_name(chain_id: u64) -> &'static str {
     match chain_id {
         84532 => "Base Sepolia",
         8453 => "Base",
+        42161 => "Arbitrum",
+        137 => "Polygon",
+        10 => "Optimism",
+        43114 => "Avalanche",
         1 => "Ethereum mainnet",
         31337 => "Ethereum fork",
         31338 | 31339 => "Ethereum local fork",
@@ -113,15 +121,19 @@ pub fn tokens_for_chain(chain_id: u64) -> &'static [TokenMetadata] {
     }
 }
 
-pub fn token_metadata_for_chain(
-    chain_id: Option<u64>,
-    token: &str,
-) -> Option<&'static TokenMetadata> {
+pub fn token_metadata_for_chain(chain_id: Option<u64>, token: &str) -> Option<TokenMetadata> {
     let chain_id = chain_id?;
     let key = normalize_token_key(token);
     tokens_for_chain(chain_id)
         .iter()
         .find(|metadata| token_matches(metadata, &key))
+        .copied()
+        .or_else(|| {
+            let registry_chain_id = aave_registry_chain_id(chain_id);
+            reserve_by_any_token(registry_chain_id, token)
+                .or_else(|| reserve_by_symbol(registry_chain_id, token))
+                .map(token_metadata_from_aave_reserve)
+        })
 }
 
 pub fn token_address_for_symbol(chain_id: u64, symbol: &str) -> Option<&'static str> {
@@ -130,6 +142,10 @@ pub fn token_address_for_symbol(chain_id: u64, symbol: &str) -> Option<&'static 
         .iter()
         .find(|metadata| key == metadata.symbol.to_ascii_lowercase())
         .map(|metadata| metadata.address)
+        .or_else(|| {
+            reserve_by_symbol(aave_registry_chain_id(chain_id), symbol)
+                .map(|reserve| reserve.underlying)
+        })
 }
 
 pub fn known_token_decimals(chain_id: Option<u64>, token: &str) -> Option<u8> {
@@ -153,7 +169,7 @@ pub fn address_chain_mismatch(chain_id: u64, token: &str) -> Option<u64> {
         return None;
     }
 
-    for candidate_chain in [84532_u64, 8453, 1, 31337, 31338, 31339] {
+    for candidate_chain in known_chain_ids() {
         if candidate_chain == chain_id {
             continue;
         }
@@ -164,12 +180,30 @@ pub fn address_chain_mismatch(chain_id: u64, token: &str) -> Option<u64> {
     None
 }
 
-fn token_metadata_across_known_chains(token: &str) -> Option<&'static TokenMetadata> {
+fn token_metadata_across_known_chains(token: &str) -> Option<TokenMetadata> {
     let key = normalize_token_key(token);
-    [84532_u64, 8453, 1, 31337, 31338, 31339]
+    known_chain_ids()
         .into_iter()
         .flat_map(tokens_for_chain)
         .find(|metadata| token_matches(metadata, &key))
+        .copied()
+        .or_else(|| {
+            AAVE_V3_MARKETS
+                .iter()
+                .find_map(|market| {
+                    market.reserves.iter().find(|reserve| {
+                        normalize_token_key(reserve.underlying) == key
+                            || normalize_token_key(reserve.a_token) == key
+                            || normalize_token_key(reserve.variable_debt_token) == key
+                            || normalize_token_key(reserve.symbol) == key
+                            || reserve
+                                .aliases
+                                .iter()
+                                .any(|alias| normalize_token_key(alias) == key)
+                    })
+                })
+                .map(token_metadata_from_aave_reserve)
+        })
 }
 
 fn token_matches(metadata: &TokenMetadata, key: &str) -> bool {
@@ -179,6 +213,31 @@ fn token_matches(metadata: &TokenMetadata, key: &str) -> bool {
             .aliases
             .iter()
             .any(|alias| key == alias.to_ascii_lowercase())
+}
+
+fn token_metadata_from_aave_reserve(reserve: &AaveReserve) -> TokenMetadata {
+    TokenMetadata {
+        symbol: reserve.symbol,
+        address: reserve.underlying,
+        decimals: reserve.decimals,
+        coingecko_id: reserve.coingecko_id,
+        aliases: reserve.aliases,
+    }
+}
+
+fn known_chain_ids() -> Vec<u64> {
+    let mut ids = vec![84532_u64, 8453, 1, 31337, 31338, 31339];
+    ids.extend(AAVE_V3_MARKETS.iter().map(|market| market.chain_id));
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn aave_registry_chain_id(chain_id: u64) -> u64 {
+    match chain_id {
+        31338 | 31339 => 1,
+        _ => chain_id,
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +251,26 @@ mod tests {
                 .expect("base sepolia usdc");
         assert_eq!(metadata.symbol, "USDC");
         assert_eq!(metadata.decimals, 6);
+    }
+
+    #[test]
+    fn aave_registry_tokens_are_known_on_supported_chains() {
+        let metadata =
+            token_metadata_for_chain(Some(42161), "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8")
+                .expect("arbitrum aave usdc");
+        assert_eq!(metadata.symbol, "USDC");
+        assert_eq!(metadata.decimals, 6);
+
+        let a_token =
+            token_metadata_for_chain(Some(8453), "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB")
+                .expect("base ausdc");
+        assert_eq!(a_token.symbol, "USDC");
+        assert_eq!(a_token.decimals, 6);
+
+        let fork_a_token =
+            token_metadata_for_chain(Some(31339), "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c")
+                .expect("ethereum fork ausdc");
+        assert_eq!(fork_a_token.symbol, "USDC");
     }
 
     #[test]

@@ -6,6 +6,10 @@ use super::{
     ActionParams, DebtReductionPostcondition, EncodedAction, ProtocolAdapter, approval,
     validate_vault_address,
 };
+use crate::aave_v3_registry::{
+    AaveMarket, AaveReserve, market_for_chain, reserve_by_a_token, reserve_by_underlying,
+    supported_chain_ids,
+};
 use crate::error::TradingError;
 use crate::types::Action;
 
@@ -18,32 +22,11 @@ sol! {
     }
 }
 
-/// Aave V3 Pool on Ethereum mainnet.
-const AAVE_V3_POOL_ETHEREUM: &str = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
-
-/// Aave V3 Pool shared across Arbitrum, Polygon, Optimism, and Avalanche.
-const AAVE_V3_POOL_SHARED_L2: &str = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
-
-/// Aave V3 Pool on Base.
-const AAVE_V3_POOL_BASE: &str = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5";
-
-/// Ethereum mainnet Aave V3 aToken addresses for common reserves used in local QA.
-const AAVE_V3_A_TOKEN_WETH_ETHEREUM: &str = "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8";
-const AAVE_V3_A_TOKEN_USDC_ETHEREUM: &str = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c";
-const AAVE_V3_A_TOKEN_DAI_ETHEREUM: &str = "0x018008bfb33d285247A21d44E50697654f754e63";
-
-const WETH_ETHEREUM: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-const USDC_ETHEREUM: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
-const DAI_ETHEREUM: &str = "0x6b175474e89094c44da98b954eedeac495271d0f";
-
-/// Supported canonical chain IDs (Ethereum, Arbitrum, Polygon, Optimism,
-/// Avalanche, Base). Synthetic fork IDs should be normalized by the shared
-/// adapter lookup before calling `for_chain`.
-const SUPPORTED_CHAINS: &[u64] = &[1, 42161, 137, 10, 43114, 8453];
-
 pub struct AaveV3Adapter {
     chain_id: u64,
     pool_address: Address,
+    pool_addresses_provider: Address,
+    protocol_data_provider: Address,
 }
 
 impl AaveV3Adapter {
@@ -52,56 +35,96 @@ impl AaveV3Adapter {
     }
 
     pub fn with_pool(pool_address: Address) -> Self {
+        let market = market_for_chain(1).expect("ethereum market exists");
         Self {
             chain_id: 1,
             pool_address,
+            pool_addresses_provider: parse_address(market.pool_addresses_provider),
+            protocol_data_provider: parse_address(market.protocol_data_provider),
         }
     }
 
     pub fn for_chain(chain_id: u64) -> Result<Self, TradingError> {
-        let pool_address = match chain_id {
-            1 => AAVE_V3_POOL_ETHEREUM,
-            42161 | 137 | 10 | 43114 => AAVE_V3_POOL_SHARED_L2,
-            8453 => AAVE_V3_POOL_BASE,
-            other => {
-                return Err(TradingError::AdapterError {
-                    protocol: "aave_v3".into(),
-                    message: format!("Unsupported chain_id for Aave V3: {other}"),
-                });
-            }
-        };
-
+        let market = market_for_chain(chain_id).ok_or_else(|| TradingError::AdapterError {
+            protocol: "aave_v3".into(),
+            message: format!("Unsupported chain_id for Aave V3: {chain_id}"),
+        })?;
         Ok(Self {
             chain_id,
-            pool_address: pool_address.parse().expect("valid aave v3 pool address"),
+            pool_address: parse_address(market.pool),
+            pool_addresses_provider: parse_address(market.pool_addresses_provider),
+            protocol_data_provider: parse_address(market.protocol_data_provider),
         })
     }
 
-    fn a_token_for_asset(&self, asset: Address) -> Option<Address> {
-        match self.chain_id {
-            1 => {
-                let asset = format!("{asset:#x}");
-                match asset.as_str() {
-                    WETH_ETHEREUM => Some(
-                        AAVE_V3_A_TOKEN_WETH_ETHEREUM
-                            .parse()
-                            .expect("valid aToken address"),
-                    ),
-                    USDC_ETHEREUM => Some(
-                        AAVE_V3_A_TOKEN_USDC_ETHEREUM
-                            .parse()
-                            .expect("valid aToken address"),
-                    ),
-                    DAI_ETHEREUM => Some(
-                        AAVE_V3_A_TOKEN_DAI_ETHEREUM
-                            .parse()
-                            .expect("valid aToken address"),
-                    ),
-                    _ => None,
-                }
-            }
-            _ => None,
+    fn market(&self) -> &'static AaveMarket {
+        market_for_chain(self.chain_id).expect("adapter constructed with supported chain")
+    }
+
+    fn reserve_for_underlying(
+        &self,
+        asset: Address,
+        action: &str,
+    ) -> Result<&'static AaveReserve, TradingError> {
+        let asset = format!("{asset:#x}");
+        reserve_by_underlying(self.chain_id, &asset).ok_or_else(|| TradingError::AdapterError {
+            protocol: "aave_v3".into(),
+            message: format!(
+                "Unsupported Aave V3 {action} asset {asset} on {} ({})",
+                self.market().name,
+                self.chain_id
+            ),
+        })
+    }
+
+    fn reserve_for_withdraw_token(
+        &self,
+        asset: Address,
+    ) -> Result<&'static AaveReserve, TradingError> {
+        let asset = format!("{asset:#x}");
+        reserve_by_underlying(self.chain_id, &asset)
+            .or_else(|| reserve_by_a_token(self.chain_id, &asset))
+            .ok_or_else(|| TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!(
+                    "Unsupported Aave V3 withdraw token {asset} on {} ({})",
+                    self.market().name,
+                    self.chain_id
+                ),
+            })
+    }
+
+    fn reserve_for_borrow_token(
+        &self,
+        asset: Address,
+    ) -> Result<&'static AaveReserve, TradingError> {
+        let reserve = self.reserve_for_underlying(asset, "borrow")?;
+        if !reserve.variable_borrow_enabled {
+            return Err(TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!(
+                    "Aave V3 borrow is disabled for {} on {} ({})",
+                    reserve.symbol,
+                    self.market().name,
+                    self.chain_id
+                ),
+            });
         }
+        Ok(reserve)
+    }
+
+    fn validate_rate_mode(&self, reserve: &AaveReserve, rate_mode: u8) -> Result<u8, TradingError> {
+        if rate_mode != 2 {
+            return Err(TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!(
+                    "Aave V3 {} on {} only supports variable rate_mode 2",
+                    reserve.symbol,
+                    self.market().name
+                ),
+            });
+        }
+        Ok(rate_mode)
     }
 
     /// Encode `supply(address,uint256,address,uint16)`.
@@ -148,7 +171,11 @@ impl AaveV3Adapter {
         Bytes::from(call.abi_encode())
     }
 
-    fn debt_token_from_metadata(&self, params: &ActionParams) -> Result<Address, TradingError> {
+    fn debt_token_from_metadata(
+        &self,
+        reserve: &AaveReserve,
+        params: &ActionParams,
+    ) -> Result<Address, TradingError> {
         let raw = params
             .extra
             .get("debt_token")
@@ -171,6 +198,16 @@ impl AaveV3Adapter {
                 message: "Aave repay debt_token must not be zero".into(),
             });
         }
+        if format!("{debt_token:#x}") != reserve.variable_debt_token.to_ascii_lowercase() {
+            return Err(TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!(
+                    "Aave repay debt_token must match {} variable debt token on {}",
+                    reserve.symbol,
+                    self.market().name
+                ),
+            });
+        }
 
         Ok(debt_token)
     }
@@ -188,11 +225,15 @@ impl ProtocolAdapter for AaveV3Adapter {
     }
 
     fn supported_chains(&self) -> Vec<u64> {
-        SUPPORTED_CHAINS.to_vec()
+        supported_chain_ids()
     }
 
     fn known_addresses(&self) -> Vec<Address> {
-        vec![self.pool_address]
+        vec![
+            self.pool_address,
+            self.pool_addresses_provider,
+            self.protocol_data_provider,
+        ]
     }
 
     fn encode_action(&self, params: &ActionParams) -> Result<EncodedAction, TradingError> {
@@ -206,15 +247,8 @@ impl ProtocolAdapter for AaveV3Adapter {
 
         match params.action {
             Action::Supply => {
-                let output_token = self.a_token_for_asset(params.token_in).ok_or_else(|| {
-                    TradingError::AdapterError {
-                        protocol: "aave_v3".into(),
-                        message: format!(
-                            "Missing Aave V3 aToken mapping for asset {} on chain {}",
-                            params.token_in, self.chain_id
-                        ),
-                    }
-                })?;
+                let reserve = self.reserve_for_underlying(params.token_in, "supply")?;
+                let output_token = parse_address(reserve.a_token);
                 let calldata =
                     self.encode_supply(params.token_in, params.amount, params.vault_address);
                 Ok(EncodedAction {
@@ -228,19 +262,23 @@ impl ProtocolAdapter for AaveV3Adapter {
                 })
             }
             Action::Withdraw => {
+                let reserve = self.reserve_for_withdraw_token(params.token_in)?;
+                let underlying = parse_address(reserve.underlying);
                 let calldata =
-                    self.encode_withdraw(params.token_in, params.amount, params.vault_address);
+                    self.encode_withdraw(underlying, params.amount, params.vault_address);
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
                     value: U256::ZERO,
                     min_output: params.min_output,
-                    output_token: params.token_in,
+                    output_token: underlying,
                     approvals: vec![],
                     debt_reduction: None,
                 })
             }
             Action::Borrow => {
+                let reserve = self.reserve_for_borrow_token(params.token_out)?;
+                let rate_mode = self.validate_rate_mode(reserve, rate_mode)?;
                 let calldata = self.encode_borrow(
                     params.token_out,
                     params.amount,
@@ -258,6 +296,8 @@ impl ProtocolAdapter for AaveV3Adapter {
                 })
             }
             Action::Repay => {
+                let reserve = self.reserve_for_borrow_token(params.token_in)?;
+                let rate_mode = self.validate_rate_mode(reserve, rate_mode)?;
                 if params.min_output == U256::ZERO {
                     return Err(TradingError::AdapterError {
                         protocol: "aave_v3".into(),
@@ -266,7 +306,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                                 .into(),
                     });
                 }
-                let debt_token = self.debt_token_from_metadata(params)?;
+                let debt_token = self.debt_token_from_metadata(reserve, params)?;
                 let calldata = self.encode_repay(
                     params.token_in,
                     params.amount,
@@ -296,13 +336,20 @@ impl ProtocolAdapter for AaveV3Adapter {
     }
 }
 
+fn parse_address(value: &str) -> Address {
+    value.parse().expect("valid Aave V3 registry address")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aave_v3_registry::reserve_by_symbol;
 
-    const TOKEN_USDC: &str = USDC_ETHEREUM;
-    const TOKEN_WETH: &str = WETH_ETHEREUM;
     const VAULT: &str = "0x0000000000000000000000000000000000000099";
+
+    fn reserve(chain_id: u64, symbol: &str) -> &'static AaveReserve {
+        reserve_by_symbol(chain_id, symbol).expect("known Aave reserve")
+    }
 
     #[test]
     fn test_protocol_id() {
@@ -313,25 +360,23 @@ mod tests {
     #[test]
     fn test_encode_supply() {
         let adapter = AaveV3Adapter::new();
+        let usdc = reserve(1, "USDC");
         let params = ActionParams {
             action: Action::Supply,
-            token_in: TOKEN_USDC.parse().unwrap(),
-            token_out: TOKEN_USDC.parse().unwrap(),
+            token_in: usdc.underlying.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
             amount: U256::from(1_000_000u64),
             min_output: U256::from(999_999u64),
             extra: serde_json::Value::Null,
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
-        assert_eq!(
-            result.target,
-            AAVE_V3_POOL_ETHEREUM.parse::<Address>().unwrap()
-        );
+        assert_eq!(result.target, adapter.pool_address);
         assert!(result.calldata.len() > 4);
         assert_eq!(result.approvals.len(), 1);
         assert_eq!(
             result.output_token,
-            AAVE_V3_A_TOKEN_USDC_ETHEREUM.parse::<Address>().unwrap()
+            usdc.a_token.parse::<Address>().unwrap()
         );
         assert_eq!(result.min_output, U256::from(999_999u64));
     }
@@ -339,32 +384,30 @@ mod tests {
     #[test]
     fn test_encode_borrow() {
         let adapter = AaveV3Adapter::new();
+        let weth = reserve(1, "WETH");
+        let usdc = reserve(1, "USDC");
         let params = ActionParams {
             action: Action::Borrow,
-            token_in: TOKEN_WETH.parse().unwrap(),
-            token_out: TOKEN_USDC.parse().unwrap(),
+            token_in: weth.underlying.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
             amount: U256::from(500_000u64),
             min_output: U256::from(500_000u64),
             extra: serde_json::json!({"rate_mode": 2}),
             vault_address: VAULT.parse().unwrap(),
         };
         let result = adapter.encode_action(&params).unwrap();
-        assert_eq!(
-            result.target,
-            AAVE_V3_POOL_ETHEREUM.parse::<Address>().unwrap()
-        );
+        assert_eq!(result.target, adapter.pool_address);
     }
 
     #[test]
     fn test_encode_repay_uses_debt_reduction_postcondition() {
         let adapter = AaveV3Adapter::new();
-        let debt_token: Address = "0x0000000000000000000000000000000000000dEb"
-            .parse()
-            .unwrap();
+        let usdc = reserve(1, "USDC");
+        let debt_token: Address = usdc.variable_debt_token.parse().unwrap();
         let params = ActionParams {
             action: Action::Repay,
-            token_in: TOKEN_USDC.parse().unwrap(),
-            token_out: TOKEN_USDC.parse().unwrap(),
+            token_in: usdc.underlying.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
             amount: U256::from(500_000u64),
             min_output: U256::from(499_000u64),
             extra: serde_json::json!({"rate_mode": 2, "debt_token": format!("{debt_token}")}),
@@ -378,7 +421,7 @@ mod tests {
         assert_eq!(result.min_output, U256::ZERO);
         assert_eq!(
             debt_reduction.input_token,
-            TOKEN_USDC.parse::<Address>().unwrap()
+            usdc.underlying.parse::<Address>().unwrap()
         );
         assert_eq!(debt_reduction.max_input, U256::from(500_000u64));
         assert_eq!(debt_reduction.debt_token, debt_token);
@@ -388,10 +431,11 @@ mod tests {
     #[test]
     fn test_encode_repay_requires_debt_token() {
         let adapter = AaveV3Adapter::new();
+        let usdc = reserve(1, "USDC");
         let params = ActionParams {
             action: Action::Repay,
-            token_in: TOKEN_USDC.parse().unwrap(),
-            token_out: TOKEN_USDC.parse().unwrap(),
+            token_in: usdc.underlying.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
             amount: U256::from(500_000u64),
             min_output: U256::from(499_000u64),
             extra: serde_json::json!({"rate_mode": 2}),
@@ -408,18 +452,17 @@ mod tests {
     #[test]
     fn test_for_chain_uses_ethereum_pool() {
         let adapter = AaveV3Adapter::for_chain(1).unwrap();
-        assert_eq!(
-            adapter.known_addresses(),
-            vec![AAVE_V3_POOL_ETHEREUM.parse::<Address>().unwrap()]
-        );
+        assert_eq!(adapter.known_addresses()[0], adapter.pool_address);
     }
 
     #[test]
     fn test_for_chain_uses_shared_l2_pool() {
         let adapter = AaveV3Adapter::for_chain(42161).unwrap();
         assert_eq!(
-            adapter.known_addresses(),
-            vec![AAVE_V3_POOL_SHARED_L2.parse::<Address>().unwrap()]
+            adapter.known_addresses()[0],
+            "0x794a61358D6845594F94dc1DB02A252b5b4814aD"
+                .parse::<Address>()
+                .unwrap()
         );
     }
 
@@ -427,9 +470,94 @@ mod tests {
     fn test_for_chain_uses_base_pool() {
         let adapter = AaveV3Adapter::for_chain(8453).unwrap();
         assert_eq!(
-            adapter.known_addresses(),
-            vec![AAVE_V3_POOL_BASE.parse::<Address>().unwrap()]
+            adapter.known_addresses()[0],
+            "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"
+                .parse::<Address>()
+                .unwrap()
         );
+    }
+
+    #[test]
+    fn test_encode_supply_on_all_supported_chains() {
+        for chain_id in [1, 8453, 42161, 137, 10, 43114] {
+            let adapter = AaveV3Adapter::for_chain(chain_id).unwrap();
+            let reserve = reserve_by_symbol(chain_id, "USDC")
+                .or_else(|| reserve_by_symbol(chain_id, "WAVAX"))
+                .expect("chain has a supported reserve");
+            let params = ActionParams {
+                action: Action::Supply,
+                token_in: reserve.underlying.parse().unwrap(),
+                token_out: reserve.underlying.parse().unwrap(),
+                amount: U256::from(1_000_000u64),
+                min_output: U256::from(1u64),
+                extra: serde_json::Value::Null,
+                vault_address: VAULT.parse().unwrap(),
+            };
+
+            let result = adapter.encode_action(&params).unwrap();
+            assert_eq!(
+                result.output_token,
+                reserve.a_token.parse::<Address>().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_supply_rejects_wrong_chain_asset() {
+        let adapter = AaveV3Adapter::for_chain(8453).unwrap();
+        let mainnet_usdc = reserve(1, "USDC");
+        let params = ActionParams {
+            action: Action::Supply,
+            token_in: mainnet_usdc.underlying.parse().unwrap(),
+            token_out: mainnet_usdc.underlying.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(1u64),
+            extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let err = adapter.encode_action(&params).unwrap_err();
+        assert!(err.to_string().contains("Unsupported Aave V3 supply asset"));
+    }
+
+    #[test]
+    fn test_withdraw_accepts_a_token_and_outputs_underlying() {
+        let adapter = AaveV3Adapter::for_chain(8453).unwrap();
+        let usdc = reserve(8453, "USDC");
+        let params = ActionParams {
+            action: Action::Withdraw,
+            token_in: usdc.a_token.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(1u64),
+            extra: serde_json::Value::Null,
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params).unwrap();
+        assert_eq!(
+            result.output_token,
+            usdc.underlying.parse::<Address>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_repay_rejects_mismatched_debt_token() {
+        let adapter = AaveV3Adapter::new();
+        let usdc = reserve(1, "USDC");
+        let weth = reserve(1, "WETH");
+        let params = ActionParams {
+            action: Action::Repay,
+            token_in: usdc.underlying.parse().unwrap(),
+            token_out: usdc.underlying.parse().unwrap(),
+            amount: U256::from(500_000u64),
+            min_output: U256::from(499_000u64),
+            extra: serde_json::json!({"rate_mode": 2, "debt_token": weth.variable_debt_token}),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let err = adapter.encode_action(&params).unwrap_err();
+        assert!(err.to_string().contains("debt_token must match"));
     }
 
     #[test]
@@ -451,10 +579,12 @@ mod tests {
     #[test]
     fn test_unsupported_action() {
         let adapter = AaveV3Adapter::new();
+        let usdc = reserve(1, "USDC");
+        let weth = reserve(1, "WETH");
         let params = ActionParams {
             action: Action::Swap,
-            token_in: TOKEN_USDC.parse().unwrap(),
-            token_out: TOKEN_WETH.parse().unwrap(),
+            token_in: usdc.underlying.parse().unwrap(),
+            token_out: weth.underlying.parse().unwrap(),
             amount: U256::from(100u64),
             min_output: U256::ZERO,
             extra: serde_json::Value::Null,

@@ -82,7 +82,7 @@ pub fn build_pack_loop_prompt(
              4. Check the circuit breaker before any action:\n\
                 `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
              5. If there is a clear yield action, build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3`, or a `supply`/`withdraw` intent for allowlisted `morpho_vault`, validate it, then execute it with `api-client.js`.\n\
-                For Aave, use the reserve status tool output as a hard gate: do not attempt assets that are frozen or unavailable on the current fork. For repay, include `metadata.debt_token` from the matching stable/variable debt token in that output.\n\
+                For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
                 For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
                 Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
                 Do not manually rebuild the validation payload or validator signatures.\n\
