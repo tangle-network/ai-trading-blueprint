@@ -7,6 +7,7 @@ pub mod routes;
 pub mod session_auth;
 pub mod trade_store;
 
+use alloy::primitives::Address;
 use axum::Router;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -194,6 +195,124 @@ pub fn validate_protocol_available(
     ))
 }
 
+#[derive(Clone, Debug)]
+struct MorphoVaultAllowlistEntry {
+    chain_id: u64,
+    vault_address: Address,
+    asset: Address,
+}
+
+fn address_from_json(value: Option<&serde_json::Value>, field: &str) -> Result<Address, String> {
+    let raw = value
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{field} is required"))?;
+    let address = raw
+        .parse::<Address>()
+        .map_err(|e| format!("Invalid {field} '{raw}': {e}"))?;
+    if address == Address::ZERO {
+        return Err(format!("{field} must not be zero"));
+    }
+    Ok(address)
+}
+
+fn parse_morpho_vault_allowlist(
+    value: &serde_json::Value,
+) -> Result<Vec<MorphoVaultAllowlistEntry>, String> {
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "morpho_vaults must be an array".to_string())?;
+
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let chain_id = positive_u64_from_value(entry.get("chain_id"))
+                .ok_or_else(|| format!("morpho_vaults[{index}].chain_id is required"))?;
+            let vault_address =
+                address_from_json(entry.get("vault_address"), "morpho_vaults[].vault_address")?;
+            let asset = address_from_json(entry.get("asset"), "morpho_vaults[].asset")?;
+            Ok(MorphoVaultAllowlistEntry {
+                chain_id,
+                vault_address,
+                asset,
+            })
+        })
+        .collect()
+}
+
+fn morpho_vault_allowlist(
+    strategy_config: &serde_json::Value,
+) -> Result<Vec<MorphoVaultAllowlistEntry>, String> {
+    if let Some(value) = strategy_config.get("morpho_vaults") {
+        return parse_morpho_vault_allowlist(value);
+    }
+
+    let Some(raw) = std::env::var("MORPHO_VAULT_ALLOWLIST")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("Invalid MORPHO_VAULT_ALLOWLIST JSON: {e}"))?;
+    parse_morpho_vault_allowlist(&value)
+}
+
+pub fn validate_morpho_protocol_request(
+    strategy_config: &serde_json::Value,
+    protocol_chain_id: u64,
+    target_protocol: &str,
+    action: &str,
+    token_in: &str,
+    token_out: &str,
+    metadata: &serde_json::Value,
+) -> Result<(), String> {
+    if target_protocol == "morpho" {
+        return Err(
+            "Protocol 'morpho' is ambiguous and disabled for execution; use 'morpho_vault'"
+                .to_string(),
+        );
+    }
+    if target_protocol != "morpho_vault" {
+        return Ok(());
+    }
+
+    let vault_address = address_from_json(metadata.get("vault_address"), "metadata.vault_address")?;
+    let expected_asset_raw = if action.eq_ignore_ascii_case("withdraw") {
+        token_out
+    } else {
+        token_in
+    };
+    let expected_asset = expected_asset_raw.parse::<Address>().map_err(|e| {
+        format!("Invalid Morpho vault asset token '{expected_asset_raw}' for {action}: {e}")
+    })?;
+
+    let allowlist = morpho_vault_allowlist(strategy_config)?;
+    if allowlist.is_empty() {
+        return Err(
+            "No Morpho vault allowlist configured. Add strategy_config.morpho_vaults or MORPHO_VAULT_ALLOWLIST before using morpho_vault."
+                .to_string(),
+        );
+    }
+
+    if allowlist.iter().any(|entry| {
+        entry.chain_id == protocol_chain_id
+            && entry.vault_address == vault_address
+            && entry.asset == expected_asset
+    }) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Morpho vault {} is not allowlisted for asset {} on {}",
+        vault_address, expected_asset, protocol_chain_id
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +329,57 @@ mod tests {
     #[test]
     fn missing_protocol_allow_list_is_unrestricted() {
         assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
+    }
+
+    #[test]
+    fn legacy_morpho_protocol_is_rejected() {
+        let err = validate_morpho_protocol_request(
+            &json!({}),
+            1,
+            "morpho",
+            "supply",
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000001",
+            &json!({}),
+        )
+        .expect_err("legacy morpho should fail closed");
+        assert!(err.contains("ambiguous"));
+    }
+
+    #[test]
+    fn morpho_vault_requires_allowlisted_vault_asset_and_chain() {
+        let config = json!({
+            "morpho_vaults": [{
+                "chain_id": 1,
+                "vault_address": "0x0000000000000000000000000000000000000099",
+                "asset": "0x0000000000000000000000000000000000000001"
+            }]
+        });
+
+        assert!(
+            validate_morpho_protocol_request(
+                &config,
+                1,
+                "morpho_vault",
+                "supply",
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000001",
+                &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
+            )
+            .is_ok()
+        );
+
+        let err = validate_morpho_protocol_request(
+            &config,
+            8453,
+            "morpho_vault",
+            "supply",
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000001",
+            &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
+        )
+        .expect_err("wrong chain should be rejected");
+        assert!(err.contains("not allowlisted"));
     }
 }
 

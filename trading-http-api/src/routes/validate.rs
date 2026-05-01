@@ -52,7 +52,7 @@ pub(crate) fn normalize_protocol_token(
 ) -> String {
     let zero = token.trim().eq_ignore_ascii_case(ZERO_ADDRESS);
     let ethereum_like = matches!(chain_id, Some(1 | 31338 | 31339));
-    let yield_protocol = matches!(protocol, "aave_v3" | "morpho");
+    let yield_protocol = matches!(protocol, "aave_v3" | "morpho_vault");
 
     if zero && ethereum_like && yield_protocol {
         MAINNET_WETH_ADDRESS.to_string()
@@ -476,6 +476,16 @@ async fn validate(
         &request.token_out,
     );
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
+    crate::validate_morpho_protocol_request(
+        &serde_json::Value::Null,
+        protocol_chain_id.unwrap_or(parsed.intent.chain_id),
+        &request.target_protocol,
+        &request.action,
+        &token_in,
+        &token_out,
+        &request.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     let intent_hash = hash_intent(&parsed.intent);
     if !state.paper_trade
@@ -627,7 +637,10 @@ async fn build_execution_context(
         };
 
     // Extract known addresses before the async boundary (adapter may not be Sync)
-    let known_addresses = adapter.known_addresses();
+    let mut known_addresses = adapter.known_addresses();
+    if protocol == "morpho_vault" {
+        known_addresses.push(encoded.target);
+    }
     drop(adapter);
 
     let simulation_result = match rpc_url {
@@ -805,6 +818,16 @@ async fn validate_multi_bot(
         &req.token_out,
     );
     validate_chain_tokens(Some(protocol_chain_id), &token_in, &token_out)?;
+    crate::validate_morpho_protocol_request(
+        &bot.strategy_config,
+        protocol_chain_id,
+        &req.target_protocol,
+        &req.action,
+        &token_in,
+        &token_out,
+        &req.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     // Use validator endpoints from the bot context
     let validator_endpoints = bot.validator_endpoints.clone();
@@ -1219,7 +1242,7 @@ mod tests {
             MAINNET_WETH_ADDRESS
         );
         assert_eq!(
-            normalize_protocol_token("morpho", Some(1), ZERO_ADDRESS),
+            normalize_protocol_token("morpho_vault", Some(1), ZERO_ADDRESS),
             MAINNET_WETH_ADDRESS
         );
         assert_eq!(

@@ -399,6 +399,9 @@ export function availableProtocolsForStrategyTarget(
   if (strategyType === 'perp' && effectiveChainId === 42161) {
     return ['gmx_v2', 'vertex'];
   }
+  if (strategyType === 'yield' && (effectiveChainId === 1 || effectiveChainId === 8453)) {
+    return ['aave_v3', 'morpho_vault'];
+  }
   return undefined;
 }
 

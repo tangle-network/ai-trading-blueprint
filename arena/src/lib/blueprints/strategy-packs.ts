@@ -261,15 +261,15 @@ Key Contracts:
 
 Query reserve data for supply/borrow APYs. Use getReserveData(asset) for current rates.
 
-### Morpho Blue Expert Knowledge
+### MetaMorpho Vault Expert Knowledge
 
-- Morpho Blue: 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb
-- Uses market IDs (bytes32) for isolated lending markets
-- Higher yields but more granular risk assessment needed
+- Use target_protocol "morpho_vault" for allowlisted MetaMorpho ERC-4626 vaults only
+- Each Morpho vault trade must include metadata.vault_address
+- Do not submit target_protocol "morpho" or direct Morpho Blue market trades
 
 ### Cross-Protocol Yield Strategy
 
-Use DeFiLlama yields API (https://yields.llama.fi/pools) to compare rates across ALL protocols.
+Use DeFiLlama yields API (https://yields.llama.fi/pools) to compare Aave V3 and allowlisted MetaMorpho vault rates.
 Rebalance when rate differential exceeds 50bps after gas costs.`,
   },
   {

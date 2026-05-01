@@ -102,7 +102,7 @@ export function protocolToVenue(protocol?: string, paperTrade?: boolean): TradeV
     case 'gmx_v2':
     case 'vertex': return 'perp';
     case 'aave_v3':
-    case 'morpho': return 'yield';
+    case 'morpho_vault': return 'yield';
     default: return protocol ? 'unknown' : 'paper';
   }
 }

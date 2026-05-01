@@ -1344,8 +1344,8 @@ After each phase transition, run `node tools/update-phase.js <next_phase>` and `
             .to_string(),
         "yield" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
-- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Run `node tools/aave-reserve-status.js` to inspect live Aave asset availability on the execution RPC, then fetch current price context with `api-client.js`. Compare only executable Aave/Morpho opportunities and only form a thesis if the expected yield improvement is meaningful after gas and risk.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3` or `morpho`, validate it through the Trading HTTP API, then execute if approved. Use `aave-reserve-status.js` as a hard gate for Aave assets: do not trade assets marked unavailable or frozen; for Aave repay, include `metadata.debt_token` from the matching stable/variable debt token in that tool output. Safe pattern: `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Then proceed to reflect.
+- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Run `node tools/aave-reserve-status.js` to inspect live Aave asset availability on the execution RPC, then fetch current price context with `api-client.js`. Compare only executable Aave and allowlisted MetaMorpho vault opportunities and only form a thesis if the expected yield improvement is meaningful after gas and risk.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3`, or a `supply`/`withdraw` intent for allowlisted `morpho_vault` with `metadata.vault_address`, validate it through the Trading HTTP API, then execute if approved. Use `aave-reserve-status.js` as a hard gate for Aave assets: do not trade assets marked unavailable or frozen; for Aave repay, include `metadata.debt_token` from the matching stable/variable debt token in that tool output. Safe pattern: `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Then proceed to reflect.
 - **reflect**: Review whether the action improved capital placement, whether risk stayed acceptable, and whether the result matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
@@ -1406,9 +1406,9 @@ Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`
             .to_string(),
         "yield" => r#"1. Run `get-portfolio.js` — check current positions and recent changes
 2. Run `aave-reserve-status.js` — treat assets with `available_for_supply: false` as blocked on this fork
-3. Fetch current price context via `api-client.js` and compare only executable Aave vs Morpho opportunities
+3. Fetch current price context via `api-client.js` and compare only executable Aave vs allowlisted MetaMorpho vault opportunities
 4. Run the circuit breaker check before any trade
-5. If the setup is actionable, build a `supply`, `withdraw`, `borrow`, or `repay` intent with `target_protocol: "aave_v3"` or `"morpho"`, validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+5. If the setup is actionable, build a `supply`, `withdraw`, `borrow`, or `repay` intent with `target_protocol: "aave_v3"`, or a `supply`/`withdraw` intent with `target_protocol: "morpho_vault"` and `metadata.vault_address` from the allowlist, validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
 6. Run `log-decision.js` with the thesis or skip reason
 7. Run `write-metrics.js` to update state
 
@@ -1775,7 +1775,7 @@ mod tests {
             "uniswap_v3",
             "aave_v3",
             "gmx_v2",
-            "morpho",
+            "morpho_vault",
             "vertex",
             "polymarket",
         ] {
