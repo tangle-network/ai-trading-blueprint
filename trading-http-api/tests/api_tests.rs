@@ -318,6 +318,62 @@ async fn test_health_no_auth_required() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "ok");
+    assert_eq!(json["mode"], "paper");
+    assert_eq!(json["validator_count"], 0);
+    assert_eq!(json["validator_quorum_ready"], true);
+    assert_eq!(json["simulation_ready"], true);
+    assert_eq!(json["vault_ready"], true);
+}
+
+#[tokio::test]
+async fn test_health_reports_degraded_live_dependencies() {
+    ensure_state_dir();
+    let mock = MockServer::start().await;
+    let state = Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(mock.uri()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:8545",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: TEST_TOKEN.to_string(),
+        vault_address: "factory:placeholder".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id: "live-health-bot".to_string(),
+        paper_trade: false,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: None,
+        chain_id: Some(31337),
+        clob_client: None,
+    });
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "degraded");
+    assert_eq!(json["mode"], "live");
+    assert_eq!(json["validator_quorum_ready"], false);
+    assert_eq!(json["simulation_ready"], false);
+    assert_eq!(json["vault_ready"], false);
 }
 
 #[tokio::test]
@@ -1323,7 +1379,11 @@ async fn test_multi_bot_health_no_auth() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["status"], "ok");
+    assert_eq!(json["status"], "degraded");
+    assert_eq!(json["mode"], "multi");
+    assert_eq!(json["rpc_ready"], false);
+    assert_eq!(json["simulation_ready"], false);
+    assert!(json["validator_count"].is_null());
 }
 
 #[tokio::test]
