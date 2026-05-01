@@ -261,8 +261,10 @@ impl TradeExecutor {
                     );
                 }
                 Err(e) => {
-                    // Simulation failure is not fatal — log and proceed
-                    tracing::warn!("Transaction simulation failed (non-fatal): {e}");
+                    tracing::error!("Transaction simulation failed — rejecting trade: {e}");
+                    return Err(TradingError::SimulationUnavailable(format!(
+                        "final transaction simulation failed: {e}"
+                    )));
                 }
             }
         }
@@ -490,9 +492,26 @@ fn parse_intent_hash(hash: &str) -> Result<[u8; 32], TradingError> {
 mod tests {
     use super::*;
     use crate::contracts::ITradingVault;
+    use crate::intent::{TradeIntentBuilder, hash_intent};
+    use crate::simulator::SimulationResult;
+    use crate::types::{Action, ValidationResult, ValidatorResponse};
     use alloy::primitives::{Address, Bytes};
     use alloy::sol_types::SolCall;
     use rust_decimal::Decimal;
+
+    struct FailingSimulator;
+
+    #[async_trait::async_trait]
+    impl TransactionSimulator for FailingSimulator {
+        async fn simulate(
+            &self,
+            _request: SimulationRequest,
+        ) -> Result<SimulationResult, TradingError> {
+            Err(TradingError::SimulationUnavailable(
+                "test simulator unavailable".into(),
+            ))
+        }
+    }
 
     #[test]
     fn test_get_adapter_known() {
@@ -594,8 +613,6 @@ mod tests {
 
     #[test]
     fn test_collect_validator_data() {
-        use crate::types::{ValidationResult, ValidatorResponse};
-
         let validation = ValidationResult {
             approved: true,
             aggregate_score: 85,
@@ -629,6 +646,79 @@ mod tests {
         assert_eq!(sigs[0].len(), 65);
         assert_eq!(scores[0], U256::from(85u32));
         assert_eq!(scores[1], U256::from(90u32));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_final_simulation_error() {
+        let vault_address = "0x0000000000000000000000000000000000000001";
+        let rpc_url = "http://127.0.0.1:8545";
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let chain_id = 1;
+
+        let vault_client = VaultClient::new(vault_address.into(), rpc_url.into(), chain_id);
+        let chain_client = ChainClient::new(rpc_url, private_key, chain_id).unwrap();
+        let executor = TradeExecutor {
+            vault_client,
+            chain_client,
+            simulator: Some(Box::new(FailingSimulator)),
+        };
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+            .token_out("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+            .amount_in(Decimal::new(1_000_000_000_000_000_000, 0))
+            .min_amount_out(Decimal::new(2_500_000_000, 0))
+            .target_protocol("uniswap_v3")
+            .chain_id(chain_id)
+            .build()
+            .unwrap();
+
+        let adapter = get_adapter(&intent.target_protocol, Some(chain_id)).unwrap();
+        let vault_address: Address = vault_address.parse().unwrap();
+        let encoded = adapter
+            .encode_action(&ActionParams {
+                action: intent.action.clone(),
+                token_in: intent.token_in.parse().unwrap(),
+                token_out: intent.token_out.parse().unwrap(),
+                amount: decimal_to_u256(&intent.amount_in).unwrap(),
+                min_output: decimal_to_u256(&intent.min_amount_out).unwrap(),
+                extra: intent.metadata.clone(),
+                vault_address,
+            })
+            .unwrap();
+        let intent_hash = hash_intent(&intent);
+        let intent_hash_b256 = B256::from(parse_intent_hash(&intent_hash).unwrap());
+        let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
+        let execution_hash = format_b256(hash_execution_payload(
+            &encoded,
+            intent_hash_b256,
+            deadline,
+            chain_id,
+        ));
+
+        let validation = ValidationResult {
+            approved: true,
+            aggregate_score: 85,
+            validator_responses: vec![ValidatorResponse {
+                validator: "0xValidator1".into(),
+                score: 85,
+                signature: format!("0x{}", "aa".repeat(65)),
+                reasoning: "ok".into(),
+                chain_id: None,
+                verifying_contract: None,
+                validated_at: None,
+            }],
+            intent_hash,
+            execution_hash,
+        };
+
+        let err = executor
+            .execute_validated_trade(&intent, &validation)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TradingError::SimulationUnavailable(_)));
     }
 
     #[test]

@@ -145,6 +145,53 @@ fn requires_execution_context(protocol: &str) -> bool {
     !uses_direct_non_vault_execution(protocol)
 }
 
+fn requires_production_simulation(protocol: &str, paper_trade: bool) -> bool {
+    !paper_trade && requires_execution_context(protocol)
+}
+
+fn require_successful_simulation(
+    execution_context: Option<&ExecutionContext>,
+    require_simulation: bool,
+) -> Result<(), (StatusCode, String)> {
+    if !require_simulation {
+        return Ok(());
+    }
+
+    let ctx = execution_context.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Could not build execution context for validator signing".to_string(),
+        )
+    })?;
+    let sim = ctx.simulation_result.as_ref().ok_or_else(|| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "Simulation is required for live production validation but did not complete"
+                .to_string(),
+        )
+    })?;
+
+    if !sim.success {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "Simulation is required for live production validation but the transaction reverted"
+                .to_string(),
+        ));
+    }
+    if sim.risk_score > 0 || !sim.warnings.is_empty() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "Simulation rejected live production validation: risk_score={}, warnings={}",
+                sim.risk_score,
+                sim.warnings.join("; ")
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new().route("/validate", post(validate))
 }
@@ -312,6 +359,9 @@ async fn validate(
             "Could not build execution context for validator signing".to_string(),
         ));
     }
+    let require_simulation =
+        requires_production_simulation(&request.target_protocol, state.paper_trade);
+    require_successful_simulation(execution_context.as_ref(), require_simulation)?;
 
     let result = state
         .validator_client
@@ -320,6 +370,7 @@ async fn validate(
             &state.vault_address,
             parsed.deadline,
             execution_context,
+            require_simulation,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -336,8 +387,9 @@ async fn validate(
 /// When `rpc_url` is available, runs a transaction simulation and populates
 /// the `SimulationSummary` for validators to verify.
 ///
-/// Returns `None` if the adapter is unavailable or encoding fails
-/// (non-fatal — validators will score without execution context).
+/// Returns `None` if the adapter is unavailable or encoding fails. A missing
+/// simulation result is fatal for live vault-executed protocols and allowed for
+/// paper/direct protocols.
 #[allow(clippy::too_many_arguments)]
 async fn build_execution_context(
     protocol: &str,
@@ -511,7 +563,7 @@ async fn run_simulation(
             })
         }
         Err(e) => {
-            tracing::warn!("Simulation failed (non-fatal): {e}");
+            tracing::warn!("Simulation failed: {e}");
             None
         }
     }
@@ -601,6 +653,8 @@ async fn validate_multi_bot(
             "Could not build execution context for validator signing".to_string(),
         ));
     }
+    let require_simulation = requires_production_simulation(&req.target_protocol, bot.paper_trade);
+    require_successful_simulation(execution_context.as_ref(), require_simulation)?;
 
     // Real validation: fan out to validator endpoints
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
@@ -610,6 +664,7 @@ async fn validate_multi_bot(
             &bot.vault_address,
             parsed.deadline,
             execution_context,
+            require_simulation,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -797,6 +852,86 @@ mod tests {
         )
         .await;
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_live_vault_protocol_requires_simulation() {
+        assert!(requires_production_simulation("uniswap_v3", false));
+        assert!(requires_production_simulation("aave_v3", false));
+        assert!(!requires_production_simulation("uniswap_v3", true));
+        assert!(!requires_production_simulation("hyperliquid", false));
+    }
+
+    #[test]
+    fn test_require_successful_simulation_rejects_missing_result() {
+        let ctx = ExecutionContext {
+            execution_hash: zero_hash(),
+            chain_id: 31337,
+            target: ZERO_ADDRESS.into(),
+            calldata: "0x".into(),
+            calldata_decoded: "noop()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: ZERO_ADDRESS.into(),
+            approvals: Vec::new(),
+            simulation_result: None,
+        };
+
+        let err = require_successful_simulation(Some(&ctx), true).unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+        assert!(err.1.contains("Simulation is required"));
+    }
+
+    #[test]
+    fn test_require_successful_simulation_rejects_warnings() {
+        let ctx = ExecutionContext {
+            execution_hash: zero_hash(),
+            chain_id: 31337,
+            target: ZERO_ADDRESS.into(),
+            calldata: "0x".into(),
+            calldata_decoded: "noop()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: ZERO_ADDRESS.into(),
+            approvals: Vec::new(),
+            simulation_result: Some(SimulationSummary {
+                success: true,
+                gas_used: 21_000,
+                output_amount: "0".into(),
+                balance_changes: Vec::new(),
+                warnings: vec!["UnexpectedApproval: token=0x1 spender=0x2 amount=3".into()],
+                risk_score: 0,
+            }),
+        };
+
+        let err = require_successful_simulation(Some(&ctx), true).unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+        assert!(err.1.contains("Simulation rejected"));
+    }
+
+    #[test]
+    fn test_require_successful_simulation_allows_clean_result() {
+        let ctx = ExecutionContext {
+            execution_hash: zero_hash(),
+            chain_id: 31337,
+            target: ZERO_ADDRESS.into(),
+            calldata: "0x".into(),
+            calldata_decoded: "noop()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: ZERO_ADDRESS.into(),
+            approvals: Vec::new(),
+            simulation_result: Some(SimulationSummary {
+                success: true,
+                gas_used: 21_000,
+                output_amount: "0".into(),
+                balance_changes: Vec::new(),
+                warnings: Vec::new(),
+                risk_score: 0,
+            }),
+        };
+
+        require_successful_simulation(Some(&ctx), true).unwrap();
     }
 
     #[test]
