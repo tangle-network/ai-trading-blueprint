@@ -49,10 +49,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         "ExecutionPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)"
     );
 
-    /// @notice Canonical hash type for atomic approval calls.
-    bytes32 public constant APPROVAL_CALL_TYPEHASH = keccak256(
-        "ApprovalCall(address token,address spender,uint256 amount)"
+    /// @notice Canonical hash type for debt-reduction execution payloads.
+    bytes32 public constant DEBT_REDUCTION_PAYLOAD_TYPEHASH = keccak256(
+        "DebtReductionPayload(address target,bytes32 dataHash,uint256 value,address inputToken,uint256 maxInput,address debtToken,uint256 minDebtDecrease,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)"
     );
+
+    /// @notice Canonical hash type for atomic approval calls.
+    bytes32 public constant APPROVAL_CALL_TYPEHASH =
+        keccak256("ApprovalCall(address token,address spender,uint256 amount)");
 
     /// @notice Canonical hash type for collateral releases.
     bytes32 public constant COLLATERAL_RELEASE_TYPEHASH = keccak256(
@@ -91,6 +95,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error HeldTokenNotEmpty(address token, uint256 balance);
     error UnsupportedValuationAsset(address token, address asset);
     error OutstandingCollateralActive(uint256 amount);
+    error DebtDecreaseNotMet(uint256 actual, uint256 required);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -108,6 +113,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event DepositAssetReserveBpsUpdated(uint256 bps);
     event AdminUnwindMaxDrawdownBpsUpdated(uint256 bps);
     event SpenderApprovalUpdated(address indexed token, address indexed spender, uint256 amount);
+    event DebtReductionExecuted(
+        address indexed target,
+        uint256 value,
+        address indexed inputToken,
+        uint256 debtDecreased,
+        address indexed debtToken,
+        bytes32 intentHash
+    );
     event CollateralReleased(
         address indexed operator, uint256 amount, address indexed recipient, bytes32 indexed intentHash
     );
@@ -429,6 +442,19 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 deadline;
     }
 
+    /// @notice Parameters for executions whose success is measured by debt-token balance decrease.
+    struct DebtReductionParams {
+        address target;
+        bytes data;
+        uint256 value;
+        address inputToken;
+        uint256 maxInput;
+        address debtToken;
+        uint256 minDebtDecrease;
+        bytes32 intentHash;
+        uint256 deadline;
+    }
+
     /// @notice Atomic approval updates applied immediately before a trade executes.
     struct ApprovalCall {
         address token;
@@ -468,14 +494,25 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _executeTrade(params);
     }
 
+    /// @notice Execute a validated debt-reducing action with vault-held token approvals.
+    /// @dev Used for actions like Aave repay where success is debt reduction rather than output-token gain.
+    function executeDebtReductionWithApprovals(
+        DebtReductionParams calldata params,
+        ApprovalCall[] calldata approvals,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _prepareDebtReduction(params, signatures, scores, _hashApprovals(approvals));
+        _applyApprovals(approvals, params.target);
+        _executeDebtReduction(params);
+    }
+
     function _prepareExecution(
         ExecuteParams calldata params,
         bytes[] calldata signatures,
         uint256[] calldata scores,
         bytes32 approvalsHash
-    )
-        internal
-    {
+    ) internal {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
         if (params.minOutput == 0) revert ZeroAmount();
@@ -490,9 +527,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
         // 2. Validator signature check (m-of-n EIP-712) — bind to execute action kind
         bytes32 executionHash = _computeExecutionHash(params, approvalsHash);
-        _checkValidators(
-            params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE
-        );
+        _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
     function _applyApprovals(ApprovalCall[] calldata approvals, address target) internal {
@@ -503,6 +538,27 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             IERC20(approval.token).forceApprove(approval.spender, approval.amount);
             emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
         }
+    }
+
+    function _prepareDebtReduction(
+        DebtReductionParams calldata params,
+        bytes[] calldata signatures,
+        uint256[] calldata scores,
+        bytes32 approvalsHash
+    ) internal {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (params.target == address(0) || params.inputToken == address(0) || params.debtToken == address(0)) {
+            revert ZeroAddress();
+        }
+        if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
+
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+
+        _checkPolicy(params.inputToken, params.maxInput, params.target);
+
+        bytes32 executionHash = _computeDebtReductionHash(params, approvalsHash);
+        _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
     function _checkPolicy(address outputToken, uint256 minOutput, address target) internal {
@@ -534,6 +590,15 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         return _computeExecutionHash(params, _hashApprovals(approvals));
     }
 
+    /// @notice Compute the exact execution hash validators must sign for debt-reduction paths.
+    function computeDebtReductionHash(DebtReductionParams calldata params, ApprovalCall[] calldata approvals)
+        external
+        view
+        returns (bytes32)
+    {
+        return _computeDebtReductionHash(params, _hashApprovals(approvals));
+    }
+
     function _computeExecutionHash(ExecuteParams calldata params, bytes32 approvalsHash)
         internal
         view
@@ -555,6 +620,29 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         );
     }
 
+    function _computeDebtReductionHash(DebtReductionParams calldata params, bytes32 approvalsHash)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                DEBT_REDUCTION_PAYLOAD_TYPEHASH,
+                params.target,
+                keccak256(params.data),
+                params.value,
+                params.inputToken,
+                params.maxInput,
+                params.debtToken,
+                params.minDebtDecrease,
+                params.intentHash,
+                params.deadline,
+                block.chainid,
+                approvalsHash
+            )
+        );
+    }
+
     function _hashApprovals(ApprovalCall[] calldata approvals) internal pure returns (bytes32) {
         bytes memory packed;
         for (uint256 i = 0; i < approvals.length; ++i) {
@@ -562,9 +650,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             packed = bytes.concat(
                 packed,
                 abi.encodePacked(
-                    keccak256(
-                        abi.encode(APPROVAL_CALL_TYPEHASH, approval.token, approval.spender, approval.amount)
-                    )
+                    keccak256(abi.encode(APPROVAL_CALL_TYPEHASH, approval.token, approval.spender, approval.amount))
                 )
             );
         }
@@ -601,6 +687,29 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
 
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
+    }
+
+    function _executeDebtReduction(DebtReductionParams calldata params) internal {
+        uint256 debtBefore = IERC20(params.debtToken).balanceOf(address(this));
+
+        (bool success,) = params.target.call{value: params.value}(params.data);
+        if (!success) revert ExecutionFailed();
+
+        uint256 debtAfter = IERC20(params.debtToken).balanceOf(address(this));
+        uint256 debtDecreased = debtBefore > debtAfter ? debtBefore - debtAfter : 0;
+        if (debtDecreased < params.minDebtDecrease) {
+            revert DebtDecreaseNotMet(debtDecreased, params.minDebtDecrease);
+        }
+
+        if (depositAssetReserveBps > 0) {
+            uint256 total = totalAssets();
+            uint256 depositBalance = IERC20(asset()).balanceOf(address(this));
+            if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
+        }
+
+        emit DebtReductionExecuted(
+            params.target, params.value, params.inputToken, debtDecreased, params.debtToken, params.intentHash
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -654,15 +763,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Compute the exact collateral release hash validators must sign.
-    function computeCollateralReleaseHash(
-        uint256 amount,
-        address recipient,
-        bytes32 intentHash,
-        uint256 deadline
-    ) public view returns (bytes32) {
-        return keccak256(
-            abi.encode(COLLATERAL_RELEASE_TYPEHASH, amount, recipient, intentHash, deadline, block.chainid)
-        );
+    function computeCollateralReleaseHash(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline)
+        public
+        view
+        returns (bytes32)
+    {
+        return
+            keccak256(abi.encode(COLLATERAL_RELEASE_TYPEHASH, amount, recipient, intentHash, deadline, block.chainid));
     }
 
     /// @notice Return collateral to the vault. Permissionless — anyone can return funds.

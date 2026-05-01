@@ -6,6 +6,7 @@ use crate::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use crate::polymarket_clob::{ClobOrderParams, Side};
 
 const EXECUTION_PAYLOAD_TYPE: &str = "ExecutionPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)";
+const DEBT_REDUCTION_PAYLOAD_TYPE: &str = "DebtReductionPayload(address target,bytes32 dataHash,uint256 value,address inputToken,uint256 maxInput,address debtToken,uint256 minDebtDecrease,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)";
 const APPROVAL_CALL_TYPE: &str = "ApprovalCall(address token,address spender,uint256 amount)";
 const COLLATERAL_RELEASE_TYPE: &str = "CollateralRelease(uint256 amount,address recipient,bytes32 intentHash,uint256 deadline,uint256 chainId)";
 const CLOB_ORDER_TYPE: &str = "ClobOrder(bytes32 tokenIdHash,bytes32 sideHash,bytes32 priceHash,bytes32 sizeHash,bytes32 orderTypeHash,uint256 expiration,bytes32 intentHash,uint256 deadline,uint256 chainId)";
@@ -18,6 +19,10 @@ pub const ACTION_KIND_HYPERLIQUID_ORDER: u64 = 3;
 
 pub fn execution_payload_typehash() -> B256 {
     keccak256(EXECUTION_PAYLOAD_TYPE.as_bytes())
+}
+
+pub fn debt_reduction_payload_typehash() -> B256 {
+    keccak256(DEBT_REDUCTION_PAYLOAD_TYPE.as_bytes())
 }
 
 pub fn approval_call_typehash() -> B256 {
@@ -57,6 +62,22 @@ pub fn hash_execution_payload(
     chain_id: u64,
 ) -> B256 {
     let approvals_hash = hash_approvals(&encoded.approvals);
+    if let Some(debt_reduction) = &encoded.debt_reduction {
+        return hash_debt_reduction_payload_parts(
+            encoded.target,
+            &encoded.calldata,
+            encoded.value,
+            debt_reduction.input_token,
+            debt_reduction.max_input,
+            debt_reduction.debt_token,
+            debt_reduction.min_debt_decrease,
+            intent_hash,
+            deadline,
+            chain_id,
+            approvals_hash,
+        );
+    }
+
     hash_execution_payload_parts(
         encoded.target,
         &encoded.calldata,
@@ -89,6 +110,36 @@ pub fn hash_execution_payload_parts(
         value,
         min_output,
         output_token,
+        intent_hash,
+        deadline,
+        U256::from(chain_id),
+        approvals_hash,
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn hash_debt_reduction_payload_parts(
+    target: Address,
+    calldata: &Bytes,
+    value: U256,
+    input_token: Address,
+    max_input: U256,
+    debt_token: Address,
+    min_debt_decrease: U256,
+    intent_hash: B256,
+    deadline: U256,
+    chain_id: u64,
+    approvals_hash: B256,
+) -> B256 {
+    keccak256(SolValue::abi_encode(&(
+        debt_reduction_payload_typehash(),
+        target,
+        keccak256(calldata),
+        value,
+        input_token,
+        max_input,
+        debt_token,
+        min_debt_decrease,
         intent_hash,
         deadline,
         U256::from(chain_id),
@@ -265,6 +316,7 @@ mod tests {
             min_output: U256::from(10),
             output_token: Address::from([2u8; 20]),
             approvals: vec![],
+            debt_reduction: None,
         };
         let mut changed = base.clone();
         changed.calldata = Bytes::from(vec![1, 2, 4]);
@@ -272,6 +324,32 @@ mod tests {
         assert_ne!(
             hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337),
             hash_execution_payload(&changed, B256::ZERO, U256::from(100), 31337)
+        );
+    }
+
+    #[test]
+    fn execution_hash_changes_for_debt_reduction_postcondition() {
+        let mut base = EncodedAction {
+            target: Address::from([1u8; 20]),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::ZERO,
+            output_token: Address::from([2u8; 20]),
+            approvals: vec![],
+            debt_reduction: Some(crate::adapters::DebtReductionPostcondition {
+                input_token: Address::from([3u8; 20]),
+                max_input: U256::from(10),
+                debt_token: Address::from([4u8; 20]),
+                min_debt_decrease: U256::from(9),
+            }),
+        };
+        let original = hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337);
+
+        base.debt_reduction.as_mut().unwrap().min_debt_decrease = U256::from(8);
+
+        assert_ne!(
+            original,
+            hash_execution_payload(&base, B256::ZERO, U256::from(100), 31337)
         );
     }
 

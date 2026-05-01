@@ -24,6 +24,18 @@ sol! {
             uint256 amount;
         }
 
+        struct DebtReductionParams {
+            address target;
+            bytes data;
+            uint256 value;
+            address inputToken;
+            uint256 maxInput;
+            address debtToken;
+            uint256 minDebtDecrease;
+            bytes32 intentHash;
+            uint256 deadline;
+        }
+
         function asset() external view returns (address);
         function share() external view returns (address);
         function totalAssets() external view returns (uint256);
@@ -41,6 +53,12 @@ sol! {
             bytes[] calldata signatures,
             uint256[] calldata scores
         ) external;
+        function executeDebtReductionWithApprovals(
+            DebtReductionParams calldata params,
+            ApprovalCall[] calldata approvals,
+            bytes[] calldata signatures,
+            uint256[] calldata scores
+        ) external;
         function emergencyWithdraw(address token, address to) external;
         function getBalance(address token) external view returns (uint256);
         function pause() external;
@@ -49,6 +67,7 @@ sol! {
         // CLOB collateral management
         function releaseCollateral(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline, bytes[] calldata signatures, uint256[] calldata scores) external;
         function computeExecutionHash(ExecuteParams calldata params, ApprovalCall[] calldata approvals) external view returns (bytes32);
+        function computeDebtReductionHash(DebtReductionParams calldata params, ApprovalCall[] calldata approvals) external view returns (bytes32);
         function computeCollateralReleaseHash(uint256 amount, address recipient, bytes32 intentHash, uint256 deadline) external view returns (bytes32);
         function returnCollateral(uint256 amount) external;
         function writeDownCollateral(address operator, uint256 amount) external;

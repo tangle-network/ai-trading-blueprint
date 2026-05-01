@@ -10,7 +10,8 @@ use crate::scoring;
 use crate::signer::ValidatorSigner;
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
-    hash_approvals, hash_clob_order, hash_execution_payload_parts, hash_hyperliquid_order,
+    hash_approvals, hash_clob_order, hash_debt_reduction_payload_parts,
+    hash_execution_payload_parts, hash_hyperliquid_order,
 };
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
@@ -79,6 +80,21 @@ pub struct ExecutionContext {
     /// Output token bound in the executable payload
     #[serde(default)]
     pub output_token: String,
+    /// Execution postcondition kind: output_increase or debt_decrease.
+    #[serde(default)]
+    pub postcondition_kind: String,
+    /// Input token spent by a debt-reduction execution.
+    #[serde(default)]
+    pub input_token: String,
+    /// Maximum input amount signed for a debt-reduction execution.
+    #[serde(default)]
+    pub max_input: String,
+    /// Debt token whose balance must decrease.
+    #[serde(default)]
+    pub debt_token: String,
+    /// Minimum debt-token balance decrease required.
+    #[serde(default)]
+    pub min_debt_decrease: String,
     /// Approval calls folded into the final execution
     #[serde(default)]
     pub approvals: Vec<ExecutionApproval>,
@@ -612,11 +628,6 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
         .map_err(|e| format!("invalid calldata hex: {e}"))?;
     let calldata = Bytes::from(calldata);
     let value = parse_u256_decimal(&ctx.value, "execution value")?;
-    let min_output = parse_u256_decimal(&ctx.min_output, "min_output")?;
-    let output_token: Address = ctx
-        .output_token
-        .parse()
-        .map_err(|e| format!("invalid output_token: {e}"))?;
     let chain_id = if ctx.chain_id == 0 {
         request.intent.chain_id
     } else {
@@ -641,17 +652,51 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let hash = hash_execution_payload_parts(
-        target,
-        &calldata,
-        value,
-        min_output,
-        output_token,
-        intent_hash,
-        deadline,
-        chain_id,
-        hash_approvals(&approvals),
-    );
+    let approvals_hash = hash_approvals(&approvals);
+    let hash = if ctx.postcondition_kind == "debt_decrease" {
+        let input_token: Address = ctx
+            .input_token
+            .parse()
+            .map_err(|e| format!("invalid input_token: {e}"))?;
+        let max_input = parse_u256_decimal(&ctx.max_input, "max_input")?;
+        let debt_token: Address = ctx
+            .debt_token
+            .parse()
+            .map_err(|e| format!("invalid debt_token: {e}"))?;
+        let min_debt_decrease = parse_u256_decimal(&ctx.min_debt_decrease, "min_debt_decrease")?;
+
+        hash_debt_reduction_payload_parts(
+            target,
+            &calldata,
+            value,
+            input_token,
+            max_input,
+            debt_token,
+            min_debt_decrease,
+            intent_hash,
+            deadline,
+            chain_id,
+            approvals_hash,
+        )
+    } else {
+        let min_output = parse_u256_decimal(&ctx.min_output, "min_output")?;
+        let output_token: Address = ctx
+            .output_token
+            .parse()
+            .map_err(|e| format!("invalid output_token: {e}"))?;
+
+        hash_execution_payload_parts(
+            target,
+            &calldata,
+            value,
+            min_output,
+            output_token,
+            intent_hash,
+            deadline,
+            chain_id,
+            approvals_hash,
+        )
+    };
 
     Ok(format_b256(hash))
 }
@@ -902,6 +947,68 @@ mod tests {
         });
 
         (execution_hash, ctx)
+    }
+
+    #[test]
+    fn test_expected_execution_hash_debt_reduction_context() {
+        let deadline = 1_900_000_000;
+        let intent = test_intent(deadline, rust_decimal::Decimal::new(100, 0));
+        let intent_hash = hash_intent(&intent);
+        let intent_hash_b256 = parse_b256(&intent_hash).unwrap();
+        let target: Address = "0x0000000000000000000000000000000000000001"
+            .parse()
+            .unwrap();
+        let input_token: Address = "0x0000000000000000000000000000000000000002"
+            .parse()
+            .unwrap();
+        let debt_token: Address = "0x0000000000000000000000000000000000000003"
+            .parse()
+            .unwrap();
+        let calldata = Bytes::from(hex::decode("deadbeef").unwrap());
+        let execution_hash = format_b256(hash_debt_reduction_payload_parts(
+            target,
+            &calldata,
+            U256::ZERO,
+            input_token,
+            U256::from(100u64),
+            debt_token,
+            U256::from(95u64),
+            intent_hash_b256,
+            U256::from(deadline),
+            31337,
+            hash_approvals(&[]),
+        ));
+        let request = ValidateRequest {
+            intent,
+            intent_hash: intent_hash.clone(),
+            execution_hash: execution_hash.clone(),
+            vault_address: format!("{}", test_contract_addr()),
+            deadline,
+            action_kind: ACTION_KIND_VAULT_EXECUTE,
+            strategy_type: None,
+            require_simulation: false,
+            execution_context: Some(ExecutionContext {
+                chain_id: 31337,
+                target: format!("{target}"),
+                calldata: "0xdeadbeef".into(),
+                calldata_decoded: "repay(...)".into(),
+                value: "0".into(),
+                min_output: "0".into(),
+                output_token: "0x0000000000000000000000000000000000000000".into(),
+                postcondition_kind: "debt_decrease".into(),
+                input_token: format!("{input_token}"),
+                max_input: "100".into(),
+                debt_token: format!("{debt_token}"),
+                min_debt_decrease: "95".into(),
+                approvals: Vec::new(),
+                simulation_result: None,
+            }),
+        };
+
+        assert_eq!(
+            expected_execution_hash(&request, &intent_hash).unwrap(),
+            execution_hash
+        );
     }
 
     async fn post_validate(app: axum::Router, req_body: serde_json::Value) -> ValidateResponse {

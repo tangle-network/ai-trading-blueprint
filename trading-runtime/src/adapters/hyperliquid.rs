@@ -139,6 +139,7 @@ impl ProtocolAdapter for HyperliquidAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.bridge, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::OpenShort => {
@@ -151,6 +152,7 @@ impl ProtocolAdapter for HyperliquidAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.bridge, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::CloseLong => {
@@ -164,6 +166,7 @@ impl ProtocolAdapter for HyperliquidAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             Action::CloseShort => {
@@ -177,6 +180,7 @@ impl ProtocolAdapter for HyperliquidAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

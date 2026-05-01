@@ -608,6 +608,23 @@ async fn build_execution_context(
     );
 
     let calldata_decoded = calldata_decoder::decode_encoded_action(&encoded.calldata, protocol);
+    let (postcondition_kind, input_token, max_input, debt_token, min_debt_decrease) =
+        match &encoded.debt_reduction {
+            Some(debt_reduction) => (
+                "debt_decrease".to_string(),
+                format!("{}", debt_reduction.input_token),
+                format!("{}", debt_reduction.max_input),
+                format!("{}", debt_reduction.debt_token),
+                format!("{}", debt_reduction.min_debt_decrease),
+            ),
+            None => (
+                "output_increase".to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ),
+        };
 
     // Extract known addresses before the async boundary (adapter may not be Sync)
     let known_addresses = adapter.known_addresses();
@@ -641,6 +658,11 @@ async fn build_execution_context(
         value: format!("{}", encoded.value),
         min_output: format!("{}", encoded.min_output),
         output_token: format!("{}", encoded.output_token),
+        postcondition_kind,
+        input_token,
+        max_input,
+        debt_token,
+        min_debt_decrease,
         approvals: encoded
             .approvals
             .iter()
@@ -1061,6 +1083,11 @@ mod tests {
             value: "0".into(),
             min_output: "0".into(),
             output_token: ZERO_ADDRESS.into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
             approvals: Vec::new(),
             simulation_result: None,
         };
@@ -1081,6 +1108,11 @@ mod tests {
             value: "0".into(),
             min_output: "0".into(),
             output_token: ZERO_ADDRESS.into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
             approvals: Vec::new(),
             simulation_result: Some(SimulationSummary {
                 success: true,
@@ -1108,6 +1140,11 @@ mod tests {
             value: "0".into(),
             min_output: "0".into(),
             output_token: ZERO_ADDRESS.into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
             approvals: Vec::new(),
             simulation_result: Some(SimulationSummary {
                 success: true,

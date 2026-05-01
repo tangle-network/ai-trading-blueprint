@@ -115,6 +115,8 @@ Write a monitoring script that checks health factor every iteration:
    - `target_protocol`: "aave_v3"
    - `token_in`: asset address
    - `amount_in`: amount as string (in token decimals)
+   - `min_amount_out`: for repay, minimum debt reduction
+   - `metadata.debt_token`: for repay, use the matching stable/variable debt token from `aave-reserve-status.js`
    - `metadata.on_behalf_of`: vault address (for Aave)
 
 5. **Rebalancing Frequency**: Yields change slowly — evaluate every 15 minutes. Only rebalance if the gas cost is <10% of the yield improvement (annualized over expected holding period).

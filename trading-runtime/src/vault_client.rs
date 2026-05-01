@@ -248,6 +248,67 @@ impl VaultClient {
         })
     }
 
+    /// Encode a debt-reduction execution call with atomic vault approvals.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_execute_debt_reduction_with_approvals(
+        &self,
+        target: &str,
+        calldata: &[u8],
+        value: &str,
+        input_token: &str,
+        max_input: &str,
+        debt_token: &str,
+        min_debt_decrease: &str,
+        intent_hash: [u8; 32],
+        approvals: &[Approval],
+        signatures: Vec<Vec<u8>>,
+        scores: Vec<U256>,
+        deadline: U256,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let target_addr = Self::parse_address(target)?;
+        let tx_value = Self::parse_u256(value)?;
+        let input_token_addr = Self::parse_address(input_token)?;
+        let max_input_amount = Self::parse_u256(max_input)?;
+        let debt_token_addr = Self::parse_address(debt_token)?;
+        let min_debt_decrease_amount = Self::parse_u256(min_debt_decrease)?;
+        let sig_bytes: Vec<Bytes> = signatures.into_iter().map(Bytes::from).collect();
+        let encoded_approvals = approvals
+            .iter()
+            .map(|approval| {
+                Ok(ITradingVault::ApprovalCall {
+                    token: Self::parse_address(&approval.token)?,
+                    spender: Self::parse_address(&approval.spender)?,
+                    amount: Self::parse_u256(&approval.amount)?,
+                })
+            })
+            .collect::<Result<Vec<_>, TradingError>>()?;
+
+        let params = ITradingVault::DebtReductionParams {
+            target: target_addr,
+            data: Bytes::from(calldata.to_vec()),
+            value: tx_value,
+            inputToken: input_token_addr,
+            maxInput: max_input_amount,
+            debtToken: debt_token_addr,
+            minDebtDecrease: min_debt_decrease_amount,
+            intentHash: FixedBytes::from(intent_hash),
+            deadline,
+        };
+
+        let call = ITradingVault::executeDebtReductionWithApprovalsCall {
+            params,
+            approvals: encoded_approvals,
+            signatures: sig_bytes,
+            scores,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: value.into(),
+        })
+    }
+
     /// Encode an emergency withdraw call: `emergencyWithdraw(address token, address to)`
     pub fn encode_emergency_withdraw(
         &self,

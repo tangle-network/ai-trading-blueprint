@@ -52,6 +52,22 @@ contract TradingVaultTest is Setup {
         vm.stopPrank();
     }
 
+    function _configurePolicyForTarget(address target, address token, uint256 limit) internal {
+        vm.startPrank(address(vaultFactory));
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = token;
+        policyEngine.setWhitelist(address(vault), tokens, true);
+
+        address[] memory targets = new address[](1);
+        targets[0] = target;
+        policyEngine.setTargetWhitelist(address(vault), targets, true);
+
+        policyEngine.setPositionLimit(address(vault), token, limit);
+
+        vm.stopPrank();
+    }
+
     /// @dev Build ExecuteParams struct for execute()
     function _buildExecuteParams(uint256 outputAmount, uint256 minOutput, bytes32 intentHash, uint256 deadline)
         internal
@@ -88,8 +104,7 @@ contract TradingVaultTest is Setup {
         TradingVault.ExecuteParams memory params,
         TradingVault.ApprovalCall[] memory approvals,
         uint256 deadline
-    ) internal view returns (bytes[] memory signatures, uint256[] memory scores)
-    {
+    ) internal view returns (bytes[] memory signatures, uint256[] memory scores) {
         signatures = new bytes[](2);
         scores = new uint256[](2);
 
@@ -109,6 +124,26 @@ contract TradingVaultTest is Setup {
     {
         approvals = new TradingVault.ApprovalCall[](1);
         approvals[0] = TradingVault.ApprovalCall({token: token, spender: spender, amount: amount});
+    }
+
+    function _createDebtReductionSigs(TradingVault.DebtReductionParams memory params, uint256 deadline)
+        internal
+        view
+        returns (bytes[] memory signatures, uint256[] memory scores)
+    {
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(params.inputToken, params.target, params.maxInput);
+
+        signatures = new bytes[](2);
+        scores = new uint256[](2);
+
+        scores[0] = 80;
+        scores[1] = 75;
+        bytes32 executionHash = vault.computeDebtReductionHash(params, approvals);
+        signatures[0] =
+            _signValidation(validator1Key, params.intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] =
+            _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -385,6 +420,128 @@ contract TradingVaultTest is Setup {
         vault.executeWithApprovals(params, approvals, sigs, scores);
 
         assertEq(tokenA.allowance(address(vault), address(mockTarget)), 0);
+    }
+
+    function test_executeDebtReductionWithApprovals() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+
+        MockDebtToken debtToken = new MockDebtToken();
+        MockDebtRepayTarget repayTarget = new MockDebtRepayTarget(tokenA, debtToken);
+        _configurePolicyForTarget(address(repayTarget), address(tokenA), 100_000 ether);
+
+        debtToken.mint(address(vault), 700 ether);
+
+        bytes32 intentHash = keccak256("debt reduction");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.DebtReductionParams memory params = TradingVault.DebtReductionParams({
+            target: address(repayTarget),
+            data: abi.encodeWithSelector(MockDebtRepayTarget.repay.selector, address(vault), 500 ether, 500 ether),
+            value: 0,
+            inputToken: address(tokenA),
+            maxInput: 500 ether,
+            debtToken: address(debtToken),
+            minDebtDecrease: 500 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(repayTarget), 500 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createDebtReductionSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.executeDebtReductionWithApprovals(params, approvals, sigs, scores);
+
+        assertEq(debtToken.balanceOf(address(vault)), 200 ether);
+        assertEq(tokenA.balanceOf(address(repayTarget)), 500 ether);
+    }
+
+    function test_executeDebtReductionRevertsWhenDebtDoesNotDecrease() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+
+        MockDebtToken debtToken = new MockDebtToken();
+        MockDebtRepayTarget repayTarget = new MockDebtRepayTarget(tokenA, debtToken);
+        _configurePolicyForTarget(address(repayTarget), address(tokenA), 100_000 ether);
+
+        debtToken.mint(address(vault), 700 ether);
+
+        bytes32 intentHash = keccak256("no debt reduction");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.DebtReductionParams memory params = TradingVault.DebtReductionParams({
+            target: address(repayTarget),
+            data: abi.encodeWithSelector(MockDebtRepayTarget.repay.selector, address(vault), 500 ether, 0),
+            value: 0,
+            inputToken: address(tokenA),
+            maxInput: 500 ether,
+            debtToken: address(debtToken),
+            minDebtDecrease: 500 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(repayTarget), 500 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createDebtReductionSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.DebtDecreaseNotMet.selector, 0, 500 ether));
+        vault.executeDebtReductionWithApprovals(params, approvals, sigs, scores);
+    }
+
+    function test_executeDebtReductionRevertsWhenDebtDecreaseBelowMinimum() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+
+        MockDebtToken debtToken = new MockDebtToken();
+        MockDebtRepayTarget repayTarget = new MockDebtRepayTarget(tokenA, debtToken);
+        _configurePolicyForTarget(address(repayTarget), address(tokenA), 100_000 ether);
+
+        debtToken.mint(address(vault), 700 ether);
+
+        bytes32 intentHash = keccak256("small debt reduction");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.DebtReductionParams memory params = TradingVault.DebtReductionParams({
+            target: address(repayTarget),
+            data: abi.encodeWithSelector(MockDebtRepayTarget.repay.selector, address(vault), 500 ether, 499 ether),
+            value: 0,
+            inputToken: address(tokenA),
+            maxInput: 500 ether,
+            debtToken: address(debtToken),
+            minDebtDecrease: 500 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(repayTarget), 500 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _createDebtReductionSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.DebtDecreaseNotMet.selector, 499 ether, 500 ether));
+        vault.executeDebtReductionWithApprovals(params, approvals, sigs, scores);
+    }
+
+    function test_debtReductionHashChangesWhenPostconditionChanges() public {
+        MockDebtToken debtToken = new MockDebtToken();
+        MockDebtRepayTarget repayTarget = new MockDebtRepayTarget(tokenA, debtToken);
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.DebtReductionParams memory params = TradingVault.DebtReductionParams({
+            target: address(repayTarget),
+            data: abi.encodeWithSelector(MockDebtRepayTarget.repay.selector, address(vault), 500 ether, 500 ether),
+            value: 0,
+            inputToken: address(tokenA),
+            maxInput: 500 ether,
+            debtToken: address(debtToken),
+            minDebtDecrease: 500 ether,
+            intentHash: keccak256("hash debt reduction"),
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals =
+            _buildApprovalCalls(address(tokenA), address(repayTarget), 500 ether);
+
+        bytes32 baseHash = vault.computeDebtReductionHash(params, approvals);
+        params.minDebtDecrease = 499 ether;
+
+        assertTrue(baseHash != vault.computeDebtReductionHash(params, approvals));
     }
 
     function test_emergencyWithdraw() public {
@@ -936,4 +1093,29 @@ contract MockETHTarget {
     }
 
     receive() external payable {}
+}
+
+contract MockDebtToken is MockERC20 {
+    constructor() MockERC20("Debt Token", "DEBT", 18) {}
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
+}
+
+contract MockDebtRepayTarget {
+    MockERC20 public inputToken;
+    MockDebtToken public debtToken;
+
+    constructor(MockERC20 _inputToken, MockDebtToken _debtToken) {
+        inputToken = _inputToken;
+        debtToken = _debtToken;
+    }
+
+    function repay(address vault, uint256 inputAmount, uint256 debtDecrease) external {
+        inputToken.transferFrom(vault, address(this), inputAmount);
+        if (debtDecrease > 0) {
+            debtToken.burn(vault, debtDecrease);
+        }
+    }
 }

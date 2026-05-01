@@ -180,6 +180,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.ctf_contract, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::Sell => {
@@ -191,6 +192,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                     min_output: params.min_output,
                     output_token: params.token_in,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             Action::Redeem => {
@@ -205,6 +207,7 @@ impl ProtocolAdapter for PolymarketAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

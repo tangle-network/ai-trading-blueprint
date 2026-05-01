@@ -174,6 +174,7 @@ impl ProtocolAdapter for AerodromeAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.router, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::Buy => {
@@ -199,6 +200,7 @@ impl ProtocolAdapter for AerodromeAdapter {
                     min_output: params.amount,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.router, amount_in_max)],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

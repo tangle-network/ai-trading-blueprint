@@ -142,6 +142,7 @@ impl ProtocolAdapter for VertexAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.endpoint, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::OpenShort => {
@@ -154,6 +155,7 @@ impl ProtocolAdapter for VertexAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![approval(params.token_in, self.endpoint, params.amount)],
+                    debt_reduction: None,
                 })
             }
             Action::CloseLong => {
@@ -167,6 +169,7 @@ impl ProtocolAdapter for VertexAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             Action::CloseShort => {
@@ -180,6 +183,7 @@ impl ProtocolAdapter for VertexAdapter {
                     min_output: params.min_output,
                     output_token: params.token_out,
                     approvals: vec![],
+                    debt_reduction: None,
                 })
             }
             _ => Err(TradingError::AdapterError {
