@@ -17,7 +17,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
-use trading_runtime::execution_hash::{format_b256, hash_clob_order, hash_hyperliquid_order};
+use trading_runtime::execution_hash::{
+    ACTION_KIND_CLOB_ORDER, format_b256, hash_clob_order, hash_hyperliquid_order,
+};
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::signed_envelope::SignedTradingEnvelope;
 use trading_runtime::trading_envelope::TradingEnvelope;
@@ -30,6 +32,9 @@ use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::validator_client::ValidatorClient;
 
 const TEST_TOKEN: &str = "test-api-token-12345";
+const TEST_VALIDATOR_PRIVATE_KEY: &str =
+    "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const TEST_VERIFYING_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
 /// Ensure a shared temp state dir is set for the entire test binary.
 /// OnceCell-backed stores in trade_store/metrics_store init once per process.
@@ -309,6 +314,71 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
     };
     validation.insert("intent_hash".into(), serde_json::json!(intent_hash));
     validation.insert("execution_hash".into(), serde_json::json!(execution_hash));
+}
+
+fn attach_signed_validation(
+    body: &mut serde_json::Value,
+    execution_chain_id: u64,
+    vault_address: &str,
+    action_kind: u64,
+) {
+    attach_validation_hashes(body, Some(execution_chain_id));
+
+    let validation = body
+        .get_mut("validation")
+        .and_then(|value| value.as_object_mut())
+        .expect("validation object");
+    let score = validation
+        .get("aggregate_score")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(75);
+    let deadline = validation
+        .get("deadline")
+        .and_then(|value| value.as_u64())
+        .expect("deadline");
+    let intent_hash: alloy::primitives::B256 = validation["intent_hash"]
+        .as_str()
+        .expect("intent_hash")
+        .parse()
+        .expect("intent hash b256");
+    let execution_hash: alloy::primitives::B256 = validation["execution_hash"]
+        .as_str()
+        .expect("execution_hash")
+        .parse()
+        .expect("execution hash b256");
+    let verifying_contract: alloy::primitives::Address =
+        TEST_VERIFYING_CONTRACT.parse().expect("verifying contract");
+    let vault: alloy::primitives::Address = vault_address.parse().expect("vault address");
+    let signer = trading_validator_lib::signer::ValidatorSigner::new(
+        TEST_VALIDATOR_PRIVATE_KEY,
+        execution_chain_id,
+        verifying_contract,
+    )
+    .expect("validator signer");
+    let (signature, validator) = signer
+        .sign_validation(
+            intent_hash,
+            execution_hash,
+            vault,
+            score,
+            deadline,
+            action_kind,
+        )
+        .expect("sign validation");
+
+    validation.insert(
+        "validator_responses".into(),
+        serde_json::json!([
+            {
+                "validator": format!("{validator:#x}"),
+                "score": score,
+                "reasoning": "signed test validation",
+                "signature": format!("0x{}", hex::encode(signature)),
+                "chain_id": execution_chain_id,
+                "verifying_contract": TEST_VERIFYING_CONTRACT,
+            }
+        ]),
+    );
 }
 
 fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
@@ -3779,7 +3849,12 @@ async fn test_multi_bot_clob_execute() {
             "validator_responses": []
         }
     });
-    attach_validation_hashes(&mut execute_body, Some(137));
+    attach_signed_validation(
+        &mut execute_body,
+        137,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_CLOB_ORDER,
+    );
 
     let response = app
         .oneshot(
@@ -3869,7 +3944,12 @@ async fn test_multi_bot_clob_execute_not_configured() {
             "validator_responses": []
         }
     });
-    attach_validation_hashes(&mut execute_body, Some(137));
+    attach_signed_validation(
+        &mut execute_body,
+        137,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_CLOB_ORDER,
+    );
 
     let response = app
         .oneshot(
