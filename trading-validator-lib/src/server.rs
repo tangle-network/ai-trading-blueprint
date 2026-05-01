@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use axum::Json;
 use axum::extract::State;
 use axum::routing::post;
@@ -8,6 +8,8 @@ use std::sync::Arc;
 use crate::risk_evaluator::AiProvider;
 use crate::scoring;
 use crate::signer::ValidatorSigner;
+use trading_runtime::execution_hash::{format_b256, hash_approvals, hash_execution_payload_parts};
+use trading_runtime::intent::hash_intent;
 
 #[derive(Debug, Clone)]
 pub struct ValidatorServer {
@@ -48,6 +50,9 @@ pub struct ValidateRequest {
 /// calldata matches the stated intent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
+    /// Chain ID the execution payload is bound to
+    #[serde(default)]
+    pub chain_id: u64,
     /// Hex-encoded target contract address
     pub target: String,
     /// Hex-encoded calldata
@@ -56,9 +61,25 @@ pub struct ExecutionContext {
     pub calldata_decoded: String,
     /// ETH value sent with the call
     pub value: String,
+    /// Minimum output bound encoded in the executable payload
+    #[serde(default)]
+    pub min_output: String,
+    /// Output token bound in the executable payload
+    #[serde(default)]
+    pub output_token: String,
+    /// Approval calls folded into the final execution
+    #[serde(default)]
+    pub approvals: Vec<ExecutionApproval>,
     /// Pre-computed simulation results from the HTTP API
     #[serde(default)]
     pub simulation_result: Option<SimulationSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionApproval {
+    pub token: String,
+    pub spender: String,
+    pub amount: String,
 }
 
 /// Summary of a simulation result, serializable for transmission to validators.
@@ -229,6 +250,68 @@ async fn handle_validate(
         )
     });
 
+    let validator_address = server.signer.as_ref().map_or_else(
+        || "0x0000000000000000000000000000000000000000".to_string(),
+        |signer| format!("0x{}", hex::encode(signer.address().as_slice())),
+    );
+
+    let expected_intent_hash = hash_intent(&request.intent);
+    if !hashes_match(&request.intent_hash, &expected_intent_hash) {
+        tracing::warn!(
+            supplied = %request.intent_hash,
+            expected = %expected_intent_hash,
+            "Rejecting validation request with mismatched intent_hash"
+        );
+        return Json(ValidateResponse {
+            score: 0,
+            signature: format!("0x{}", "00".repeat(65)),
+            reasoning: format!(
+                "{reasoning}; signature error: intent_hash mismatch, expected {expected_intent_hash}"
+            ),
+            validator: validator_address,
+            chain_id: signer_chain_id,
+            verifying_contract: signer_contract,
+            validated_at,
+        });
+    }
+
+    let expected_execution_hash = match expected_execution_hash(
+        &request,
+        expected_intent_hash.as_str(),
+    ) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::warn!(error = %e, "Rejecting validation request with invalid execution context");
+            return Json(ValidateResponse {
+                score: 0,
+                signature: format!("0x{}", "00".repeat(65)),
+                reasoning: format!("{reasoning}; signature error: invalid execution context: {e}"),
+                validator: validator_address,
+                chain_id: signer_chain_id,
+                verifying_contract: signer_contract,
+                validated_at,
+            });
+        }
+    };
+    if !hashes_match(&request.execution_hash, &expected_execution_hash) {
+        tracing::warn!(
+            supplied = %request.execution_hash,
+            expected = %expected_execution_hash,
+            "Rejecting validation request with mismatched execution_hash"
+        );
+        return Json(ValidateResponse {
+            score: 0,
+            signature: format!("0x{}", "00".repeat(65)),
+            reasoning: format!(
+                "{reasoning}; signature error: execution_hash mismatch, expected {expected_execution_hash}"
+            ),
+            validator: validator_address,
+            chain_id: signer_chain_id,
+            verifying_contract: signer_contract,
+            validated_at,
+        });
+    }
+
     // If we have a signer, produce a real EIP-712 signature
     if let Some(ref signer) = server.signer {
         // Parse intent_hash and execution_hash from hex strings
@@ -341,6 +424,77 @@ fn parse_b256(hex_str: &str) -> Result<B256, String> {
     Ok(B256::from(arr))
 }
 
+fn hashes_match(supplied: &str, expected: &str) -> bool {
+    supplied.eq_ignore_ascii_case(expected)
+}
+
+fn zero_hash() -> String {
+    format!("0x{}", "00".repeat(32))
+}
+
+fn parse_u256_decimal(value: &str, field_name: &str) -> Result<U256, String> {
+    U256::from_str_radix(value, 10).map_err(|e| format!("invalid {field_name}: {e}"))
+}
+
+fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Result<String, String> {
+    let Some(ctx) = request.execution_context.as_ref() else {
+        return Ok(zero_hash());
+    };
+
+    let target: Address = ctx
+        .target
+        .parse()
+        .map_err(|e| format!("invalid execution target: {e}"))?;
+    let calldata = hex::decode(ctx.calldata.trim_start_matches("0x"))
+        .map_err(|e| format!("invalid calldata hex: {e}"))?;
+    let calldata = Bytes::from(calldata);
+    let value = parse_u256_decimal(&ctx.value, "execution value")?;
+    let min_output = parse_u256_decimal(&ctx.min_output, "min_output")?;
+    let output_token: Address = ctx
+        .output_token
+        .parse()
+        .map_err(|e| format!("invalid output_token: {e}"))?;
+    let intent_hash = parse_b256(intent_hash)?;
+    let deadline = U256::from(request.deadline);
+    let chain_id = if ctx.chain_id == 0 {
+        request.intent.chain_id
+    } else {
+        ctx.chain_id
+    };
+
+    let approvals = ctx
+        .approvals
+        .iter()
+        .map(|approval| {
+            Ok(trading_runtime::adapters::Approval {
+                token: approval
+                    .token
+                    .parse()
+                    .map_err(|e| format!("invalid approval token: {e}"))?,
+                spender: approval
+                    .spender
+                    .parse()
+                    .map_err(|e| format!("invalid approval spender: {e}"))?,
+                amount: parse_u256_decimal(&approval.amount, "approval amount")?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let hash = hash_execution_payload_parts(
+        target,
+        &calldata,
+        value,
+        min_output,
+        output_token,
+        intent_hash,
+        deadline,
+        chain_id,
+        hash_approvals(&approvals),
+    );
+
+    Ok(format_b256(hash))
+}
+
 /// Run an independent eth_call simulation using the validator's own RPC connection.
 ///
 /// Returns a `SimulationSummary` if successful, or `None` on failure.
@@ -419,7 +573,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_with_signer() {
-        use alloy::primitives::keccak256;
         use trading_runtime::Action;
         use trading_runtime::intent::TradeIntentBuilder;
 
@@ -448,14 +601,14 @@ mod tests {
             .build()
             .unwrap();
 
-        let intent_hash = keccak256("test-intent");
-        let execution_hash = keccak256("test-execution");
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let execution_hash = zero_hash();
         let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
         let req_body = serde_json::json!({
             "intent": intent,
-            "intent_hash": format!("0x{}", hex::encode(intent_hash)),
-            "execution_hash": format!("0x{}", hex::encode(execution_hash)),
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
             "vault_address": vault_address,
             "deadline": 9999999999u64,
         });
@@ -497,6 +650,65 @@ mod tests {
             Some("0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string())
         );
         assert!(!resp.validated_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_validate_rejects_mismatched_intent_hash() {
+        use trading_runtime::Action;
+        use trading_runtime::intent::TradeIntentBuilder;
+
+        let contract_addr: Address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            .parse()
+            .unwrap();
+        let server = ValidatorServer::new(9090)
+            .with_signer(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                31337,
+                contract_addr,
+            )
+            .unwrap();
+        let app = server.router();
+
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("test")
+            .action(Action::Swap)
+            .token_in("0xA")
+            .token_out("0xB")
+            .amount_in(rust_decimal::Decimal::new(100, 0))
+            .min_amount_out(rust_decimal::Decimal::new(95, 0))
+            .target_protocol("uniswap_v3")
+            .build()
+            .unwrap();
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "execution_hash": zero_hash(),
+            "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "deadline": 9999999999u64,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ValidateResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, format!("0x{}", "00".repeat(65)));
+        assert!(resp.reasoning.contains("intent_hash mismatch"));
     }
 
     #[tokio::test]

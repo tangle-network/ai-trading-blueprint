@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
     pub execution_hash: String,
+    pub chain_id: u64,
     pub target: String,
     pub calldata: String,
     pub calldata_decoded: String,

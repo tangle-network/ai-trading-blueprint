@@ -274,6 +274,10 @@ mod tests {
             calldata: "0xdeadbeef".into(),
             calldata_decoded: "unknown()".into(),
             value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
                 success: false,
                 gas_used: 21000,
@@ -294,6 +298,10 @@ mod tests {
             calldata: "0xdeadbeef".into(),
             calldata_decoded: "unknown()".into(),
             value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
                 success: true,
                 gas_used: 150000,
@@ -325,6 +333,10 @@ mod tests {
             calldata: "0x414bf389".into(),
             calldata_decoded: "exactInputSingle(...)".into(),
             value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
                 success: true,
                 gas_used: 150000,
@@ -395,6 +407,10 @@ mod tests {
             calldata: "0xdeadbeef".into(),
             calldata_decoded: "unknown()".into(),
             value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            approvals: Vec::new(),
+            chain_id: 31337,
             simulation_result: Some(crate::server::SimulationSummary {
                 success: true,
                 gas_used: 100000,

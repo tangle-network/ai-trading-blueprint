@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
-use trading_runtime::executor::TradeExecutor;
+use trading_runtime::adapters::ActionParams;
+use trading_runtime::execution_hash::{format_b256, hash_execution_payload};
+use trading_runtime::executor::{TradeExecutor, get_adapter};
+use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
 use trading_runtime::token_metadata::{
@@ -416,6 +419,144 @@ fn normalize_intent_payload(mut intent: IntentPayload, chain_id: Option<u64>) ->
     intent.token_out =
         normalize_protocol_token(&intent.target_protocol, chain_id, &intent.token_out);
     intent
+}
+
+fn zero_hash() -> String {
+    format!("0x{}", "00".repeat(32))
+}
+
+fn uses_direct_non_vault_execution(protocol: &str) -> bool {
+    matches!(protocol, "polymarket_clob" | "hyperliquid")
+}
+
+fn parse_hash_hex(
+    hash: &str,
+    field_name: &str,
+) -> Result<alloy::primitives::B256, (StatusCode, String)> {
+    let bytes = hex::decode(hash.trim_start_matches("0x")).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid {field_name} hex: {e}"),
+        )
+    })?;
+    if bytes.len() != 32 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{field_name} must be 32 bytes, got {}", bytes.len()),
+        ));
+    }
+    Ok(alloy::primitives::B256::from_slice(&bytes))
+}
+
+fn decimal_to_u256_for_hash(
+    amount: &rust_decimal::Decimal,
+) -> Result<alloy::primitives::U256, (StatusCode, String)> {
+    let truncated = amount.trunc();
+    if truncated.is_sign_negative() {
+        return Err((StatusCode::BAD_REQUEST, "Amount cannot be negative".into()));
+    }
+    alloy::primitives::U256::from_str_radix(&truncated.to_string(), 10).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Amount is too large for execution hash: {e}"),
+        )
+    })
+}
+
+fn expected_validation_hashes(
+    intent: &TradeIntent,
+    vault_address: &str,
+    adapter_chain_id: Option<u64>,
+    execution_chain_id: u64,
+    bind_execution_payload: bool,
+) -> Result<(String, String), (StatusCode, String)> {
+    let expected_intent_hash = hash_intent(intent);
+
+    if !bind_execution_payload || uses_direct_non_vault_execution(&intent.target_protocol) {
+        return Ok((expected_intent_hash, zero_hash()));
+    }
+
+    let adapter = get_adapter(&intent.target_protocol, adapter_chain_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let token_in = intent.token_in.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid token_in address for execution hash: {e}"),
+        )
+    })?;
+    let token_out = intent.token_out.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid token_out address for execution hash: {e}"),
+        )
+    })?;
+    let vault_address = vault_address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault address for execution hash: {e}"),
+        )
+    })?;
+
+    let params = ActionParams {
+        action: intent.action.clone(),
+        token_in,
+        token_out,
+        amount: decimal_to_u256_for_hash(&intent.amount_in)?,
+        min_output: decimal_to_u256_for_hash(&intent.min_amount_out)?,
+        extra: intent.metadata.clone(),
+        vault_address,
+    };
+    let encoded = adapter
+        .encode_action(&params)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let intent_hash = parse_hash_hex(&expected_intent_hash, "intent_hash")?;
+    let deadline = alloy::primitives::U256::from(intent.deadline.timestamp().max(0) as u64);
+    let execution_hash =
+        hash_execution_payload(&encoded, intent_hash, deadline, execution_chain_id);
+
+    Ok((expected_intent_hash, format_b256(execution_hash)))
+}
+
+fn ensure_validation_hash_binding(
+    validation: &ValidationPayload,
+    intent: &TradeIntent,
+    vault_address: &str,
+    adapter_chain_id: Option<u64>,
+    execution_chain_id: u64,
+    bind_execution_payload: bool,
+) -> Result<String, (StatusCode, String)> {
+    parse_hash_hex(&validation.intent_hash, "intent_hash")?;
+    parse_hash_hex(&validation.execution_hash, "execution_hash")?;
+
+    let (expected_intent_hash, expected_execution_hash) = expected_validation_hashes(
+        intent,
+        vault_address,
+        adapter_chain_id,
+        execution_chain_id,
+        bind_execution_payload,
+    )?;
+
+    if validation.intent_hash != expected_intent_hash {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Validation intent_hash does not match execute request: got {}, expected {}",
+                validation.intent_hash, expected_intent_hash
+            ),
+        ));
+    }
+
+    if validation.execution_hash != expected_execution_hash {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Validation execution_hash does not match execute request: got {}, expected {}",
+                validation.execution_hash, expected_execution_hash
+            ),
+        ));
+    }
+
+    Ok(expected_intent_hash)
 }
 
 #[derive(Clone, Debug)]
@@ -1534,20 +1675,6 @@ async fn execute(
         &request.intent.token_in,
         &request.intent.token_out,
     )?;
-    // Dedup check FIRST — before any validation or execution work.
-    // Prevents race window where parallel requests both pass validation
-    // before either inserts into the dedup store.
-    if !request.validation.intent_hash.is_empty()
-        && check_and_insert_intent(&request.validation.intent_hash)
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            format!(
-                "Intent hash {} has already been executed",
-                request.validation.intent_hash
-            ),
-        ));
-    }
 
     let normalized_intent = normalize_intent_payload(request.intent.clone(), protocol_chain_id);
     let mut normalized_request = request.clone();
@@ -1558,6 +1685,22 @@ async fn execute(
     }
 
     let intent = parse_execute_request(&normalized_request, protocol_chain_id)?;
+    let canonical_intent_hash = ensure_validation_hash_binding(
+        &request.validation,
+        &intent,
+        &state.vault_address,
+        protocol_chain_id,
+        state.chain_id.unwrap_or(intent.chain_id),
+        !state.paper_trade,
+    )?;
+
+    if check_and_insert_intent(&canonical_intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Intent hash {canonical_intent_hash} has already been executed"),
+        ));
+    }
+
     let stored_validation = build_stored_validation(&request.validation);
 
     let is_clob_trade = normalized_request.intent.target_protocol == "polymarket_clob";
@@ -1689,19 +1832,6 @@ async fn execute_multi_bot(
         &req.intent.token_out,
     )?;
 
-    // Dedup check FIRST — before any validation or execution work.
-    if !req.validation.intent_hash.is_empty()
-        && check_and_insert_intent(&req.validation.intent_hash)
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            format!(
-                "Intent hash {} has already been executed",
-                req.validation.intent_hash
-            ),
-        ));
-    }
-
     let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(protocol_chain_id));
     let mut normalized_req = req.clone();
     normalized_req.intent = normalized_intent;
@@ -1711,6 +1841,22 @@ async fn execute_multi_bot(
     }
 
     let intent = parse_execute_request(&normalized_req, Some(protocol_chain_id))?;
+    let canonical_intent_hash = ensure_validation_hash_binding(
+        &req.validation,
+        &intent,
+        &bot.vault_address,
+        Some(protocol_chain_id),
+        bot.chain_id,
+        !bot.paper_trade,
+    )?;
+
+    if check_and_insert_intent(&canonical_intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Intent hash {canonical_intent_hash} has already been executed"),
+        ));
+    }
+
     let stored_validation = build_stored_validation(&req.validation);
 
     let is_clob_trade = normalized_req.intent.target_protocol == "polymarket_clob";
@@ -2031,6 +2177,24 @@ mod tests {
         }
     }
 
+    fn attach_expected_hashes(
+        req: &mut ExecuteRequest,
+        adapter_chain_id: Option<u64>,
+        execution_chain_id: u64,
+    ) {
+        let intent = parse_execute_request(req, adapter_chain_id).expect("intent");
+        let (intent_hash, execution_hash) = expected_validation_hashes(
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            adapter_chain_id,
+            execution_chain_id,
+            true,
+        )
+        .expect("hashes");
+        req.validation.intent_hash = intent_hash;
+        req.validation.execution_hash = execution_hash;
+    }
+
     #[test]
     fn parse_execute_request_uses_validation_deadline_when_present() {
         let req = make_execute_request(Some(1_777_777_777));
@@ -2066,5 +2230,44 @@ mod tests {
             intent.token_out,
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         );
+    }
+
+    #[test]
+    fn validation_hash_binding_accepts_matching_request() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        attach_expected_hashes(&mut req, Some(1), 1);
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+
+        let result = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(1),
+            1,
+            true,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_hash_binding_rejects_mutated_min_output() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        attach_expected_hashes(&mut req, Some(1), 1);
+        req.intent.min_amount_out = "2000000".to_string();
+        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+
+        let err = ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            "0x0000000000000000000000000000000000000001",
+            Some(1),
+            1,
+            true,
+        )
+        .expect_err("mutated request should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
     }
 }
