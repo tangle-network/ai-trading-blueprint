@@ -3,8 +3,8 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 
 use super::{
-    ActionParams, DebtReductionPostcondition, EncodedAction, ProtocolAdapter, approval,
-    validate_vault_address,
+    ActionParams, DebtReductionPostcondition, EncodedAction, HealthFactorPostcondition,
+    ProtocolAdapter, approval, validate_vault_address,
 };
 use crate::aave_v3_registry::{
     AaveMarket, AaveReserve, market_for_chain, reserve_by_a_token, reserve_by_underlying,
@@ -125,6 +125,33 @@ impl AaveV3Adapter {
             });
         }
         Ok(rate_mode)
+    }
+
+    fn health_factor_postcondition(
+        &self,
+        params: &ActionParams,
+    ) -> Result<HealthFactorPostcondition, TradingError> {
+        let raw = params
+            .extra
+            .get("min_aave_health_factor_wad")
+            .and_then(|value| value.as_str())
+            .unwrap_or("1500000000000000000");
+        let min_health_factor =
+            U256::from_str_radix(raw, 10).map_err(|e| TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: format!("Invalid metadata.min_aave_health_factor_wad '{raw}': {e}"),
+            })?;
+        if min_health_factor == U256::ZERO {
+            return Err(TradingError::AdapterError {
+                protocol: "aave_v3".into(),
+                message: "Aave health factor threshold must not be zero".into(),
+            });
+        }
+        Ok(HealthFactorPostcondition {
+            pool: self.pool_address,
+            account: params.vault_address,
+            min_health_factor,
+        })
     }
 
     /// Encode `supply(address,uint256,address,uint16)`.
@@ -259,6 +286,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     output_token,
                     approvals: vec![approval(params.token_in, self.pool_address, params.amount)],
                     debt_reduction: None,
+                    health_factor: None,
                 })
             }
             Action::Withdraw => {
@@ -266,6 +294,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                 let underlying = parse_address(reserve.underlying);
                 let calldata =
                     self.encode_withdraw(underlying, params.amount, params.vault_address);
+                let health_factor = self.health_factor_postcondition(params)?;
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
@@ -274,6 +303,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     output_token: underlying,
                     approvals: vec![],
                     debt_reduction: None,
+                    health_factor: Some(health_factor),
                 })
             }
             Action::Borrow => {
@@ -285,6 +315,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     rate_mode,
                     params.vault_address,
                 );
+                let health_factor = self.health_factor_postcondition(params)?;
                 Ok(EncodedAction {
                     target: self.pool_address,
                     calldata,
@@ -293,6 +324,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                     output_token: params.token_out,
                     approvals: vec![],
                     debt_reduction: None,
+                    health_factor: Some(health_factor),
                 })
             }
             Action::Repay => {
@@ -326,6 +358,7 @@ impl ProtocolAdapter for AaveV3Adapter {
                         debt_token,
                         min_debt_decrease: params.min_output,
                     }),
+                    health_factor: None,
                 })
             }
             _ => Err(TradingError::AdapterError {

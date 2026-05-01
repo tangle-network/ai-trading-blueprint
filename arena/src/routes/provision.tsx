@@ -1031,7 +1031,9 @@ export default function ProvisionPage() {
                 : undefined,
             }),
           ),
-          risk_params_json: '{}',
+          risk_params_json: strategyType === 'yield'
+            ? JSON.stringify({ min_aave_health_factor: 1.5 })
+            : '{}',
           trading_loop_cron: effectiveCron,
           validator_service_ids: resolvedValidatorIds,
           ...(usesExecutionTarget && executionConfig

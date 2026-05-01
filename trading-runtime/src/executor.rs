@@ -383,6 +383,24 @@ fn build_execution_tx(
         );
     }
 
+    if let Some(health_factor) = &encoded.health_factor {
+        return vault_client.encode_execute_health_factor_with_approvals(
+            &format!("{}", encoded.target),
+            &encoded.calldata,
+            &encoded.value.to_string(),
+            &encoded.min_output.to_string(),
+            &format!("{}", encoded.output_token),
+            &format!("{}", health_factor.pool),
+            &format!("{}", health_factor.account),
+            &health_factor.min_health_factor.to_string(),
+            intent_hash,
+            &approvals,
+            signatures,
+            scores,
+            deadline,
+        );
+    }
+
     if encoded.approvals.is_empty() {
         vault_client.encode_execute(
             &format!("{}", encoded.target),
@@ -635,12 +653,10 @@ mod tests {
         let adapter = get_adapter("aave_v3", Some(31339)).expect("local fork should resolve");
 
         assert_eq!(
-            adapter.known_addresses(),
-            vec![
-                "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-                    .parse::<Address>()
-                    .unwrap()
-            ]
+            adapter.known_addresses()[0],
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                .parse::<Address>()
+                .unwrap()
         );
     }
 
@@ -806,6 +822,7 @@ mod tests {
                 .unwrap(),
             approvals: vec![],
             debt_reduction: None,
+            health_factor: None,
         };
 
         let tx = build_execution_tx(
@@ -848,6 +865,7 @@ mod tests {
                 amount: U256::from(42u64),
             }],
             debt_reduction: None,
+            health_factor: None,
         };
 
         let tx = build_execution_tx(
@@ -902,6 +920,7 @@ mod tests {
                     .unwrap(),
                 min_debt_decrease: U256::from(40u64),
             }),
+            health_factor: None,
         };
 
         let tx = build_execution_tx(
@@ -917,6 +936,52 @@ mod tests {
         assert_eq!(
             &tx.data[..4],
             &ITradingVault::executeDebtReductionWithApprovalsCall::SELECTOR[..]
+        );
+    }
+
+    #[test]
+    fn test_build_execution_tx_with_health_factor_uses_health_path() {
+        let vault_client = VaultClient::new(
+            "0x0000000000000000000000000000000000000001".into(),
+            "http://localhost:8545".into(),
+            42161,
+        );
+        let encoded = EncodedAction {
+            target: "0x0000000000000000000000000000000000000002"
+                .parse::<Address>()
+                .unwrap(),
+            calldata: Bytes::from(vec![1, 2, 3]),
+            value: U256::ZERO,
+            min_output: U256::from(10u64),
+            output_token: "0x0000000000000000000000000000000000000003"
+                .parse::<Address>()
+                .unwrap(),
+            approvals: vec![],
+            debt_reduction: None,
+            health_factor: Some(crate::adapters::HealthFactorPostcondition {
+                pool: "0x0000000000000000000000000000000000000002"
+                    .parse::<Address>()
+                    .unwrap(),
+                account: "0x0000000000000000000000000000000000000001"
+                    .parse::<Address>()
+                    .unwrap(),
+                min_health_factor: U256::from(1_500_000_000_000_000_000u128),
+            }),
+        };
+
+        let tx = build_execution_tx(
+            &vault_client,
+            &encoded,
+            [0x11; 32],
+            vec![vec![0xaa; 65]],
+            vec![U256::from(80u64)],
+            U256::from(123u64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            &tx.data[..4],
+            &ITradingVault::executeHealthFactorWithApprovalsCall::SELECTOR[..]
         );
     }
 

@@ -9,6 +9,8 @@ pub mod trade_store;
 
 use alloy::primitives::Address;
 use axum::Router;
+use rust_decimal::Decimal;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -86,10 +88,15 @@ pub struct BotContext {
     pub chain_id: u64,
     pub rpc_url: String,
     pub strategy_config: serde_json::Value,
+    pub risk_params: serde_json::Value,
     pub validator_endpoints: Vec<String>,
     /// Validation trust level — determines per-trade vs envelope vs self-operated.
     pub validation_trust: trading_runtime::ValidationTrust,
 }
+
+const DEFAULT_MIN_AAVE_HEALTH_FACTOR: &str = "1.5";
+const MIN_ALLOWED_AAVE_HEALTH_FACTOR: &str = "1.01";
+const WAD_DECIMAL: &str = "1000000000000000000";
 
 /// Shared state for the multi-bot trading HTTP API.
 ///
@@ -222,6 +229,61 @@ pub fn validate_protocol_available(
         "Protocol {target_protocol} is not available for this bot. Available protocols: {}",
         protocols.join(", ")
     ))
+}
+
+fn decimal_from_value(value: Option<&serde_json::Value>) -> Option<Decimal> {
+    match value {
+        Some(serde_json::Value::Number(number)) => Decimal::from_str(&number.to_string()).ok(),
+        Some(serde_json::Value::String(raw)) => Decimal::from_str(raw.trim()).ok(),
+        _ => None,
+    }
+}
+
+pub fn min_aave_health_factor_from_risk_params(
+    risk_params: &serde_json::Value,
+) -> Result<(Decimal, String), String> {
+    let value = decimal_from_value(
+        risk_params
+            .get("min_aave_health_factor")
+            .or_else(|| risk_params.get("minAaveHealthFactor")),
+    )
+    .unwrap_or_else(|| Decimal::from_str(DEFAULT_MIN_AAVE_HEALTH_FACTOR).unwrap());
+    let floor = Decimal::from_str(MIN_ALLOWED_AAVE_HEALTH_FACTOR).unwrap();
+    if value < floor {
+        return Err(format!(
+            "risk_params.min_aave_health_factor must be at least {floor}"
+        ));
+    }
+    let wad = (value * Decimal::from_str(WAD_DECIMAL).unwrap()).trunc();
+    Ok((value, wad.to_string()))
+}
+
+pub fn enrich_yield_safety_metadata(
+    target_protocol: &str,
+    action: &str,
+    risk_params: &serde_json::Value,
+    metadata: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if target_protocol != "aave_v3" || !matches!(action, "borrow" | "withdraw") {
+        return Ok(metadata.clone());
+    }
+
+    let (min_health_factor, min_health_factor_wad) =
+        min_aave_health_factor_from_risk_params(risk_params)?;
+    let mut enriched = match metadata {
+        serde_json::Value::Object(map) => map.clone(),
+        serde_json::Value::Null => serde_json::Map::new(),
+        _ => return Err("Aave borrow/withdraw metadata must be a JSON object".to_string()),
+    };
+    enriched.insert(
+        "min_aave_health_factor".to_string(),
+        serde_json::Value::String(min_health_factor.to_string()),
+    );
+    enriched.insert(
+        "min_aave_health_factor_wad".to_string(),
+        serde_json::Value::String(min_health_factor_wad),
+    );
+    Ok(serde_json::Value::Object(enriched))
 }
 
 #[derive(Clone, Debug)]
@@ -409,6 +471,35 @@ mod tests {
         )
         .expect_err("wrong chain should be rejected");
         assert!(err.contains("not allowlisted"));
+    }
+
+    #[test]
+    fn min_aave_health_factor_defaults_to_one_point_five() {
+        let (value, wad) = min_aave_health_factor_from_risk_params(&json!({})).unwrap();
+        assert_eq!(value.to_string(), "1.5");
+        assert_eq!(wad, "1500000000000000000");
+    }
+
+    #[test]
+    fn min_aave_health_factor_rejects_too_low_values() {
+        let err =
+            min_aave_health_factor_from_risk_params(&json!({"min_aave_health_factor": "1.0"}))
+                .expect_err("too-low health factor should fail closed");
+        assert!(err.contains("at least 1.01"));
+    }
+
+    #[test]
+    fn enrich_yield_safety_metadata_injects_canonical_health_factor() {
+        let metadata = enrich_yield_safety_metadata(
+            "aave_v3",
+            "borrow",
+            &json!({"min_aave_health_factor": 1.6}),
+            &json!({"rate_mode": 2}),
+        )
+        .unwrap();
+        assert_eq!(metadata["rate_mode"], 2);
+        assert_eq!(metadata["min_aave_health_factor"], "1.6");
+        assert_eq!(metadata["min_aave_health_factor_wad"], "1600000000000000000");
     }
 }
 

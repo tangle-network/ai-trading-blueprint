@@ -1,10 +1,15 @@
 use crate::{MultiBotTradingState, TradingApiState};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol;
+use alloy::sol_types::SolCall;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::adapters::ActionParams;
+use trading_runtime::aave_v3_registry::market_for_chain;
 use trading_runtime::calldata_decoder;
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
@@ -25,6 +30,19 @@ use trading_runtime::{Action, TradeIntent, TradeIntentBuilder};
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 const MAINNET_WETH_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 pub(crate) const PAPER_MODE_VALIDATOR: &str = "paper-mode";
+
+sol! {
+    interface IAavePoolHealth {
+        function getUserAccountData(address user) external view returns (
+            uint256 totalCollateralBase,
+            uint256 totalDebtBase,
+            uint256 availableBorrowsBase,
+            uint256 currentLiquidationThreshold,
+            uint256 ltv,
+            uint256 healthFactor
+        );
+    }
+}
 
 #[derive(Deserialize)]
 pub struct ValidateRequest {
@@ -160,6 +178,93 @@ fn requires_execution_context(protocol: &str) -> bool {
 
 fn requires_production_simulation(protocol: &str, paper_trade: bool) -> bool {
     !paper_trade && requires_execution_context(protocol)
+}
+
+fn requires_aave_health_check(protocol: &str, action: &str) -> bool {
+    protocol == "aave_v3" && matches!(action, "borrow" | "withdraw")
+}
+
+async fn require_current_aave_health(
+    rpc_url: &str,
+    protocol_chain_id: u64,
+    vault_address: &str,
+    metadata: &serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
+    let min_health_factor_raw = metadata
+        .get("min_aave_health_factor_wad")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Aave borrow/withdraw requires min_aave_health_factor_wad metadata".to_string(),
+            )
+        })?;
+    let min_health_factor =
+        alloy::primitives::U256::from_str_radix(min_health_factor_raw, 10).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid min_aave_health_factor_wad: {e}"),
+            )
+        })?;
+    let market = market_for_chain(protocol_chain_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Unsupported Aave V3 chain for health check: {protocol_chain_id}"),
+        )
+    })?;
+    let pool: alloy::primitives::Address = market.pool.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Aave V3 pool address for health check: {e}"),
+        )
+    })?;
+    let account: alloy::primitives::Address = vault_address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault address for Aave health check: {e}"),
+        )
+    })?;
+    let provider = ProviderBuilder::new().connect_http(rpc_url.parse().map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Invalid RPC URL for Aave health check: {e}"),
+        )
+    })?);
+    let result = provider
+        .call(
+            TransactionRequest::default()
+                .to(pool)
+                .input(
+                    alloy::primitives::Bytes::from(
+                        IAavePoolHealth::getUserAccountDataCall { user: account }.abi_encode(),
+                    )
+                    .into(),
+                ),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Aave health check failed: {e}"),
+            )
+        })?;
+    let account_data = IAavePoolHealth::getUserAccountDataCall::abi_decode_returns(&result)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Aave health check returned invalid data: {e}"),
+            )
+        })?;
+    if account_data.healthFactor < min_health_factor {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Aave health factor {} is below required {}",
+                account_data.healthFactor, min_health_factor
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn require_successful_simulation(
@@ -461,9 +566,16 @@ fn build_validate_response(
 
 async fn validate(
     State(state): State<Arc<TradingApiState>>,
-    Json(request): Json<ValidateRequest>,
+    Json(mut request): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, (StatusCode, String)> {
     let protocol_chain_id = state_protocol_chain_id(state.chain_id);
+    request.metadata = crate::enrich_yield_safety_metadata(
+        &request.target_protocol,
+        &request.action,
+        &serde_json::Value::Null,
+        &request.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let parsed = parse_validate_request(&request, protocol_chain_id)?;
     let token_in = normalize_protocol_token(
         &request.target_protocol,
@@ -486,6 +598,21 @@ async fn validate(
         &request.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    if !state.paper_trade && requires_aave_health_check(&request.target_protocol, &request.action) {
+        let rpc_url = state.rpc_url.as_deref().ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Aave health checks require an RPC URL".to_string(),
+            )
+        })?;
+        require_current_aave_health(
+            rpc_url,
+            protocol_chain_id.unwrap_or(parsed.intent.chain_id),
+            &state.vault_address,
+            &request.metadata,
+        )
+        .await?;
+    }
 
     let intent_hash = hash_intent(&parsed.intent);
     if !state.paper_trade
@@ -618,23 +745,47 @@ async fn build_execution_context(
     );
 
     let calldata_decoded = calldata_decoder::decode_encoded_action(&encoded.calldata, protocol);
-    let (postcondition_kind, input_token, max_input, debt_token, min_debt_decrease) =
-        match &encoded.debt_reduction {
-            Some(debt_reduction) => (
-                "debt_decrease".to_string(),
-                format!("{}", debt_reduction.input_token),
-                format!("{}", debt_reduction.max_input),
-                format!("{}", debt_reduction.debt_token),
-                format!("{}", debt_reduction.min_debt_decrease),
-            ),
-            None => (
-                "output_increase".to_string(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-            ),
-        };
+    let (
+        postcondition_kind,
+        input_token,
+        max_input,
+        debt_token,
+        min_debt_decrease,
+        health_pool,
+        health_account,
+        min_health_factor,
+    ) = match (&encoded.debt_reduction, &encoded.health_factor) {
+        (Some(debt_reduction), _) => (
+            "debt_decrease".to_string(),
+            format!("{}", debt_reduction.input_token),
+            format!("{}", debt_reduction.max_input),
+            format!("{}", debt_reduction.debt_token),
+            format!("{}", debt_reduction.min_debt_decrease),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+        (_, Some(health_factor)) => (
+            "health_factor".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            format!("{}", health_factor.pool),
+            format!("{}", health_factor.account),
+            format!("{}", health_factor.min_health_factor),
+        ),
+        (None, None) => (
+            "output_increase".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+    };
 
     // Extract known addresses before the async boundary (adapter may not be Sync)
     let mut known_addresses = adapter.known_addresses();
@@ -676,6 +827,9 @@ async fn build_execution_context(
         max_input,
         debt_token,
         min_debt_decrease,
+        health_pool,
+        health_account,
+        min_health_factor,
         approvals: encoded
             .approvals
             .iter()
@@ -804,11 +958,19 @@ async fn validate_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Body read failed: {e}")))?;
     let req: ValidateRequest = serde_json::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
+    let mut req = req;
     crate::validate_protocol_available(&bot.strategy_config, &req.target_protocol)
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     let protocol_chain_id =
         crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);
+    req.metadata = crate::enrich_yield_safety_metadata(
+        &req.target_protocol,
+        &req.action,
+        &bot.risk_params,
+        &req.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let parsed = parse_validate_request(&req, Some(protocol_chain_id))?;
     let token_in =
         normalize_protocol_token(&req.target_protocol, Some(protocol_chain_id), &req.token_in);
@@ -828,6 +990,15 @@ async fn validate_multi_bot(
         &req.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    if !bot.paper_trade && requires_aave_health_check(&req.target_protocol, &req.action) {
+        require_current_aave_health(
+            &bot.rpc_url,
+            protocol_chain_id,
+            &bot.vault_address,
+            &req.metadata,
+        )
+        .await?;
+    }
 
     // Use validator endpoints from the bot context
     let validator_endpoints = bot.validator_endpoints.clone();
@@ -1111,6 +1282,9 @@ mod tests {
             max_input: String::new(),
             debt_token: String::new(),
             min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
             approvals: Vec::new(),
             simulation_result: None,
         };
@@ -1136,6 +1310,9 @@ mod tests {
             max_input: String::new(),
             debt_token: String::new(),
             min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
             approvals: Vec::new(),
             simulation_result: Some(SimulationSummary {
                 success: true,
@@ -1168,6 +1345,9 @@ mod tests {
             max_input: String::new(),
             debt_token: String::new(),
             min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
             approvals: Vec::new(),
             simulation_result: Some(SimulationSummary {
                 success: true,

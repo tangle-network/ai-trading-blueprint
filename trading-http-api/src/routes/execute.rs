@@ -1930,6 +1930,13 @@ async fn execute(
     let normalized_intent = normalize_intent_payload(request.intent.clone(), protocol_chain_id);
     let mut normalized_request = request.clone();
     normalized_request.intent = normalized_intent;
+    normalized_request.intent.metadata = crate::enrich_yield_safety_metadata(
+        &normalized_request.intent.target_protocol,
+        &normalized_request.intent.action,
+        &serde_json::Value::Null,
+        &normalized_request.intent.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
         protocol_chain_id.unwrap_or(state.chain_id.unwrap_or(42161)),
@@ -2111,6 +2118,13 @@ async fn execute_multi_bot(
     let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(protocol_chain_id));
     let mut normalized_req = req.clone();
     normalized_req.intent = normalized_intent;
+    normalized_req.intent.metadata = crate::enrich_yield_safety_metadata(
+        &normalized_req.intent.target_protocol,
+        &normalized_req.intent.action,
+        &bot.risk_params,
+        &normalized_req.intent.metadata,
+    )
+    .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
         protocol_chain_id,

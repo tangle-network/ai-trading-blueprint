@@ -54,6 +54,13 @@ function readConfigString(config: Record<string, unknown>, key: string): string 
   return typeof value === 'string' ? value : '';
 }
 
+function readRiskNumber(config: Record<string, unknown> | undefined, key: string, fallback: string): string {
+  const value = config?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return fallback;
+}
+
 function formatOptionalConfigValue(value: string, emptyLabel = 'Not set'): string {
   const trimmed = value.trim();
   return trimmed || emptyLabel;
@@ -545,10 +552,14 @@ function StrategyCard({
   updateConfig: ReturnType<typeof useBotControl>['updateConfig'];
 }) {
   const strategyConfig = detail.strategy_config ?? {};
+  const riskParams = detail.risk_params ?? {};
   const savedExpertKnowledge = readConfigString(strategyConfig, 'expert_knowledge_override');
   const savedCustomInstructions = readConfigString(strategyConfig, 'custom_instructions');
+  const savedMinAaveHealthFactor = readRiskNumber(riskParams, 'min_aave_health_factor', '1.5');
+  const showAaveHealthFactor = detail.strategy_type === 'yield';
 
   const [paperTrade, setPaperTrade] = useState(detail.paper_trade);
+  const [minAaveHealthFactor, setMinAaveHealthFactor] = useState(savedMinAaveHealthFactor);
   const [expertKnowledgeOverride, setExpertKnowledgeOverride] = useState(savedExpertKnowledge);
   const [customInstructions, setCustomInstructions] = useState(savedCustomInstructions);
   const [draftExpertKnowledge, setDraftExpertKnowledge] = useState(savedExpertKnowledge);
@@ -557,16 +568,22 @@ function StrategyCard({
 
   useEffect(() => {
     setPaperTrade(detail.paper_trade);
+    setMinAaveHealthFactor(savedMinAaveHealthFactor);
     setExpertKnowledgeOverride(savedExpertKnowledge);
     setCustomInstructions(savedCustomInstructions);
     setDraftExpertKnowledge(savedExpertKnowledge);
     setDraftCustomInstructions(savedCustomInstructions);
     setIsInstructionsModalOpen(false);
-  }, [detail.id, detail.paper_trade, savedCustomInstructions, savedExpertKnowledge]);
+  }, [detail.id, detail.paper_trade, savedCustomInstructions, savedExpertKnowledge, savedMinAaveHealthFactor]);
 
   const hasUnsavedChanges = paperTrade !== detail.paper_trade
+    || minAaveHealthFactor !== savedMinAaveHealthFactor
     || expertKnowledgeOverride !== savedExpertKnowledge
     || customInstructions !== savedCustomInstructions;
+
+  const parsedMinAaveHealthFactor = Number(minAaveHealthFactor);
+  const minAaveHealthFactorInvalid = showAaveHealthFactor
+    && (!Number.isFinite(parsedMinAaveHealthFactor) || parsedMinAaveHealthFactor < 1.01);
 
   const handlePaperTradeChange = (nextValue: boolean) => {
     if (!nextValue) {
@@ -597,9 +614,17 @@ function StrategyCard({
   };
 
   const handleSave = () => {
+    if (minAaveHealthFactorInvalid) {
+      toast.error('Aave health factor must be at least 1.01');
+      return;
+    }
     const nextStrategyConfig: Record<string, unknown> = { ...strategyConfig };
+    const nextRiskParams: Record<string, unknown> = { ...riskParams };
 
     nextStrategyConfig.paper_trade = paperTrade;
+    if (showAaveHealthFactor) {
+      nextRiskParams.min_aave_health_factor = parsedMinAaveHealthFactor;
+    }
 
     const trimmedExpertKnowledge = expertKnowledgeOverride.trim();
     if (trimmedExpertKnowledge) {
@@ -617,7 +642,7 @@ function StrategyCard({
 
     updateConfig.mutate({
       strategyConfigJson: JSON.stringify(nextStrategyConfig),
-      riskParamsJson: JSON.stringify(detail.risk_params ?? {}),
+      riskParamsJson: JSON.stringify(nextRiskParams),
     });
   };
 
@@ -666,6 +691,30 @@ function StrategyCard({
             </Badge>
           </div>
 
+          {showAaveHealthFactor && (
+            <div className="flex items-center justify-between gap-4">
+              <FieldTooltip
+                label="Aave Health Factor"
+                description="Minimum Aave health factor required after live borrow or withdraw actions."
+              />
+              <input
+                aria-label="Minimum Aave health factor"
+                type="number"
+                min="1.01"
+                step="0.01"
+                value={minAaveHealthFactor}
+                onChange={(e) => setMinAaveHealthFactor(e.target.value)}
+                className="h-9 w-28 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 text-right font-data text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              />
+            </div>
+          )}
+
+          {minAaveHealthFactorInvalid && (
+            <p className="text-xs text-crimson-500">
+              Minimum Aave health factor must be at least 1.01.
+            </p>
+          )}
+
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-3">
               <FieldTooltip
@@ -704,7 +753,7 @@ function StrategyCard({
             <p className="text-xs text-arena-elements-textTertiary">
               {hasUnsavedChanges ? 'You have unsaved configuration changes.' : 'No unsaved changes.'}
             </p>
-            <Button size="sm" disabled={!hasUnsavedChanges || updateConfig.isPending} onClick={handleSave}>
+            <Button size="sm" disabled={!hasUnsavedChanges || updateConfig.isPending || minAaveHealthFactorInvalid} onClick={handleSave}>
               {updateConfig.isPending ? 'Saving...' : 'Save'}
             </Button>
           </div>

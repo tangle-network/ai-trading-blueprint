@@ -62,6 +62,7 @@ pub struct EncodedAction {
     pub output_token: Address,
     pub approvals: Vec<Approval>,
     pub debt_reduction: Option<DebtReductionPostcondition>,
+    pub health_factor: Option<HealthFactorPostcondition>,
 }
 
 /// Success condition for actions that reduce protocol debt instead of receiving output tokens.
@@ -71,6 +72,14 @@ pub struct DebtReductionPostcondition {
     pub max_input: U256,
     pub debt_token: Address,
     pub min_debt_decrease: U256,
+}
+
+/// Success condition for actions that must leave an Aave-style account above a health-factor threshold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthFactorPostcondition {
+    pub pool: Address,
+    pub account: Address,
+    pub min_health_factor: U256,
 }
 
 /// Describe an atomic vault-held token approval to apply during execution.
