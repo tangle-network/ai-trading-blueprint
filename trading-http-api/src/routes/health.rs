@@ -1,10 +1,12 @@
 use crate::TradingApiState;
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<TradingApiState>> {
-    Router::new().route("/health", get(health))
+    Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
 }
 
 fn looks_like_address(value: &str) -> bool {
@@ -14,7 +16,7 @@ fn looks_like_address(value: &str) -> bool {
         && value != "0x0000000000000000000000000000000000000000"
 }
 
-async fn health(State(state): State<Arc<TradingApiState>>) -> Json<Value> {
+fn readiness_payload(state: &TradingApiState) -> (bool, Value) {
     let mode = if state.paper_trade { "paper" } else { "live" };
     let rpc_ready = state
         .rpc_url
@@ -26,7 +28,9 @@ async fn health(State(state): State<Arc<TradingApiState>>) -> Json<Value> {
     let vault_ready = state.paper_trade || looks_like_address(&state.vault_address);
     let ready = validator_quorum_ready && simulation_ready && vault_ready;
 
-    Json(json!({
+    (
+        ready,
+        json!({
         "status": if ready { "ok" } else { "degraded" },
         "mode": mode,
         "rpc_ready": rpc_ready,
@@ -34,5 +38,23 @@ async fn health(State(state): State<Arc<TradingApiState>>) -> Json<Value> {
         "validator_quorum_ready": validator_quorum_ready,
         "simulation_ready": simulation_ready,
         "vault_ready": vault_ready,
-    }))
+        }),
+    )
+}
+
+async fn health(State(state): State<Arc<TradingApiState>>) -> Json<Value> {
+    let (_, payload) = readiness_payload(&state);
+    Json(payload)
+}
+
+async fn ready(State(state): State<Arc<TradingApiState>>) -> (StatusCode, Json<Value>) {
+    let (ready, payload) = readiness_payload(&state);
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(payload),
+    )
 }

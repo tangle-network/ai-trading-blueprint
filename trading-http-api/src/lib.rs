@@ -512,6 +512,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     use axum::routing::get;
     Router::new()
         .route("/health", get(multi_bot_health))
+        .route("/ready", get(multi_bot_ready))
         .merge(routes::market_data::multi_bot_router())
         .merge(routes::portfolio::multi_bot_router())
         .merge(routes::validate::multi_bot_router())
@@ -534,9 +535,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .with_state(state)
 }
 
-async fn multi_bot_health(
-    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
-) -> axum::Json<serde_json::Value> {
+fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {
     let rpc_ready = state
         .chain_client_rpc_url
         .as_ref()
@@ -544,7 +543,9 @@ async fn multi_bot_health(
         || state.chain_client.is_some();
     let simulation_ready = rpc_ready;
 
-    axum::Json(serde_json::json!({
+    (
+        rpc_ready,
+        serde_json::json!({
         "status": if rpc_ready { "ok" } else { "degraded" },
         "mode": "multi",
         "rpc_ready": rpc_ready,
@@ -552,5 +553,27 @@ async fn multi_bot_health(
         "validator_quorum_ready": serde_json::Value::Null,
         "simulation_ready": simulation_ready,
         "vault_ready": serde_json::Value::Null,
-    }))
+        }),
+    )
+}
+
+async fn multi_bot_health(
+    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
+) -> axum::Json<serde_json::Value> {
+    let (_, payload) = multi_bot_readiness_payload(&state);
+    axum::Json(payload)
+}
+
+async fn multi_bot_ready(
+    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
+) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    let (ready, payload) = multi_bot_readiness_payload(&state);
+    (
+        if ready {
+            axum::http::StatusCode::OK
+        } else {
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        },
+        axum::Json(payload),
+    )
 }
