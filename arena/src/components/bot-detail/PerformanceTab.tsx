@@ -15,6 +15,9 @@ import {
   PERFORMANCE_SECTION_COPY,
 } from './metricCopy';
 
+const CHART_TOOLTIP_FONT_FAMILY = "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const CHART_DATA_FONT_FAMILY = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
   const raw = strategyConfig?.initial_capital_usd
     ?? strategyConfig?.initial_capital
@@ -128,8 +131,8 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               borderWidth: 1,
               titleColor: chartTheme.tooltipTitleColor,
               bodyColor: chartTheme.tooltipBodyColor,
-              titleFont: { family: 'IBM Plex Mono', size: 11 },
-              bodyFont: { family: 'IBM Plex Mono', size: 12, weight: 'bold' as const },
+              titleFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 12, weight: 500 },
+              bodyFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 12, weight: 700 },
               padding: 10,
               cornerRadius: 8,
               displayColors: false,
@@ -149,7 +152,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               ticks: {
                 maxTicksLimit: 7,
                 color: chartTheme.tickColor,
-                font: { family: 'IBM Plex Mono', size: 10 },
+                font: { family: CHART_DATA_FONT_FAMILY, size: 10 },
               },
             },
             y: {
@@ -160,7 +163,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               border: { display: false },
               ticks: {
                 color: chartTheme.tickColor,
-                font: { family: 'IBM Plex Mono', size: 10 },
+                font: { family: CHART_DATA_FONT_FAMILY, size: 10 },
               },
             },
           },
