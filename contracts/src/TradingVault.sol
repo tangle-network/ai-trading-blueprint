@@ -44,6 +44,23 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Action kind for CLOB collateral releases (releaseCollateral).
     uint256 public constant ACTION_KIND_RELEASE_COLLATERAL = 1;
 
+    /// @notice Canonical hash type for exact vault execution payloads.
+    bytes32 public constant EXECUTION_PAYLOAD_TYPEHASH = keccak256(
+        "ExecutionPayload(address target,bytes32 dataHash,uint256 value,uint256 minOutput,address outputToken,bytes32 intentHash,uint256 deadline,uint256 chainId,bytes32 approvalsHash)"
+    );
+
+    /// @notice Canonical hash type for atomic approval calls.
+    bytes32 public constant APPROVAL_CALL_TYPEHASH = keccak256(
+        "ApprovalCall(address token,address spender,uint256 amount)"
+    );
+
+    /// @notice Canonical hash type for collateral releases.
+    bytes32 public constant COLLATERAL_RELEASE_TYPEHASH = keccak256(
+        "CollateralRelease(uint256 amount,address recipient,bytes32 intentHash,uint256 deadline,uint256 chainId)"
+    );
+
+    bytes32 private constant EMPTY_APPROVALS_HASH = keccak256("");
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -428,7 +445,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         nonReentrant
         whenNotPaused
     {
-        _prepareExecution(params, signatures, scores);
+        _prepareExecution(params, signatures, scores, EMPTY_APPROVALS_HASH);
         _executeTrade(params);
     }
 
@@ -446,12 +463,17 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
-        _prepareExecution(params, signatures, scores);
+        _prepareExecution(params, signatures, scores, _hashApprovals(approvals));
         _applyApprovals(approvals, params.target);
         _executeTrade(params);
     }
 
-    function _prepareExecution(ExecuteParams calldata params, bytes[] calldata signatures, uint256[] calldata scores)
+    function _prepareExecution(
+        ExecuteParams calldata params,
+        bytes[] calldata signatures,
+        uint256[] calldata scores,
+        bytes32 approvalsHash
+    )
         internal
     {
         if (windDownActive) revert WindDownBlocksExecute();
@@ -467,7 +489,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkPolicy(params.outputToken, params.minOutput, params.target);
 
         // 2. Validator signature check (m-of-n EIP-712) — bind to execute action kind
-        _checkValidators(params.intentHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
+        bytes32 executionHash = _computeExecutionHash(params, approvalsHash);
+        _checkValidators(
+            params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE
+        );
     }
 
     function _applyApprovals(ApprovalCall[] calldata approvals, address target) internal {
@@ -488,15 +513,62 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     function _checkValidators(
         bytes32 intentHash,
+        bytes32 executionHash,
         bytes[] calldata signatures,
         uint256[] calldata scores,
         uint256 deadline,
         uint256 actionKind
     ) internal view {
         (bool ok,) = tradeValidator.validateWithSignatures(
-            intentHash, address(this), signatures, scores, deadline, actionKind
+            intentHash, executionHash, address(this), signatures, scores, deadline, actionKind
         );
         if (!ok) revert ValidatorCheckFailed();
+    }
+
+    /// @notice Compute the exact execution hash validators must sign for execute paths.
+    function computeExecutionHash(ExecuteParams calldata params, ApprovalCall[] calldata approvals)
+        external
+        view
+        returns (bytes32)
+    {
+        return _computeExecutionHash(params, _hashApprovals(approvals));
+    }
+
+    function _computeExecutionHash(ExecuteParams calldata params, bytes32 approvalsHash)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                EXECUTION_PAYLOAD_TYPEHASH,
+                params.target,
+                keccak256(params.data),
+                params.value,
+                params.minOutput,
+                params.outputToken,
+                params.intentHash,
+                params.deadline,
+                block.chainid,
+                approvalsHash
+            )
+        );
+    }
+
+    function _hashApprovals(ApprovalCall[] calldata approvals) internal pure returns (bytes32) {
+        bytes memory packed;
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall calldata approval = approvals[i];
+            packed = bytes.concat(
+                packed,
+                abi.encodePacked(
+                    keccak256(
+                        abi.encode(APPROVAL_CALL_TYPEHASH, approval.token, approval.spender, approval.amount)
+                    )
+                )
+            );
+        }
+        return keccak256(packed);
     }
 
     function _executeTrade(ExecuteParams calldata params) internal {
@@ -568,8 +640,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             revert ExceedsCollateralLimit(amount, maxAllowed - totalOutstandingCollateral);
         }
 
-        // Validator signature check — bind to release-collateral action kind
-        _checkValidators(intentHash, signatures, scores, deadline, ACTION_KIND_RELEASE_COLLATERAL);
+        // Validator signature check — bind to exact release payload and action kind
+        bytes32 executionHash = computeCollateralReleaseHash(amount, recipient, intentHash, deadline);
+        _checkValidators(intentHash, executionHash, signatures, scores, deadline, ACTION_KIND_RELEASE_COLLATERAL);
 
         // CEI: update state before transfer
         totalOutstandingCollateral += amount;
@@ -578,6 +651,18 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _asset.safeTransfer(recipient, amount);
 
         emit CollateralReleased(msg.sender, amount, recipient, intentHash);
+    }
+
+    /// @notice Compute the exact collateral release hash validators must sign.
+    function computeCollateralReleaseHash(
+        uint256 amount,
+        address recipient,
+        bytes32 intentHash,
+        uint256 deadline
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(COLLATERAL_RELEASE_TYPEHASH, amount, recipient, intentHash, deadline, block.chainid)
+        );
     }
 
     /// @notice Return collateral to the vault. Permissionless — anyone can return funds.

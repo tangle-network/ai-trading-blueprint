@@ -15,10 +15,10 @@ const DOMAIN_NAME: &str = "TradeValidator";
 const DOMAIN_VERSION: &str = "1";
 
 /// Must match Solidity:
-/// `keccak256("TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")`
+/// `keccak256("TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)")`
 fn validation_typehash() -> B256 {
     keccak256(
-        "TradeValidation(bytes32 intentHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)",
+        "TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)",
     )
 }
 
@@ -57,6 +57,7 @@ fn compute_domain_separator(chain_id: u64, verifying_contract: Address) -> B256 
 /// `action_kind`: 0 = execute, 1 = release collateral.
 fn compute_struct_hash(
     intent_hash: B256,
+    execution_hash: B256,
     vault: Address,
     score: u64,
     deadline: u64,
@@ -66,6 +67,7 @@ fn compute_struct_hash(
         [
             validation_typehash().as_slice(),
             intent_hash.as_slice(),
+            execution_hash.as_slice(),
             &B256::left_padding_from(vault.as_slice()).0,
             &U256::from(score).to_be_bytes::<32>(),
             &U256::from(deadline).to_be_bytes::<32>(),
@@ -103,6 +105,7 @@ fn compute_eip712_digest(domain_separator: B256, struct_hash: B256) -> B256 {
 pub fn verify_validator_signature(
     response: &ValidatorResponse,
     intent_hash_hex: &str,
+    execution_hash_hex: &str,
     vault_address: &str,
     deadline: u64,
 ) -> Result<Address, TradingError> {
@@ -155,6 +158,19 @@ pub fn verify_validator_signature(
     }
     let intent_hash = B256::from_slice(&intent_hash_bytes);
 
+    let execution_hash_stripped = execution_hash_hex
+        .strip_prefix("0x")
+        .unwrap_or(execution_hash_hex);
+    let execution_hash_bytes = hex::decode(execution_hash_stripped)
+        .map_err(|e| TradingError::ValidatorError(format!("Invalid execution_hash hex: {e}")))?;
+    if execution_hash_bytes.len() != 32 {
+        return Err(TradingError::ValidatorError(format!(
+            "execution_hash must be 32 bytes, got {}",
+            execution_hash_bytes.len()
+        )));
+    }
+    let execution_hash = B256::from_slice(&execution_hash_bytes);
+
     // Parse vault address
     let vault: Address = vault_address
         .parse()
@@ -183,7 +199,14 @@ pub fn verify_validator_signature(
     let domain_separator = compute_domain_separator(chain_id, verifying_contract);
     // Default to actionKind=0 (execute). The off-chain verifier is only called from
     // the execute HTTP handler, which always uses the execute action kind.
-    let struct_hash = compute_struct_hash(intent_hash, vault, response.score as u64, deadline, 0);
+    let struct_hash = compute_struct_hash(
+        intent_hash,
+        execution_hash,
+        vault,
+        response.score as u64,
+        deadline,
+        0,
+    );
     let digest = compute_eip712_digest(domain_separator, struct_hash);
 
     // Recover signer from signature.
@@ -234,6 +257,7 @@ pub fn verify_validator_signature(
 pub fn verify_all_signatures(
     responses: &[ValidatorResponse],
     intent_hash: &str,
+    execution_hash: &str,
     vault_address: &str,
     deadline: u64,
 ) -> Result<Vec<Address>, TradingError> {
@@ -245,7 +269,13 @@ pub fn verify_all_signatures(
 
     let mut verified = Vec::with_capacity(responses.len());
     for response in responses {
-        let addr = verify_validator_signature(response, intent_hash, vault_address, deadline)?;
+        let addr = verify_validator_signature(
+            response,
+            intent_hash,
+            execution_hash,
+            vault_address,
+            deadline,
+        )?;
         verified.push(addr);
     }
 
@@ -275,8 +305,8 @@ mod tests {
             .parse()
             .unwrap();
         let intent_hash = B256::ZERO;
-        let sh1 = compute_struct_hash(intent_hash, vault, 85, 9999999999, 0);
-        let sh2 = compute_struct_hash(intent_hash, vault, 85, 9999999999, 0);
+        let sh1 = compute_struct_hash(intent_hash, B256::ZERO, vault, 85, 9999999999, 0);
+        let sh2 = compute_struct_hash(intent_hash, B256::ZERO, vault, 85, 9999999999, 0);
         assert_eq!(sh1, sh2);
     }
 
@@ -299,6 +329,7 @@ mod tests {
         .unwrap();
 
         let intent_hash = keccak256("test-intent-for-verify");
+        let execution_hash = keccak256("test-execution-for-verify");
         let vault: Address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
             .parse()
             .unwrap();
@@ -306,7 +337,7 @@ mod tests {
         let deadline = 9999999999u64;
 
         let (sig_bytes, addr) = signer
-            .sign_validation(intent_hash, vault, score, deadline, 0)
+            .sign_validation(intent_hash, execution_hash, vault, score, deadline, 0)
             .unwrap();
 
         // Build a ValidatorResponse as the execute endpoint would receive it
@@ -321,10 +352,17 @@ mod tests {
         };
 
         let intent_hash_hex = format!("0x{}", hex::encode(intent_hash));
+        let execution_hash_hex = format!("0x{}", hex::encode(execution_hash));
         let vault_str = format!("{vault:#x}");
 
-        let recovered =
-            verify_validator_signature(&response, &intent_hash_hex, &vault_str, deadline).unwrap();
+        let recovered = verify_validator_signature(
+            &response,
+            &intent_hash_hex,
+            &execution_hash_hex,
+            &vault_str,
+            deadline,
+        )
+        .unwrap();
         assert_eq!(recovered, addr);
     }
 
@@ -342,9 +380,11 @@ mod tests {
         };
 
         let intent_hash = format!("0x{}", "cc".repeat(32));
+        let execution_hash = format!("0x{}", "dd".repeat(32));
         let vault = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-        let result = verify_validator_signature(&response, &intent_hash, vault, 9999999999);
+        let result =
+            verify_validator_signature(&response, &intent_hash, &execution_hash, vault, 9999999999);
         assert!(result.is_err(), "Tampered signature should be rejected");
     }
 
@@ -362,9 +402,11 @@ mod tests {
         };
 
         let intent_hash = format!("0x{}", "cc".repeat(32));
+        let execution_hash = format!("0x{}", "dd".repeat(32));
         let vault = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-        let result = verify_validator_signature(&response, &intent_hash, vault, 9999999999);
+        let result =
+            verify_validator_signature(&response, &intent_hash, &execution_hash, vault, 9999999999);
         assert!(result.is_err(), "Missing chain_id should fail");
     }
 
@@ -373,6 +415,7 @@ mod tests {
     fn test_verify_all_empty_fails() {
         let result = verify_all_signatures(
             &[],
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
             "0x0000000000000000000000000000000000000000000000000000000000000000",
             "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             9999999999,

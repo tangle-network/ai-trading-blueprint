@@ -165,6 +165,7 @@ pub struct ValidationResult {
     pub aggregate_score: u32,
     pub validator_responses: Vec<ValidatorResponse>,
     pub intent_hash: String,
+    pub execution_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

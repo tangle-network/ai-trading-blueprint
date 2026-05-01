@@ -477,8 +477,9 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.DepositAssetBelowReserve.selector));
@@ -508,8 +509,9 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         // Should succeed — no reserve check when BPS = 0
         vm.prank(operator);
@@ -539,8 +541,9 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         // Should revert — deposit asset balance (10000) < total (10100) * 100%
         vm.prank(operator);
@@ -586,8 +589,9 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         // Should emit HeldTokenDecimalMismatch for 6-decimal token in 18-decimal vault
         vm.recordLogs();

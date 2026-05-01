@@ -7,12 +7,26 @@ use serde::{Deserialize, Serialize};
 /// Re-exported from trading-validator-lib's types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
+    pub execution_hash: String,
     pub target: String,
     pub calldata: String,
     pub calldata_decoded: String,
     pub value: String,
     #[serde(default)]
+    pub min_output: String,
+    #[serde(default)]
+    pub output_token: String,
+    #[serde(default)]
+    pub approvals: Vec<ExecutionApproval>,
+    #[serde(default)]
     pub simulation_result: Option<SimulationSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionApproval {
+    pub token: String,
+    pub spender: String,
+    pub amount: String,
 }
 
 /// Simulation summary for validator communication.
@@ -56,6 +70,8 @@ struct ValidateRequest {
     intent: TradeIntent,
     /// Hex-encoded intent hash (with 0x prefix)
     intent_hash: String,
+    /// Hex-encoded execution hash (with 0x prefix)
+    execution_hash: String,
     /// Hex-encoded vault address (with 0x prefix)
     vault_address: String,
     /// Unix timestamp deadline for the validation signature
@@ -137,9 +153,14 @@ impl ValidatorClient {
         execution_context: Option<ExecutionContext>,
     ) -> Result<ValidationResult, TradingError> {
         let intent_hash = hash_intent(intent);
+        let execution_hash = execution_context
+            .as_ref()
+            .map(|ctx| ctx.execution_hash.clone())
+            .unwrap_or_else(|| format!("0x{}", "00".repeat(32)));
         let request = ValidateRequest {
             intent: intent.clone(),
             intent_hash: intent_hash.clone(),
+            execution_hash: execution_hash.clone(),
             vault_address: vault_address.to_string(),
             deadline,
             execution_context,
@@ -256,6 +277,7 @@ impl ValidatorClient {
             aggregate_score,
             validator_responses: responses,
             intent_hash,
+            execution_hash,
         })
     }
 }

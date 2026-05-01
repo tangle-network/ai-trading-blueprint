@@ -6,13 +6,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
+use trading_runtime::execution_hash::{format_b256, hash_execution_payload};
 use trading_runtime::executor::get_adapter;
 use trading_runtime::intent::hash_intent;
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
 use trading_runtime::validator_client::ValidatorClient;
 use trading_runtime::validator_client::{
-    BalanceChangeSummary, ExecutionContext, SimulationSummary,
+    BalanceChangeSummary, ExecutionApproval, ExecutionContext, SimulationSummary,
 };
 use trading_runtime::{Action, TradeIntent, TradeIntentBuilder};
 
@@ -29,6 +30,8 @@ pub struct ValidateRequest {
     pub amount_in: String,
     pub min_amount_out: String,
     pub target_protocol: String,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
     #[serde(default = "default_deadline")]
     pub deadline_secs: u64,
 }
@@ -62,6 +65,7 @@ pub struct ValidateResponse {
     pub approved: bool,
     pub aggregate_score: u32,
     pub intent_hash: String,
+    pub execution_hash: String,
     /// The exact Unix timestamp deadline that validators signed over (needed for on-chain verification)
     pub deadline: u64,
     pub validator_responses: Vec<ValidatorResponseEntry>,
@@ -106,11 +110,16 @@ fn effective_validation_approval(result: &ValidationResult, paper_trade: bool) -
         .any(|response| has_usable_validator_signature(&response.signature))
 }
 
-fn paper_mode_bypass_response(intent_hash: String, deadline: u64) -> ValidateResponse {
+fn paper_mode_bypass_response(
+    intent_hash: String,
+    execution_hash: String,
+    deadline: u64,
+) -> ValidateResponse {
     ValidateResponse {
         approved: true,
         aggregate_score: 100,
         intent_hash,
+        execution_hash,
         deadline,
         validator_responses: vec![ValidatorResponseEntry {
             validator: PAPER_MODE_VALIDATOR.into(),
@@ -191,6 +200,8 @@ fn parse_validate_request(
         .amount_in(amount_in)
         .min_amount_out(min_amount_out)
         .target_protocol(&req.target_protocol)
+        .chain_id(chain_id.unwrap_or(42161))
+        .metadata(req.metadata.clone())
         .build()
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -233,6 +244,7 @@ fn build_validate_response(
         approved: effective_validation_approval(result, paper_trade),
         aggregate_score: result.aggregate_score,
         intent_hash: result.intent_hash.clone(),
+        execution_hash: result.execution_hash.clone(),
         deadline,
         validator_responses: responses,
     }
@@ -258,11 +270,14 @@ async fn validate(
 
     if state.paper_trade && state.validator_endpoints.is_empty() {
         let intent_hash = hash_intent(&parsed.intent);
+        let execution_hash = format!("0x{}", "00".repeat(32));
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
+            execution_hash,
             parsed.deadline,
         )));
     }
+    let intent_hash = hash_intent(&parsed.intent);
 
     let execution_context = build_execution_context(
         &request.target_protocol,
@@ -274,8 +289,17 @@ async fn validate(
         &state.vault_address,
         state.rpc_url.as_deref(),
         protocol_chain_id,
+        state.chain_id.unwrap_or(parsed.intent.chain_id),
+        &intent_hash,
+        parsed.deadline,
     )
-    .await;
+    .await
+    .ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Could not build execution context for validator signing".to_string(),
+        )
+    })?;
 
     let result = state
         .validator_client
@@ -283,7 +307,7 @@ async fn validate(
             &parsed.intent,
             &state.vault_address,
             parsed.deadline,
-            execution_context,
+            Some(execution_context),
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -313,6 +337,9 @@ async fn build_execution_context(
     vault_address: &str,
     rpc_url: Option<&str>,
     chain_id: Option<u64>,
+    execution_chain_id: u64,
+    intent_hash: &str,
+    deadline: u64,
 ) -> Option<ExecutionContext> {
     let adapter = get_adapter(protocol, chain_id).ok()?;
 
@@ -334,6 +361,13 @@ async fn build_execution_context(
     };
 
     let encoded = adapter.encode_action(&params).ok()?;
+    let intent_hash_bytes = parse_b256(intent_hash)?;
+    let execution_hash = hash_execution_payload(
+        &encoded,
+        intent_hash_bytes,
+        alloy::primitives::U256::from(deadline),
+        execution_chain_id,
+    );
 
     let calldata_decoded = calldata_decoder::decode_encoded_action(&encoded.calldata, protocol);
 
@@ -361,12 +395,32 @@ async fn build_execution_context(
     };
 
     Some(ExecutionContext {
+        execution_hash: format_b256(execution_hash),
         target: format!("{}", encoded.target),
         calldata: format!("0x{}", hex::encode(&encoded.calldata)),
         calldata_decoded,
         value: format!("{}", encoded.value),
+        min_output: format!("{}", encoded.min_output),
+        output_token: format!("{}", encoded.output_token),
+        approvals: encoded
+            .approvals
+            .iter()
+            .map(|approval| ExecutionApproval {
+                token: format!("{}", approval.token),
+                spender: format!("{}", approval.spender),
+                amount: format!("{}", approval.amount),
+            })
+            .collect(),
         simulation_result,
     })
+}
+
+fn parse_b256(hash: &str) -> Option<alloy::primitives::B256> {
+    let bytes = hex::decode(hash.trim_start_matches("0x")).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    Some(alloy::primitives::B256::from_slice(&bytes))
 }
 
 /// Run a transaction simulation and return a SimulationSummary.
@@ -498,11 +552,14 @@ async fn validate_multi_bot(
     // return synthetic approval so the trading loop can proceed.
     if bot.paper_trade && validator_endpoints.is_empty() {
         let intent_hash = hash_intent(&parsed.intent);
+        let execution_hash = format!("0x{}", "00".repeat(32));
         return Ok(Json(paper_mode_bypass_response(
             intent_hash,
+            execution_hash,
             parsed.deadline,
         )));
     }
+    let intent_hash = hash_intent(&parsed.intent);
 
     // Build execution context for validators (with simulation if RPC available)
     let execution_context = build_execution_context(
@@ -515,8 +572,17 @@ async fn validate_multi_bot(
         &bot.vault_address,
         Some(&bot.rpc_url),
         Some(protocol_chain_id),
+        bot.chain_id,
+        &intent_hash,
+        parsed.deadline,
     )
-    .await;
+    .await
+    .ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Could not build execution context for validator signing".to_string(),
+        )
+    })?;
 
     // Real validation: fan out to validator endpoints
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
@@ -525,7 +591,7 @@ async fn validate_multi_bot(
             &parsed.intent,
             &bot.vault_address,
             parsed.deadline,
-            execution_context,
+            Some(execution_context),
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -632,6 +698,9 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             None,
             None,
+            31337,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            9999999999,
         )
         .await;
         assert!(result.is_none());
@@ -649,6 +718,9 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             None,
             None,
+            31337,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            9999999999,
         )
         .await;
         let ctx = result.expect("should build context for uniswap_v3 swap");
@@ -669,6 +741,9 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             None,
             Some(31339),
+            31339,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            9999999999,
         )
         .await;
 
@@ -694,6 +769,9 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             None,
             None,
+            31337,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            9999999999,
         )
         .await;
         assert!(result.is_none());
@@ -709,6 +787,7 @@ mod tests {
             amount_in: "1000000000000000000".into(),
             min_amount_out: "2500000000".into(),
             target_protocol: "uniswap_v3".into(),
+            metadata: serde_json::Value::Null,
             deadline_secs: 300,
         };
         let parsed = parse_validate_request(&req, Some(1)).unwrap();
@@ -726,6 +805,7 @@ mod tests {
             amount_in: "100".into(),
             min_amount_out: "95".into(),
             target_protocol: "uniswap_v3".into(),
+            metadata: serde_json::Value::Null,
             deadline_secs: 300,
         };
         let err = parse_validate_request(&req, Some(1)).unwrap_err();
@@ -742,6 +822,7 @@ mod tests {
             amount_in: "not-a-number".into(),
             min_amount_out: "95".into(),
             target_protocol: "uniswap_v3".into(),
+            metadata: serde_json::Value::Null,
             deadline_secs: 300,
         };
         let err = parse_validate_request(&req, Some(1)).unwrap_err();

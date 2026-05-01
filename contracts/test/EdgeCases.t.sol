@@ -53,7 +53,11 @@ contract EdgeCaseTests is Setup {
         });
     }
 
-    function _createValidatorSigs(bytes32 intentHash, uint256 deadline)
+    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
+        approvals = new TradingVault.ApprovalCall[](0);
+    }
+
+    function _createValidatorSigs(TradingVault.ExecuteParams memory params, uint256 deadline)
         internal
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
@@ -62,8 +66,11 @@ contract EdgeCaseTests is Setup {
         scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        signatures[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        signatures[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        signatures[0] =
+            _signValidation(validator1Key, params.intentHash, executionHash, address(vault), scores[0], deadline);
+        signatures[1] =
+            _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -84,8 +91,9 @@ contract EdgeCaseTests is Setup {
         bytes[] memory sigs = new bytes[](2);
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), 75, deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), 75, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradeValidator.InvalidSignatureCount.selector);
@@ -126,7 +134,8 @@ contract EdgeCaseTests is Setup {
         scores[0] = 80;
         scores[1] = 75;
         scores[2] = 90;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradeValidator.InvalidSignatureCount.selector);
@@ -174,7 +183,7 @@ contract EdgeCaseTests is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 0, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ZeroAmount.selector);
@@ -198,7 +207,7 @@ contract EdgeCaseTests is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ZeroAddress.selector);
@@ -219,8 +228,9 @@ contract EdgeCaseTests is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradeValidator.DeadlineExpired.selector);
@@ -246,7 +256,7 @@ contract EdgeCaseTests is Setup {
             intentHash: intentHash,
             deadline: deadline
         });
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
@@ -346,7 +356,7 @@ contract EdgeCaseTests is Setup {
 
         // Trade outputs tokenB which is NOT whitelisted
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
@@ -371,7 +381,7 @@ contract EdgeCaseTests is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
@@ -399,7 +409,7 @@ contract EdgeCaseTests is Setup {
 
         // Try to acquire 500 tokenB, exceeds 100 limit
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
@@ -504,7 +514,7 @@ contract EdgeCaseTests is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
-        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.WindDownBlocksExecute.selector);
@@ -542,9 +552,10 @@ contract EdgeCaseTests is Setup {
         scores[0] = 80;
         scores[1] = 80; // Same score as scores[0] but signed by same key
         scores[2] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator1Key, intentHash, address(vault), scores[1], deadline); // dup of validator1
-        sigs[2] = _signValidation(validator2Key, intentHash, address(vault), scores[2], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[1], deadline); // dup of validator1
+        sigs[2] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[2], deadline);
 
         // This should pass: 2 unique signers (validator1 + validator2) >= required 2
         vm.prank(operator);
@@ -567,8 +578,9 @@ contract EdgeCaseTests is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 85;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator1Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, _emptyApprovals());
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);

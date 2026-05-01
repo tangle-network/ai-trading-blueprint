@@ -246,12 +246,38 @@ abstract contract Setup is Test {
     function _signValidation(
         uint256 privateKey,
         bytes32 intentHash,
+        bytes32 executionHash,
+        address vault,
+        uint256 score,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        return _signValidation(privateKey, intentHash, executionHash, vault, score, deadline, 0);
+    }
+
+    function _signValidation(
+        uint256 privateKey,
+        bytes32 intentHash,
         address vault,
         uint256 score,
         uint256 deadline,
         uint256 actionKind
     ) internal view returns (bytes memory) {
         bytes32 digest = tradeValidator.computeDigest(intentHash, vault, score, deadline, actionKind);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// Sign with explicit executionHash and actionKind.
+    function _signValidation(
+        uint256 privateKey,
+        bytes32 intentHash,
+        bytes32 executionHash,
+        address vault,
+        uint256 score,
+        uint256 deadline,
+        uint256 actionKind
+    ) internal view returns (bytes memory) {
+        bytes32 digest = tradeValidator.computeDigest(intentHash, executionHash, vault, score, deadline, actionKind);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
     }

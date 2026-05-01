@@ -126,7 +126,7 @@ impl Default for TradeIntentBuilder {
 /// Hash a trade intent for signing
 pub fn hash_intent(intent: &TradeIntent) -> String {
     let mut hasher = Keccak256::new();
-    hasher.update(intent.id.as_bytes());
+    hasher.update(format!("{:?}", intent.action).as_bytes());
     hasher.update(intent.strategy_id.as_bytes());
     hasher.update(intent.token_in.as_bytes());
     hasher.update(intent.token_out.as_bytes());
@@ -134,6 +134,8 @@ pub fn hash_intent(intent: &TradeIntent) -> String {
     hasher.update(intent.min_amount_out.to_string().as_bytes());
     hasher.update(intent.target_protocol.as_bytes());
     hasher.update(intent.chain_id.to_be_bytes());
+    let metadata = serde_json::to_vec(&intent.metadata).unwrap_or_default();
+    hasher.update(metadata);
     let result = hasher.finalize();
     format!("0x{}", hex::encode(result))
 }

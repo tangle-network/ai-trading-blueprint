@@ -26,6 +26,8 @@ pub struct ValidateRequest {
     pub intent: trading_runtime::TradeIntent,
     /// Hex-encoded keccak256 hash of the intent (with 0x prefix)
     pub intent_hash: String,
+    /// Hex-encoded canonical hash of the exact executable payload (with 0x prefix)
+    pub execution_hash: String,
     /// Hex-encoded vault address (with 0x prefix)
     pub vault_address: String,
     /// Unix timestamp deadline for the validation signature
@@ -229,7 +231,7 @@ async fn handle_validate(
 
     // If we have a signer, produce a real EIP-712 signature
     if let Some(ref signer) = server.signer {
-        // Parse intent_hash from hex string
+        // Parse intent_hash and execution_hash from hex strings
         let intent_hash = match parse_b256(&request.intent_hash) {
             Ok(h) => h,
             Err(e) => {
@@ -238,6 +240,22 @@ async fn handle_validate(
                     score,
                     signature: format!("0x{}", "00".repeat(65)),
                     reasoning: format!("{reasoning}; signature error: invalid intent_hash"),
+                    validator: format!("0x{}", hex::encode(signer.address().as_slice())),
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
+                });
+            }
+        };
+
+        let execution_hash = match parse_b256(&request.execution_hash) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Invalid execution_hash: {e}");
+                return Json(ValidateResponse {
+                    score,
+                    signature: format!("0x{}", "00".repeat(65)),
+                    reasoning: format!("{reasoning}; signature error: invalid execution_hash"),
                     validator: format!("0x{}", hex::encode(signer.address().as_slice())),
                     chain_id: signer_chain_id,
                     verifying_contract: signer_contract,
@@ -265,7 +283,14 @@ async fn handle_validate(
 
         // action_kind=0 (execute) — the validate endpoint only signs for trade executions.
         // Collateral releases use a separate signing flow.
-        match signer.sign_validation(intent_hash, vault, score as u64, request.deadline, 0) {
+        match signer.sign_validation(
+            intent_hash,
+            execution_hash,
+            vault,
+            score as u64,
+            request.deadline,
+            0,
+        ) {
             Ok((sig_bytes, addr)) => {
                 return Json(ValidateResponse {
                     score,
@@ -424,11 +449,13 @@ mod tests {
             .unwrap();
 
         let intent_hash = keccak256("test-intent");
+        let execution_hash = keccak256("test-execution");
         let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
         let req_body = serde_json::json!({
             "intent": intent,
             "intent_hash": format!("0x{}", hex::encode(intent_hash)),
+            "execution_hash": format!("0x{}", hex::encode(execution_hash)),
             "vault_address": vault_address,
             "deadline": 9999999999u64,
         });
@@ -494,6 +521,7 @@ mod tests {
         let req_body = serde_json::json!({
             "intent": intent,
             "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "execution_hash": format!("0x{}", "cd".repeat(32)),
             "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             "deadline": 9999999999u64,
         });
@@ -550,6 +578,7 @@ mod tests {
         let json = serde_json::json!({
             "intent": make_test_intent_json(),
             "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "execution_hash": format!("0x{}", "cd".repeat(32)),
             "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             "deadline": 9999999999u64,
             "strategy_type": "dex"
@@ -564,6 +593,7 @@ mod tests {
         let json = serde_json::json!({
             "intent": make_test_intent_json(),
             "intent_hash": format!("0x{}", "ab".repeat(32)),
+            "execution_hash": format!("0x{}", "cd".repeat(32)),
             "vault_address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
             "deadline": 9999999999u64
         });

@@ -151,8 +151,9 @@ contract WindDownTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.WindDownBlocksExecute.selector);
@@ -187,8 +188,9 @@ contract WindDownTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
-        sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
+        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
         vault.execute(params, sigs, scores);

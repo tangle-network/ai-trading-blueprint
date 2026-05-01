@@ -67,11 +67,17 @@ pub struct ValidationPayload {
     pub approved: bool,
     pub aggregate_score: u32,
     pub intent_hash: String,
+    #[serde(default = "default_zero_hash")]
+    pub execution_hash: String,
     #[serde(default)]
     pub deadline: Option<u64>,
     pub validator_responses: Vec<ValidatorResponsePayload>,
     #[serde(default)]
     pub simulation: Option<SimulationPayload>,
+}
+
+fn default_zero_hash() -> String {
+    format!("0x{}", "00".repeat(32))
 }
 
 #[derive(Deserialize, Serialize, Clone, Default)]
@@ -270,6 +276,7 @@ fn build_validation_result(v: &ValidationPayload) -> ValidationResult {
         approved: v.approved,
         aggregate_score: v.aggregate_score,
         intent_hash: v.intent_hash.clone(),
+        execution_hash: v.execution_hash.clone(),
         validator_responses: v
             .validator_responses
             .iter()
@@ -329,6 +336,7 @@ fn verify_signatures_offchain(
     trading_runtime::signature_verify::verify_all_signatures(
         &responses,
         &validation.intent_hash,
+        &validation.execution_hash,
         vault_address,
         deadline,
     )
@@ -385,6 +393,8 @@ fn parse_execute_request(
         .amount_in(amount_in)
         .min_amount_out(min_amount_out)
         .target_protocol(&req.intent.target_protocol)
+        .chain_id(chain_id.unwrap_or(42161))
+        .metadata(req.intent.metadata.clone())
         .build()
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -2013,6 +2023,7 @@ mod tests {
                 approved: true,
                 aggregate_score: 100,
                 intent_hash: "0xdeadbeef".to_string(),
+                execution_hash: format!("0x{}", "00".repeat(32)),
                 deadline,
                 validator_responses: vec![],
                 simulation: None,
