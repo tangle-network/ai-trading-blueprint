@@ -141,7 +141,7 @@ FORGE_STATUS_FILE="$(mktemp)"
     PRECREATE_SINGLETON_VAULTS="$FORK_MODE" \
     ASSET_TOKEN_ADDRESS="${ASSET_TOKEN_ADDRESS:-}" \
     forge script contracts/script/RegisterBlueprint.s.sol \
-      --rpc-url "$RPC_URL" --sender "$DEPLOYER_ADDR" --broadcast --skip-simulation >"$FORGE_OUTPUT_FILE" 2>&1; then
+      --rpc-url "$RPC_URL" --sender "$DEPLOYER_ADDR" --broadcast --skip-simulation --disable-code-size-limit >"$FORGE_OUTPUT_FILE" 2>&1; then
     echo 0 > "$FORGE_STATUS_FILE"
   else
     echo $? > "$FORGE_STATUS_FILE"
@@ -168,6 +168,13 @@ fi
 FORGE_OUTPUT="$(cat "$FORGE_OUTPUT_FILE")"
 FORGE_STATUS="$(cat "$FORGE_STATUS_FILE")"
 rm -f "$FORGE_OUTPUT_FILE" "$FORGE_STATUS_FILE"
+
+if [[ "$FORGE_STATUS" != "0" ]]; then
+  echo "ERROR: Forge deployment script failed with status $FORGE_STATUS."
+  echo "Forge output:"
+  echo "$FORGE_OUTPUT" | tail -80
+  exit "$FORGE_STATUS"
+fi
 
 # Parse addresses from forge output
 parse_deploy() {

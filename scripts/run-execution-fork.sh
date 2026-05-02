@@ -9,6 +9,7 @@ FORK_BLOCK_NUMBER="${FORK_BLOCK_NUMBER:-}"
 ANVIL_PORT="${ANVIL_PORT:-8545}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
 CHAIN_ID="${CHAIN_ID:-31339}"
+ANVIL_CODE_SIZE_LIMIT="${ANVIL_CODE_SIZE_LIMIT:-30000}"
 ASSET_TOKEN_ADDRESS="${ASSET_TOKEN_ADDRESS:?ASSET_TOKEN_ADDRESS is required}"
 EXECUTION_STATE_FILE="${EXECUTION_STATE_FILE:-$ROOT_DIR/.execution-fork.env}"
 DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -205,9 +206,9 @@ fi
 
 echo "=== Starting execution fork ==="
 if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
-  anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
 else
-  anvil --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  anvil --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
 fi
 ANVIL_PID=$!
 
@@ -227,44 +228,36 @@ forge build --root "$ROOT_DIR" > /dev/null 2>&1
 POLICY_ENGINE="$(deploy_contract "$ROOT_DIR/contracts/out/PolicyEngine.sol/PolicyEngine.json" "constructor()")"
 TRADE_VALIDATOR="$(deploy_contract "$ROOT_DIR/contracts/out/TradeValidator.sol/TradeValidator.json" "constructor()")"
 FEE_DISTRIBUTOR="$(deploy_contract "$ROOT_DIR/contracts/out/FeeDistributor.sol/FeeDistributor.json" "constructor(address)" "$EXECUTION_ADMIN")"
-SHARE_ADDRESS="$(deploy_contract "$ROOT_DIR/contracts/out/VaultShare.sol/VaultShare.json" "constructor(string,string,address)" "$EXECUTION_VAULT_NAME" "$EXECUTION_VAULT_SYMBOL" "$DEPLOYER_ADDRESS")"
-VAULT_ADDRESS="$(
-  deploy_contract "$ROOT_DIR/contracts/out/TradingVault.sol/TradingVault.json" "constructor(address,address,address,address,address,address,address)" \
-    "$ASSET_TOKEN_ADDRESS" "$SHARE_ADDRESS" "$POLICY_ENGINE" "$TRADE_VALIDATOR" "$FEE_DISTRIBUTOR" "$EXECUTION_ADMIN" "$OPERATOR_ONE"
-)"
+VAULT_FACTORY="$(deploy_contract "$ROOT_DIR/contracts/out/VaultFactory.sol/VaultFactory.json" "constructor(address,address,address)" "$POLICY_ENGINE" "$TRADE_VALIDATOR" "$FEE_DISTRIBUTOR")"
+VAULT_DEPLOYER="$(deploy_contract "$ROOT_DIR/contracts/out/VaultDeployer.sol/VaultDeployer.json" "constructor(address,address,address,address)" "$VAULT_FACTORY" "$POLICY_ENGINE" "$TRADE_VALIDATOR" "$FEE_DISTRIBUTOR")"
+VAULT_SHARE_DEPLOYER="$(deploy_contract "$ROOT_DIR/contracts/out/VaultShareDeployer.sol/VaultShareDeployer.json" "constructor(address)" "$VAULT_FACTORY")"
 
-MINTER_ROLE="$(cast keccak "MINTER_ROLE")"
-OPERATOR_ROLE="$(cast keccak "OPERATOR_ROLE")"
-CREATOR_ROLE="$(cast keccak "CREATOR_ROLE")"
-DEFAULT_ADMIN_ROLE="0x0000000000000000000000000000000000000000000000000000000000000000"
-SIGNERS_ARRAY="$(csv_to_array_literal "$OPERATOR_ONE,$OPERATOR_TWO")"
-
-send_tx "$SHARE_ADDRESS" "grantRole(bytes32,address)" "$MINTER_ROLE" "$VAULT_ADDRESS"
-send_tx "$SHARE_ADDRESS" "linkVault(address)" "$VAULT_ADDRESS"
-if [[ "$EXECUTION_ADMIN" != "$DEPLOYER_ADDRESS" ]]; then
-  send_tx "$SHARE_ADDRESS" "grantRole(bytes32,address)" "$DEFAULT_ADMIN_ROLE" "$EXECUTION_ADMIN"
-fi
-
-send_tx "$TRADE_VALIDATOR" "configureVault(address,address[],uint256)" "$VAULT_ADDRESS" "$SIGNERS_ARRAY" "$EXECUTION_REQUIRED_SIGS"
-send_tx "$POLICY_ENGINE" "initializeVault(address,address,(uint256,uint256,uint256))" "$VAULT_ADDRESS" "$EXECUTION_ADMIN" "($POLICY_LEVERAGE_CAP,$POLICY_MAX_TRADES_PER_HOUR,$POLICY_MAX_SLIPPAGE_BPS)"
-send_tx "$POLICY_ENGINE" "setAuthorizedCaller(address,bool)" "$VAULT_ADDRESS" true
-send_tx "$POLICY_ENGINE" "whitelistToken(address,address,bool)" "$VAULT_ADDRESS" "$ASSET_TOKEN_ADDRESS" true
-send_tx "$FEE_DISTRIBUTOR" "initializeVaultFees(address,address,(uint256,uint256,uint256))" "$VAULT_ADDRESS" "$EXECUTION_ADMIN" "($PERFORMANCE_FEE_BPS,$MANAGEMENT_FEE_BPS,$VALIDATOR_FEE_SHARE_BPS)"
-send_tx "$VAULT_ADDRESS" "grantRole(bytes32,address)" "$OPERATOR_ROLE" "$OPERATOR_TWO"
-send_tx "$VAULT_ADDRESS" "grantRole(bytes32,address)" "$CREATOR_ROLE" "$EXECUTION_ADMIN"
+send_tx "$POLICY_ENGINE" "transferOwnership(address)" "$VAULT_FACTORY"
+send_tx "$TRADE_VALIDATOR" "transferOwnership(address)" "$VAULT_FACTORY"
+send_tx "$FEE_DISTRIBUTOR" "transferOwnership(address)" "$VAULT_FACTORY"
+send_tx "$VAULT_FACTORY" "acceptDependencyOwnership()"
+send_tx "$VAULT_FACTORY" "setVaultDeployers(address,address)" "$VAULT_DEPLOYER" "$VAULT_SHARE_DEPLOYER"
+send_tx "$VAULT_FACTORY" "setAuthorizedCaller(address,bool)" "$DEPLOYER_ADDRESS" true
+send_tx "$VAULT_FACTORY" "setAuthorizedCaller(address,bool)" "$OPERATOR_ONE" true
+send_tx "$VAULT_FACTORY" "setAuthorizedCaller(address,bool)" "$OPERATOR_TWO" true
+send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$ASSET_TOKEN_ADDRESS" true
 
 if [[ -n "$WHITELISTED_TOKENS" ]]; then
   IFS=',' read -r -a token_items <<< "$WHITELISTED_TOKENS"
   for token in "${token_items[@]}"; do
     token="$(printf '%s' "$token" | xargs)"
     [[ -n "$token" ]] || continue
-    send_tx "$POLICY_ENGINE" "whitelistToken(address,address,bool)" "$VAULT_ADDRESS" "$token" true
+    send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$token" true
   done
 fi
 
 if [[ -n "$WHITELISTED_TARGETS" ]]; then
-  TARGETS_ARRAY="$(csv_to_array_literal "$WHITELISTED_TARGETS")"
-  send_tx "$POLICY_ENGINE" "setTargetWhitelist(address,address[],bool)" "$VAULT_ADDRESS" "$TARGETS_ARRAY" true
+  IFS=',' read -r -a target_items <<< "$WHITELISTED_TARGETS"
+  for target in "${target_items[@]}"; do
+    target="$(printf '%s' "$target" | xargs)"
+    [[ -n "$target" ]] || continue
+    send_tx "$VAULT_FACTORY" "setDefaultWhitelistedTarget(address,bool)" "$target" true
+  done
 fi
 
 cat > "$EXECUTION_STATE_FILE" <<EOF
@@ -279,15 +272,16 @@ EXECUTION_ASSET_TOKEN=$ASSET_TOKEN_ADDRESS
 EXECUTION_POLICY_ENGINE=$POLICY_ENGINE
 EXECUTION_TRADE_VALIDATOR=$TRADE_VALIDATOR
 EXECUTION_FEE_DISTRIBUTOR=$FEE_DISTRIBUTOR
-EXECUTION_VAULT_ADDRESS=$VAULT_ADDRESS
-EXECUTION_SHARE_ADDRESS=$SHARE_ADDRESS
+EXECUTION_VAULT_FACTORY_ADDRESS=$VAULT_FACTORY
+EXECUTION_VAULT_DEPLOYER_ADDRESS=$VAULT_DEPLOYER
+EXECUTION_VAULT_SHARE_DEPLOYER_ADDRESS=$VAULT_SHARE_DEPLOYER
 EOF
 
 echo "Execution fork ready."
 echo "  RPC URL:         $RPC_URL"
 echo "  Chain ID:        $CHAIN_ID"
 echo "  Asset token:     $ASSET_TOKEN_ADDRESS"
-echo "  Vault:           $VAULT_ADDRESS"
+echo "  VaultFactory:    $VAULT_FACTORY"
 echo "  TradeValidator:  $TRADE_VALIDATOR"
 echo "  State file:      $EXECUTION_STATE_FILE"
 

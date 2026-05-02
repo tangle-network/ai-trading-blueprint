@@ -1,5 +1,4 @@
 import 'virtual:uno.css';
-import '@tangle-network/blueprint-ui/styles.css';
 import '@tangle-network/sandbox-ui/styles';
 import './styles/global.scss';
 

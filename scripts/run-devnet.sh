@@ -204,6 +204,7 @@ ANVIL_PORT="${ANVIL_PORT:-8545}"
 CHAIN_ID="${CHAIN_ID:-31338}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:$ANVIL_PORT}"
 WS_RPC_URL="${WS_RPC_URL:-ws://127.0.0.1:$ANVIL_PORT}"
+ANVIL_CODE_SIZE_LIMIT="${ANVIL_CODE_SIZE_LIMIT:-30000}"
 ARENA_PORT="${ARENA_PORT:-1337}"
 OPERATOR_API_PORT="${OPERATOR_API_PORT:-9200}"
 INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
@@ -268,22 +269,22 @@ fi
 
 if [[ -f "$SNAPSHOT" && -n "$FORK_URL" ]]; then
   if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
-    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
   else
-    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+    anvil --load-state "$SNAPSHOT" --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
   fi
 elif [[ -f "$SNAPSHOT" ]]; then
-  anvil --load-state "$SNAPSHOT" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  anvil --load-state "$SNAPSHOT" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
 elif [[ -n "$FORK_URL" ]]; then
   if [[ -n "$FORK_BLOCK_NUMBER" ]]; then
-    anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+    anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK_NUMBER" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
   else
-    anvil --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+    anvil --fork-url "$FORK_URL" --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
   fi
 else
   echo "WARNING: Tangle state snapshot not found at $SNAPSHOT"
   echo "Starting plain Anvil (no Tangle contracts)"
-  anvil --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --silent &
+  anvil --port "$ANVIL_PORT" --chain-id "$CHAIN_ID" --code-size-limit "$ANVIL_CODE_SIZE_LIMIT" --silent &
 fi
 PIDS+=($!)
 
