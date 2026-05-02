@@ -1,20 +1,37 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  Fragment,
+} from 'react';
 import { Link, useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
-import {
-  useAccount,
-  useWriteContract,
-  useSwitchChain,
-} from 'wagmi';
+import { useAccount, useWriteContract, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
-import { decodeEventLog, encodeAbiParameters, parseAbiParameters, parseGwei, zeroAddress } from 'viem';
+import {
+  decodeEventLog,
+  encodeAbiParameters,
+  parseAbiParameters,
+  parseGwei,
+  zeroAddress,
+} from 'viem';
 import type { Address } from 'viem';
 import { Button } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
-import { tangleJobsAbi, tangleServicesAbi, tradingBlueprintAbi } from '~/lib/contracts/abis';
+import {
+  tangleJobsAbi,
+  tangleServicesAbi,
+  tradingBlueprintAbi,
+} from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { networks } from '~/lib/contracts/chains';
-import { publicClient, selectedChainIdStore, useOperators } from '@tangle-network/blueprint-ui';
+import {
+  publicClient,
+  selectedChainIdStore,
+  useOperators,
+} from '@tangle-network/blueprint-ui';
 import { useQuotes } from '~/lib/hooks/useQuotes';
 import { PricingModelHint } from '~/lib/gen/pricing_pb';
 import { addTx } from '@tangle-network/blueprint-ui';
@@ -108,11 +125,14 @@ interface DexExecutionTargetOption {
   enabled: boolean;
   chainId?: number;
   rpcUrl?: string;
+  vaultFactoryAddress?: string;
   vaultAddress?: string;
   assetToken?: string;
   paperTrade?: boolean;
   protocolChainId?: number;
 }
+
+type VaultBinding = 'factory' | 'direct';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -134,7 +154,10 @@ const CHAIN_NAMES: Record<number, string> = {
   421614: 'Arbitrum Sepolia',
 };
 
-function resolveEnvBoolean(value: string | undefined, fallback: boolean): boolean {
+function resolveEnvBoolean(
+  value: string | undefined,
+  fallback: boolean,
+): boolean {
   if (!value) return fallback;
   const normalized = value.trim().toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
@@ -142,7 +165,10 @@ function resolveEnvBoolean(value: string | undefined, fallback: boolean): boolea
   return fallback;
 }
 
-function resolveEnvPositiveNumber(value: string | undefined, fallback: number): number {
+function resolveEnvPositiveNumber(
+  value: string | undefined,
+  fallback: number,
+): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
@@ -153,14 +179,19 @@ const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
   description: 'Uses Base Sepolia for cloud paper-trading execution.',
   modeLabel: 'Cloud execution',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_ENABLED, true),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_BASE_CHAIN_ID, 84532),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_BASE_CHAIN_ID,
+    84532,
+  ),
   rpcUrl: import.meta.env.VITE_DEX_BASE_RPC_URL ?? 'https://sepolia.base.org',
-  vaultAddress:
-    import.meta.env.VITE_DEX_BASE_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_BASE_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_BASE_ASSET_TOKEN ?? BASE_SEPOLIA_USDC_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_PAPER_TRADE, true),
+  vaultFactoryAddress: import.meta.env.VITE_DEX_BASE_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_BASE_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_BASE_ASSET_TOKEN ?? BASE_SEPOLIA_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_BASE_PAPER_TRADE,
+    true,
+  ),
 };
 
 const DEFAULT_BASE_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -168,32 +199,52 @@ const DEFAULT_BASE_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
   label: 'Base',
   description: 'Uses Base mainnet for live EVM execution.',
   modeLabel: 'Live EVM execution',
-  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_MAINNET_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_BASE_MAINNET_CHAIN_ID, 8453),
-  rpcUrl: import.meta.env.VITE_DEX_BASE_MAINNET_RPC_URL ?? 'https://mainnet.base.org',
-  vaultAddress:
-    import.meta.env.VITE_DEX_BASE_MAINNET_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_BASE_MAINNET_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_BASE_MAINNET_ASSET_TOKEN ?? BASE_USDC_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_BASE_MAINNET_PAPER_TRADE, false),
+  enabled: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_BASE_MAINNET_ENABLED,
+    false,
+  ),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_BASE_MAINNET_CHAIN_ID,
+    8453,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_BASE_MAINNET_RPC_URL ?? 'https://mainnet.base.org',
+  vaultFactoryAddress: import.meta.env
+    .VITE_DEX_BASE_MAINNET_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_BASE_MAINNET_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_BASE_MAINNET_ASSET_TOKEN ?? BASE_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_BASE_MAINNET_PAPER_TRADE,
+    false,
+  ),
 };
 
 const DEFAULT_ETHEREUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'ethereum',
   label: 'Ethereum Fork (Local Live)',
-  description: 'Uses the local Ethereum fork for live transaction execution. This is not Ethereum mainnet.',
+  description:
+    'Uses the local Ethereum fork for live transaction execution. This is not Ethereum mainnet.',
   modeLabel: 'Local live fork',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_ENABLED, true),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID, 31339),
-  protocolChainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID, 1),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID,
+    31339,
+  ),
+  protocolChainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID,
+    1,
+  ),
   rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? 'http://127.0.0.1:42545',
-  vaultAddress:
-    import.meta.env.VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_ETHEREUM_ASSET_TOKEN ?? '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_PAPER_TRADE, false),
+  vaultFactoryAddress: import.meta.env.VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_ETHEREUM_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_ETHEREUM_ASSET_TOKEN ??
+    '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ETHEREUM_PAPER_TRADE,
+    false,
+  ),
 };
 
 const DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -201,15 +252,27 @@ const DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
   label: 'Ethereum',
   description: 'Uses Ethereum mainnet for live EVM execution.',
   modeLabel: 'Live EVM execution',
-  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_CHAIN_ID, 1),
-  rpcUrl: import.meta.env.VITE_DEX_ETHEREUM_MAINNET_RPC_URL ?? 'https://ethereum-rpc.publicnode.com',
-  vaultAddress:
-    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_ETHEREUM_MAINNET_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ASSET_TOKEN ?? ETHEREUM_USDC_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ETHEREUM_MAINNET_PAPER_TRADE, false),
+  enabled: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ENABLED,
+    false,
+  ),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_CHAIN_ID,
+    1,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_RPC_URL ??
+    'https://ethereum-rpc.publicnode.com',
+  vaultFactoryAddress: import.meta.env
+    .VITE_DEX_ETHEREUM_MAINNET_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_ETHEREUM_MAINNET_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_ASSET_TOKEN ??
+    ETHEREUM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ETHEREUM_MAINNET_PAPER_TRADE,
+    false,
+  ),
 };
 
 const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -218,47 +281,78 @@ const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   description: 'Optional execution target for Arbitrum Sepolia.',
   modeLabel: 'Cloud execution',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_CHAIN_ID, 421614),
-  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc',
-  vaultAddress:
-    import.meta.env.VITE_DEX_ARBITRUM_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_ARBITRUM_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ARBITRUM_CHAIN_ID,
+    421614,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_ARBITRUM_RPC_URL ??
+    'https://sepolia-rollup.arbitrum.io/rpc',
+  vaultFactoryAddress: import.meta.env.VITE_DEX_ARBITRUM_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_ARBITRUM_VAULT_ADDRESS,
   assetToken: import.meta.env.VITE_DEX_ARBITRUM_ASSET_TOKEN ?? ZERO_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_PAPER_TRADE, true),
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ARBITRUM_PAPER_TRADE,
+    true,
+  ),
 };
 
 const DEFAULT_ARBITRUM_FORK_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum-fork',
   label: 'Arbitrum Fork (Local Live)',
-  description: 'Uses a local Arbitrum One fork for GMX v2 and Vertex EVM perp execution.',
+  description:
+    'Uses a local Arbitrum One fork for GMX v2 and Vertex EVM perp execution.',
   modeLabel: 'Local Arbitrum fork',
-  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_FORK_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_FORK_CHAIN_ID, 31340),
-  protocolChainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_FORK_PROTOCOL_CHAIN_ID, 42161),
-  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_FORK_RPC_URL ?? 'http://127.0.0.1:42546',
-  vaultAddress:
-    import.meta.env.VITE_DEX_ARBITRUM_FORK_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_ARBITRUM_FORK_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_ARBITRUM_FORK_ASSET_TOKEN ?? ARBITRUM_USDC_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE, false),
+  enabled: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_ENABLED,
+    false,
+  ),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_CHAIN_ID,
+    31340,
+  ),
+  protocolChainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_PROTOCOL_CHAIN_ID,
+    42161,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_RPC_URL ?? 'http://127.0.0.1:42546',
+  vaultFactoryAddress: import.meta.env
+    .VITE_DEX_ARBITRUM_FORK_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_ARBITRUM_FORK_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_ASSET_TOKEN ?? ARBITRUM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE,
+    false,
+  ),
 };
 
 const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum-one',
   label: 'Arbitrum One',
-  description: 'Uses Arbitrum One for live GMX v2 and Vertex EVM perp execution.',
+  description:
+    'Uses Arbitrum One for live GMX v2 and Vertex EVM perp execution.',
   modeLabel: 'Live EVM execution',
-  enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ONE_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_ARBITRUM_ONE_CHAIN_ID, 42161),
-  rpcUrl: import.meta.env.VITE_DEX_ARBITRUM_ONE_RPC_URL ?? 'https://arb1.arbitrum.io/rpc',
-  vaultAddress:
-    import.meta.env.VITE_DEX_ARBITRUM_ONE_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_ARBITRUM_ONE_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
+  enabled: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ARBITRUM_ONE_ENABLED,
+    false,
+  ),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_ARBITRUM_ONE_CHAIN_ID,
+    42161,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_ARBITRUM_ONE_RPC_URL ??
+    'https://arb1.arbitrum.io/rpc',
+  vaultFactoryAddress: import.meta.env
+    .VITE_DEX_ARBITRUM_ONE_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_ARBITRUM_ONE_VAULT_ADDRESS,
   assetToken: import.meta.env.VITE_DEX_ARBITRUM_ONE_ASSET_TOKEN ?? ZERO_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_ARBITRUM_ONE_PAPER_TRADE, false),
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_ARBITRUM_ONE_PAPER_TRADE,
+    false,
+  ),
 };
 
 const DEFAULT_POLYGON_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -269,10 +363,8 @@ const DEFAULT_POLYGON_EXECUTION_TARGET: DexExecutionTargetOption = {
   enabled: resolveEnvBoolean(import.meta.env.VITE_POLYGON_ENABLED, false),
   chainId: resolveEnvPositiveNumber(import.meta.env.VITE_POLYGON_CHAIN_ID, 137),
   rpcUrl: import.meta.env.VITE_POLYGON_RPC_URL ?? 'https://polygon-rpc.com',
-  vaultAddress:
-    import.meta.env.VITE_POLYGON_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_POLYGON_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
+  vaultFactoryAddress: import.meta.env.VITE_POLYGON_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_POLYGON_VAULT_ADDRESS,
   assetToken: import.meta.env.VITE_POLYGON_ASSET_TOKEN ?? POLYGON_USDC_ADDRESS,
   paperTrade: resolveEnvBoolean(import.meta.env.VITE_POLYGON_PAPER_TRADE, true),
 };
@@ -283,19 +375,30 @@ const DEFAULT_OPTIMISM_EXECUTION_TARGET: DexExecutionTargetOption = {
   description: 'Uses Optimism for live EVM execution.',
   modeLabel: 'Live EVM execution',
   enabled: resolveEnvBoolean(import.meta.env.VITE_DEX_OPTIMISM_ENABLED, false),
-  chainId: resolveEnvPositiveNumber(import.meta.env.VITE_DEX_OPTIMISM_CHAIN_ID, 10),
-  rpcUrl: import.meta.env.VITE_DEX_OPTIMISM_RPC_URL ?? 'https://mainnet.optimism.io',
-  vaultAddress:
-    import.meta.env.VITE_DEX_OPTIMISM_VAULT_FACTORY_ADDRESS
-    ?? import.meta.env.VITE_DEX_OPTIMISM_VAULT_ADDRESS
-    ?? ZERO_ADDRESS,
-  assetToken: import.meta.env.VITE_DEX_OPTIMISM_ASSET_TOKEN ?? OPTIMISM_USDC_ADDRESS,
-  paperTrade: resolveEnvBoolean(import.meta.env.VITE_DEX_OPTIMISM_PAPER_TRADE, false),
+  chainId: resolveEnvPositiveNumber(
+    import.meta.env.VITE_DEX_OPTIMISM_CHAIN_ID,
+    10,
+  ),
+  rpcUrl:
+    import.meta.env.VITE_DEX_OPTIMISM_RPC_URL ?? 'https://mainnet.optimism.io',
+  vaultFactoryAddress: import.meta.env.VITE_DEX_OPTIMISM_VAULT_FACTORY_ADDRESS,
+  vaultAddress: import.meta.env.VITE_DEX_OPTIMISM_VAULT_ADDRESS,
+  assetToken:
+    import.meta.env.VITE_DEX_OPTIMISM_ASSET_TOKEN ?? OPTIMISM_USDC_ADDRESS,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_DEX_OPTIMISM_PAPER_TRADE,
+    false,
+  ),
 };
 
-export function resolveSelectedProvisionNetwork(selectedChainId: number | undefined | null) {
+export function resolveSelectedProvisionNetwork(
+  selectedChainId: number | undefined | null,
+) {
   const configuredNetworks = Object.values(networks);
-  return (selectedChainId != null ? networks[selectedChainId] : undefined) ?? configuredNetworks[0];
+  return (
+    (selectedChainId != null ? networks[selectedChainId] : undefined) ??
+    configuredNetworks[0]
+  );
 }
 
 export function resolveRuntimeBackendForProvision(
@@ -304,7 +407,8 @@ export function resolveRuntimeBackendForProvision(
   firecrackerRuntimeSupported = FIRECRACKER_RUNTIME_SUPPORTED,
 ): RuntimeBackend {
   if (isTeeBlueprint) return 'tee';
-  if (!firecrackerRuntimeSupported && runtimeBackend === 'firecracker') return 'docker';
+  if (!firecrackerRuntimeSupported && runtimeBackend === 'firecracker')
+    return 'docker';
   return runtimeBackend;
 }
 
@@ -326,11 +430,17 @@ export function buildStrategyConfigForProvision({
     ),
   };
   if (paperTrade != null) config.paper_trade = paperTrade;
-  if (protocolChainId != null && Number.isFinite(protocolChainId) && protocolChainId > 0) {
+  if (
+    protocolChainId != null &&
+    Number.isFinite(protocolChainId) &&
+    protocolChainId > 0
+  ) {
     config.protocol_chain_id = protocolChainId;
   }
-  if (availableProtocols?.length) config.available_protocols = availableProtocols;
-  if (customExpertKnowledge) config.expert_knowledge_override = customExpertKnowledge;
+  if (availableProtocols?.length)
+    config.available_protocols = availableProtocols;
+  if (customExpertKnowledge)
+    config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
   return config;
 }
@@ -338,12 +448,26 @@ export function buildStrategyConfigForProvision({
 export function resolveExecutionTargetProvisionConfig(
   target: DexExecutionTargetOption | undefined,
 ) {
+  const configuredFactoryAddress = nonZeroAddress(target?.vaultFactoryAddress);
+  const configuredVaultAddress = nonZeroAddress(target?.vaultAddress);
+  const hasDistinctFactory =
+    configuredFactoryAddress &&
+    (!configuredVaultAddress ||
+      !sameAddress(configuredFactoryAddress, configuredVaultAddress));
+  const vaultBinding: VaultBinding =
+    hasDistinctFactory || (!configuredVaultAddress && target?.paperTrade)
+      ? 'factory'
+      : 'direct';
+  const provisionVaultAddress = hasDistinctFactory
+    ? configuredFactoryAddress
+    : (configuredVaultAddress ??
+      (target?.paperTrade ? (ZERO_ADDRESS as Address) : undefined));
   if (!target?.enabled) return null;
   if (
-    target.chainId == null
-    || !target.rpcUrl
-    || !target.vaultAddress
-    || !target.assetToken
+    target.chainId == null ||
+    !target.rpcUrl ||
+    !provisionVaultAddress ||
+    !target.assetToken
   ) {
     return null;
   }
@@ -351,11 +475,88 @@ export function resolveExecutionTargetProvisionConfig(
   return {
     chainId: BigInt(target.chainId),
     rpcUrl: target.rpcUrl,
-    vaultAddress: target.vaultAddress as Address,
+    vaultBinding,
+    provisionVaultAddress,
+    vaultFactoryAddress: configuredFactoryAddress,
+    vaultAddress:
+      configuredVaultAddress ??
+      configuredFactoryAddress ??
+      provisionVaultAddress,
     assetAddress: target.assetToken as Address,
     paperTrade: target.paperTrade ?? false,
     protocolChainId: target.protocolChainId,
   };
+}
+
+function nonZeroAddress(value: string | undefined | null): Address | undefined {
+  if (typeof value !== 'string' || value.toLowerCase() === ZERO_ADDRESS)
+    return undefined;
+  return value as Address;
+}
+
+function sameAddress(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+function instanceVaultEnvAddressForBlueprint(
+  blueprint: TradingBlueprintDef | undefined,
+): Address | undefined {
+  if (!blueprint || blueprint.isFleet) return undefined;
+  return nonZeroAddress(
+    blueprint.isTee
+      ? import.meta.env.VITE_TEE_VAULT_ADDRESS
+      : import.meta.env.VITE_INSTANCE_VAULT_ADDRESS,
+  );
+}
+
+function tradingBlueprintAddressForBlueprint(
+  blueprint: TradingBlueprintDef | undefined,
+): Address | undefined {
+  if (!blueprint) return undefined;
+  if (blueprint.isTee) {
+    return (
+      nonZeroAddress(import.meta.env.VITE_TEE_TRADING_BLUEPRINT) ??
+      nonZeroAddress(import.meta.env.VITE_INSTANCE_TRADING_BLUEPRINT) ??
+      nonZeroAddress(import.meta.env.VITE_TRADING_BLUEPRINT)
+    );
+  }
+  if (!blueprint.isFleet) {
+    return (
+      nonZeroAddress(import.meta.env.VITE_INSTANCE_TRADING_BLUEPRINT) ??
+      nonZeroAddress(import.meta.env.VITE_TRADING_BLUEPRINT)
+    );
+  }
+  return nonZeroAddress(import.meta.env.VITE_TRADING_BLUEPRINT);
+}
+
+async function resolveInstanceVaultAddressForProvision(
+  blueprint: TradingBlueprintDef | undefined,
+  serviceId: bigint | number | string | undefined,
+): Promise<Address | undefined> {
+  if (!blueprint || blueprint.isFleet || serviceId == null) {
+    return instanceVaultEnvAddressForBlueprint(blueprint);
+  }
+
+  const blueprintAddress = tradingBlueprintAddressForBlueprint(blueprint);
+  if (blueprintAddress) {
+    try {
+      const vault = (await publicClient.readContract({
+        address: blueprintAddress,
+        abi: tradingBlueprintAbi,
+        functionName: 'instanceVault',
+        args: [BigInt(serviceId)],
+      })) as Address;
+      const resolved = nonZeroAddress(vault);
+      if (resolved) return resolved;
+    } catch (err) {
+      console.warn(
+        '[provision] Failed to resolve instance vault from blueprint:',
+        err,
+      );
+    }
+  }
+
+  return instanceVaultEnvAddressForBlueprint(blueprint);
 }
 
 export function strategyUsesExecutionTarget(
@@ -367,7 +568,9 @@ export function strategyUsesExecutionTarget(
   if (pack?.executionMode !== 'single-chain') return false;
   if (!target) return false;
   const effectiveChainId = target.protocolChainId ?? target.chainId;
-  return Boolean(effectiveChainId && pack.supportedChainIds.includes(effectiveChainId));
+  return Boolean(
+    effectiveChainId && pack.supportedChainIds.includes(effectiveChainId),
+  );
 }
 
 function chainLabel(chainId: number): string {
@@ -399,7 +602,10 @@ export function availableProtocolsForStrategyTarget(
   if (strategyType === 'perp' && effectiveChainId === 42161) {
     return ['gmx_v2', 'vertex'];
   }
-  if (strategyType === 'yield' && (effectiveChainId === 1 || effectiveChainId === 8453)) {
+  if (
+    strategyType === 'yield' &&
+    (effectiveChainId === 1 || effectiveChainId === 8453)
+  ) {
     return ['aave_v3', 'morpho_vault'];
   }
   return undefined;
@@ -412,7 +618,10 @@ export function validateStrategyExecutionSelection(
 ): { ok: true } | { ok: false; message: string } {
   const pack = strategyPacks.find((p) => p.id === strategyType);
   if (!pack) {
-    return { ok: false, message: 'Select a valid strategy profile before provisioning.' };
+    return {
+      ok: false,
+      message: 'Select a valid strategy profile before provisioning.',
+    };
   }
 
   if (pack.executionMode === 'none') {
@@ -460,7 +669,9 @@ export function buildServiceActivationAttemptKey(
   activatedServiceId: string,
   txHash?: `0x${string}`,
 ): string {
-  return txHash ? `${txHash}:${activatedServiceId}` : `service:${activatedServiceId}`;
+  return txHash
+    ? `${txHash}:${activatedServiceId}`
+    : `service:${activatedServiceId}`;
 }
 
 interface InstanceOperatorBot {
@@ -491,7 +702,9 @@ export function selectLatestInstanceProvision(
   if (candidates.length === 0) return undefined;
 
   const parsedServiceId =
-    activeServiceId && /^\d+$/.test(activeServiceId) ? Number(activeServiceId) : undefined;
+    activeServiceId && /^\d+$/.test(activeServiceId)
+      ? Number(activeServiceId)
+      : undefined;
 
   const sortNewest = (a: TrackedProvision, b: TrackedProvision) =>
     b.updatedAt - a.updatedAt || b.createdAt - a.createdAt;
@@ -503,11 +716,12 @@ export function selectLatestInstanceProvision(
     if (matching[0]) return matching[0];
   }
 
-  const targetServiceId = typeof target.serviceId === 'number'
-    ? target.serviceId
-    : (typeof target.serviceId === 'string' && /^\d+$/.test(target.serviceId))
-      ? Number(target.serviceId)
-      : undefined;
+  const targetServiceId =
+    typeof target.serviceId === 'number'
+      ? target.serviceId
+      : typeof target.serviceId === 'string' && /^\d+$/.test(target.serviceId)
+        ? Number(target.serviceId)
+        : undefined;
 
   if (targetServiceId != null) {
     const matching = candidates
@@ -544,7 +758,11 @@ export const meta: MetaFunction = () => [
 // ── Main page ────────────────────────────────────────────────────────────
 
 export default function ProvisionPage() {
-  const { address: userAddress, isConnected, chainId: walletChainId } = useAccount();
+  const {
+    address: userAddress,
+    isConnected,
+    chainId: walletChainId,
+  } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const selectedChainId = useStore(selectedChainIdStore);
   const selectedNetwork = resolveSelectedProvisionNetwork(selectedChainId);
@@ -567,13 +785,14 @@ export default function ProvisionPage() {
       DEFAULT_OPTIMISM_EXECUTION_TARGET,
     ];
   }, []);
-  const [executionTargetId, setExecutionTargetId] = useState<DexExecutionTargetId>(
-    import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base',
-  );
+  const [executionTargetId, setExecutionTargetId] =
+    useState<DexExecutionTargetId>(
+      import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base',
+    );
   const configuredExecutionTarget = useMemo(
     () =>
-      executionTargets.find((target) => target.id === executionTargetId)
-      ?? executionTargets[0],
+      executionTargets.find((target) => target.id === executionTargetId) ??
+      executionTargets[0],
     [executionTargetId, executionTargets],
   );
   const [provisionPaperTrade, setProvisionPaperTrade] = useState(
@@ -584,7 +803,8 @@ export default function ProvisionPage() {
   }, [configuredExecutionTarget?.id, configuredExecutionTarget?.paperTrade]);
   const localFeeOverrides = useMemo(
     () =>
-      import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' && targetChain.id === localChainId
+      import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' &&
+      targetChain.id === localChainId
         ? {
             maxFeePerGas: parseGwei('1'),
             maxPriorityFeePerGas: parseGwei('1'),
@@ -606,7 +826,9 @@ export default function ProvisionPage() {
       return true;
     } catch (err: any) {
       if (err?.code === 4001) return false;
-      toast.error(`Switch to ${targetChain.name} in your wallet (chain ${targetChain.id})`);
+      toast.error(
+        `Switch to ${targetChain.name} in your wallet (chain ${targetChain.id})`,
+      );
       return false;
     }
   }, [isConnected, walletChainId, switchChainAsync]);
@@ -620,21 +842,31 @@ export default function ProvisionPage() {
 
   // Blueprint selection state
   const initialBlueprint = preselectedBlueprintId
-    ? getBlueprint(preselectedBlueprintId) ?? TRADING_BLUEPRINTS[0]
+    ? (getBlueprint(preselectedBlueprintId) ?? TRADING_BLUEPRINTS[0])
     : TRADING_BLUEPRINTS.length === 1
       ? TRADING_BLUEPRINTS[0]
       : undefined;
-  const skipBlueprintStep = TRADING_BLUEPRINTS.length <= 1 || !!preselectedBlueprintId;
+  const skipBlueprintStep =
+    TRADING_BLUEPRINTS.length <= 1 || !!preselectedBlueprintId;
 
   // Wizard navigation
-  const [step, setStep] = useState<WizardStep>(skipBlueprintStep ? 'configure' : 'blueprint');
-  const [selectedBlueprint, setSelectedBlueprint] = useState<TradingBlueprintDef | undefined>(initialBlueprint);
+  const [step, setStep] = useState<WizardStep>(
+    skipBlueprintStep ? 'configure' : 'blueprint',
+  );
+  const [selectedBlueprint, setSelectedBlueprint] = useState<
+    TradingBlueprintDef | undefined
+  >(initialBlueprint);
 
   // Blueprint + service defaults
   const [blueprintId, setBlueprintId] = useState(
-    () => selectedBlueprint?.blueprintId ?? import.meta.env.VITE_BLUEPRINT_ID ?? '0',
+    () =>
+      selectedBlueprint?.blueprintId ??
+      import.meta.env.VITE_BLUEPRINT_ID ??
+      '0',
   );
-  const [serviceMode, setServiceMode] = useState<'existing' | 'new'>('existing');
+  const [serviceMode, setServiceMode] = useState<'existing' | 'new'>(
+    'existing',
+  );
   const [serviceId, setServiceId] = useState(() => {
     const raw = import.meta.env.VITE_SERVICE_IDS ?? '';
     const first = raw.split(',')[0].trim();
@@ -644,53 +876,80 @@ export default function ProvisionPage() {
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [showInfra, setShowInfra] = useState(false);
-  const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
+  const [discoveredServices, setDiscoveredServices] = useState<
+    DiscoveredService[]
+  >([]);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
   // New service deployment
-  const [selectedOperators, setSelectedOperators] = useState<Set<Address>>(new Set());
+  const [selectedOperators, setSelectedOperators] = useState<Set<Address>>(
+    new Set(),
+  );
   const [manualOperator, setManualOperator] = useState('');
-  const [newServiceTxHash, setNewServiceTxHash] = useState<`0x${string}` | undefined>();
+  const [newServiceTxHash, setNewServiceTxHash] = useState<
+    `0x${string}` | undefined
+  >();
   const [newServiceDeploying, setNewServiceDeploying] = useState(false);
 
   // Instance auto-provision state
   const [instanceProvisioning, setInstanceProvisioning] = useState(false);
-  const [instanceProvisionError, setInstanceProvisionError] = useState<string | null>(null);
+  const [instanceProvisionError, setInstanceProvisionError] = useState<
+    string | null
+  >(null);
   const handledActivationAttemptKeysRef = useRef<Set<string>>(new Set());
   const instanceAutoProvisionInFlightRef = useRef<string | null>(null);
   const activationGuardTxHashRef = useRef<`0x${string}` | undefined>();
-  const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(() => ({
-    serviceId: targetServiceId ?? undefined,
-    botId: targetBotId ?? undefined,
-    sandboxId: targetSandboxId ?? undefined,
-  }), [targetBotId, targetSandboxId, targetServiceId]);
+  const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(
+    () => ({
+      serviceId: targetServiceId ?? undefined,
+      botId: targetBotId ?? undefined,
+      sandboxId: targetSandboxId ?? undefined,
+    }),
+    [targetBotId, targetSandboxId, targetServiceId],
+  );
   const hasExplicitInstanceRouteTarget = Boolean(
-    instanceRouteTarget.serviceId || instanceRouteTarget.botId || instanceRouteTarget.sandboxId,
+    instanceRouteTarget.serviceId ||
+    instanceRouteTarget.botId ||
+    instanceRouteTarget.sandboxId,
   );
 
   // Configure — agent settings
   const [name, setName] = useState('');
   const [strategyType, setStrategyType] = useState('dex');
-  const [runtimeBackend, setRuntimeBackend] = useState<RuntimeBackend>('docker');
+  const [runtimeBackend, setRuntimeBackend] =
+    useState<RuntimeBackend>('docker');
   const [customInstructions, setCustomInstructions] = useState('');
   const [customExpertKnowledge, setCustomExpertKnowledge] = useState('');
   const [customCron, setCustomCron] = useState('');
   const [collateralCapPct, setCollateralCapPct] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>('default');
+  const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>(
+    'default',
+  );
   const [customValidatorIds, setCustomValidatorIds] = useState('');
 
   // Deploy step
-  const { writeContract, data: txHash, isPending, reset: resetTx } =
-    useWriteContract();
+  const {
+    writeContract,
+    data: txHash,
+    isPending,
+    reset: resetTx,
+  } = useWriteContract();
 
   // Provisions store
-  const ownerProvisions = useMemo(() => provisionsForOwner(userAddress), [userAddress]);
+  const ownerProvisions = useMemo(
+    () => provisionsForOwner(userAddress),
+    [userAddress],
+  );
   const myProvisions = useStore(ownerProvisions) as TrackedProvision[];
 
   // Operator discovery
-  const blueprintIdBig = useMemo(() => BigInt(blueprintId || '0'), [blueprintId]);
-  const { operators: discoveredOperators, operatorCount } = useOperators(blueprintIdBig);
+  const blueprintIdBig = useMemo(
+    () => BigInt(blueprintId || '0'),
+    [blueprintId],
+  );
+  const { operators: discoveredOperators, operatorCount } =
+    useOperators(blueprintIdBig);
 
   // Quotes for new service mode
   const selectedOps = useMemo(
@@ -715,10 +974,8 @@ export default function ProvisionPage() {
   );
 
   // Second writeContract for new service
-  const {
-    writeContract: writeNewService,
-    isPending: isNewServicePending,
-  } = useWriteContract();
+  const { writeContract: writeNewService, isPending: isNewServicePending } =
+    useWriteContract();
 
   // Secrets step state
   const defaultProvider = (
@@ -728,11 +985,15 @@ export default function ProvisionPage() {
   ) as AiProvider;
   const [aiProvider, setAiProvider] = useState<AiProvider>(defaultProvider);
   const [apiKey, setApiKey] = useState(DEFAULT_AI_API_KEY);
-  const [extraEnvs, setExtraEnvs] = useState<{ id: number; key: string; value: string }[]>([]);
+  const [extraEnvs, setExtraEnvs] = useState<
+    { id: number; key: string; value: string }[]
+  >([]);
   const envIdRef = useRef(0);
   const [isSubmittingSecrets, setIsSubmittingSecrets] = useState(false);
   const [activationPhase, setActivationPhase] = useState<string | null>(null);
-  const [secretsLookupError, setSecretsLookupError] = useState<string | null>(null);
+  const [secretsLookupError, setSecretsLookupError] = useState<string | null>(
+    null,
+  );
   const [useOperatorKey, setUseOperatorKey] = useState(false);
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
@@ -744,27 +1005,32 @@ export default function ProvisionPage() {
     () => compatibleExecutionTargets.filter((target) => target.enabled),
     [compatibleExecutionTargets],
   );
-  const selectedExecutionTarget = useMemo(
-    () => {
-      if (selectedPack.executionMode !== 'single-chain') return undefined;
-      return compatibleExecutionTargets.find((target) => target.id === executionTargetId)
-        ?? enabledCompatibleExecutionTargets[0]
-        ?? compatibleExecutionTargets[0];
-    },
-    [
-      compatibleExecutionTargets,
-      enabledCompatibleExecutionTargets,
-      executionTargetId,
-      selectedPack.executionMode,
-    ],
-  );
+  const selectedExecutionTarget = useMemo(() => {
+    if (selectedPack.executionMode !== 'single-chain') return undefined;
+    return (
+      compatibleExecutionTargets.find(
+        (target) => target.id === executionTargetId && target.enabled,
+      ) ??
+      enabledCompatibleExecutionTargets[0] ??
+      compatibleExecutionTargets.find(
+        (target) => target.id === executionTargetId,
+      ) ??
+      compatibleExecutionTargets[0]
+    );
+  }, [
+    compatibleExecutionTargets,
+    enabledCompatibleExecutionTargets,
+    executionTargetId,
+    selectedPack.executionMode,
+  ]);
   const strategyExecutionValidation = validateStrategyExecutionSelection(
     strategyType,
     selectedExecutionTarget,
     provisionPaperTrade,
   );
   const hasEnabledExecutionTarget =
-    selectedPack.executionMode !== 'single-chain' || enabledCompatibleExecutionTargets.length > 0;
+    selectedPack.executionMode !== 'single-chain' ||
+    enabledCompatibleExecutionTargets.length > 0;
   const strategyExecutionNotice = (() => {
     if (selectedPack.executionMode === 'paper-only') {
       return `${selectedPack.name} is paper-trading only until multi-chain execution is supported.`;
@@ -801,7 +1067,9 @@ export default function ProvisionPage() {
 
   useEffect(() => {
     if (selectedPack.executionMode !== 'single-chain') return;
-    const selected = compatibleExecutionTargets.find((target) => target.id === executionTargetId);
+    const selected = compatibleExecutionTargets.find(
+      (target) => target.id === executionTargetId,
+    );
     if (selected?.enabled) return;
     const firstEnabled = enabledCompatibleExecutionTargets[0];
     if (firstEnabled) setExecutionTargetId(firstEnabled.id);
@@ -827,12 +1095,14 @@ export default function ProvisionPage() {
   }, [selectedBlueprint?.id, selectedBlueprint?.isTee]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker') return;
+    if (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker')
+      return;
     setRuntimeBackend(selectedBlueprint?.isTee ? 'tee' : 'docker');
   }, [runtimeBackend, selectedBlueprint?.isTee]);
 
   useEffect(() => {
-    if (!isInstance || serviceMode !== 'new' || selectedOperators.size > 0) return;
+    if (!isInstance || serviceMode !== 'new' || selectedOperators.size > 0)
+      return;
     const defaultOperator = discoveredOperators[0]?.address;
     if (!defaultOperator) return;
     setSelectedOperators(new Set([defaultOperator]));
@@ -860,7 +1130,11 @@ export default function ProvisionPage() {
   // Track TX in history + create provision entry
   useEffect(() => {
     if (!txHash || !userAddress) return;
-    addTx(txHash, `Deploy ${name || 'Agent'} (${selectedPack?.name})`, targetChain.id);
+    addTx(
+      txHash,
+      `Deploy ${name || 'Agent'} (${selectedPack?.name})`,
+      targetChain.id,
+    );
     addProvision({
       id: txHash,
       owner: userAddress,
@@ -883,67 +1157,93 @@ export default function ProvisionPage() {
     const txMatch = myProvisions.find((p) => p.txHash === txHash);
     if (txMatch) return txMatch;
     if (isInstance) {
-      return selectLatestInstanceProvision(myProvisions, serviceId, instanceRouteTarget);
+      return selectLatestInstanceProvision(
+        myProvisions,
+        serviceId,
+        instanceRouteTarget,
+      );
     }
     return undefined;
   }, [instanceRouteTarget, isInstance, myProvisions, serviceId, txHash]);
 
   const ambiguousInstanceProvisionMessage = useMemo(() => {
-    if (!isInstance || latestDeployment || hasExplicitInstanceRouteTarget) return null;
+    if (!isInstance || latestDeployment || hasExplicitInstanceRouteTarget)
+      return null;
     const candidates = myProvisions.filter(
       (p) => p.id.startsWith('instance-') && p.phase !== 'failed',
     );
     if (candidates.length <= 1) return null;
     return 'Multiple instance bot drafts exist for this wallet. Open the intended bot from the dashboard or use a route with serviceId, botId, or sandboxId so the correct draft is resumed.';
-  }, [hasExplicitInstanceRouteTarget, isInstance, latestDeployment, myProvisions]);
-
-  const syncInstanceRouteTarget = useCallback((target: InstanceProvisionIdentity) => {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      if (target.serviceId != null) {
-        next.set('serviceId', String(target.serviceId));
-      } else {
-        next.delete('serviceId');
-      }
-      if (target.botId) {
-        next.set('botId', target.botId);
-      } else {
-        next.delete('botId');
-      }
-      if (target.sandboxId) {
-        next.set('sandboxId', target.sandboxId);
-      } else {
-        next.delete('sandboxId');
-      }
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
-
-  const currentInstanceIdentity = useMemo<InstanceProvisionIdentity>(() => ({
-    serviceId: latestDeployment?.serviceId ?? instanceRouteTarget.serviceId,
-    botId: latestDeployment?.botId ?? instanceRouteTarget.botId,
-    sandboxId: latestDeployment?.sandboxId ?? instanceRouteTarget.sandboxId,
-  }), [
-    instanceRouteTarget.botId,
-    instanceRouteTarget.sandboxId,
-    instanceRouteTarget.serviceId,
-    latestDeployment?.botId,
-    latestDeployment?.sandboxId,
-    latestDeployment?.serviceId,
+  }, [
+    hasExplicitInstanceRouteTarget,
+    isInstance,
+    latestDeployment,
+    myProvisions,
   ]);
 
+  const syncInstanceRouteTarget = useCallback(
+    (target: InstanceProvisionIdentity) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (target.serviceId != null) {
+            next.set('serviceId', String(target.serviceId));
+          } else {
+            next.delete('serviceId');
+          }
+          if (target.botId) {
+            next.set('botId', target.botId);
+          } else {
+            next.delete('botId');
+          }
+          if (target.sandboxId) {
+            next.set('sandboxId', target.sandboxId);
+          } else {
+            next.delete('sandboxId');
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const currentInstanceIdentity = useMemo<InstanceProvisionIdentity>(
+    () => ({
+      serviceId: latestDeployment?.serviceId ?? instanceRouteTarget.serviceId,
+      botId: latestDeployment?.botId ?? instanceRouteTarget.botId,
+      sandboxId: latestDeployment?.sandboxId ?? instanceRouteTarget.sandboxId,
+    }),
+    [
+      instanceRouteTarget.botId,
+      instanceRouteTarget.sandboxId,
+      instanceRouteTarget.serviceId,
+      latestDeployment?.botId,
+      latestDeployment?.sandboxId,
+      latestDeployment?.serviceId,
+    ],
+  );
+
   const operatorApiUrl = useMemo(
-    () => getOperatorApiUrlForBlueprint(selectedBlueprint?.id ?? latestDeployment?.blueprintType),
+    () =>
+      getOperatorApiUrlForBlueprint(
+        selectedBlueprint?.id ?? latestDeployment?.blueprintType,
+      ),
     [latestDeployment?.blueprintType, selectedBlueprint?.id],
   );
   const operatorAuth = useOperatorAuth(operatorApiUrl);
   const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
   const expectedOperatorKind = useMemo(
-    () => getExpectedDeploymentKindForBlueprint(selectedBlueprint?.id ?? latestDeployment?.blueprintType),
+    () =>
+      getExpectedDeploymentKindForBlueprint(
+        selectedBlueprint?.id ?? latestDeployment?.blueprintType,
+      ),
     [latestDeployment?.blueprintType, selectedBlueprint?.id],
   );
   const operatorRouteMismatchMessage = useMemo(() => {
-    if (!operatorMeta || operatorMeta.deployment_kind === expectedOperatorKind) return null;
+    if (!operatorMeta || operatorMeta.deployment_kind === expectedOperatorKind)
+      return null;
     const flowLabel = expectedOperatorKind === 'fleet' ? 'cloud' : 'instance';
     return `This ${flowLabel} provision flow is pointed at a ${operatorMeta.deployment_kind} operator. Fix the local operator proxy routing and restart the devnet.`;
   }, [expectedOperatorKind, operatorMeta]);
@@ -951,15 +1251,13 @@ export default function ProvisionPage() {
     ['job_submitted', 'job_processing', 'awaiting_secrets'].includes(p.phase),
   );
   const provisionNeedsOperatorAuth = Boolean(
-    operatorApiUrl
-    && isConnected
-    && (
-      isInstance
-      || step === 'deploy'
-      || step === 'secrets'
-      || instanceProvisioning
-      || hasOperatorManagedProvision
-    ),
+    operatorApiUrl &&
+    isConnected &&
+    (isInstance ||
+      step === 'deploy' ||
+      step === 'secrets' ||
+      instanceProvisioning ||
+      hasOperatorManagedProvision),
   );
 
   useRouteOperatorAutoAuth({
@@ -969,171 +1267,227 @@ export default function ProvisionPage() {
   });
 
   // Auto-provision instance bot via operator API after service activation
-  const autoProvisionInstance = useCallback(async (activatedServiceId: string) => {
-    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) return;
+  const autoProvisionInstance = useCallback(
+    async (activatedServiceId: string) => {
+      if (instanceAutoProvisionInFlightRef.current === activatedServiceId)
+        return;
 
-    instanceAutoProvisionInFlightRef.current = activatedServiceId;
-    setInstanceProvisioning(true);
-    setInstanceProvisionError(null);
+      instanceAutoProvisionInFlightRef.current = activatedServiceId;
+      setInstanceProvisioning(true);
+      setInstanceProvisionError(null);
 
-    const maxRetries = 5;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        let authToken = operatorAuth.token;
-        if (!authToken) {
-          authToken = await operatorAuth.authenticate();
-          if (!authToken) throw new Error('Wallet authentication failed');
-        }
+      const maxRetries = 5;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          let authToken = operatorAuth.token;
+          if (!authToken) {
+            authToken = await operatorAuth.authenticate();
+            if (!authToken) throw new Error('Wallet authentication failed');
+          }
 
-        const resolvedValidatorIds: number[] = validatorMode === 'custom' && customValidatorIds.trim()
-          ? customValidatorIds.split(',').flatMap(s => {
-              const n = parseInt(s.trim(), 10);
-              return !isNaN(n) && n > 0 ? [n] : [];
-            })
-          : (() => {
-              const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-              const n = parseInt(defaultId, 10);
-              return !isNaN(n) && n > 0 ? [n] : [];
-            })();
+          const resolvedValidatorIds: number[] =
+            validatorMode === 'custom' && customValidatorIds.trim()
+              ? customValidatorIds.split(',').flatMap((s) => {
+                  const n = parseInt(s.trim(), 10);
+                  return !isNaN(n) && n > 0 ? [n] : [];
+                })
+              : (() => {
+                  const defaultId =
+                    import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+                  const n = parseInt(defaultId, 10);
+                  return !isNaN(n) && n > 0 ? [n] : [];
+                })();
 
-        const strategyExecution = validateStrategyExecutionSelection(
-          strategyType,
-          selectedExecutionTarget,
-          provisionPaperTrade,
-        );
-        if (!strategyExecution.ok) {
-          throw new Error(strategyExecution.message);
-        }
+          const strategyExecution = validateStrategyExecutionSelection(
+            strategyType,
+            selectedExecutionTarget,
+            provisionPaperTrade,
+          );
+          if (!strategyExecution.ok) {
+            throw new Error(strategyExecution.message);
+          }
 
-        const usesExecutionTarget = strategyUsesExecutionTarget(
-          strategyType,
-          selectedExecutionTarget,
-          provisionPaperTrade,
-        );
-        const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
-        if (usesExecutionTarget && !executionConfig) {
-          throw new Error('Execution target is incomplete');
-        }
+          const usesExecutionTarget = strategyUsesExecutionTarget(
+            strategyType,
+            selectedExecutionTarget,
+            provisionPaperTrade,
+          );
+          const executionConfig = resolveExecutionTargetProvisionConfig(
+            selectedExecutionTarget,
+          );
+          if (usesExecutionTarget && !executionConfig) {
+            throw new Error('Execution target is incomplete');
+          }
+          const instanceVaultAddress =
+            selectedBlueprint && !selectedBlueprint.isFleet
+              ? await resolveInstanceVaultAddressForProvision(
+                  selectedBlueprint,
+                  activatedServiceId,
+                )
+              : undefined;
 
-        const provisionBody = {
-          name: name || `Instance Bot (service ${activatedServiceId})`,
-          strategy_type: strategyType,
-          strategy_config_json: JSON.stringify(
-            buildStrategyConfigForProvision({
-              runtimeBackend,
-              isTeeBlueprint: !!selectedBlueprint?.isTee,
-              customExpertKnowledge,
-              customInstructions,
-              paperTrade: provisionPaperTrade,
-              protocolChainId: usesExecutionTarget ? executionConfig?.protocolChainId : undefined,
-              availableProtocols: usesExecutionTarget
-                ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
-                : undefined,
-            }),
-          ),
-          risk_params_json: strategyType === 'yield'
-            ? JSON.stringify({ min_aave_health_factor: 1.5 })
-            : '{}',
-          trading_loop_cron: effectiveCron,
-          validator_service_ids: resolvedValidatorIds,
-          ...(usesExecutionTarget && executionConfig
-            ? {
-                chain_id: Number(executionConfig.chainId),
-                rpc_url: executionConfig.rpcUrl,
-                vault_address: executionConfig.vaultAddress,
-                asset_token: executionConfig.assetAddress,
-                paper_trade: provisionPaperTrade,
-              }
-            : {}),
-        };
+          const provisionBody = {
+            name: name || `Instance Bot (service ${activatedServiceId})`,
+            strategy_type: strategyType,
+            strategy_config_json: JSON.stringify(
+              buildStrategyConfigForProvision({
+                runtimeBackend,
+                isTeeBlueprint: !!selectedBlueprint?.isTee,
+                customExpertKnowledge,
+                customInstructions,
+                paperTrade: provisionPaperTrade,
+                protocolChainId: usesExecutionTarget
+                  ? executionConfig?.protocolChainId
+                  : undefined,
+                availableProtocols: usesExecutionTarget
+                  ? availableProtocolsForStrategyTarget(
+                      strategyType,
+                      selectedExecutionTarget,
+                    )
+                  : undefined,
+              }),
+            ),
+            risk_params_json:
+              strategyType === 'yield'
+                ? JSON.stringify({ min_aave_health_factor: 1.5 })
+                : '{}',
+            trading_loop_cron: effectiveCron,
+            validator_service_ids: resolvedValidatorIds,
+            ...(usesExecutionTarget && executionConfig
+              ? {
+                  chain_id: Number(executionConfig.chainId),
+                  rpc_url: executionConfig.rpcUrl,
+                  ...(instanceVaultAddress
+                    ? { vault_address: instanceVaultAddress }
+                    : {}),
+                  asset_token: executionConfig.assetAddress,
+                  paper_trade: provisionPaperTrade,
+                }
+              : {}),
+          };
 
-        const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify(provisionBody),
-        });
-
-        if (res.status === 401) {
-          operatorAuth.clearCachedToken();
-          const fresh = await operatorAuth.authenticate();
-          if (!fresh) throw new Error('Re-authentication failed');
-          const retry = await fetch(`${operatorApiUrl}/api/bot/provision`, {
+          const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${fresh}`,
+              Authorization: `Bearer ${authToken}`,
             },
             body: JSON.stringify(provisionBody),
           });
-          if (!retry.ok) throw await readOperatorError(retry);
-          const result = await retry.json();
+
+          if (res.status === 401) {
+            operatorAuth.clearCachedToken();
+            const fresh = await operatorAuth.authenticate();
+            if (!fresh) throw new Error('Re-authentication failed');
+            const retry = await fetch(`${operatorApiUrl}/api/bot/provision`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${fresh}`,
+              },
+              body: JSON.stringify(provisionBody),
+            });
+            if (!retry.ok) throw await readOperatorError(retry);
+            const result = await retry.json();
+            handleInstanceProvisionSuccess(activatedServiceId, result);
+            return;
+          }
+
+          if (!res.ok) {
+            throw await readOperatorError(res);
+          }
+
+          const result = await res.json();
           handleInstanceProvisionSuccess(activatedServiceId, result);
           return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          if (attempt < maxRetries - 1) {
+            await new Promise((r) =>
+              setTimeout(r, 2000 * Math.pow(2, attempt)),
+            );
+            continue;
+          }
+          setInstanceProvisionError(msg);
+          toast.error(`Instance provision failed: ${msg.slice(0, 150)}`);
         }
-
-        if (!res.ok) {
-          throw await readOperatorError(res);
-        }
-
-        const result = await res.json();
-        handleInstanceProvisionSuccess(activatedServiceId, result);
-        return;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        if (attempt < maxRetries - 1) {
-          await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
-          continue;
-        }
-        setInstanceProvisionError(msg);
-        toast.error(`Instance provision failed: ${msg.slice(0, 150)}`);
       }
-    }
-    setInstanceProvisioning(false);
-    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
-      instanceAutoProvisionInFlightRef.current = null;
-    }
-  }, [name, strategyType, runtimeBackend, selectedBlueprint?.isTee, effectiveCron, validatorMode, customValidatorIds, customExpertKnowledge, customInstructions, operatorApiUrl, operatorAuth, selectedExecutionTarget, provisionPaperTrade]);
+      setInstanceProvisioning(false);
+      if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
+        instanceAutoProvisionInFlightRef.current = null;
+      }
+    },
+    [
+      name,
+      strategyType,
+      runtimeBackend,
+      selectedBlueprint?.isTee,
+      effectiveCron,
+      validatorMode,
+      customValidatorIds,
+      customExpertKnowledge,
+      customInstructions,
+      operatorApiUrl,
+      operatorAuth,
+      selectedExecutionTarget,
+      provisionPaperTrade,
+    ],
+  );
 
-  const handleInstanceProvisionSuccess = useCallback((activatedServiceId: string, result: { bot_id: string; sandbox_id: string }) => {
-    if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
-      instanceAutoProvisionInFlightRef.current = null;
-    }
-    setInstanceProvisioning(false);
-    setServiceId(activatedServiceId);
-    syncInstanceRouteTarget({
-      serviceId: activatedServiceId,
-      botId: result.bot_id,
-      sandboxId: result.sandbox_id,
-    });
-
-    if (userAddress) {
-      upsertInstanceProvision({
-        id: `instance-${activatedServiceId}`,
-        owner: userAddress,
-        name: name || 'Instance Agent',
-        strategyType,
-        operators: [],
-        blueprintId,
-        blueprintType: selectedBlueprint?.id,
-        serviceId: Number(activatedServiceId),
-        jobIndex: 0,
-        phase: 'awaiting_secrets',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        chainId: targetChain.id,
+  const handleInstanceProvisionSuccess = useCallback(
+    (
+      activatedServiceId: string,
+      result: { bot_id: string; sandbox_id: string },
+    ) => {
+      if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
+        instanceAutoProvisionInFlightRef.current = null;
+      }
+      setInstanceProvisioning(false);
+      setServiceId(activatedServiceId);
+      syncInstanceRouteTarget({
+        serviceId: activatedServiceId,
         botId: result.bot_id,
         sandboxId: result.sandbox_id,
-        callId: 0,
       });
-    }
 
-    resetTx();
-    toast.success(`Instance provisioned! Configure API keys to start trading.`);
-    setStep('secrets');
-  }, [userAddress, name, strategyType, blueprintId, selectedBlueprint, targetChain.id, resetTx, syncInstanceRouteTarget]);
+      if (userAddress) {
+        upsertInstanceProvision({
+          id: `instance-${activatedServiceId}`,
+          owner: userAddress,
+          name: name || 'Instance Agent',
+          strategyType,
+          operators: [],
+          blueprintId,
+          blueprintType: selectedBlueprint?.id,
+          serviceId: Number(activatedServiceId),
+          jobIndex: 0,
+          phase: 'awaiting_secrets',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          chainId: targetChain.id,
+          botId: result.bot_id,
+          sandboxId: result.sandbox_id,
+          callId: 0,
+        });
+      }
+
+      resetTx();
+      toast.success(
+        `Instance provisioned! Configure API keys to start trading.`,
+      );
+      setStep('secrets');
+    },
+    [
+      userAddress,
+      name,
+      strategyType,
+      blueprintId,
+      selectedBlueprint,
+      targetChain.id,
+      resetTx,
+      syncInstanceRouteTarget,
+    ],
+  );
 
   // ── Service validation ─────────────────────────────────────────────────
 
@@ -1211,7 +1565,9 @@ export default function ProvisionPage() {
       });
     } catch (err) {
       setServiceError(
-        err instanceof Error ? err.message.slice(0, 120) : 'Failed to fetch service',
+        err instanceof Error
+          ? err.message.slice(0, 120)
+          : 'Failed to fetch service',
       );
     } finally {
       setServiceLoading(false);
@@ -1226,7 +1582,9 @@ export default function ProvisionPage() {
     if (serviceInfo) {
       const mismatch = serviceInfo.blueprintId !== Number(blueprintId);
       if (serviceInfo.blueprintMismatch !== mismatch) {
-        setServiceInfo((prev) => prev ? { ...prev, blueprintMismatch: mismatch } : prev);
+        setServiceInfo((prev) =>
+          prev ? { ...prev, blueprintMismatch: mismatch } : prev,
+        );
       }
     }
   }, [blueprintId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1242,7 +1600,9 @@ export default function ProvisionPage() {
         const latestBlock = await publicClient.getBlockNumber();
         const lookback = 250_000n;
         fromBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
-      } catch { /* fall back to genesis */ }
+      } catch {
+        /* fall back to genesis */
+      }
       const logs = await publicClient.getLogs({
         address: addresses.tangle,
         event: {
@@ -1265,7 +1625,9 @@ export default function ProvisionPage() {
       }
 
       type SvcLog = { args: { serviceId?: bigint } };
-      const serviceIds: number[] = logs.map((log: SvcLog) => Number(log.args.serviceId!));
+      const serviceIds: number[] = logs.map((log: SvcLog) =>
+        Number(log.args.serviceId!),
+      );
       const unique: number[] = [...new Set(serviceIds)];
 
       const results = await Promise.all(
@@ -1294,7 +1656,8 @@ export default function ProvisionPage() {
             ]);
 
             const svc = service as { owner: Address; operatorCount: number };
-            const isOwner = svc.owner.toLowerCase() === userAddress.toLowerCase();
+            const isOwner =
+              svc.owner.toLowerCase() === userAddress.toLowerCase();
 
             return {
               serviceId: sid,
@@ -1312,8 +1675,14 @@ export default function ProvisionPage() {
 
       const valid = results.filter((r): r is DiscoveredService => r !== null);
       valid.sort((a, b) => {
-        const scoreA = (a.isActive && a.isPermitted ? 4 : 0) + (a.isActive ? 2 : 0) + (a.isOwner ? 1 : 0);
-        const scoreB = (b.isActive && b.isPermitted ? 4 : 0) + (b.isActive ? 2 : 0) + (b.isOwner ? 1 : 0);
+        const scoreA =
+          (a.isActive && a.isPermitted ? 4 : 0) +
+          (a.isActive ? 2 : 0) +
+          (a.isOwner ? 1 : 0);
+        const scoreB =
+          (b.isActive && b.isPermitted ? 4 : 0) +
+          (b.isActive ? 2 : 0) +
+          (b.isOwner ? 1 : 0);
         return scoreB - scoreA;
       });
       setDiscoveredServices(valid);
@@ -1327,63 +1696,96 @@ export default function ProvisionPage() {
     }
   }, [blueprintId, userAddress]);
 
-  const handleServiceActivated = useCallback((activatedServiceId: string) => {
-    const activationKey = buildServiceActivationAttemptKey(activatedServiceId, newServiceTxHash);
-    if (handledActivationAttemptKeysRef.current.has(activationKey)) return;
+  const handleServiceActivated = useCallback(
+    (activatedServiceId: string) => {
+      const activationKey = buildServiceActivationAttemptKey(
+        activatedServiceId,
+        newServiceTxHash,
+      );
+      if (handledActivationAttemptKeysRef.current.has(activationKey)) return;
 
-    handledActivationAttemptKeysRef.current.add(activationKey);
-    setNewServiceDeploying(false);
-    setShowInfra(false);
+      handledActivationAttemptKeysRef.current.add(activationKey);
+      setNewServiceDeploying(false);
+      setShowInfra(false);
 
-    if (isInstance) {
-      toast.success(`Service #${activatedServiceId} active! Provisioning instance bot...`);
-      void autoProvisionInstance(activatedServiceId);
-    } else {
-      setServiceId(activatedServiceId);
-      setServiceMode('existing');
-      toast.success(`Service #${activatedServiceId} is live! Ready to provision agents.`);
-      void discoverServices();
-    }
-  }, [isInstance, autoProvisionInstance, discoverServices, newServiceTxHash]);
+      if (isInstance) {
+        toast.success(
+          `Service #${activatedServiceId} active! Provisioning instance bot...`,
+        );
+        void autoProvisionInstance(activatedServiceId);
+      } else {
+        setServiceId(activatedServiceId);
+        setServiceMode('existing');
+        toast.success(
+          `Service #${activatedServiceId} is live! Ready to provision agents.`,
+        );
+        void discoverServices();
+      }
+    },
+    [isInstance, autoProvisionInstance, discoverServices, newServiceTxHash],
+  );
 
   // Wait for new service TX receipt
   useEffect(() => {
     if (!newServiceTxHash || !newServiceDeploying) return;
     publicClient
       .waitForTransactionReceipt({ hash: newServiceTxHash })
-      .then((receipt: { status: string; logs?: Array<{ data: `0x${string}`; topics: readonly `0x${string}`[] }> }) => {
-        if (receipt.status === 'success') {
-          for (const log of receipt.logs ?? []) {
-            try {
-              const decoded = decodeEventLog({
-                abi: tangleServicesAbi,
-                data: log.data,
-                topics: [...log.topics] as [`0x${string}`, ...`0x${string}`[]],
-              });
-              if (decoded.eventName !== 'ServiceActivated') continue;
-              const args = decoded.args as { blueprintId?: bigint; serviceId?: bigint };
-              if (args.blueprintId == null || args.serviceId == null) continue;
-              if (Number(args.blueprintId) !== Number(blueprintId)) continue;
-              handleServiceActivated(Number(args.serviceId).toString());
-              return;
-            } catch {
-              // Ignore unrelated logs in the receipt
+      .then(
+        (receipt: {
+          status: string;
+          logs?: Array<{
+            data: `0x${string}`;
+            topics: readonly `0x${string}`[];
+          }>;
+        }) => {
+          if (receipt.status === 'success') {
+            for (const log of receipt.logs ?? []) {
+              try {
+                const decoded = decodeEventLog({
+                  abi: tangleServicesAbi,
+                  data: log.data,
+                  topics: [...log.topics] as [
+                    `0x${string}`,
+                    ...`0x${string}`[],
+                  ],
+                });
+                if (decoded.eventName !== 'ServiceActivated') continue;
+                const args = decoded.args as {
+                  blueprintId?: bigint;
+                  serviceId?: bigint;
+                };
+                if (args.blueprintId == null || args.serviceId == null)
+                  continue;
+                if (Number(args.blueprintId) !== Number(blueprintId)) continue;
+                handleServiceActivated(Number(args.serviceId).toString());
+                return;
+              } catch {
+                // Ignore unrelated logs in the receipt
+              }
             }
-          }
 
-          toast.success('Service request submitted! Waiting for activation...');
-        } else {
-          toast.error('Service request transaction reverted');
-          resetServiceActivationGuard(undefined);
-          setNewServiceDeploying(false);
-        }
-      })
+            toast.success(
+              'Service request submitted! Waiting for activation...',
+            );
+          } else {
+            toast.error('Service request transaction reverted');
+            resetServiceActivationGuard(undefined);
+            setNewServiceDeploying(false);
+          }
+        },
+      )
       .catch(() => {
         toast.error('Failed to confirm service request');
         resetServiceActivationGuard(undefined);
         setNewServiceDeploying(false);
       });
-  }, [newServiceTxHash, newServiceDeploying, blueprintId, handleServiceActivated, resetServiceActivationGuard]);
+  }, [
+    newServiceTxHash,
+    newServiceDeploying,
+    blueprintId,
+    handleServiceActivated,
+    resetServiceActivationGuard,
+  ]);
 
   // Watch for ServiceActivated when deploying new service
   useEffect(() => {
@@ -1392,7 +1794,9 @@ export default function ProvisionPage() {
       address: addresses.tangle,
       abi: tangleServicesAbi,
       eventName: 'ServiceActivated',
-      onLogs(logs: Array<{ args: { blueprintId?: bigint; serviceId?: bigint } }>) {
+      onLogs(
+        logs: Array<{ args: { blueprintId?: bigint; serviceId?: bigint } }>,
+      ) {
         for (const log of logs) {
           const bid = log.args.blueprintId;
           const sid = log.args.serviceId;
@@ -1422,7 +1826,9 @@ export default function ProvisionPage() {
       return;
     }
     if (!serviceInfo?.isActive) {
-      toast.error('Service is not active — select an active service in Infrastructure Settings');
+      toast.error(
+        'Service is not active — select an active service in Infrastructure Settings',
+      );
       return;
     }
     if (!serviceInfo?.isPermitted) {
@@ -1445,9 +1851,13 @@ export default function ProvisionPage() {
       selectedExecutionTarget,
       provisionPaperTrade,
     );
-    const executionConfig = resolveExecutionTargetProvisionConfig(selectedExecutionTarget);
+    const executionConfig = resolveExecutionTargetProvisionConfig(
+      selectedExecutionTarget,
+    );
     if (requiresExecutionTarget && !executionConfig) {
-      toast.error('Execution target is incomplete — select a valid execution target in Advanced Settings');
+      toast.error(
+        'Execution target is incomplete — select a valid execution target in Advanced Settings',
+      );
       return;
     }
 
@@ -1457,32 +1867,48 @@ export default function ProvisionPage() {
       customExpertKnowledge,
       customInstructions,
       paperTrade: provisionPaperTrade,
-      protocolChainId: requiresExecutionTarget ? executionConfig?.protocolChainId : undefined,
+      protocolChainId: requiresExecutionTarget
+        ? executionConfig?.protocolChainId
+        : undefined,
       availableProtocols: requiresExecutionTarget
-        ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+        ? availableProtocolsForStrategyTarget(
+            strategyType,
+            selectedExecutionTarget,
+          )
         : undefined,
     });
+    if (requiresExecutionTarget && executionConfig) {
+      strategyConfig.vault_binding = executionConfig.vaultBinding;
+      if (
+        executionConfig.vaultBinding === 'direct' &&
+        executionConfig.vaultAddress &&
+        executionConfig.vaultAddress !== zeroAddress
+      ) {
+        strategyConfig.direct_vault_address = executionConfig.vaultAddress;
+      }
+    }
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
 
-    const resolvedValidatorIds: bigint[] = validatorMode === 'custom' && customValidatorIds.trim()
-      ? customValidatorIds.split(',').flatMap(s => {
-          const trimmed = s.trim();
-          if (!trimmed || !/^\d+$/.test(trimmed)) return [];
-          const n = BigInt(trimmed);
-          return n > 0n ? [n] : [];
-        })
-      : (() => {
-          const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-          const n = BigInt(defaultId);
-          return n > 0n ? [n] : [];
-        })();
+    const resolvedValidatorIds: bigint[] =
+      validatorMode === 'custom' && customValidatorIds.trim()
+        ? customValidatorIds.split(',').flatMap((s) => {
+            const trimmed = s.trim();
+            if (!trimmed || !/^\d+$/.test(trimmed)) return [];
+            const n = BigInt(trimmed);
+            return n > 0n ? [n] : [];
+          })
+        : (() => {
+            const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+            const n = BigInt(defaultId);
+            return n > 0n ? [n] : [];
+          })();
 
     let vaultSigners: Address[] = [];
     if (resolvedValidatorIds.length > 0) {
       try {
         const operatorResults = await Promise.all(
-          resolvedValidatorIds.map(vid =>
+          resolvedValidatorIds.map((vid) =>
             publicClient.readContract({
               address: addresses.tangle,
               abi: tangleServicesAbi,
@@ -1502,14 +1928,30 @@ export default function ProvisionPage() {
           }
         }
         if (vaultSigners.length === 0) {
-          toast.error('Selected validator services have no operators — cannot create vault signers');
+          toast.error(
+            'Selected validator services have no operators — cannot create vault signers',
+          );
           return;
         }
       } catch (err) {
-        console.error('[provision] Failed to resolve validator operators:', err);
+        console.error(
+          '[provision] Failed to resolve validator operators:',
+          err,
+        );
         toast.error('Failed to query validator service operators from chain');
         return;
       }
+    }
+    if (
+      requiresExecutionTarget &&
+      executionConfig?.vaultBinding === 'factory' &&
+      !executionConfig.paperTrade &&
+      vaultSigners.length < 2
+    ) {
+      toast.error(
+        'Factory vault creation needs at least 2 validator operators',
+      );
+      return;
     }
 
     const inputs = bp.encodeProvision({
@@ -1517,9 +1959,11 @@ export default function ProvisionPage() {
       strategyType,
       strategyConfig,
       riskParams: '{}',
-      vaultAddress: executionConfig?.vaultAddress ?? zeroAddress,
-      assetAddress: executionConfig?.assetAddress ?? ((import.meta.env.VITE_USDC_ADDRESS ??
-        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
+      vaultAddress: executionConfig?.provisionVaultAddress ?? zeroAddress,
+      assetAddress:
+        executionConfig?.assetAddress ??
+        ((import.meta.env.VITE_USDC_ADDRESS ??
+          '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       depositors: vaultSigners.length > 0 ? vaultSigners : [],
       chainId: executionConfig?.chainId ?? BigInt(targetChain.id),
       rpcUrl: executionConfig?.rpcUrl ?? '',
@@ -1528,7 +1972,9 @@ export default function ProvisionPage() {
       memoryMb: bp.defaults.memoryMb,
       maxLifetimeDays: bp.defaults.maxLifetimeDays,
       validatorServiceIds: resolvedValidatorIds,
-      maxCollateralBps: collateralCapPct ? BigInt(Math.round(Number(collateralCapPct) * 100)) : 0n,
+      maxCollateralBps: collateralCapPct
+        ? BigInt(Math.round(Number(collateralCapPct) * 100))
+        : 0n,
     });
 
     writeContract(
@@ -1544,7 +1990,9 @@ export default function ProvisionPage() {
           const msg = err.message || '';
           const shortName = (err as any).shortMessage || '';
           if (msg.includes('NotPermittedCaller') || msg.includes('d5dd5b44')) {
-            toast.error('Not permitted — your wallet is not a permitted caller for this service');
+            toast.error(
+              'Not permitted — your wallet is not a permitted caller for this service',
+            );
           } else if (shortName) {
             toast.error(`Transaction failed: ${shortName.slice(0, 150)}`);
           } else {
@@ -1596,21 +2044,23 @@ export default function ProvisionPage() {
     let instanceValidatorIds: bigint[] = [];
     let instanceVaultSigners: Address[] = [];
     if (isInstance) {
-      instanceValidatorIds = validatorMode === 'custom' && customValidatorIds.trim()
-        ? customValidatorIds.split(',').flatMap(s => {
-            const n = BigInt(s.trim() || '0');
-            return n > 0n ? [n] : [];
-          })
-        : (() => {
-            const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-            const n = BigInt(defaultId);
-            return n > 0n ? [n] : [];
-          })();
+      instanceValidatorIds =
+        validatorMode === 'custom' && customValidatorIds.trim()
+          ? customValidatorIds.split(',').flatMap((s) => {
+              const n = BigInt(s.trim() || '0');
+              return n > 0n ? [n] : [];
+            })
+          : (() => {
+              const defaultId =
+                import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
+              const n = BigInt(defaultId);
+              return n > 0n ? [n] : [];
+            })();
 
       if (instanceValidatorIds.length > 0) {
         try {
           const opResults = await Promise.all(
-            instanceValidatorIds.map(vid =>
+            instanceValidatorIds.map((vid) =>
               publicClient.readContract({
                 address: addresses.tangle,
                 abi: tangleServicesAbi,
@@ -1630,14 +2080,19 @@ export default function ProvisionPage() {
             }
           }
         } catch (err) {
-          console.warn('[provision] Failed to resolve validator operators for instance vault:', err);
+          console.warn(
+            '[provision] Failed to resolve validator operators for instance vault:',
+            err,
+          );
         }
       }
     }
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
     // Convert collateral cap percentage (0-100) to basis points (0-10000)
-    const collateralBps = collateralCapPct ? BigInt(Math.round(Number(collateralCapPct) * 100)) : 0n;
+    const collateralBps = collateralCapPct
+      ? BigInt(Math.round(Number(collateralCapPct) * 100))
+      : 0n;
 
     const config = encodeAbiParameters(
       parseAbiParameters(
@@ -1645,16 +2100,18 @@ export default function ProvisionPage() {
       ),
       [
         [
-          isInstance ? (name || 'Instance Bot') : '',
+          isInstance ? name || 'Instance Bot' : '',
           isInstance ? strategyType : '',
-          isInstance ? JSON.stringify(
-            buildStrategyConfigForProvision({
-              runtimeBackend,
-              isTeeBlueprint: !!selectedBlueprint?.isTee,
-              customExpertKnowledge,
-              customInstructions,
-            }),
-          ) : '{}',
+          isInstance
+            ? JSON.stringify(
+                buildStrategyConfigForProvision({
+                  runtimeBackend,
+                  isTeeBlueprint: !!selectedBlueprint?.isTee,
+                  customExpertKnowledge,
+                  customInstructions,
+                }),
+              )
+            : '{}',
           '{}',
           zeroAddress,
           (import.meta.env.VITE_USDC_ADDRESS ??
@@ -1699,7 +2156,13 @@ export default function ProvisionPage() {
         address: addresses.tangle,
         abi: tangleServicesAbi,
         functionName: 'createServiceFromQuotes',
-        args: [BigInt(blueprintId), quoteTuples, config, [userAddress], ttlBlocks],
+        args: [
+          BigInt(blueprintId),
+          quoteTuples,
+          config,
+          [userAddress],
+          ttlBlocks,
+        ],
         value: totalCost,
         ...localFeeOverrides,
       },
@@ -1727,10 +2190,12 @@ export default function ProvisionPage() {
       case 'blueprint':
         return !!selectedBlueprint;
       case 'configure':
-        return !!name.trim()
-          && (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker')
-          && strategyExecutionValidation.ok
-          && hasEnabledExecutionTarget;
+        return (
+          !!name.trim() &&
+          (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker') &&
+          strategyExecutionValidation.ok &&
+          hasEnabledExecutionTarget
+        );
       case 'deploy':
         return false;
     }
@@ -1751,126 +2216,152 @@ export default function ProvisionPage() {
     if (idx > 0) setStep(STEP_ORDER[idx - 1]);
   };
 
-  const syncInstanceProvisionFromBot = useCallback((bot: InstanceOperatorBot) => {
-    if (!userAddress) return null;
-    const phase = bot.lifecycle_status === 'awaiting_secrets' || bot.secrets_configured === false
-      ? 'awaiting_secrets'
-      : 'active';
+  const syncInstanceProvisionFromBot = useCallback(
+    (bot: InstanceOperatorBot) => {
+      if (!userAddress) return null;
+      const phase =
+        bot.lifecycle_status === 'awaiting_secrets' ||
+        bot.secrets_configured === false
+          ? 'awaiting_secrets'
+          : 'active';
 
-    const normalized: TrackedProvision = {
-      id: `instance-${bot.service_id}`,
-      owner: userAddress,
-      name: latestDeployment?.name || name || 'Instance Agent',
-      strategyType: bot.strategy_type || latestDeployment?.strategyType || strategyType,
-      operators: latestDeployment?.operators ?? [],
-      blueprintId: latestDeployment?.blueprintId ?? blueprintId,
-      blueprintType: latestDeployment?.blueprintType ?? selectedBlueprint?.id,
-      serviceId: bot.service_id,
-      jobIndex: latestDeployment?.jobIndex ?? 0,
-      phase,
-      createdAt: latestDeployment?.createdAt ?? Date.now(),
-      updatedAt: Date.now(),
-      chainId: latestDeployment?.chainId ?? targetChain.id,
-      botId: bot.id,
-      sandboxId: bot.sandbox_id,
-      callId: bot.call_id,
-      workflowId: normalizeWorkflowId(bot.workflow_id),
-      vaultAddress: bot.vault_address !== zeroAddress ? bot.vault_address : undefined,
-    };
+      const normalized: TrackedProvision = {
+        id: `instance-${bot.service_id}`,
+        owner: userAddress,
+        name: latestDeployment?.name || name || 'Instance Agent',
+        strategyType:
+          bot.strategy_type || latestDeployment?.strategyType || strategyType,
+        operators: latestDeployment?.operators ?? [],
+        blueprintId: latestDeployment?.blueprintId ?? blueprintId,
+        blueprintType: latestDeployment?.blueprintType ?? selectedBlueprint?.id,
+        serviceId: bot.service_id,
+        jobIndex: latestDeployment?.jobIndex ?? 0,
+        phase,
+        createdAt: latestDeployment?.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+        chainId: latestDeployment?.chainId ?? targetChain.id,
+        botId: bot.id,
+        sandboxId: bot.sandbox_id,
+        callId: bot.call_id,
+        workflowId: normalizeWorkflowId(bot.workflow_id),
+        vaultAddress:
+          bot.vault_address !== zeroAddress ? bot.vault_address : undefined,
+      };
 
-    upsertInstanceProvision(normalized);
-    syncInstanceRouteTarget({
-      serviceId: normalized.serviceId,
-      botId: normalized.botId,
-      sandboxId: normalized.sandboxId,
-    });
-    setSecretsLookupError(null);
-    return normalized;
-  }, [
-    blueprintId,
-    latestDeployment,
-    name,
-    selectedBlueprint?.id,
-    strategyType,
-    syncInstanceRouteTarget,
-    targetChain.id,
-    userAddress,
-  ]);
-
-  const reconcileInstanceDeployment = useCallback(async (
-    token: string,
-  ): Promise<
-    | { kind: 'ok'; provision: TrackedProvision }
-    | { kind: 'auth_required' }
-    | { kind: 'missing'; message: string }
-    | { kind: 'error'; message: string }
-  > => {
-    if (!isInstance || !userAddress || operatorMeta?.deployment_kind !== 'instance') {
-      if (!latestDeployment) {
-        return { kind: 'error', message: 'No provision is available to configure.' };
-      }
-      return { kind: 'ok', provision: latestDeployment };
-    }
-
-    try {
-      const res = await fetch(`${operatorApiUrl}/api/bot`, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+      upsertInstanceProvision(normalized);
+      syncInstanceRouteTarget({
+        serviceId: normalized.serviceId,
+        botId: normalized.botId,
+        sandboxId: normalized.sandboxId,
       });
+      setSecretsLookupError(null);
+      return normalized;
+    },
+    [
+      blueprintId,
+      latestDeployment,
+      name,
+      selectedBlueprint?.id,
+      strategyType,
+      syncInstanceRouteTarget,
+      targetChain.id,
+      userAddress,
+    ],
+  );
 
-      if (res.status === 401 || res.status === 403) {
-        return { kind: 'auth_required' };
+  const reconcileInstanceDeployment = useCallback(
+    async (
+      token: string,
+    ): Promise<
+      | { kind: 'ok'; provision: TrackedProvision }
+      | { kind: 'auth_required' }
+      | { kind: 'missing'; message: string }
+      | { kind: 'error'; message: string }
+    > => {
+      if (
+        !isInstance ||
+        !userAddress ||
+        operatorMeta?.deployment_kind !== 'instance'
+      ) {
+        if (!latestDeployment) {
+          return {
+            kind: 'error',
+            message: 'No provision is available to configure.',
+          };
+        }
+        return { kind: 'ok', provision: latestDeployment };
       }
 
-      if (res.status === 404) {
-        removeMatchingInstanceProvision(userAddress, currentInstanceIdentity);
-        return {
-          kind: 'missing',
-          message: 'Instance bot is no longer provisioned on the operator. Reprovision it from the deploy step.',
-        };
-      }
+      try {
+        const res = await fetch(`${operatorApiUrl}/api/bot`, {
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
 
-      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          return { kind: 'auth_required' };
+        }
+
+        if (res.status === 404) {
+          removeMatchingInstanceProvision(userAddress, currentInstanceIdentity);
+          return {
+            kind: 'missing',
+            message:
+              'Instance bot is no longer provisioned on the operator. Reprovision it from the deploy step.',
+          };
+        }
+
+        if (!res.ok) {
+          return {
+            kind: 'error',
+            message: `Failed to load current instance bot (HTTP ${res.status}).`,
+          };
+        }
+
+        const bot = (await res.json()) as InstanceOperatorBot;
+        if (
+          !bot.sandbox_exists ||
+          bot.lifecycle_status === 'archived' ||
+          bot.archived
+        ) {
+          removeMatchingInstanceProvision(userAddress, {
+            serviceId: bot.service_id || currentInstanceIdentity.serviceId,
+            botId: bot.id || currentInstanceIdentity.botId,
+            sandboxId: bot.sandbox_id || currentInstanceIdentity.sandboxId,
+          });
+          return {
+            kind: 'missing',
+            message: `Instance bot ${bot.id} points to missing sandbox ${bot.sandbox_id}. Reprovision it from the deploy step.`,
+          };
+        }
+        const provision = syncInstanceProvisionFromBot(bot);
+        if (!provision) {
+          return {
+            kind: 'error',
+            message: 'Wallet authentication required to load bot data.',
+          };
+        }
+        return { kind: 'ok', provision };
+      } catch {
         return {
           kind: 'error',
-          message: `Failed to load current instance bot (HTTP ${res.status}).`,
+          message:
+            'Failed to reach the operator while loading the current instance bot.',
         };
       }
-
-      const bot = await res.json() as InstanceOperatorBot;
-      if (!bot.sandbox_exists || bot.lifecycle_status === 'archived' || bot.archived) {
-        removeMatchingInstanceProvision(userAddress, {
-          serviceId: bot.service_id || currentInstanceIdentity.serviceId,
-          botId: bot.id || currentInstanceIdentity.botId,
-          sandboxId: bot.sandbox_id || currentInstanceIdentity.sandboxId,
-        });
-        return {
-          kind: 'missing',
-          message: `Instance bot ${bot.id} points to missing sandbox ${bot.sandbox_id}. Reprovision it from the deploy step.`,
-        };
-      }
-      const provision = syncInstanceProvisionFromBot(bot);
-      if (!provision) {
-        return { kind: 'error', message: 'Wallet authentication required to load bot data.' };
-      }
-      return { kind: 'ok', provision };
-    } catch {
-      return {
-        kind: 'error',
-        message: 'Failed to reach the operator while loading the current instance bot.',
-      };
-    }
-  }, [
-    isInstance,
-    userAddress,
-    operatorMeta?.deployment_kind,
-    latestDeployment,
-    operatorApiUrl,
-    currentInstanceIdentity,
-    syncInstanceProvisionFromBot,
-  ]);
+    },
+    [
+      isInstance,
+      userAddress,
+      operatorMeta?.deployment_kind,
+      latestDeployment,
+      operatorApiUrl,
+      currentInstanceIdentity,
+      syncInstanceProvisionFromBot,
+    ],
+  );
 
   useEffect(() => {
     if (latestDeployment?.phase === 'awaiting_secrets' && step === 'deploy') {
@@ -1880,10 +2371,10 @@ export default function ProvisionPage() {
 
   useEffect(() => {
     if (
-      !isInstance
-      || step !== 'secrets'
-      || operatorMeta?.deployment_kind !== 'instance'
-      || !operatorAuth.token
+      !isInstance ||
+      step !== 'secrets' ||
+      operatorMeta?.deployment_kind !== 'instance' ||
+      !operatorAuth.token
     ) {
       return;
     }
@@ -1912,43 +2403,57 @@ export default function ProvisionPage() {
   ]);
 
   /** Resolve operator bot ID using multi-strategy lookup. */
-  const resolveBotId = useCallback(async (opts: {
-    botId?: string;
-    sandboxId?: string;
-    callId?: number;
-    serviceId?: number;
-    token?: string | null;
-  }): Promise<
-    | { botId: string }
-    | {
-      error: string;
-      code: 'auth_required' | 'not_found' | 'operator_unreachable' | 'stale_state' | 'conflict';
-    }
-  > => {
-    if (!operatorApiUrl) {
-      const error = {
-        error: 'Operator API URL not configured',
-        code: 'operator_unreachable' as const,
-      };
-      setSecretsLookupError(error.error);
-      return error;
-    }
-    const result = await resolveBot(operatorApiUrl, opts);
-    if ('botId' in result) {
-      if (latestDeployment && latestDeployment.botId !== result.botId) {
-        updateProvision(latestDeployment.id, { botId: result.botId });
+  const resolveBotId = useCallback(
+    async (opts: {
+      botId?: string;
+      sandboxId?: string;
+      callId?: number;
+      serviceId?: number;
+      token?: string | null;
+    }): Promise<
+      | { botId: string }
+      | {
+          error: string;
+          code:
+            | 'auth_required'
+            | 'not_found'
+            | 'operator_unreachable'
+            | 'stale_state'
+            | 'conflict';
+        }
+    > => {
+      if (!operatorApiUrl) {
+        const error = {
+          error: 'Operator API URL not configured',
+          code: 'operator_unreachable' as const,
+        };
+        setSecretsLookupError(error.error);
+        return error;
       }
-      setSecretsLookupError(null);
+      const result = await resolveBot(operatorApiUrl, opts);
+      if ('botId' in result) {
+        if (latestDeployment && latestDeployment.botId !== result.botId) {
+          updateProvision(latestDeployment.id, { botId: result.botId });
+        }
+        setSecretsLookupError(null);
+        return result;
+      }
+      setSecretsLookupError(result.error);
       return result;
-    }
-    setSecretsLookupError(result.error);
-    return result;
-  }, [latestDeployment, operatorApiUrl]);
+    },
+    [latestDeployment, operatorApiUrl],
+  );
 
   const handleSubmitSecrets = async () => {
     if (!latestDeployment) return;
-    const canResumeInstanceProvision = isInstance && latestDeployment.serviceId != null;
-    if (!canResumeInstanceProvision && !latestDeployment.sandboxId && latestDeployment.callId == null) return;
+    const canResumeInstanceProvision =
+      isInstance && latestDeployment.serviceId != null;
+    if (
+      !canResumeInstanceProvision &&
+      !latestDeployment.sandboxId &&
+      latestDeployment.callId == null
+    )
+      return;
     if (!useOperatorKey && !apiKey.trim()) return;
     if (operatorRouteMismatchMessage) {
       setSecretsLookupError(operatorRouteMismatchMessage);
@@ -1963,7 +2468,9 @@ export default function ProvisionPage() {
     if (!authToken) {
       authToken = await operatorAuth.authenticate();
       if (!authToken) {
-        setSecretsLookupError('Wallet authentication required to load bot data.');
+        setSecretsLookupError(
+          'Wallet authentication required to load bot data.',
+        );
         setIsSubmittingSecrets(false);
         return;
       }
@@ -1978,7 +2485,9 @@ export default function ProvisionPage() {
         operatorAuth.clearCachedToken();
         authToken = await operatorAuth.authenticate();
         if (!authToken) {
-          setSecretsLookupError('Wallet authentication required to load bot data.');
+          setSecretsLookupError(
+            'Wallet authentication required to load bot data.',
+          );
           setIsSubmittingSecrets(false);
           return;
         }
@@ -1999,7 +2508,9 @@ export default function ProvisionPage() {
       }
 
       if (reconciled.kind !== 'ok') {
-        setSecretsLookupError('Wallet authentication required to load bot data.');
+        setSecretsLookupError(
+          'Wallet authentication required to load bot data.',
+        );
         setIsSubmittingSecrets(false);
         return;
       }
@@ -2018,7 +2529,9 @@ export default function ProvisionPage() {
         operatorAuth.clearCachedToken();
         authToken = await operatorAuth.authenticate();
         if (!authToken) {
-          setSecretsLookupError('Wallet authentication required to load bot data.');
+          setSecretsLookupError(
+            'Wallet authentication required to load bot data.',
+          );
           setIsSubmittingSecrets(false);
           return;
         }
@@ -2091,7 +2604,7 @@ export default function ProvisionPage() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${tok}`,
+              Authorization: `Bearer ${tok}`,
             },
             body: JSON.stringify({ env_json: envJson }),
             signal: controller.signal,
@@ -2103,7 +2616,10 @@ export default function ProvisionPage() {
 
       let res = await postSecrets(authToken);
 
-      if (res.status === 401 || (!res.ok && (await res.clone().text()).includes('PASETO'))) {
+      if (
+        res.status === 401 ||
+        (!res.ok && (await res.clone().text()).includes('PASETO'))
+      ) {
         operatorAuth.clearCachedToken();
         const freshToken = await operatorAuth.authenticate();
         if (!freshToken) throw new Error('Wallet re-authentication failed');
@@ -2115,13 +2631,16 @@ export default function ProvisionPage() {
         throw await readOperatorError(res);
       }
 
-      const resultJson = await res.json() as {
+      const resultJson = (await res.json()) as {
         workflow_id?: string | number | null;
         sandbox_id?: string | null;
       };
       const result = {
         workflow_id: normalizeWorkflowId(resultJson.workflow_id),
-        sandbox_id: typeof resultJson.sandbox_id === 'string' ? resultJson.sandbox_id : undefined,
+        sandbox_id:
+          typeof resultJson.sandbox_id === 'string'
+            ? resultJson.sandbox_id
+            : undefined,
       };
 
       if (isInstance && userAddress) {
@@ -2157,9 +2676,14 @@ export default function ProvisionPage() {
         const staleBody = err.body as OperatorErrorBody | null;
         if (isInstance && userAddress) {
           removeMatchingInstanceProvision(userAddress, {
-            serviceId: targetDeployment.serviceId ?? currentInstanceIdentity.serviceId,
-            botId: targetDeployment.botId ?? botId ?? currentInstanceIdentity.botId,
-            sandboxId: staleBody?.sandbox_id ?? targetDeployment.sandboxId ?? currentInstanceIdentity.sandboxId,
+            serviceId:
+              targetDeployment.serviceId ?? currentInstanceIdentity.serviceId,
+            botId:
+              targetDeployment.botId ?? botId ?? currentInstanceIdentity.botId,
+            sandboxId:
+              staleBody?.sandbox_id ??
+              targetDeployment.sandboxId ??
+              currentInstanceIdentity.sandboxId,
           });
         } else if (targetDeployment.id) {
           updateProvision(targetDeployment.id, {
@@ -2195,10 +2719,13 @@ export default function ProvisionPage() {
         Provision Trading Agent
       </h1>
       <p className="text-base text-arena-elements-textSecondary mb-6">
-        {step === 'blueprint' && 'Choose a blueprint type for your trading agent.'}
-        {step === 'configure' && `Configure your ${selectedBlueprint?.name ?? 'trading'} agent, then provision it on-chain.`}
+        {step === 'blueprint' &&
+          'Choose a blueprint type for your trading agent.'}
+        {step === 'configure' &&
+          `Configure your ${selectedBlueprint?.name ?? 'trading'} agent, then provision it on-chain.`}
         {step === 'deploy' && 'Your agent is being provisioned on the network.'}
-        {step === 'secrets' && 'Provide your API keys to activate the trading agent.'}
+        {step === 'secrets' &&
+          'Provide your API keys to activate the trading agent.'}
       </p>
 
       {/* Step indicator */}
@@ -2212,7 +2739,11 @@ export default function ProvisionPage() {
                 type="button"
                 onClick={() => {
                   if (!isDone) return;
-                  if (txHash && STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')) return;
+                  if (
+                    txHash &&
+                    STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')
+                  )
+                    return;
                   setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
@@ -2271,14 +2802,19 @@ export default function ProvisionPage() {
                 Wrong Network
               </div>
               <div className="text-xs text-arena-elements-textSecondary mt-0.5">
-                Your wallet is on chain {walletChainId}. Switch to {targetChain.name} to submit transactions.
+                Your wallet is on chain {walletChainId}. Switch to{' '}
+                {targetChain.name} to submit transactions.
               </div>
             </div>
             <Button
               size="sm"
-              onClick={() => switchChainAsync({ chainId: targetChain.id }).catch(() =>
-                toast.error('Failed to switch — add the chain to your wallet manually')
-              )}
+              onClick={() =>
+                switchChainAsync({ chainId: targetChain.id }).catch(() =>
+                  toast.error(
+                    'Failed to switch — add the chain to your wallet manually',
+                  ),
+                )
+              }
             >
               Switch Network
             </Button>
@@ -2382,7 +2918,9 @@ export default function ProvisionPage() {
             setUseOperatorKey={setUseOperatorKey}
             isSubmittingSecrets={isSubmittingSecrets}
             activationPhase={activationPhase}
-            secretsLookupError={operatorRouteMismatchMessage ?? secretsLookupError}
+            secretsLookupError={
+              operatorRouteMismatchMessage ?? secretsLookupError
+            }
             handleSubmitSecrets={handleSubmitSecrets}
             setStep={setStep}
             resetTx={resetTx}
@@ -2448,10 +2986,15 @@ export default function ProvisionPage() {
         isTeeBlueprint={!!selectedBlueprint?.isTee}
         executionTargets={compatibleExecutionTargets}
         executionTargetId={selectedExecutionTarget?.id ?? executionTargetId}
-        setExecutionTargetId={(value) => setExecutionTargetId(value as DexExecutionTargetId)}
+        setExecutionTargetId={(value) =>
+          setExecutionTargetId(value as DexExecutionTargetId)
+        }
         selectedExecutionTarget={selectedExecutionTarget}
         executionChainMessage={strategyExecutionNotice}
-        liveModeDisabled={selectedPack.executionMode === 'paper-only' || selectedPack.executionMode === 'none'}
+        liveModeDisabled={
+          selectedPack.executionMode === 'paper-only' ||
+          selectedPack.executionMode === 'none'
+        }
         provisionPaperTrade={provisionPaperTrade}
         setProvisionPaperTrade={setProvisionPaperTrade}
         onOpenInfrastructure={() => {

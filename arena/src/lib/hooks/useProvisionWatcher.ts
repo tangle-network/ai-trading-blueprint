@@ -427,6 +427,7 @@ export function useProvisionWatcher() {
  *  from the BSM to get the actual vault address.
  */
 function applyResultToProvision(provId: string, output: `0x${string}` | undefined, serviceId: number, callId?: number) {
+  let vaultAddress: Address | undefined;
   let sandboxId: string | undefined;
   let workflowId: string | undefined;
 
@@ -434,6 +435,9 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   if (output) {
     try {
       const decoded = decodeProvisionOutput(output);
+      if (decoded.vaultAddress !== zeroAddress) {
+        vaultAddress = decoded.vaultAddress as Address;
+      }
       sandboxId = decoded.sandboxId;
       workflowId = decoded.workflowId;
     } catch (decodeErr) {
@@ -445,7 +449,15 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   const prov = provisionsStore.get().find((p: TrackedProvision) => p.id === provId);
   const resolvedCallId = callId ?? prov?.callId;
 
-  if (resolvedCallId != null && serviceId > 0 && addresses.tradingBlueprint !== zeroAddress) {
+  if (vaultAddress) {
+    updateProvision(provId, {
+      phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
+      vaultAddress,
+      sandboxId,
+      workflowId,
+      serviceId,
+    });
+  } else if (resolvedCallId != null && serviceId > 0 && addresses.tradingBlueprint !== zeroAddress) {
     publicClient.readContract({
       address: addresses.tradingBlueprint,
       abi: tradingBlueprintAbi,
