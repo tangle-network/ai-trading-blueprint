@@ -40,7 +40,6 @@ pub fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) -> SandboxR
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
-        capabilities_json: String::new(),
     }
 }
 
