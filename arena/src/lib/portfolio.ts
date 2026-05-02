@@ -1,4 +1,5 @@
 import type { Portfolio, Position } from '~/lib/types/portfolio';
+import { normalizeDisplayNumber } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 export interface RawPortfolioPosition {
@@ -27,7 +28,7 @@ export interface RawPortfolioState {
 function toFiniteNumber(value: number | string | null | undefined): number | null {
   if (value == null) return null;
   const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? normalizeDisplayNumber(parsed) : null;
 }
 
 function inferValuationStatus(pos: RawPortfolioPosition): Position['valuationStatus'] {

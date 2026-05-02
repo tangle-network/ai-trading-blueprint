@@ -24,7 +24,7 @@ import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
-import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, normalizeDisplayNumber } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import { getTradeValidationDisplay } from '~/lib/tradeValidation';
 
@@ -79,7 +79,7 @@ function formatUsdValue(value: string): string {
 
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed)) return trimmed;
-  return usdFormatter.format(parsed);
+  return usdFormatter.format(normalizeDisplayNumber(parsed, 0));
 }
 
 function FieldTooltip({ label, description }: { label: string; description: string }) {

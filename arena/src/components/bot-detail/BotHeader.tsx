@@ -6,7 +6,7 @@ import type { Bot } from '~/lib/types/bot';
 import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
-import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { buildVaultPath } from '~/lib/utils/vaultRoute';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
@@ -35,23 +35,39 @@ export function BotHeader({ bot }: BotHeaderProps) {
 
   const formatSignedPercent = (value: number | null) => {
     if (value == null) return '—';
-    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+    const displayValue = normalizeDisplayNumber(value, 1);
+    return `${displayValue > 0 ? '+' : ''}${formatNumber(displayValue, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: 1,
+    })}%`;
   };
 
   const formatPercent = (value: number | null) => {
     if (value == null) return '—';
-    return `${value.toFixed(1)}%`;
+    return `${formatNumber(value, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: 1,
+    })}%`;
   };
 
   const formatDecimal = (value: number | null) => {
     if (value == null) return '—';
-    return value.toFixed(2);
+    return formatNumber(value, {
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    });
   };
 
   const formatPortfolioValue = (value: number | null) => {
     if (value == null) return '—';
-    if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
-    return `$${value.toFixed(0)}`;
+    const displayValue = normalizeDisplayNumber(value, 0);
+    if (displayValue >= 1000) {
+      return `$${formatNumber(displayValue / 1000, {
+        maximumFractionDigits: 1,
+        minimumFractionDigits: 1,
+      })}K`;
+    }
+    return `$${formatNumber(displayValue, { maximumFractionDigits: 0 })}`;
   };
 
   const metrics = [
