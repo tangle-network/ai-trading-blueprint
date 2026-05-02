@@ -24,8 +24,25 @@ interface MetricsHistoryResponse {
   snapshots: MetricsSnapshot[];
 }
 
+interface PortfolioStateResponse {
+  total_value_usd?: number | string | null;
+  has_unpriced_positions?: boolean;
+}
+
 function normalizeSnapshots(data: MetricsSnapshot[] | MetricsHistoryResponse): MetricsSnapshot[] {
   return Array.isArray(data) ? data : data.snapshots;
+}
+
+function toFiniteNumber(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function portfolioTvlUsd(data: PortfolioStateResponse | null | undefined): number | null {
+  if (!data || data.has_unpriced_positions) return null;
+  const value = toFiniteNumber(data.total_value_usd);
+  return value != null && value >= 0 ? value : null;
 }
 
 export function useBotEnrichment(bots: Bot[]): Bot[] {
@@ -84,10 +101,42 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     })),
   });
 
+  const portfolioResults = useQueries({
+    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => ({
+      queryKey: [
+        'bot-enrichment-portfolio',
+        operatorApiUrl,
+        botId,
+        getDeploymentKindForOperatorKind(operatorKind),
+        authByUrl[operatorKind ?? 'cloud'].authCacheKey,
+      ] as const,
+      queryFn: async (): Promise<PortfolioStateResponse> => {
+        const path = buildBotScopedPathForDeploymentKind(
+          getDeploymentKindForOperatorKind(operatorKind),
+          botId,
+          '/portfolio/state',
+        );
+        return operatorJsonWithAuth<PortfolioStateResponse>(
+          operatorApiUrl,
+          path,
+          authByUrl[operatorKind ?? 'cloud'],
+        );
+      },
+      staleTime: 10_000,
+      refetchInterval: 15_000,
+      retry: 1,
+      enabled: !!operatorApiUrl && !!authByUrl[operatorKind ?? 'cloud'].getCachedToken(),
+    })),
+  });
+
   const prevRef = useRef<Bot[]>(bots);
   const dataFingerprint = results.map((r) =>
     r.data ? `${r.data.length}:${r.data[r.data.length - 1]?.trade_count}` : 'x',
   ).join(',');
+  const portfolioFingerprint = portfolioResults.map((r) => {
+    const tvl = portfolioTvlUsd(r.data);
+    return tvl == null ? 'x' : String(tvl);
+  }).join(',');
 
   return useMemo(() => {
     if (enrichable.entries.length === 0) return bots;
@@ -118,7 +167,17 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
         sparklineData,
       };
     }
+    for (let qi = 0; qi < portfolioResults.length; qi++) {
+      const tvl = portfolioTvlUsd(portfolioResults[qi].data);
+      if (tvl == null) continue;
+
+      const botIndex = enrichable.indices[qi];
+      enrichedBots[botIndex] = {
+        ...enrichedBots[botIndex],
+        tvl,
+      };
+    }
     prevRef.current = enrichedBots;
     return enrichedBots;
-  }, [botIds, bots, dataFingerprint, enrichable.entries.length, enrichable.indices, results]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botIds, bots, dataFingerprint, portfolioFingerprint, enrichable.entries.length, enrichable.indices, results, portfolioResults]); // eslint-disable-line react-hooks/exhaustive-deps
 }
