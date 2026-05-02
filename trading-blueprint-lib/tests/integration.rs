@@ -119,7 +119,6 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
-        capabilities_json: String::new(),
     }
 }
 
@@ -1149,7 +1148,7 @@ async fn test_dex_profile_has_uniswap_content() {
     assert!(instructions.contains("Uniswap V3"));
     assert!(instructions.contains("persistent workspace"));
     assert!(instructions.contains("/home/agent/"));
-    assert!(instructions.contains("raw base units"));
+    assert!(instructions.contains("amount_format: \"base_units\""));
 }
 
 #[tokio::test]

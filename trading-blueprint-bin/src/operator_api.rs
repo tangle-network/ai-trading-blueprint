@@ -4600,7 +4600,6 @@ mod tests {
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
             tee_attestation_json: None,
-            capabilities_json: String::new(),
         };
         // Ignore flush errors — the in-memory data is what matters for
         // has_user_secrets() since get_sandbox_by_id reads from memory.

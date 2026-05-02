@@ -1732,12 +1732,9 @@ mod tests {
     }
 
     #[test]
-    fn test_yield_pack_has_aave_addresses() {
+    fn test_yield_pack_uses_live_aave_reserve_tooling() {
         let pack = get_pack("yield").unwrap();
-        assert!(
-            pack.system_prompt
-                .contains("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
-        ); // Aave Pool
+        assert!(pack.system_prompt.contains("aave-reserve-status.js")); // Aave pool/reserve addresses are resolved from the live execution RPC.
         assert!(pack.system_prompt.contains("Morpho"));
     }
 
