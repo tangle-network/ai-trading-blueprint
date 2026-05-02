@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
 import { useBotMetrics, useBotPortfolio, useBotTrades } from './useBotApi';
+import { normalizeDisplayNumber } from '~/lib/format';
 import type { BotOperatorKind } from '~/lib/types/bot';
 import { syncTradesIntoTxStore } from '~/lib/utils/txHistorySync';
 
@@ -35,7 +36,7 @@ export type PortfolioValueState = 'missing' | 'priced' | 'value_only' | 'unprice
 
 function roundTo(value: number, decimals: number) {
   const scale = 10 ** decimals;
-  return Math.round(value * scale) / scale;
+  return normalizeDisplayNumber(Math.round(value * scale) / scale, decimals);
 }
 
 function computeSharpeRatio(snapshots: MetricsSnapshot[]): number | null {

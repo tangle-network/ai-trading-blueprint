@@ -114,6 +114,13 @@ interface FormatNumberOptions {
   locale?: string;
 }
 
+export function normalizeDisplayNumber(value: number, maximumFractionDigits = 2): number {
+  if (!Number.isFinite(value)) return value;
+  const roundedZeroThreshold = 0.5 / (10 ** Math.max(0, maximumFractionDigits));
+  if (Object.is(value, -0) || Math.abs(value) < roundedZeroThreshold) return 0;
+  return value;
+}
+
 export function formatNumber(value: number, options: FormatNumberOptions = {}): string {
   const {
     maximumFractionDigits = 2,
@@ -122,11 +129,12 @@ export function formatNumber(value: number, options: FormatNumberOptions = {}): 
   } = options;
 
   if (!Number.isFinite(value)) return String(value);
+  const displayValue = normalizeDisplayNumber(value, maximumFractionDigits);
 
   return new Intl.NumberFormat(locale, {
     maximumFractionDigits,
     minimumFractionDigits,
-  }).format(value);
+  }).format(displayValue);
 }
 
 export function botStatusLabel(status: BotStatus): string {

@@ -12,6 +12,7 @@ import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
+import { formatNumber } from '~/lib/format';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -72,7 +73,7 @@ function truncateHash(hash: string): string {
 }
 
 function formatTradeAmount(amount: number): string {
-  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  return formatNumber(amount, { maximumFractionDigits: 4 });
 }
 
 function formatExecutionStatus(status: string): string {
@@ -81,7 +82,7 @@ function formatExecutionStatus(status: string): string {
 
 function renderTradePrice(trade: Trade): string {
   if (trade.priceUsd != null && trade.priceUsd > 0) {
-    return `$${trade.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+    return `$${formatNumber(trade.priceUsd, { maximumFractionDigits: 2 })}`;
   }
   if (
     trade.paperTrade &&
@@ -89,7 +90,7 @@ function renderTradePrice(trade: Trade): string {
     trade.execution?.requestedPriceUsd != null &&
     trade.execution.requestedPriceUsd > 0
   ) {
-    return `$${trade.execution.requestedPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
+    return `$${formatNumber(trade.execution.requestedPriceUsd, { maximumFractionDigits: 4 })}`;
   }
   if (trade.paperTrade) return 'No USD leg';
   return '—';
@@ -322,13 +323,13 @@ export function TradeHistoryTab({
                           {trade.execution.requestedPriceUsd != null && (
                             <div>
                               <span className="text-arena-elements-textTertiary">Requested price:</span>{' '}
-                              ${trade.execution.requestedPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                              ${formatNumber(trade.execution.requestedPriceUsd, { maximumFractionDigits: 4 })}
                             </div>
                           )}
                           {trade.execution.filledPriceUsd != null && (
                             <div>
                               <span className="text-arena-elements-textTertiary">Filled price:</span>{' '}
-                              ${trade.execution.filledPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                              ${formatNumber(trade.execution.filledPriceUsd, { maximumFractionDigits: 4 })}
                             </div>
                           )}
                           {trade.execution.filledAmount != null && (
@@ -340,7 +341,7 @@ export function TradeHistoryTab({
                           {trade.execution.slippageBps != null && (
                             <div>
                               <span className="text-arena-elements-textTertiary">Slippage:</span>{' '}
-                              {trade.execution.slippageBps.toLocaleString('en-US', { maximumFractionDigits: 2 })} bps
+                              {formatNumber(trade.execution.slippageBps, { maximumFractionDigits: 2 })} bps
                             </div>
                           )}
                         </div>

@@ -8,6 +8,7 @@ import { useBotMetrics, useBotMetricsSummary } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
+import { formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { buildPerformanceChartPoints } from './performanceChart';
 import {
   PERFORMANCE_RETURN_FALLBACK_COPY,
@@ -204,8 +205,8 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const summaryCards = [
     {
       label: returnMetricCopy.label,
-      value: `$${totalReturnValue.toLocaleString()}`,
-      color: totalReturnValue >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
+      value: `$${formatNumber(totalReturnValue)}`,
+      color: normalizeDisplayNumber(totalReturnValue) >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error',
       title: returnMetricCopy.title,
     },
     {

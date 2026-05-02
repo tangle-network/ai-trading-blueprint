@@ -4,7 +4,7 @@ import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } 
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
-import { botStatusLabel, isLiveBotStatus } from '~/lib/format';
+import { botStatusLabel, formatNumber, isLiveBotStatus } from '~/lib/format';
 import { AssetDisplay } from './shared/AssetDisplay';
 
 interface PositionsTabProps {
@@ -61,12 +61,15 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
 
   const formatCurrency = (value: number | null) => {
     if (value == null) return 'Unavailable';
-    return `$${value.toLocaleString()}`;
+    return `$${formatNumber(value)}`;
   };
 
   const formatPercent = (value: number | null) => {
     if (value == null) return 'Unavailable';
-    return `${value.toFixed(1)}%`;
+    return `${formatNumber(value, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: 1,
+    })}%`;
   };
 
   const warningTitle = portfolio.hasUnpricedPositions
@@ -132,7 +135,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
                   )}
                 </div>
               </TableCell>
-              <TableCell className="text-right font-data text-sm">{pos.amount.toLocaleString()}</TableCell>
+              <TableCell className="text-right font-data text-sm">{formatNumber(pos.amount)}</TableCell>
               <TableCell className={`text-right font-data text-sm ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
                 {formatCurrency(pos.displayValueUsd)}
               </TableCell>
