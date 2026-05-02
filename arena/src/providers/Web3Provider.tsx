@@ -1,16 +1,63 @@
 import { createConfig } from 'wagmi';
 import { ConnectKitProvider, getDefaultConfig } from 'connectkit';
 import { type ReactNode } from 'react';
+import type { Chain } from 'viem';
 import { defaultConnectKitOptions, getTangleWalletChains } from '@tangle-network/blueprint-ui';
 import { Web3Shell } from '@tangle-network/blueprint-ui/components';
-import { tangleLocal } from '~/lib/contracts/chains';
+import { executionForkChain, tangleLocal } from '~/lib/contracts/chains';
 import { http } from 'wagmi';
+
+function isLocalRpcUrl(rpcUrl: string | undefined): boolean {
+  if (!rpcUrl) return false;
+  try {
+    const { hostname } = new URL(rpcUrl);
+    return (
+      hostname === '127.0.0.1' ||
+      hostname === 'localhost' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function dedupeChains(chains: readonly Chain[]): readonly [Chain, ...Chain[]] {
+  const seen = new Set<number>();
+  const unique = chains.filter((chain) => {
+    if (seen.has(chain.id)) return false;
+    seen.add(chain.id);
+    return true;
+  });
+
+  return unique as [Chain, ...Chain[]];
+}
+
+function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
+  const tangleChains = getTangleWalletChains(tangleLocal);
+  const executionForkRpc = executionForkChain.rpcUrls.default.http[0];
+  const shouldIncludeLocalExecutionFork =
+    import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' &&
+    import.meta.env.VITE_DEX_ETHEREUM_ENABLED !== 'false' &&
+    executionForkChain.id !== tangleLocal.id &&
+    isLocalRpcUrl(executionForkRpc);
+
+  if (!shouldIncludeLocalExecutionFork) return tangleChains;
+
+  return dedupeChains([
+    tangleLocal,
+    executionForkChain,
+    ...tangleChains.slice(1),
+  ]);
+}
+
+const walletChains = getArenaWalletChains();
 
 const config = createConfig(
   getDefaultConfig({
-    chains: getTangleWalletChains(tangleLocal),
+    chains: walletChains,
     transports: Object.fromEntries(
-      getTangleWalletChains(tangleLocal).map((chain) => [
+      walletChains.map((chain) => [
         chain.id,
         http(chain.rpcUrls.default.http[0]),
       ]),

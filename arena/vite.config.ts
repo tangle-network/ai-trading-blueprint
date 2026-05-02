@@ -142,6 +142,16 @@ export default defineConfig(({ mode }) => {
     define: {
       global: 'globalThis',
     },
+    esbuild: {
+      jsx: 'automatic',
+      jsxImportSource: 'react',
+    },
+    optimizeDeps: {
+      esbuildOptions: {
+        jsx: 'automatic',
+        jsxImportSource: 'react',
+      },
+    },
     resolve: {
       alias: {
         events: 'events',
