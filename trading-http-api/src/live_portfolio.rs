@@ -87,6 +87,7 @@ pub async fn reconcile_live_portfolio(
         ));
     }
     if input.vault_address.starts_with("factory:")
+        || input.vault_address.starts_with("vault:")
         || input
             .vault_address
             .eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
@@ -152,23 +153,23 @@ pub async fn reconcile_live_portfolio(
     let asset_decimals = asset_meta
         .map(|metadata| metadata.decimals)
         .unwrap_or_else(|| known_token_decimals(Some(input.chain_id), &asset_token).unwrap_or(18));
+    let total_assets_decimal = u256_to_decimal(total_assets, asset_decimals)?;
     let mut asset_price = price_for_token(&market_client, input.chain_id, &asset_token).await;
     if asset_price.is_none() && asset_symbol != asset_token {
         asset_price = price_for_token(&market_client, input.chain_id, &asset_symbol).await;
     }
-    let asset_price = asset_price.ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("Live risk checks require a price for vault asset {asset_symbol}"),
-        )
-    })?;
-
-    let total_assets_decimal = u256_to_decimal(total_assets, asset_decimals)?;
-    let mut account_value_usd = total_assets_decimal * asset_price;
+    let mut account_value_usd = asset_price
+        .map(|price| total_assets_decimal * price)
+        .unwrap_or(Decimal::ZERO);
     let mut positions = Vec::new();
     let mut warnings = Vec::new();
-    let has_value_only_positions = true;
-    let mut has_unpriced_positions = false;
+    let mut has_value_only_positions = asset_price.is_some();
+    let mut has_unpriced_positions = asset_price.is_none();
+    if asset_price.is_none() {
+        warnings.push(format!(
+            "Vault asset {asset_symbol} is held on-chain but has no current market price, so total portfolio value is hidden."
+        ));
+    }
     let protocol_chain_id =
         crate::protocol_chain_id_from_config(input.chain_id, &input.strategy_config);
 
@@ -179,16 +180,24 @@ pub async fn reconcile_live_portfolio(
     )
     .await?;
     let cash_amount = u256_to_decimal(cash_raw, asset_decimals)?;
+    let (cash_value_usd, cash_current_price, cash_valuation_status) = match asset_price {
+        Some(price) => (
+            Some((cash_amount * price).to_string()),
+            Some(price.to_string()),
+            ValuationStatus::ValueOnly,
+        ),
+        None => (None, None, ValuationStatus::Unpriced),
+    };
     positions.push(PositionEntry {
         token: asset_symbol.clone(),
         amount: cash_amount.to_string(),
-        value_usd: Some((cash_amount * asset_price).to_string()),
+        value_usd: cash_value_usd,
         entry_price: None,
-        current_price: Some(asset_price.to_string()),
+        current_price: cash_current_price,
         unrealized_pnl: None,
         protocol: "vault".to_string(),
         position_type: "spot".to_string(),
-        valuation_status: ValuationStatus::ValueOnly,
+        valuation_status: cash_valuation_status,
     });
 
     for token_addr in held_tokens {
@@ -239,6 +248,7 @@ pub async fn reconcile_live_portfolio(
                 (None, None, ValuationStatus::Unpriced)
             }
         };
+        has_value_only_positions |= valuation_status == ValuationStatus::ValueOnly;
         positions.push(PositionEntry {
             token: symbol,
             amount: amount.to_string(),
@@ -284,6 +294,7 @@ pub async fn reconcile_live_portfolio(
                 Some(price) => {
                     let value = amount * price;
                     account_value_usd -= value;
+                    has_value_only_positions = true;
                     (
                         Some(format!("-{value}")),
                         Some(price.to_string()),
@@ -316,16 +327,27 @@ pub async fn reconcile_live_portfolio(
 
     if !outstanding_collateral.is_zero() {
         let collateral = u256_to_decimal(outstanding_collateral, asset_decimals)?;
+        let (value_usd, current_price, valuation_status) = match asset_price {
+            Some(price) => (
+                Some((collateral * price).to_string()),
+                Some(price.to_string()),
+                ValuationStatus::ValueOnly,
+            ),
+            None => {
+                has_unpriced_positions = true;
+                (None, None, ValuationStatus::Unpriced)
+            }
+        };
         positions.push(PositionEntry {
             token: asset_symbol.clone(),
             amount: collateral.to_string(),
-            value_usd: Some((collateral * asset_price).to_string()),
+            value_usd,
             entry_price: None,
-            current_price: Some(asset_price.to_string()),
+            current_price,
             unrealized_pnl: None,
             protocol: "vault_collateral".to_string(),
             position_type: "spot".to_string(),
-            valuation_status: ValuationStatus::ValueOnly,
+            valuation_status,
         });
     }
 
@@ -373,6 +395,12 @@ pub async fn enforce_live_risk(
     max_drawdown_pct: Decimal,
 ) -> Result<LivePortfolioSnapshot, (StatusCode, String)> {
     let snapshot = reconcile_live_portfolio(input).await?;
+    if snapshot.portfolio.has_unpriced_positions {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Live portfolio valuation is unavailable; refusing production trade".to_string(),
+        ));
+    }
     if Utc::now()
         .signed_duration_since(snapshot.observed_at)
         .num_seconds()
