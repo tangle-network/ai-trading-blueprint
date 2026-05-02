@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
+use alloy::primitives::{Address, U256, keccak256};
 use blueprint_sdk::tangle::extract::{CallId, Caller, TangleArg, TangleResult};
 use sandbox_runtime::provision_progress::{self, ProvisionPhase};
 use serde_json::{Map, Value};
@@ -18,6 +19,12 @@ static PROVISION_INFLIGHT: std::sync::LazyLock<Mutex<HashSet<(u64, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 const DEFAULT_PAPER_INITIAL_CAPITAL_USD: &str = "10000";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VaultBinding {
+    Factory,
+    Direct,
+}
 
 /// Drop guard that removes a (service_id, call_id) from PROVISION_INFLIGHT.
 struct InflightGuard(u64, u64);
@@ -80,6 +87,41 @@ fn parse_paper_trade_from_strategy_config(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_) => Err("strategy_config_json.paper_trade must be a boolean".to_string()),
         None => Ok(None),
+    }
+}
+
+fn parse_vault_binding(
+    strategy_config: &Map<String, Value>,
+    request: &TradingProvisionRequest,
+) -> Result<Option<VaultBinding>, String> {
+    let Some(raw) = strategy_config.get("vault_binding") else {
+        return Ok(None);
+    };
+
+    let Some(binding) = raw.as_str() else {
+        return Err("strategy_config_json.vault_binding must be a string".to_string());
+    };
+
+    match binding.trim().to_ascii_lowercase().as_str() {
+        "direct" | "vault" | "existing_vault" => {
+            if let Some(raw_addr) = strategy_config
+                .get("direct_vault_address")
+                .and_then(Value::as_str)
+            {
+                let addr: alloy::primitives::Address = raw_addr.parse().map_err(|e| {
+                    format!("Invalid strategy_config_json.direct_vault_address '{raw_addr}': {e}")
+                })?;
+                if addr != request.factory_address {
+                    return Err(
+                        "strategy_config_json.direct_vault_address must match provision vault address"
+                            .to_string(),
+                    );
+                }
+            }
+            Ok(Some(VaultBinding::Direct))
+        }
+        "factory" | "vault_factory" => Ok(Some(VaultBinding::Factory)),
+        _ => Err("strategy_config_json.vault_binding must be one of: factory, direct".to_string()),
     }
 }
 
@@ -198,6 +240,33 @@ fn mark_provision_failed(call_id: u64, error: &str) {
     }
 }
 
+fn provision_vault_symbol(call_id: u64, bot_id: &str) -> String {
+    if call_id > 0 {
+        format!("bot{call_id}")
+    } else {
+        let suffix = bot_id.rsplit('-').next().unwrap_or("vault");
+        format!("bot{}", &suffix[..suffix.len().min(8)])
+    }
+}
+
+fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U256, String> {
+    if signer_count < 2 {
+        return Err("Factory vault creation requires at least 2 validator signers".to_string());
+    }
+
+    let required = if requested < U256::from(2u64) {
+        U256::from(2u64)
+    } else {
+        requested
+    };
+    if required > U256::from(signer_count as u64) {
+        return Err(format!(
+            "Factory vault creation requires_signatures ({required}) exceeds signer count ({signer_count})"
+        ));
+    }
+    Ok(required)
+}
+
 /// Provision core logic, testable without Tangle extractors.
 ///
 /// When `mock_sandbox` is `Some`, skips Docker sidecar creation and uses the
@@ -297,6 +366,8 @@ pub async fn provision_core(
         .inspect_err(|e| mark_provision_failed(call_id, e))?
         .unwrap_or_else(|| default_paper_trade_for_request(&request));
     let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
+    let vault_binding = parse_vault_binding(strategy_config_obj, &request)
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
 
     // 2. Get operator context for shared config (if initialized)
@@ -323,11 +394,90 @@ pub async fn provision_core(
         .map_err(|e| format!("invalid rpc_url from provision request: {e}"))?
     };
 
-    // Vault will be created on-chain in onJobResult via VaultFactory.createBotVault().
-    // Store factory address prefixed with "factory:" so activate can detect it needs
-    // resolution. The BSM creates the real vault on-chain, but never updates the
-    // operator-side record — activate resolves it via getServiceVaults().
-    let vault_address = format!("factory:{:#x}", request.factory_address);
+    // 5. Resolve operator address early (needed for vault deployment, env, and bot record)
+    let operator_address = op_ctx
+        .map(|c| c.operator_address.clone())
+        .unwrap_or_default();
+
+    let mut provision_output_vault = Address::ZERO;
+    let mut provision_output_share = Address::ZERO;
+
+    // Explicit factory binding means this is an execution-chain factory target.
+    // The Tangle BSM cannot call a factory on a different chain, so the operator
+    // creates the per-bot vault here and stores the concrete vault address.
+    let (vault_address, share_token) = if vault_binding == Some(VaultBinding::Factory)
+        && !paper_trade
+        && request.factory_address != Address::ZERO
+    {
+        let op_ctx = op_ctx.ok_or_else(|| {
+            "Operator context is required to create an execution-chain bot vault".to_string()
+        })?;
+        let operator_addr: Address = operator_address
+            .parse()
+            .map_err(|e| format!("Invalid operator address '{}': {e}", operator_address))?;
+        if request.asset_token == Address::ZERO {
+            return Err(
+                "Execution-chain factory vault creation requires a non-zero asset token"
+                    .to_string(),
+            );
+        }
+        let signers = request.signers.to_vec();
+        let required_sigs = required_factory_signatures(request.required_signatures, signers.len())
+            .inspect_err(|e| mark_provision_failed(call_id, e))?;
+
+        if let Err(e) = provision_progress::update_provision(
+            call_id,
+            ProvisionPhase::HealthCheck,
+            Some("Creating per-bot execution vault".into()),
+            None,
+            None,
+        ) {
+            tracing::warn!("Provision progress update failed: {e}");
+        }
+
+        let chain =
+            trading_runtime::chain::ChainClient::new(&rpc_url, &op_ctx.private_key, chain_id)
+                .map_err(|e| {
+                    format!("Failed to connect execution chain for vault deployment: {e}")
+                })?;
+        let salt = keccak256(format!("{service_id}:{call_id}:{bot_id}").as_bytes());
+        let deployment = crate::on_chain::deploy_bot_vault(
+            &chain,
+            request.factory_address,
+            service_id,
+            request.asset_token,
+            operator_addr,
+            operator_addr,
+            signers,
+            required_sigs,
+            request.name.clone(),
+            provision_vault_symbol(call_id, &bot_id),
+            salt,
+        )
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to create execution-chain bot vault: {e}");
+            mark_provision_failed(call_id, &msg);
+            msg
+        })?;
+
+        provision_output_vault = deployment.vault_address;
+        provision_output_share = deployment.share_token;
+        (
+            format!("{:#x}", deployment.vault_address),
+            format!("{:#x}", deployment.share_token),
+        )
+    } else if vault_binding == Some(VaultBinding::Direct) {
+        (
+            format!("vault:{:#x}", request.factory_address),
+            String::new(),
+        )
+    } else {
+        (
+            format!("factory:{:#x}", request.factory_address),
+            String::new(),
+        )
+    };
 
     // Trading API URL points to the shared HTTP API running in the binary.
     // TRADING_API_URL overrides if explicitly set, otherwise:
@@ -346,11 +496,6 @@ pub async fn provision_core(
         let port = std::env::var("TRADING_API_PORT").unwrap_or_else(|_| "9100".to_string());
         format!("http://{host}:{port}")
     });
-
-    // 5. Resolve operator address early (needed in both env and bot record)
-    let operator_address = op_ctx
-        .map(|c| c.operator_address.clone())
-        .unwrap_or_default();
 
     // 6. Build base env_json for sidecar (no secrets — never from on-chain data)
     let mut env = serde_json::Map::new();
@@ -481,7 +626,7 @@ pub async fn provision_core(
         name: request.name.clone(),
         sandbox_id: record.id.clone(),
         vault_address: vault_address.clone(),
-        share_token: String::new(),
+        share_token: share_token.clone(),
         strategy_type: request.strategy_type.clone(),
         strategy_config: serde_json::Value::Object(parsed_strategy_config.unwrap_or_default()),
         risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_else(|e| {
@@ -557,12 +702,13 @@ pub async fn provision_core(
         record.id
     );
 
-    // 9. Return result — vault_address=ZERO because the vault doesn't exist yet.
-    //    The BSM creates it on-chain in _handleProvisionResult when this result is submitted.
+    // 9. Return result. For execution-chain factory targets, the operator has
+    //    already created the concrete per-bot vault above. Legacy same-chain
+    //    factory targets still return zero and let the BSM resolve botVaults.
     //    workflow_id=0 signals "awaiting secrets" to the frontend.
     Ok(TradingProvisionOutput {
-        vault_address: alloy::primitives::Address::ZERO,
-        share_token: alloy::primitives::Address::ZERO,
+        vault_address: provision_output_vault,
+        share_token: provision_output_share,
         sandbox_id: record.id,
         workflow_id: 0,
     })

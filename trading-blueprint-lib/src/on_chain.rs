@@ -7,7 +7,7 @@
 //! - Fee settlement via `FeeDistributor.settleFees()`
 //! - Subscription billing via `ITangleServices.billSubscription()`
 
-use alloy::primitives::{Address, Bytes, FixedBytes, U256};
+use alloy::primitives::{Address, Bytes, FixedBytes, U256, keccak256};
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use trading_runtime::chain::ChainClient;
@@ -104,6 +104,73 @@ pub async fn deploy_vault(
     })
 }
 
+/// Deploy a new per-bot vault via `VaultFactory.createBotVault()`.
+#[allow(clippy::too_many_arguments)]
+pub async fn deploy_bot_vault(
+    chain: &ChainClient,
+    factory_address: Address,
+    service_id: u64,
+    asset_token: Address,
+    admin: Address,
+    operator: Address,
+    signers: Vec<Address>,
+    required_sigs: U256,
+    name: String,
+    symbol: String,
+    salt: FixedBytes<32>,
+) -> Result<VaultDeployment, String> {
+    let call = IVaultFactory::createBotVaultCall {
+        serviceId: service_id,
+        assetToken: asset_token,
+        admin,
+        operator,
+        signers,
+        requiredSigs: required_sigs,
+        name,
+        symbol,
+        salt,
+        policyConfig: IVaultFactory::PolicyConfig {
+            leverageCap: U256::from(50_000u64),
+            maxTradesPerHour: U256::from(100u64),
+            maxSlippageBps: U256::from(500u64),
+        },
+        feeConfig: IVaultFactory::FeeConfig {
+            performanceFeeBps: U256::from(2_000u64),
+            managementFeeBps: U256::from(200u64),
+            validatorFeeShareBps: U256::from(3_000u64),
+        },
+    };
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(factory_address)
+        .input(Bytes::from(call.abi_encode()).into());
+
+    let pending = chain
+        .provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| format!("VaultFactory.createBotVault tx send failed: {e}"))?;
+
+    let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+
+    let receipt = pending
+        .get_receipt()
+        .await
+        .map_err(|e| format!("VaultFactory.createBotVault receipt failed: {e}"))?;
+
+    let (vault_address, share_token) = parse_vault_created_event(&receipt).ok_or_else(|| {
+        "VaultFactory.createBotVault receipt missing VaultCreated event".to_string()
+    })?;
+
+    tracing::info!("Bot vault deployed: vault={vault_address}, share={share_token}, tx={tx_hash}");
+
+    Ok(VaultDeployment {
+        vault_address,
+        share_token,
+        tx_hash,
+    })
+}
+
 /// Parse VaultCreated event from transaction receipt.
 ///
 /// Event signature: VaultCreated(uint64 indexed serviceId, address indexed vault,
@@ -117,9 +184,11 @@ fn parse_vault_created_event(
     // topic[1] = serviceId
     // topic[2] = vault (indexed address)
     // topic[3] = shareToken (indexed address)
+    let event_sig =
+        keccak256("VaultCreated(uint64,address,address,address,address,address)".as_bytes());
     for log in receipt.inner.logs() {
         let topics = log.topics();
-        if topics.len() >= 4 {
+        if topics.len() >= 4 && topics[0] == event_sig {
             // Extract vault from topic[2] and shareToken from topic[3]
             let vault = Address::from_word(topics[2]);
             let share = Address::from_word(topics[3]);

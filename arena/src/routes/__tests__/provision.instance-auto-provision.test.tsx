@@ -58,6 +58,7 @@ const shared = vi.hoisted(() => {
       defaults: { cpuCores: 1n, memoryMb: 512n, maxLifetimeDays: 7n },
       encodeProvision: vi.fn(() => '0x'),
     },
+    instanceVaultAddress: '0x0000000000000000000000000000000000000077',
     newServiceWriteContract: vi.fn(),
     provisions: [] as any[],
     removeInstanceProvisions: vi.fn(),
@@ -118,7 +119,7 @@ vi.mock('wagmi', () => ({
   useSwitchChain: () => ({ switchChainAsync: vi.fn() }),
   useWriteContract: () => {
     shared.useWriteContractCalls += 1;
-    if (shared.useWriteContractCalls % 2 === 1) {
+    if (shared.useWriteContractCalls === 1) {
       return {
         writeContract: vi.fn(),
         data: undefined,
@@ -189,7 +190,9 @@ vi.mock('@tangle-network/blueprint-ui', () => ({
     getBlockNumber: vi.fn(async () => 1000n),
     getLogs: vi.fn(async () => []),
     multicall: vi.fn(async () => []),
-    readContract: vi.fn(async () => []),
+    readContract: vi.fn(async ({ functionName }: { functionName?: string }) =>
+      functionName === 'instanceVault' ? shared.instanceVaultAddress : [],
+    ),
     waitForTransactionReceipt: shared.waitForTransactionReceipt,
     watchContractEvent: shared.watchContractEvent,
   },
@@ -358,6 +361,9 @@ describe('instance service activation auto-provision', () => {
     shared.waitForTransactionReceipt.mockClear();
     shared.watchContractEvent.mockClear();
     shared.watchLogs = undefined;
+    vi.stubEnv('VITE_DEX_BASE_ENABLED', 'true');
+    vi.stubEnv('VITE_INSTANCE_TRADING_BLUEPRINT', '0x0000000000000000000000000000000000000002');
+    vi.stubEnv('VITE_INSTANCE_VAULT_ADDRESS', '0x00000000000000000000000000000000000000aa');
     vi.resetModules();
     vi.stubGlobal('fetch', shared.fetchMock);
   });
@@ -414,6 +420,11 @@ describe('instance service activation auto-provision', () => {
       expect(getProvisionRequestCalls()).toHaveLength(1);
       expect(shared.upsertInstanceProvision).toHaveBeenCalled();
     });
+
+    const [, provisionRequest] = getProvisionRequestCalls()[0];
+    expect(JSON.parse((provisionRequest as RequestInit).body as string).vault_address).toBe(
+      shared.instanceVaultAddress,
+    );
 
     expect(await screen.findByTestId('secrets-step')).toBeInTheDocument();
 

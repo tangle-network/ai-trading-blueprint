@@ -16,7 +16,7 @@ function encodeProvision(params: ProvisionParams): `0x${string}` {
         params.vaultAddress,
         params.assetAddress,
         params.depositors,
-        1n,
+        params.depositors.length >= 2 ? 2n : 1n,
         params.chainId,
         params.rpcUrl,
         params.cron,

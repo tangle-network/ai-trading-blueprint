@@ -9,7 +9,11 @@ vi.mock('react-router', () => ({
 }));
 
 vi.mock('wagmi', () => ({
-  useAccount: () => ({ address: undefined, isConnected: false, chainId: undefined }),
+  useAccount: () => ({
+    address: undefined,
+    isConnected: false,
+    chainId: undefined,
+  }),
   useWriteContract: () => ({
     writeContract: vi.fn(),
     data: undefined,
@@ -180,12 +184,24 @@ vi.mock('~/lib/blueprints', () => ({
   buildFullInstructions: vi.fn(() => ''),
 }));
 
-vi.mock('~/components/provision/BlueprintSelector', () => ({ BlueprintSelector: () => null }));
-vi.mock('~/components/provision/ConfigureStep', () => ({ ConfigureStep: () => null }));
-vi.mock('~/components/provision/DeployStep', () => ({ DeployStep: () => null }));
-vi.mock('~/components/provision/SecretsStep', () => ({ SecretsStep: () => null }));
-vi.mock('~/components/provision/InfrastructureDialog', () => ({ InfrastructureDialog: () => null }));
-vi.mock('~/components/provision/AdvancedSettingsDialog', () => ({ AdvancedSettingsDialog: () => null }));
+vi.mock('~/components/provision/BlueprintSelector', () => ({
+  BlueprintSelector: () => null,
+}));
+vi.mock('~/components/provision/ConfigureStep', () => ({
+  ConfigureStep: () => null,
+}));
+vi.mock('~/components/provision/DeployStep', () => ({
+  DeployStep: () => null,
+}));
+vi.mock('~/components/provision/SecretsStep', () => ({
+  SecretsStep: () => null,
+}));
+vi.mock('~/components/provision/InfrastructureDialog', () => ({
+  InfrastructureDialog: () => null,
+}));
+vi.mock('~/components/provision/AdvancedSettingsDialog', () => ({
+  AdvancedSettingsDialog: () => null,
+}));
 
 vi.mock('~/lib/utils/resolveBotId', () => ({
   resolveBotId: vi.fn(async () => ({ botId: 'bot-1' })),
@@ -193,9 +209,12 @@ vi.mock('~/lib/utils/resolveBotId', () => ({
 
 describe('provision runtime backend helpers', () => {
   it('falls back unsupported firecracker runtime to docker', async () => {
-    const { resolveRuntimeBackendForProvision, FIRECRACKER_RUNTIME_SUPPORTED } = await import('../provision');
+    const { resolveRuntimeBackendForProvision, FIRECRACKER_RUNTIME_SUPPORTED } =
+      await import('../provision');
     expect(FIRECRACKER_RUNTIME_SUPPORTED).toBe(false);
-    expect(resolveRuntimeBackendForProvision('firecracker', false)).toBe('docker');
+    expect(resolveRuntimeBackendForProvision('firecracker', false)).toBe(
+      'docker',
+    );
   });
 
   it('pins tee blueprints to tee runtime', async () => {
@@ -205,7 +224,9 @@ describe('provision runtime backend helpers', () => {
 
   it('keeps firecracker when explicitly marked as supported', async () => {
     const { resolveRuntimeBackendForProvision } = await import('../provision');
-    expect(resolveRuntimeBackendForProvision('firecracker', false, true)).toBe('firecracker');
+    expect(resolveRuntimeBackendForProvision('firecracker', false, true)).toBe(
+      'firecracker',
+    );
   });
 
   it('falls back to the first configured network when the selected chain is unsupported', async () => {
@@ -236,7 +257,8 @@ describe('provision runtime backend helpers', () => {
   });
 
   it('resolves a complete execution target into provision-safe values', async () => {
-    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    const { resolveExecutionTargetProvisionConfig } =
+      await import('../provision');
     expect(
       resolveExecutionTargetProvisionConfig({
         id: 'ethereum',
@@ -253,6 +275,9 @@ describe('provision runtime backend helpers', () => {
     ).toEqual({
       chainId: 31339n,
       rpcUrl: 'http://127.0.0.1:42545',
+      vaultBinding: 'direct',
+      provisionVaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
+      vaultFactoryAddress: undefined,
       vaultAddress: '0x19ba547192222d3480665d4af454270b3fbe6749',
       assetAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
       paperTrade: false,
@@ -260,8 +285,34 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
+  it('keeps cloud factory and direct vault execution addresses separate', async () => {
+    const { resolveExecutionTargetProvisionConfig } =
+      await import('../provision');
+    expect(
+      resolveExecutionTargetProvisionConfig({
+        id: 'ethereum',
+        label: 'Ethereum Fork (Local QA)',
+        description: 'Local fork',
+        enabled: true,
+        chainId: 31339,
+        rpcUrl: 'http://127.0.0.1:42545',
+        vaultFactoryAddress: '0x00000000000000000000000000000000000000fa',
+        vaultAddress: '0x00000000000000000000000000000000000000bb',
+        assetToken: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+        paperTrade: false,
+        protocolChainId: 1,
+      }),
+    ).toMatchObject({
+      vaultBinding: 'factory',
+      provisionVaultAddress: '0x00000000000000000000000000000000000000fa',
+      vaultFactoryAddress: '0x00000000000000000000000000000000000000fa',
+      vaultAddress: '0x00000000000000000000000000000000000000bb',
+    });
+  });
+
   it('defaults enabled execution targets to live mode when paper mode is omitted', async () => {
-    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    const { resolveExecutionTargetProvisionConfig } =
+      await import('../provision');
     const config = resolveExecutionTargetProvisionConfig({
       id: 'ethereum',
       label: 'Ethereum Fork (Local Live)',
@@ -310,11 +361,14 @@ describe('provision runtime backend helpers', () => {
     expect(strategyUsesExecutionTarget('perp', ethereumTarget)).toBe(false);
     expect(strategyUsesExecutionTarget('yield', baseTarget)).toBe(false);
     expect(strategyUsesExecutionTarget('prediction', baseTarget)).toBe(false);
-    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(false);
+    expect(strategyUsesExecutionTarget('prediction', baseTarget, false)).toBe(
+      false,
+    );
   });
 
   it('rejects incomplete execution targets', async () => {
-    const { resolveExecutionTargetProvisionConfig } = await import('../provision');
+    const { resolveExecutionTargetProvisionConfig } =
+      await import('../provision');
     expect(
       resolveExecutionTargetProvisionConfig({
         id: 'ethereum',
@@ -401,10 +455,13 @@ describe('provision runtime backend helpers', () => {
     ];
 
     expect(
-      selectLatestInstanceProvision(provisions, undefined, { botId: 'bot-11' })?.id,
+      selectLatestInstanceProvision(provisions, undefined, { botId: 'bot-11' })
+        ?.id,
     ).toBe('instance-11');
     expect(
-      selectLatestInstanceProvision(provisions, undefined, { sandboxId: 'sandbox-12' })?.id,
+      selectLatestInstanceProvision(provisions, undefined, {
+        sandboxId: 'sandbox-12',
+      })?.id,
     ).toBe('instance-12');
   });
 
@@ -413,36 +470,34 @@ describe('provision runtime backend helpers', () => {
     const owner = '0x0000000000000000000000000000000000000001' as const;
 
     expect(
-      selectLatestInstanceProvision(
-        [
-          {
-            id: 'instance-11',
-            owner,
-            name: 'Older',
-            strategyType: 'dex',
-            operators: [],
-            blueprintId: '1',
-            serviceId: 11,
-            phase: 'awaiting_secrets',
-            createdAt: 10,
-            updatedAt: 10,
-            chainId: 31337,
-          },
-          {
-            id: 'instance-12',
-            owner,
-            name: 'Newest',
-            strategyType: 'dex',
-            operators: [],
-            blueprintId: '1',
-            serviceId: 12,
-            phase: 'awaiting_secrets',
-            createdAt: 20,
-            updatedAt: 20,
-            chainId: 31337,
-          },
-        ],
-      ),
+      selectLatestInstanceProvision([
+        {
+          id: 'instance-11',
+          owner,
+          name: 'Older',
+          strategyType: 'dex',
+          operators: [],
+          blueprintId: '1',
+          serviceId: 11,
+          phase: 'awaiting_secrets',
+          createdAt: 10,
+          updatedAt: 10,
+          chainId: 31337,
+        },
+        {
+          id: 'instance-12',
+          owner,
+          name: 'Newest',
+          strategyType: 'dex',
+          operators: [],
+          blueprintId: '1',
+          serviceId: 12,
+          phase: 'awaiting_secrets',
+          createdAt: 20,
+          updatedAt: 20,
+          chainId: 31337,
+        },
+      ]),
     ).toBeUndefined();
   });
 
@@ -451,43 +506,79 @@ describe('provision runtime backend helpers', () => {
     const owner = '0x0000000000000000000000000000000000000001' as const;
 
     expect(
-      selectLatestInstanceProvision(
-        [
-          {
-            id: 'instance-11',
-            owner,
-            name: 'Only Draft',
-            strategyType: 'dex',
-            operators: [],
-            blueprintId: '1',
-            serviceId: 11,
-            phase: 'awaiting_secrets',
-            createdAt: 10,
-            updatedAt: 10,
-            chainId: 31337,
-          },
-        ],
-      )?.id,
+      selectLatestInstanceProvision([
+        {
+          id: 'instance-11',
+          owner,
+          name: 'Only Draft',
+          strategyType: 'dex',
+          operators: [],
+          blueprintId: '1',
+          serviceId: 11,
+          phase: 'awaiting_secrets',
+          createdAt: 10,
+          updatedAt: 10,
+          chainId: 31337,
+        },
+      ])?.id,
     ).toBe('instance-11');
   });
 
   it('filters execution targets by selected strategy chain support', async () => {
     const { executionTargetsForStrategy } = await import('../provision');
     const targets = [
-      { id: 'base', label: 'Base Sepolia', description: 'Base test', enabled: true, chainId: 84532 },
-      { id: 'polygon', label: 'Polygon', description: 'Polygon', enabled: true, chainId: 137 },
-      { id: 'arbitrum-fork', label: 'Arbitrum Fork', description: 'Arbitrum fork', enabled: true, chainId: 31340, protocolChainId: 42161 },
-      { id: 'arbitrum-one', label: 'Arbitrum One', description: 'Arbitrum', enabled: true, chainId: 42161 },
+      {
+        id: 'base',
+        label: 'Base Sepolia',
+        description: 'Base test',
+        enabled: true,
+        chainId: 84532,
+      },
+      {
+        id: 'polygon',
+        label: 'Polygon',
+        description: 'Polygon',
+        enabled: true,
+        chainId: 137,
+      },
+      {
+        id: 'arbitrum-fork',
+        label: 'Arbitrum Fork',
+        description: 'Arbitrum fork',
+        enabled: true,
+        chainId: 31340,
+        protocolChainId: 42161,
+      },
+      {
+        id: 'arbitrum-one',
+        label: 'Arbitrum One',
+        description: 'Arbitrum',
+        enabled: true,
+        chainId: 42161,
+      },
     ] as const;
 
-    expect(executionTargetsForStrategy('dex', [...targets]).map((target) => target.id)).toEqual(['base']);
-    expect(executionTargetsForStrategy('prediction', [...targets]).map((target) => target.id)).toEqual(['polygon']);
-    expect(executionTargetsForStrategy('perp', [...targets]).map((target) => target.id)).toEqual(['arbitrum-fork', 'arbitrum-one']);
+    expect(
+      executionTargetsForStrategy('dex', [...targets]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(['base']);
+    expect(
+      executionTargetsForStrategy('prediction', [...targets]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(['polygon']);
+    expect(
+      executionTargetsForStrategy('perp', [...targets]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(['arbitrum-fork', 'arbitrum-one']);
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
   });
 
   it('returns GMX and Vertex as the Arbitrum perp protocols', async () => {
-    const { availableProtocolsForStrategyTarget } = await import('../provision');
+    const { availableProtocolsForStrategyTarget } =
+      await import('../provision');
     expect(
       availableProtocolsForStrategyTarget('perp', {
         id: 'arbitrum-fork',
@@ -520,9 +611,17 @@ describe('provision runtime backend helpers', () => {
       chainId: 84532,
     } as const;
 
-    expect(validateStrategyExecutionSelection('volatility', target, true)).toEqual({ ok: true });
-    expect(validateStrategyExecutionSelection('volatility', target, false)).toMatchObject({ ok: false });
-    expect(validateStrategyExecutionSelection('multi', target, true)).toMatchObject({ ok: false });
-    expect(validateStrategyExecutionSelection('prediction', target, true)).toMatchObject({ ok: false });
+    expect(
+      validateStrategyExecutionSelection('volatility', target, true),
+    ).toEqual({ ok: true });
+    expect(
+      validateStrategyExecutionSelection('volatility', target, false),
+    ).toMatchObject({ ok: false });
+    expect(
+      validateStrategyExecutionSelection('multi', target, true),
+    ).toMatchObject({ ok: false });
+    expect(
+      validateStrategyExecutionSelection('prediction', target, true),
+    ).toMatchObject({ ok: false });
   });
 });

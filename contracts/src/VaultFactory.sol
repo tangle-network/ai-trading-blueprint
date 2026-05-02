@@ -41,6 +41,7 @@ contract VaultFactory is Ownable2Step {
     event ShareTokenCreated(uint64 indexed serviceId, address indexed shareToken);
     event AuthorizedCallerUpdated(address indexed caller, bool authorized);
     event DefaultWhitelistedTokenUpdated(address indexed token, bool allowed);
+    event DefaultWhitelistedTargetUpdated(address indexed target, bool allowed);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -75,6 +76,10 @@ contract VaultFactory is Ownable2Step {
     /// @notice Default token whitelist applied to every newly created vault.
     address[] public defaultWhitelistedTokens;
     mapping(address token => bool) public isDefaultWhitelistedToken;
+
+    /// @notice Default target whitelist applied to every newly created vault.
+    address[] public defaultWhitelistedTargets;
+    mapping(address target => bool) public isDefaultWhitelistedTarget;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -139,6 +144,16 @@ contract VaultFactory is Ownable2Step {
         }
         isDefaultWhitelistedToken[token] = allowed;
         emit DefaultWhitelistedTokenUpdated(token, allowed);
+    }
+
+    /// @notice Configure a target contract to be policy-whitelisted on all newly created vaults.
+    function setDefaultWhitelistedTarget(address target, bool allowed) external onlyOwner {
+        if (target == address(0)) revert ZeroAddress();
+        if (allowed && !isDefaultWhitelistedTarget[target]) {
+            defaultWhitelistedTargets.push(target);
+        }
+        isDefaultWhitelistedTarget[target] = allowed;
+        emit DefaultWhitelistedTargetUpdated(target, allowed);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -279,6 +294,13 @@ contract VaultFactory is Ownable2Step {
             address token = defaultWhitelistedTokens[i];
             if (isDefaultWhitelistedToken[token]) {
                 policyEngine.whitelistToken(vault, token, true);
+            }
+        }
+        address[] memory target = new address[](1);
+        for (uint256 i = 0; i < defaultWhitelistedTargets.length; i++) {
+            target[0] = defaultWhitelistedTargets[i];
+            if (isDefaultWhitelistedTarget[target[0]]) {
+                policyEngine.setTargetWhitelist(vault, target, true);
             }
         }
         feeDistributor.initializeVaultFees(vault, admin, feeConfig);

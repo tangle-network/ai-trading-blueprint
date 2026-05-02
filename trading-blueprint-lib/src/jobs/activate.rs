@@ -141,10 +141,10 @@ pub async fn activate_bot_with_secrets(
 
     let mut bot = get_bot(bot_id)?.ok_or_else(|| format!("Bot {bot_id} not found"))?;
 
-    // Resolve vault address if still a factory placeholder from provision.
-    // The BSM creates the real vault on-chain in _handleProvisionResult, but
-    // never updates the operator-side record. Resolve it here before the bot
-    // starts trading.
+    // Resolve vault address if still a placeholder from provision.
+    // `factory:` means the BSM should have created a per-bot vault that we must
+    // resolve. `vault:` means the provision request explicitly bound to an
+    // already-created vault, so unwrap it without probing unrelated contracts.
     if bot.vault_address.starts_with("factory:") {
         let factory_hex = bot.vault_address.trim_start_matches("factory:").trim();
         let zero_factory_placeholder =
@@ -189,6 +189,15 @@ pub async fn activate_bot_with_secrets(
                     ));
                 }
             }
+        }
+    } else if bot.vault_address.starts_with("vault:") {
+        let addr = resolve_direct_vault_placeholder(&bot.vault_address)?;
+        tracing::info!("Resolved direct vault address for {bot_id}: {addr}");
+        bot.vault_address = addr.clone();
+        if let Ok(store) = bots() {
+            let _ = store.update(&bot_key(bot_id), |b| {
+                b.vault_address = addr.clone();
+            });
         }
     }
 
@@ -922,28 +931,38 @@ async fn resolve_vault_from_factory(
         .parse()
         .map_err(|e| format!("Invalid factory address '{factory_hex}': {e}"))?;
 
-    let rpc_url: reqwest::Url = bot
+    let execution_rpc_url: reqwest::Url = bot
         .rpc_url
         .parse()
         .map_err(|e| format!("Invalid RPC URL '{}': {e}", bot.rpc_url))?;
 
-    let provider = ProviderBuilder::new().connect_http(rpc_url);
+    let execution_provider = ProviderBuilder::new().connect_http(execution_rpc_url);
 
-    let has_blueprint_vault_index = local_trading_blueprint_address()?.is_some();
-    if has_blueprint_vault_index {
-        if let Some(vault) = resolve_blueprint_bot_vault(&provider, bot).await? {
-            return Ok(vault);
-        }
-
-        if !bot.paper_trade {
-            maybe_replay_local_provision_result(bot).await?;
-            if let Some(vault) = resolve_blueprint_bot_vault(&provider, bot).await? {
+    if let Some(blueprint_addr) = local_trading_blueprint_address()? {
+        if let Some(blueprint_rpc_url) = local_trading_blueprint_rpc_url()? {
+            let blueprint_provider = ProviderBuilder::new().connect_http(blueprint_rpc_url.clone());
+            if let Some(vault) =
+                resolve_blueprint_bot_vault(&blueprint_provider, blueprint_addr, bot).await?
+            {
                 return Ok(vault);
             }
-            return Err(format!(
-                "No vault found for service {} call {} in TradingBlueprint.botVaults",
-                bot.service_id, bot.call_id
-            ));
+
+            if !bot.paper_trade {
+                maybe_replay_local_provision_result(bot, blueprint_rpc_url.as_str()).await?;
+                if let Some(vault) =
+                    resolve_blueprint_bot_vault(&blueprint_provider, blueprint_addr, bot).await?
+                {
+                    return Ok(vault);
+                }
+                return Err(format!(
+                    "No vault found for service {} call {} in TradingBlueprint.botVaults",
+                    bot.service_id, bot.call_id
+                ));
+            }
+        } else {
+            tracing::warn!(
+                "TRADING_BLUEPRINT_ADDRESS is configured but no Tangle RPC env var is set; skipping botVaults lookup"
+            );
         }
     }
 
@@ -953,7 +972,7 @@ async fn resolve_vault_from_factory(
     };
     let calldata = call.abi_encode();
 
-    let result = match provider
+    let result = match execution_provider
         .call(
             alloy::rpc::types::TransactionRequest::default()
                 .to(factory_addr)
@@ -963,9 +982,6 @@ async fn resolve_vault_from_factory(
     {
         Ok(result) => result,
         Err(factory_err) => {
-            if let Ok(vault) = resolve_direct_vault_address(&provider, factory_addr).await {
-                return Ok(vault);
-            }
             return Err(format!("getServiceVaults call failed: {factory_err}"));
         }
     };
@@ -976,17 +992,16 @@ async fn resolve_vault_from_factory(
 
     let vaults = match vaults {
         Ok(vaults) => vaults,
-        Err(decode_err) => {
-            if let Ok(vault) = resolve_direct_vault_address(&provider, factory_addr).await {
-                return Ok(vault);
-            }
-            return Err(decode_err);
-        }
+        Err(decode_err) => return Err(decode_err),
     };
 
     match vaults.len() {
         0 => Err("No vaults found for this service".into()),
-        1 => Ok(format!("{:#x}", vaults[0])),
+        1 if bot.call_id == 0 => Ok(format!("{:#x}", vaults[0])),
+        1 => Err(format!(
+            "Only one vault found for service {}, but bot call {} requires TradingBlueprint.botVaults lookup to avoid assigning the wrong vault",
+            bot.service_id, bot.call_id
+        )),
         n => Err(format!(
             "Ambiguous: {n} vaults found for service {}; cannot determine owner without explicit vault address",
             bot.service_id
@@ -994,8 +1009,22 @@ async fn resolve_vault_from_factory(
     }
 }
 
+fn resolve_direct_vault_placeholder(vault_address: &str) -> Result<String, String> {
+    use alloy::primitives::Address;
+
+    let raw = vault_address.trim_start_matches("vault:").trim();
+    let addr: Address = raw
+        .parse()
+        .map_err(|e| format!("Invalid direct vault address '{raw}': {e}"))?;
+    if addr == Address::ZERO {
+        return Err("Direct vault address cannot be zero".to_string());
+    }
+    Ok(format!("{addr:#x}"))
+}
+
 async fn resolve_blueprint_bot_vault<P>(
     provider: &P,
+    blueprint_addr: alloy::primitives::Address,
     bot: &crate::state::TradingBotRecord,
 ) -> Result<Option<String>, String>
 where
@@ -1003,10 +1032,6 @@ where
 {
     use alloy::primitives::Address;
     use alloy::sol_types::SolCall;
-
-    let Some(blueprint_addr) = local_trading_blueprint_address()? else {
-        return Ok(None);
-    };
 
     let call = trading_runtime::contracts::ITradingBlueprint::botVaultsCall {
         serviceId: bot.service_id,
@@ -1048,6 +1073,23 @@ fn local_trading_blueprint_address() -> Result<Option<alloy::primitives::Address
         .map_err(|e| format!("Invalid TRADING_BLUEPRINT_ADDRESS '{raw}': {e}"))
 }
 
+fn local_trading_blueprint_rpc_url() -> Result<Option<reqwest::Url>, String> {
+    let Some(raw) = std::env::var("TRADING_BLUEPRINT_RPC_URL")
+        .or_else(|_| std::env::var("TANGLE_HTTP_RPC_URL"))
+        .or_else(|_| std::env::var("HTTP_RPC_URL"))
+        .or_else(|_| std::env::var("RPC_URL"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    raw.parse()
+        .map(Some)
+        .map_err(|e| format!("Invalid TRADING_BLUEPRINT_RPC_URL/HTTP_RPC_URL/RPC_URL '{raw}': {e}"))
+}
+
 fn local_tangle_contract_address() -> Result<Option<alloy::primitives::Address>, String> {
     let Some(raw) = std::env::var("TANGLE_CONTRACT")
         .ok()
@@ -1075,11 +1117,12 @@ fn local_rpc_allows_anvil_impersonation(rpc_url: &str) -> bool {
 
 async fn maybe_replay_local_provision_result(
     bot: &crate::state::TradingBotRecord,
+    rpc_url: &str,
 ) -> Result<(), String> {
     use alloy::primitives::{Address, Bytes, U256};
     use alloy::sol_types::SolCall;
 
-    if bot.paper_trade || !local_rpc_allows_anvil_impersonation(&bot.rpc_url) {
+    if bot.paper_trade || !local_rpc_allows_anvil_impersonation(rpc_url) {
         return Err("No vaults found for this service".into());
     }
 
@@ -1117,21 +1160,21 @@ async fn maybe_replay_local_provision_result(
 
     json_rpc(
         &client,
-        &bot.rpc_url,
+        rpc_url,
         "anvil_impersonateAccount",
         json!([tangle]),
     )
     .await?;
     json_rpc(
         &client,
-        &bot.rpc_url,
+        rpc_url,
         "anvil_setBalance",
         json!([tangle, format!("0x{:x}", U256::from(10u128.pow(20)))]),
     )
     .await?;
     let tx_hash = json_rpc(
         &client,
-        &bot.rpc_url,
+        rpc_url,
         "eth_sendTransaction",
         json!([{
             "from": tangle,
@@ -1143,7 +1186,7 @@ async fn maybe_replay_local_provision_result(
     .await?;
     let _ = json_rpc(
         &client,
-        &bot.rpc_url,
+        rpc_url,
         "anvil_stopImpersonatingAccount",
         json!([tangle]),
     )
@@ -1153,7 +1196,7 @@ async fn maybe_replay_local_provision_result(
         .as_str()
         .ok_or_else(|| "eth_sendTransaction returned non-string tx hash".to_string())?
         .to_string();
-    wait_for_json_rpc_receipt(&client, &bot.rpc_url, &tx_hash).await?;
+    wait_for_json_rpc_receipt(&client, rpc_url, &tx_hash).await?;
     Ok(())
 }
 
@@ -1219,26 +1262,4 @@ async fn wait_for_json_rpc_receipt(
     Err(format!(
         "timed out waiting for local onJobResult replay tx {tx_hash}"
     ))
-}
-
-async fn resolve_direct_vault_address<P>(
-    provider: &P,
-    vault_addr: alloy::primitives::Address,
-) -> Result<String, String>
-where
-    P: alloy::providers::Provider,
-{
-    use alloy::sol_types::SolCall;
-
-    let call = trading_runtime::contracts::ITradingVault::assetCall {};
-    provider
-        .call(
-            alloy::rpc::types::TransactionRequest::default()
-                .to(vault_addr)
-                .input(call.abi_encode().into()),
-        )
-        .await
-        .map_err(|e| format!("asset() call failed: {e}"))?;
-
-    Ok(format!("{vault_addr:#x}"))
 }
