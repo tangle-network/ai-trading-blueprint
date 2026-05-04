@@ -3310,8 +3310,8 @@ async fn test_multi_bot_validate_live_vault_trade_requires_simulation() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8_lossy(&body);
     assert!(
-        body_str.contains("Simulation is required"),
-        "Expected required simulation error, got: {body_str}"
+        body_str.contains("Vault asset lookup failed for valuation check"),
+        "Expected vault valuation guard error, got: {body_str}"
     );
 }
 
@@ -4185,7 +4185,7 @@ async fn test_state_with_clob(mock_uri: &str, clob_mock_uri: &str) -> Arc<Tradin
         vault_address: "0x0000000000000000000000000000000000000001".to_string(),
         validator_endpoints: vec![],
         validation_deadline_secs: 3600,
-        bot_id: "test-bot".to_string(),
+        bot_id: format!("test-bot-{}", uuid::Uuid::new_v4()),
         paper_trade: false,
         operator_address: String::new(),
         submitter_address: String::new(),

@@ -158,7 +158,7 @@ fn aave_assets(chain_id: u64, protocol: &str) -> Vec<SupportedAsset> {
 
 fn registry_chain_id(chain_id: u64) -> u64 {
     match chain_id {
-        31337 | 31338 | 31339 => 1,
+        31337..=31339 => 1,
         _ => chain_id,
     }
 }

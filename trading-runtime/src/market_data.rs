@@ -28,6 +28,14 @@ fn should_try_coingecko_fallback(base_url: &str) -> bool {
     base_url.contains("coingecko.com") || normalize_base_url(base_url).ends_with("/api/v3")
 }
 
+fn should_cache_prices(base_url: &str) -> bool {
+    let normalized = normalize_base_url(base_url).to_ascii_lowercase();
+    !(normalized.starts_with("http://localhost:")
+        || normalized.starts_with("https://localhost:")
+        || normalized.starts_with("http://127.0.0.1:")
+        || normalized.starts_with("https://127.0.0.1:"))
+}
+
 fn coingecko_id_for_symbol(token: &str) -> Option<&'static str> {
     match token.to_ascii_uppercase().as_str() {
         "ETH" | "WETH" => Some("ethereum"),
@@ -88,6 +96,9 @@ fn cached_price(
     token: &str,
     max_age_secs: i64,
 ) -> Option<PriceData> {
+    if !should_cache_prices(base_url) {
+        return None;
+    }
     let key = cache_key(base_url, chain_id, token);
     let cache = PRICE_CACHE.lock().ok()?;
     let cached = cache.get(&key)?;
@@ -98,6 +109,9 @@ fn cached_price(
 }
 
 fn cache_price(base_url: &str, chain_id: Option<u64>, price: PriceData) {
+    if !should_cache_prices(base_url) {
+        return;
+    }
     let key = cache_key(base_url, chain_id, &price.token);
     if let Ok(mut cache) = PRICE_CACHE.lock() {
         cache.insert(

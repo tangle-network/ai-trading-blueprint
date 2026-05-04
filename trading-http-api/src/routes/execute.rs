@@ -36,8 +36,9 @@ use trading_runtime::{
 };
 
 use super::validate::{
-    PAPER_MODE_VALIDATOR, has_usable_validator_signature, normalize_protocol_token, parse_action,
-    strategy_type_from_config, validate_supported_trade_assets,
+    PAPER_MODE_VALIDATOR, SupportedTradeAssetValidation, has_usable_validator_signature,
+    normalize_protocol_token, parse_action, strategy_type_from_config,
+    validate_supported_trade_assets,
 };
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -2001,17 +2002,17 @@ async fn execute(
     let normalized_intent = normalize_intent_payload(request.intent.clone(), protocol_chain_id);
     let mut normalized_request = request.clone();
     normalized_request.intent = normalized_intent;
-    validate_supported_trade_assets(
-        None,
-        protocol_chain_id,
-        &normalized_request.intent.target_protocol,
-        &normalized_request.intent.token_in,
-        &normalized_request.intent.token_out,
-        Some(&state.vault_address),
-        state.rpc_url.as_deref(),
-        !state.paper_trade
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: None,
+        chain_id: protocol_chain_id,
+        protocol: &normalized_request.intent.target_protocol,
+        token_in: &normalized_request.intent.token_in,
+        token_out: &normalized_request.intent.token_out,
+        vault_address: Some(&state.vault_address),
+        rpc_url: state.rpc_url.as_deref(),
+        require_vault_valuation: !state.paper_trade
             && !uses_direct_non_vault_execution(&normalized_request.intent.target_protocol),
-    )
+    })
     .await?;
     normalized_request.intent.metadata = crate::enrich_yield_safety_metadata(
         &normalized_request.intent.target_protocol,
@@ -2054,13 +2055,6 @@ async fn execute(
         !state.paper_trade,
     )?;
 
-    if check_and_insert_intent(&canonical_intent_hash) {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Intent hash {canonical_intent_hash} has already been executed"),
-        ));
-    }
-
     let stored_validation = build_stored_validation(&request.validation);
 
     let is_clob_trade = normalized_request.intent.target_protocol == "polymarket_clob";
@@ -2075,6 +2069,13 @@ async fn execute(
             action_kind,
             Some(state.min_validator_score),
         )?;
+    }
+
+    if check_and_insert_intent(&canonical_intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Intent hash {canonical_intent_hash} has already been executed"),
+        ));
     }
 
     // Circuit breaker check before any execution.
@@ -2206,17 +2207,17 @@ async fn execute_multi_bot(
     let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(protocol_chain_id));
     let mut normalized_req = req.clone();
     normalized_req.intent = normalized_intent;
-    validate_supported_trade_assets(
-        strategy_type_from_config(&bot.strategy_config),
-        Some(protocol_chain_id),
-        &normalized_req.intent.target_protocol,
-        &normalized_req.intent.token_in,
-        &normalized_req.intent.token_out,
-        Some(&bot.vault_address),
-        Some(&bot.rpc_url),
-        !bot.paper_trade
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: strategy_type_from_config(&bot.strategy_config),
+        chain_id: Some(protocol_chain_id),
+        protocol: &normalized_req.intent.target_protocol,
+        token_in: &normalized_req.intent.token_in,
+        token_out: &normalized_req.intent.token_out,
+        vault_address: Some(&bot.vault_address),
+        rpc_url: Some(&bot.rpc_url),
+        require_vault_valuation: !bot.paper_trade
             && !uses_direct_non_vault_execution(&normalized_req.intent.target_protocol),
-    )
+    })
     .await?;
     normalized_req.intent.metadata = crate::enrich_yield_safety_metadata(
         &normalized_req.intent.target_protocol,
@@ -2258,13 +2259,6 @@ async fn execute_multi_bot(
         bot.chain_id,
         !bot.paper_trade,
     )?;
-
-    if check_and_insert_intent(&canonical_intent_hash) {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("Intent hash {canonical_intent_hash} has already been executed"),
-        ));
-    }
 
     let stored_validation = build_stored_validation(&req.validation);
 
@@ -2321,6 +2315,13 @@ async fn execute_multi_bot(
             }
         }
 
+        if check_and_insert_intent(&canonical_intent_hash) {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("Intent hash {canonical_intent_hash} has already been executed"),
+            ));
+        }
+
         let max_drawdown = max_drawdown_from_strategy_config(&bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
@@ -2336,6 +2337,11 @@ async fn execute_multi_bot(
             let live_input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
             enforce_live_risk(&live_input, max_drawdown).await?;
         }
+    } else if check_and_insert_intent(&canonical_intent_hash) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Intent hash {canonical_intent_hash} has already been executed"),
+        ));
     }
 
     let market_client = MarketDataClient::new(state.market_data_base_url.clone());
