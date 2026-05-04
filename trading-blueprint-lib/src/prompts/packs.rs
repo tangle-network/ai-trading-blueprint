@@ -1334,8 +1334,8 @@ fn strategy_iteration_protocol(strategy_type: &str) -> String {
     match strategy_type {
         "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
-- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, a realistic `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Log the outcome immediately. Then proceed to reflect.
+- **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Treat `protocol: "vault"` + `position_type: "spot"` as vault-held custody that can be swapped through the Trading API, not as a locked protocol position. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Choose `token_in` from an available spot balance, then build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, a realistic `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
@@ -1395,10 +1395,10 @@ fn strategy_core_workflow_tools(strategy_type: &str) -> String {
 
 fn strategy_typical_iteration(strategy_type: &str) -> String {
     match strategy_type {
-        "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills
+        "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills. `protocol: "vault"` with `position_type: "spot"` means vault-held custody available for vault-backed swaps, not a locked protocol position
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+4. If the setup is actionable, choose `token_in` from an available spot balance, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, a realistic raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 
@@ -2039,6 +2039,16 @@ mod tests {
         assert!(
             content.contains("api-client.js"),
             "dex instructions must reference the Trading API client"
+        );
+        assert!(
+            content.contains("protocol: \"vault\"")
+                && content.contains("not as a locked protocol position"),
+            "dex instructions must explain that vault spot custody is tradeable"
+        );
+        assert!(
+            content.contains("Choose `token_in` from an available spot balance")
+                || content.contains("choose `token_in` from an available spot balance"),
+            "dex instructions must choose swap input from portfolio inventory"
         );
         assert!(
             content.contains("Do not use `analyze-opportunities.js`"),
