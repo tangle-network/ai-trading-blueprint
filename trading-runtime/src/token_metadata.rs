@@ -83,6 +83,21 @@ const BASE_CBBTC: TokenMetadata = TokenMetadata {
     aliases: CBBTC_ALIASES,
 };
 
+const ARBITRUM_WETH: TokenMetadata = TokenMetadata {
+    symbol: "WETH",
+    address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+    decimals: 18,
+    coingecko_id: Some("ethereum"),
+    aliases: WETH_ALIASES,
+};
+const ARBITRUM_USDC: TokenMetadata = TokenMetadata {
+    symbol: "USDC",
+    address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    decimals: 6,
+    coingecko_id: Some("usd-coin"),
+    aliases: USDC_ALIASES,
+};
+
 const ETHEREUM_TOKENS: &[TokenMetadata] = &[
     ETHEREUM_WETH,
     ETHEREUM_USDC,
@@ -92,6 +107,7 @@ const ETHEREUM_TOKENS: &[TokenMetadata] = &[
 ];
 const BASE_TOKENS: &[TokenMetadata] = &[BASE_WETH, BASE_USDC, BASE_CBBTC];
 const BASE_SEPOLIA_TOKENS: &[TokenMetadata] = &[BASE_WETH, BASE_USDC_SEPOLIA];
+const ARBITRUM_TOKENS: &[TokenMetadata] = &[ARBITRUM_WETH, ARBITRUM_USDC];
 
 pub fn normalize_token_key(token: &str) -> String {
     token.trim().to_ascii_lowercase()
@@ -116,6 +132,7 @@ pub fn tokens_for_chain(chain_id: u64) -> &'static [TokenMetadata] {
     match chain_id {
         8453 => BASE_TOKENS,
         84532 => BASE_SEPOLIA_TOKENS,
+        42161 => ARBITRUM_TOKENS,
         1 | 31337 | 31338 | 31339 => ETHEREUM_TOKENS,
         _ => &[],
     }
@@ -226,7 +243,7 @@ fn token_metadata_from_aave_reserve(reserve: &AaveReserve) -> TokenMetadata {
 }
 
 fn known_chain_ids() -> Vec<u64> {
-    let mut ids = vec![84532_u64, 8453, 1, 31337, 31338, 31339];
+    let mut ids = vec![84532_u64, 8453, 42161, 1, 31337, 31338, 31339];
     ids.extend(AAVE_V3_MARKETS.iter().map(|market| market.chain_id));
     ids.sort_unstable();
     ids.dedup();

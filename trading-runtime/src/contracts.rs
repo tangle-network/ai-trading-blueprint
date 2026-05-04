@@ -55,6 +55,8 @@ sol! {
         function totalAssets() external view returns (uint256);
         function isNavSafe() external view returns (bool);
         function getHeldTokens() external view returns (address[] memory);
+        function valuationAdapters(address token) external view returns (address);
+        function setValuationAdapter(address token, address adapter) external;
         function deposit(uint256 assets, address receiver) external returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
         function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
@@ -156,9 +158,15 @@ sol! {
     interface IPolicyEngine {
         function initializeVault(address vault, uint256 leverageCap, uint256 maxTrades, uint256 maxSlippage) external;
         function setWhitelist(address vault, address[] calldata tokens, bool allowed) external;
+        function whitelistToken(address vault, address token, bool allowed) external;
         function setTargetWhitelist(address vault, address[] calldata targets, bool allowed) external;
         function setPositionLimit(address vault, address token, uint256 maxAmount) external;
         function validateTrade(address vault, address token, uint256 amount, address target, uint256 leverage) external returns (bool);
+    }
+
+    #[sol(rpc)]
+    interface IAssetValuator {
+        function isSupported(address token, address asset) external view returns (bool);
     }
 
     #[sol(rpc)]

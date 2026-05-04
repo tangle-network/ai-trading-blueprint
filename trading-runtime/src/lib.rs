@@ -19,6 +19,7 @@ pub mod signature_verify;
 pub mod signed_envelope;
 pub mod simulator;
 pub mod strategy;
+pub mod supported_assets;
 pub mod token_metadata;
 pub mod trading_envelope;
 pub mod types;
