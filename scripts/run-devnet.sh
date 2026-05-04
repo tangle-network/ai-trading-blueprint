@@ -118,6 +118,47 @@ verify_distinct_proxy_targets() {
   fi
 }
 
+patch_execution_fork_frontend_env() {
+  if [[ "$LOAD_EXECUTION_FORK_ENV" != "true" || ! -f "$EXECUTION_STATE_FILE" ]]; then
+    return
+  fi
+  if [[ -z "${EXECUTION_RPC_URL:-}" || -z "${EXECUTION_CHAIN_ID:-}" || -z "${EXECUTION_VAULT_FACTORY_ADDRESS:-}" || -z "${EXECUTION_ASSET_TOKEN:-}" ]]; then
+    return
+  fi
+
+  ARENA_ENV_FILE="$ROOT_DIR/arena/.env.local" \
+  EXECUTION_RPC_URL="$EXECUTION_RPC_URL" \
+  EXECUTION_CHAIN_ID="$EXECUTION_CHAIN_ID" \
+  EXECUTION_VAULT_FACTORY_ADDRESS="$EXECUTION_VAULT_FACTORY_ADDRESS" \
+  EXECUTION_ASSET_TOKEN="$EXECUTION_ASSET_TOKEN" \
+  node <<'NODE'
+const fs = require('fs');
+const path = process.env.ARENA_ENV_FILE;
+let text = fs.readFileSync(path, 'utf8');
+const updates = {
+  VITE_DEX_ETHEREUM_ENABLED: 'true',
+  VITE_DEX_ETHEREUM_CHAIN_ID: process.env.EXECUTION_CHAIN_ID,
+  VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID: '1',
+  VITE_DEX_ETHEREUM_RPC_URL: process.env.EXECUTION_RPC_URL,
+  VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS: process.env.EXECUTION_VAULT_FACTORY_ADDRESS,
+  VITE_DEX_ETHEREUM_VAULT_ADDRESS: '0x0000000000000000000000000000000000000000',
+  VITE_DEX_ETHEREUM_ASSET_TOKEN: process.env.EXECUTION_ASSET_TOKEN,
+  VITE_DEX_ETHEREUM_PAPER_TRADE: 'false',
+};
+for (const [key, value] of Object.entries(updates)) {
+  const line = `${key}=${value}`;
+  const pattern = new RegExp(`^${key}=.*$`, 'm');
+  if (pattern.test(text)) {
+    text = text.replace(pattern, line);
+  } else {
+    text += text.endsWith('\n') ? line + '\n' : '\n' + line + '\n';
+  }
+}
+fs.writeFileSync(path, text);
+NODE
+  echo "  Patched arena/.env.local with execution fork target from $EXECUTION_STATE_FILE"
+}
+
 sync_tangle_domain_separator() {
   local rpc_url="$1"
   local chain_id="$2"
@@ -211,6 +252,9 @@ INSTANCE_OPERATOR_API_PORT="${INSTANCE_OPERATOR_API_PORT:-9201}"
 TRADING_API_PORT="${TRADING_API_PORT:-9100}"
 INSTANCE_TRADING_API_PORT="${INSTANCE_TRADING_API_PORT:-9101}"
 VALIDATOR_HTTP_PORT="${VALIDATOR_HTTP_PORT:-9090}"
+VALIDATOR_ENDPOINT_COUNT="${VALIDATOR_ENDPOINT_COUNT:-2}"
+EXECUTION_STATE_FILE="${EXECUTION_STATE_FILE:-$ROOT_DIR/.execution-fork.env}"
+LOAD_EXECUTION_FORK_ENV="${LOAD_EXECUTION_FORK_ENV:-true}"
 START_VALIDATOR="${START_VALIDATOR:-}"
 FORK_URL="${FORK_URL:-}"
 FORK_BLOCK_NUMBER="${FORK_BLOCK_NUMBER:-}"
@@ -218,6 +262,14 @@ FORK_MODE="${FORK_MODE:-false}"
 FORK_BASE_CHAIN_ID="${FORK_BASE_CHAIN_ID:-${PROTOCOL_CHAIN_ID:-}}"
 OPERATOR_PROXY_TARGET="${VITE_OPERATOR_PROXY_TARGET:-http://localhost:$OPERATOR_API_PORT}"
 INSTANCE_OPERATOR_PROXY_TARGET="${VITE_INSTANCE_OPERATOR_PROXY_TARGET:-http://localhost:$INSTANCE_OPERATOR_API_PORT}"
+
+if [[ "$LOAD_EXECUTION_FORK_ENV" == "true" && -f "$EXECUTION_STATE_FILE" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$EXECUTION_STATE_FILE"
+  set +a
+  echo "Loaded execution fork env from $EXECUTION_STATE_FILE"
+fi
 
 for arg in "$@"; do
   case "$arg" in
@@ -257,14 +309,6 @@ fi
 if [[ "$FORK_MODE" == "true" && "$FORK_BASE_CHAIN_ID" == "1" ]]; then
   EXISTING_USDC_ADDRESS="${EXISTING_USDC_ADDRESS:-0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48}"
   EXISTING_WETH_ADDRESS="${EXISTING_WETH_ADDRESS:-0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2}"
-fi
-
-if [[ -z "$START_VALIDATOR" ]]; then
-  if [[ "$FORK_MODE" == "true" ]]; then
-    START_VALIDATOR=true
-  else
-    START_VALIDATOR=false
-  fi
 fi
 
 if [[ -f "$SNAPSHOT" && -n "$FORK_URL" ]]; then
@@ -326,6 +370,7 @@ FORK_BASE_CHAIN_ID="$FORK_BASE_CHAIN_ID" \
 EXISTING_USDC_ADDRESS="${EXISTING_USDC_ADDRESS:-}" \
 EXISTING_WETH_ADDRESS="${EXISTING_WETH_ADDRESS:-}" \
   bash "$SCRIPT_DIR/deploy-local.sh"
+patch_execution_fork_frontend_env
 
 # ── 3. Start pricing engines ──────────────────────────────────────
 echo ""
@@ -361,10 +406,30 @@ VALIDATOR_SERVICE_ID="$(grep '^VITE_VALIDATOR_SERVICE_ID=' "$ROOT_DIR/arena/.env
 VALIDATOR_BLUEPRINT_ID="$(grep '^VITE_VALIDATOR_BLUEPRINT_ID=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
 INSTANCE_VAULT_ADDRESS="$(grep '^VITE_INSTANCE_VAULT_ADDRESS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
 TRADE_VALIDATOR_ADDRESS="$(grep '^VITE_TRADE_VALIDATOR_ADDRESS=' "$ROOT_DIR/arena/.env.local" | cut -d= -f2)"
+if [[ -z "$START_VALIDATOR" ]]; then
+  if [[ -n "$VALIDATOR_SERVICE_ID" && "$VALIDATOR_SERVICE_ID" != "0" ]]; then
+    START_VALIDATOR=true
+  elif [[ "$FORK_MODE" == "true" ]]; then
+    START_VALIDATOR=true
+  else
+    START_VALIDATOR=false
+  fi
+fi
 DEFAULT_VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-}"
 if [[ -z "$DEFAULT_VALIDATOR_ENDPOINTS" && "$START_VALIDATOR" == "true" ]]; then
-  DEFAULT_VALIDATOR_ENDPOINTS="http://127.0.0.1:$VALIDATOR_HTTP_PORT"
+  DEFAULT_VALIDATOR_ENDPOINTS=""
+  for ((i = 0; i < VALIDATOR_ENDPOINT_COUNT; i++)); do
+    endpoint="http://127.0.0.1:$((VALIDATOR_HTTP_PORT + i))"
+    if [[ -z "$DEFAULT_VALIDATOR_ENDPOINTS" ]]; then
+      DEFAULT_VALIDATOR_ENDPOINTS="$endpoint"
+    else
+      DEFAULT_VALIDATOR_ENDPOINTS="$DEFAULT_VALIDATOR_ENDPOINTS,$endpoint"
+    fi
+  done
 fi
+VALIDATOR_SIGNING_RPC_URL="${EXECUTION_RPC_URL:-$RPC_URL}"
+VALIDATOR_SIGNING_CHAIN_ID="${EXECUTION_CHAIN_ID:-$CHAIN_ID}"
+VALIDATOR_VERIFYING_CONTRACT="${EXECUTION_TRADE_VALIDATOR_ADDRESS:-${EXECUTION_TRADE_VALIDATOR:-$TRADE_VALIDATOR_ADDRESS}}"
 DOCKER_SOCKET="${DOCKER_HOST:-}"
 if [[ -z "$DOCKER_SOCKET" ]]; then
   if [[ -S "$HOME/.docker/run/docker.sock" ]]; then
@@ -379,38 +444,62 @@ fi
 if [[ "$START_VALIDATOR" == "true" ]]; then
   # ── 3b. Start validator ─────────────────────────────────────────
   echo ""
-  echo "=== Starting validator ==="
+  echo "=== Starting validators ==="
 
-  RUST_LOG="${RUST_LOG:-info,tangle=debug,trading=debug}" \
-  SERVICE_ID="$VALIDATOR_SERVICE_ID" \
-  BLUEPRINT_ID="$VALIDATOR_BLUEPRINT_ID" \
-  CHAIN_ID="$CHAIN_ID" \
-  FORK_BASE_CHAIN_ID="$FORK_BASE_CHAIN_ID" \
-  PROTOCOL_CHAIN_ID="$FORK_BASE_CHAIN_ID" \
-  RPC_URL="$RPC_URL" \
-  HTTP_RPC_URL="$RPC_URL" \
-  VALIDATOR_RPC_URL="$RPC_URL" \
-  VALIDATOR_HTTP_PORT="$VALIDATOR_HTTP_PORT" \
-  VERIFYING_CONTRACT="$TRADE_VALIDATOR_ADDRESS" \
-  OPERATOR_ADDRESS="0x70997970C51812dc3A010C7d01b50e0d17dc79C8" \
-  PRIVATE_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" \
-  TANGLE_CONTRACT="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9" \
-  STAKING_CONTRACT="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" \
-  STATUS_REGISTRY_CONTRACT="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
-  STATUS_REGISTRY_ADDRESS="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
-  "$ROOT_DIR/target/release/trading-validator" run \
-    --http-rpc-url "$RPC_URL" \
-    --ws-rpc-url "$WS_RPC_URL" \
-    --keystore-uri "$ROOT_DIR/scripts/data/operator1/keystore" \
-    --data-dir "${VALIDATOR_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/validator}" \
-    --protocol tangle -t &
-  PIDS+=($!)
+  for ((i = 0; i < VALIDATOR_ENDPOINT_COUNT; i++)); do
+    port=$((VALIDATOR_HTTP_PORT + i))
+    if (( i % 2 == 0 )); then
+      validator_operator_address="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+      validator_private_key="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+      validator_keystore="$ROOT_DIR/scripts/data/operator1/keystore"
+    else
+      validator_operator_address="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+      validator_private_key="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+      validator_keystore="$ROOT_DIR/scripts/data/operator2/keystore"
+    fi
+
+    RUST_LOG="${RUST_LOG:-info,tangle=debug,trading=debug}" \
+    SERVICE_ID="$VALIDATOR_SERVICE_ID" \
+    BLUEPRINT_ID="$VALIDATOR_BLUEPRINT_ID" \
+    CHAIN_ID="$CHAIN_ID" \
+    EXECUTION_CHAIN_ID="$VALIDATOR_SIGNING_CHAIN_ID" \
+    FORK_BASE_CHAIN_ID="$FORK_BASE_CHAIN_ID" \
+    PROTOCOL_CHAIN_ID="$FORK_BASE_CHAIN_ID" \
+    EXECUTION_RPC_URL="$VALIDATOR_SIGNING_RPC_URL" \
+    RPC_URL="$RPC_URL" \
+    HTTP_RPC_URL="$RPC_URL" \
+    VALIDATOR_RPC_URL="$VALIDATOR_SIGNING_RPC_URL" \
+    VALIDATOR_HTTP_PORT="$port" \
+    EXECUTION_TRADE_VALIDATOR_ADDRESS="$VALIDATOR_VERIFYING_CONTRACT" \
+    VERIFYING_CONTRACT="$VALIDATOR_VERIFYING_CONTRACT" \
+    OPERATOR_ADDRESS="$validator_operator_address" \
+    PRIVATE_KEY="$validator_private_key" \
+    TANGLE_CONTRACT="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9" \
+    STAKING_CONTRACT="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" \
+    STATUS_REGISTRY_CONTRACT="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
+    STATUS_REGISTRY_ADDRESS="0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf" \
+    "$ROOT_DIR/target/release/trading-validator" run \
+      --http-rpc-url "$RPC_URL" \
+      --ws-rpc-url "$WS_RPC_URL" \
+      --keystore-uri "$validator_keystore" \
+      --data-dir "${VALIDATOR_BLUEPRINT_STATE_DIR:-$ROOT_DIR/blueprint-state/validator-$((i + 1))}" \
+      --protocol tangle -t &
+    PIDS+=($!)
+  done
+
   sleep 2
-  echo "  Validator running at http://localhost:$VALIDATOR_HTTP_PORT"
-  if ! curl -fsS "http://localhost:$VALIDATOR_HTTP_PORT/health" > /dev/null 2>&1; then
-    echo "ERROR: Validator failed to start"
-    exit 1
-  fi
+  for ((i = 0; i < VALIDATOR_ENDPOINT_COUNT; i++)); do
+    port=$((VALIDATOR_HTTP_PORT + i))
+    echo "  Validator running at http://localhost:$port"
+    if ! curl -fsS "http://localhost:$port/health" > /dev/null 2>&1; then
+      echo "ERROR: Validator failed to start on port $port"
+      exit 1
+    fi
+  done
+  echo "  Validator endpoints:    $DEFAULT_VALIDATOR_ENDPOINTS"
+  echo "  Validator signing chain: $VALIDATOR_SIGNING_CHAIN_ID"
+  echo "  Validator signing RPC:   $VALIDATOR_SIGNING_RPC_URL"
+  echo "  Verifying contract:      $VALIDATOR_VERIFYING_CONTRACT"
 else
   echo ""
   echo "=== Skipping validator ==="

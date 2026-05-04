@@ -20,6 +20,10 @@ const TOKEN_DEFAULTS_BY_CHAIN = {
     weth: '0x4200000000000000000000000000000000000006',
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   },
+  42161: {
+    weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+    usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  },
 };
 
 function loadConfig() {
@@ -36,6 +40,9 @@ function loadConfig() {
 }
 
 function tokenDefaults(config = loadConfig()) {
+  const supported = supportedAssetDefaults(config);
+  if (Object.keys(supported).length > 0) return supported;
+
   const chainId = Number(
     (config.strategy_config && config.strategy_config.protocol_chain_id)
       || config.protocol_chain_id
@@ -47,6 +54,18 @@ function tokenDefaults(config = loadConfig()) {
   return TOKEN_DEFAULTS_BY_CHAIN[chainId] || {};
 }
 
+function supportedAssetDefaults(config = loadConfig()) {
+  const assets =
+    (config.strategy_config && Array.isArray(config.strategy_config.supported_assets)
+      && config.strategy_config.supported_assets)
+    || [];
+  return assets.reduce((acc, asset) => {
+    if (!asset || !asset.symbol || !asset.address) return acc;
+    acc[String(asset.symbol).toLowerCase()] = asset.address;
+    return acc;
+  }, {});
+}
+
 function resolveTokenAddress(token) {
   if (!token || typeof token !== 'string') return token;
   const trimmed = token.trim();
@@ -54,6 +73,7 @@ function resolveTokenAddress(token) {
 
   const defaults = tokenDefaults();
   const key = trimmed.toLowerCase();
+  if (defaults[key]) return defaults[key];
   if (key === 'eth' || key === 'weth') return defaults.weth || trimmed;
   if (key === 'usdc') return defaults.usdc || trimmed;
   return trimmed;
@@ -78,14 +98,18 @@ function defaultStrategyId(config = loadConfig()) {
 
 function normalizeIntent(intent = {}) {
   const config = loadConfig();
+  const action = intent.action || intent.intent || intent.intent_type || intent.intentType || 'swap';
+  const amountIn = intent.amount_in || intent.amountIn || intent.amount || '0';
+  const minAmountOut =
+    intent.min_amount_out || intent.minAmountOut || intent.min_amount || intent.minAmount || '0';
   return {
     ...intent,
     strategy_id: intent.strategy_id || defaultStrategyId(config),
-    action: intent.action || intent.intent || 'swap',
+    action,
     token_in: resolveTokenAddress(intent.token_in || intent.tokenIn),
     token_out: resolveTokenAddress(intent.token_out || intent.tokenOut),
-    amount_in: String(intent.amount_in || intent.amountIn || '0'),
-    min_amount_out: String(intent.min_amount_out || intent.minAmountOut || '0'),
+    amount_in: String(amountIn),
+    min_amount_out: String(minAmountOut),
     amount_format: intent.amount_format || intent.amountFormat,
     target_protocol:
       intent.target_protocol || intent.targetProtocol || intent.protocol || 'uniswap_v3',
@@ -163,6 +187,10 @@ async function getAdapters() {
   return apiCall('GET', '/adapters');
 }
 
+async function getSupportedAssets() {
+  return apiCall('GET', '/supported-assets');
+}
+
 async function getMetrics() {
   return apiCall('GET', '/metrics');
 }
@@ -170,6 +198,7 @@ async function getMetrics() {
 module.exports = {
   loadConfig,
   apiCall,
+  supportedAssetDefaults,
   resolveTokenAddress,
   knownTokenSymbol,
   normalizeIntent,
@@ -179,5 +208,6 @@ module.exports = {
   getPortfolio,
   getPrices,
   getAdapters,
+  getSupportedAssets,
   getMetrics,
 };
