@@ -143,6 +143,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
                 "http://localhost:0".to_string(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{vault_addr}"),
                 &rpc_url,

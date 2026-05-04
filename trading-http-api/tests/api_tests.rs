@@ -57,6 +57,7 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
@@ -87,6 +88,7 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
@@ -130,6 +132,7 @@ async fn test_state_with_bot_id_and_clob(
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
@@ -160,6 +163,7 @@ async fn test_state_with_chain_id(mock_uri: &str, chain_id: u64) -> Arc<TradingA
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
@@ -469,6 +473,7 @@ async fn test_health_reports_degraded_live_dependencies() {
     let state = Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock.uri()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",
@@ -3752,6 +3757,92 @@ async fn test_portfolio_state_recovers_unpriced_position_as_value_only() {
 
 // ── Polymarket CLOB integration tests ────────────────────────────────────────
 
+/// Single-bot live CLOB execution must enforce the configured validator score
+/// threshold before submitting any direct exchange order.
+#[tokio::test]
+async fn test_single_bot_live_clob_rejects_below_threshold_validation() {
+    ensure_state_dir();
+
+    let market_mock = MockServer::start().await;
+    let clob_mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/order"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "orderID": "clob-order-should-not-submit",
+            "status": "LIVE",
+            "success": true,
+            "errorMsg": null,
+            "makingAmount": "100",
+            "takingAmount": "65",
+            "transactionHashes": [],
+            "tradeIds": []
+        })))
+        .mount(&clob_mock)
+        .await;
+
+    let mut state = test_state_with_clob(&market_mock.uri(), &clob_mock.uri()).await;
+    Arc::get_mut(&mut state)
+        .expect("test state should have a single owner")
+        .chain_id = Some(137);
+    let app = build_router(state);
+
+    let mut execute_body = serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "0x0000000000000000000000000000000000000000",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.65,
+                "order_type": "GTC"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 49,
+            "validator_responses": []
+        }
+    });
+    attach_signed_validation(
+        &mut execute_body,
+        137,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_CLOB_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body.contains("below required"), "unexpected body: {body}");
+
+    let order_requests = clob_mock
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.method.as_str() == "POST" && request.url.path() == "/order")
+        .count();
+    assert_eq!(order_requests, 0, "CLOB order should not be submitted");
+}
+
 /// Multi-bot execute with target_protocol="polymarket_clob" routes through the
 /// ClobClient instead of vault.execute(). Uses a mock CLOB server.
 #[tokio::test]
@@ -4081,6 +4172,7 @@ async fn test_state_with_clob(mock_uri: &str, clob_mock_uri: &str) -> Arc<Tradin
     Arc::new(TradingApiState {
         market_client: MarketDataClient::new(mock_uri.to_string()),
         validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
         executor: TradeExecutor::new(
             "0x0000000000000000000000000000000000000001",
             "http://localhost:8545",

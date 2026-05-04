@@ -152,6 +152,7 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                 "http://localhost:0".into(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{vault_addr}"),
                 &rpc_url,
@@ -301,6 +302,7 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
                 "http://localhost:0".into(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{vault_addr}"),
                 &rpc_url,
