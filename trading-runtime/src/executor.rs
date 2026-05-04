@@ -173,7 +173,10 @@ impl TradeExecutor {
             token_out,
             amount,
             min_output,
-            extra: intent.metadata.clone(),
+            extra: metadata_with_execution_deadline(
+                &intent.metadata,
+                intent.deadline.timestamp().max(0) as u64,
+            ),
             vault_address,
         };
 
@@ -449,6 +452,21 @@ fn build_execution_tx(
 
 fn parse_tx_value(value: &str) -> U256 {
     U256::from_str_radix(value.trim_start_matches("0x"), 10).unwrap_or_default()
+}
+
+fn metadata_with_execution_deadline(
+    metadata: &serde_json::Value,
+    deadline: u64,
+) -> serde_json::Value {
+    let mut extra = metadata.clone();
+    match extra {
+        serde_json::Value::Object(ref mut map) => {
+            map.entry("execution_deadline".to_string())
+                .or_insert_with(|| serde_json::json!(deadline));
+            extra
+        }
+        _ => serde_json::json!({ "execution_deadline": deadline }),
+    }
 }
 
 fn canonicalize_adapter_chain_id(protocol: &str, chain_id: Option<u64>) -> Option<u64> {

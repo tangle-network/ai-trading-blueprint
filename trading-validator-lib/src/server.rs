@@ -265,15 +265,28 @@ async fn handle_validate(
     let independent_simulation_rejection = if let (Some(rpc_url), Some(ctx)) =
         (server.rpc_url.as_ref(), request.execution_context.as_mut())
     {
-        match run_independent_simulation(rpc_url, ctx).await {
-            Some(sim) => {
-                ctx.simulation_result = Some(sim);
-                None
+        if should_run_independent_simulation(ctx) {
+            match run_independent_simulation(rpc_url, ctx).await {
+                Some(sim) => {
+                    ctx.simulation_result = Some(sim);
+                    None
+                }
+                None if request.require_simulation => {
+                    Some("validator independent simulation failed".to_string())
+                }
+                None => None,
             }
-            None if request.require_simulation => {
-                Some("validator independent simulation failed".to_string())
-            }
-            None => None,
+        } else if request.require_simulation && ctx.simulation_result.is_none() {
+            Some(
+                "required simulation result is missing for atomically approved execution"
+                    .to_string(),
+            )
+        } else {
+            tracing::info!(
+                approvals = ctx.approvals.len(),
+                "Skipping validator raw simulation for atomically approved vault execution"
+            );
+            None
         }
     } else {
         None
@@ -560,6 +573,10 @@ fn required_simulation_rejection(request: &ValidateRequest) -> Option<String> {
     }
 
     None
+}
+
+fn should_run_independent_simulation(ctx: &ExecutionContext) -> bool {
+    ctx.approvals.is_empty()
 }
 
 fn scoring_outcome(score_result: Result<scoring::ScoringResult, String>) -> (u32, String) {
@@ -987,6 +1004,35 @@ mod tests {
         });
 
         (execution_hash, ctx)
+    }
+
+    #[test]
+    fn test_validator_skips_raw_simulation_for_atomic_approvals() {
+        let ctx = ExecutionContext {
+            chain_id: 31337,
+            target: "0x0000000000000000000000000000000000000001".into(),
+            calldata: "0xdeadbeef".into(),
+            calldata_decoded: "unknown()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: "0x0000000000000000000000000000000000000000".into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
+            approvals: vec![ExecutionApproval {
+                token: "0x0000000000000000000000000000000000000000".into(),
+                spender: "0x0000000000000000000000000000000000000001".into(),
+                amount: "100".into(),
+            }],
+            simulation_result: None,
+        };
+
+        assert!(!should_run_independent_simulation(&ctx));
     }
 
     #[test]

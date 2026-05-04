@@ -56,6 +56,18 @@ fn default_deadline() -> u64 {
         + 1800
 }
 
+fn deadline_from_extra(extra: &serde_json::Value) -> u64 {
+    ["execution_deadline", "uniswap_deadline", "deadline"]
+        .iter()
+        .find_map(|key| {
+            extra
+                .get(key)
+                .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+                .filter(|value| *value > 0)
+        })
+        .unwrap_or_else(default_deadline)
+}
+
 pub struct UniswapV3Adapter {
     router_address: Address,
 }
@@ -82,6 +94,7 @@ impl UniswapV3Adapter {
         amount_out_min: U256,
         fee_tier: u32,
         recipient: Address,
+        deadline: u64,
     ) -> Bytes {
         let call = ISwapRouter::exactInputSingleCall {
             params: ISwapRouter::ExactInputSingleParams {
@@ -89,7 +102,7 @@ impl UniswapV3Adapter {
                 tokenOut: token_out,
                 fee: Uint24::from(fee_tier),
                 recipient,
-                deadline: U256::from(default_deadline()),
+                deadline: U256::from(deadline),
                 amountIn: amount_in,
                 amountOutMinimum: amount_out_min,
                 sqrtPriceLimitX96: Uint160::ZERO, // No price limit
@@ -107,6 +120,7 @@ impl UniswapV3Adapter {
         amount_in_max: U256,
         fee_tier: u32,
         recipient: Address,
+        deadline: u64,
     ) -> Bytes {
         let call = ISwapRouter::exactOutputSingleCall {
             params: ISwapRouter::ExactOutputSingleParams {
@@ -114,7 +128,7 @@ impl UniswapV3Adapter {
                 tokenOut: token_out,
                 fee: Uint24::from(fee_tier),
                 recipient,
-                deadline: U256::from(default_deadline()),
+                deadline: U256::from(deadline),
                 amountOut: amount_out,
                 amountInMaximum: amount_in_max,
                 sqrtPriceLimitX96: Uint160::ZERO,
@@ -153,6 +167,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
             .unwrap_or(3000) as u32;
 
         let router: Address = UNISWAP_V3_ROUTER.parse().expect("valid router address");
+        let deadline = deadline_from_extra(&params.extra);
 
         match params.action {
             Action::Swap => {
@@ -163,6 +178,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     params.min_output,
                     fee_tier,
                     params.vault_address,
+                    deadline,
                 );
                 Ok(EncodedAction {
                     target: self.router_address,
@@ -189,6 +205,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     amount_in_max,
                     fee_tier,
                     params.vault_address,
+                    deadline,
                 );
                 Ok(EncodedAction {
                     target: self.router_address,
@@ -252,6 +269,30 @@ mod tests {
             result.approvals[0].spender,
             UNISWAP_V3_ROUTER.parse::<Address>().unwrap()
         );
+    }
+
+    #[test]
+    fn test_encode_swap_uses_execution_deadline() {
+        let adapter = UniswapV3Adapter::new();
+        let make_params = |deadline| ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_B.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "fee_tier": 3000,
+                "execution_deadline": deadline,
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let first = adapter.encode_action(&make_params(1_777_735_000)).unwrap();
+        let same = adapter.encode_action(&make_params(1_777_735_000)).unwrap();
+        let different = adapter.encode_action(&make_params(1_777_735_001)).unwrap();
+
+        assert_eq!(first.calldata, same.calldata);
+        assert_ne!(first.calldata, different.calldata);
     }
 
     #[test]
