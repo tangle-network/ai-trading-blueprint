@@ -106,9 +106,38 @@ export function cronToHuman(cron: string): string {
   const parts = cron.split(' ');
   if (parts.length < 6) return cron;
   const min = parts[1];
+  const hour = parts[2];
+  const unit = (n: number, label: string) =>
+    `${n} ${label}${n === 1 ? '' : 's'}`;
+  const hasFixedStep = (values: number[]) =>
+    values.every(
+      (value, index) =>
+        index === 0 || value - values[index - 1] === values[1] - values[0],
+    );
   if (min.startsWith('*/')) {
     const n = parseInt(min.slice(2));
-    return n === 1 ? '1 min' : `${n} min`;
+    return unit(n, 'min');
+  }
+  const minuteList = min.split(',').map((value) => parseInt(value, 10));
+  if (
+    minuteList.length > 1 &&
+    minuteList.every(Number.isFinite) &&
+    hasFixedStep(minuteList)
+  ) {
+    return unit(minuteList[1] - minuteList[0], 'min');
+  }
+  if (hour === '*' && /^\d+$/.test(min)) return unit(1, 'hour');
+  if (hour.startsWith('*/')) {
+    const n = parseInt(hour.slice(2));
+    return unit(n, 'hour');
+  }
+  const hourList = hour.split(',').map((value) => parseInt(value, 10));
+  if (
+    hourList.length > 1 &&
+    hourList.every(Number.isFinite) &&
+    hasFixedStep(hourList)
+  ) {
+    return unit(hourList[1] - hourList[0], 'hour');
   }
   return cron;
 }
