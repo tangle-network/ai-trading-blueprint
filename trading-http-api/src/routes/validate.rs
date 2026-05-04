@@ -1,8 +1,9 @@
 use crate::{MultiBotTradingState, TradingApiState};
+use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
-use alloy::sol_types::SolCall;
+use alloy::sol_types::{SolCall, SolValue};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
@@ -11,6 +12,7 @@ use std::sync::Arc;
 use trading_runtime::aave_v3_registry::market_for_chain;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
+use trading_runtime::contracts::{ITradeValidator, ITradingVault};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
@@ -178,6 +180,15 @@ fn requires_execution_context(protocol: &str) -> bool {
 
 fn requires_production_simulation(protocol: &str, paper_trade: bool) -> bool {
     !paper_trade && requires_execution_context(protocol)
+}
+
+fn requires_prevalidation_simulation(
+    protocol: &str,
+    paper_trade: bool,
+    execution_context: Option<&ExecutionContext>,
+) -> bool {
+    requires_production_simulation(protocol, paper_trade)
+        && execution_context.is_none_or(|ctx| ctx.approvals.is_empty())
 }
 
 fn requires_aave_health_check(protocol: &str, action: &str) -> bool {
@@ -653,8 +664,11 @@ async fn validate(
             "Could not build execution context for validator signing".to_string(),
         ));
     }
-    let require_simulation =
-        requires_production_simulation(&request.target_protocol, state.paper_trade);
+    let require_simulation = requires_prevalidation_simulation(
+        &request.target_protocol,
+        state.paper_trade,
+        execution_context.as_ref(),
+    );
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
     let execution_hash_override = build_direct_execution_hash(
         &request.target_protocol,
@@ -665,8 +679,17 @@ async fn validate(
     )?;
     let action_kind = action_kind_for_protocol(&request.target_protocol);
 
-    let result = state
+    let min_validators = required_validator_signatures(
+        &state.vault_address,
+        state.rpc_url.as_deref(),
+        state.paper_trade,
+    )
+    .await?;
+    let validator_client = state
         .validator_client
+        .clone()
+        .with_min_validators(min_validators);
+    let result = validator_client
         .validate_with_context(
             &parsed.intent,
             &state.vault_address,
@@ -729,7 +752,7 @@ async fn build_execution_context(
         token_out: token_out_addr,
         amount,
         min_output: min_out,
-        extra: metadata.clone(),
+        extra: metadata_with_execution_deadline(metadata, deadline),
         vault_address: vault_addr,
     };
 
@@ -793,7 +816,7 @@ async fn build_execution_context(
     drop(adapter);
 
     let simulation_result = match rpc_url {
-        Some(rpc) => {
+        Some(rpc) if encoded.approvals.is_empty() => {
             let mut simulation_tokens = vec![token_in_addr, token_out_addr, encoded.output_token];
             for approval in &encoded.approvals {
                 simulation_tokens.push(approval.token);
@@ -818,6 +841,14 @@ async fn build_execution_context(
                 &known_addresses,
             )
             .await
+        }
+        Some(_) => {
+            tracing::info!(
+                protocol,
+                approvals = encoded.approvals.len(),
+                "Skipping raw pre-validation simulation for atomically approved vault execution"
+            );
+            None
         }
         None => None,
     };
@@ -858,6 +889,21 @@ fn parse_b256(hash: &str) -> Option<alloy::primitives::B256> {
         return None;
     }
     Some(alloy::primitives::B256::from_slice(&bytes))
+}
+
+fn metadata_with_execution_deadline(
+    metadata: &serde_json::Value,
+    deadline: u64,
+) -> serde_json::Value {
+    let mut extra = metadata.clone();
+    match extra {
+        serde_json::Value::Object(ref mut map) => {
+            map.entry("execution_deadline".to_string())
+                .or_insert_with(|| serde_json::json!(deadline));
+            extra
+        }
+        _ => serde_json::json!({ "execution_deadline": deadline }),
+    }
 }
 
 /// Run a transaction simulation and return a SimulationSummary.
@@ -1057,7 +1103,11 @@ async fn validate_multi_bot(
             "Could not build execution context for validator signing".to_string(),
         ));
     }
-    let require_simulation = requires_production_simulation(&req.target_protocol, bot.paper_trade);
+    let require_simulation = requires_prevalidation_simulation(
+        &req.target_protocol,
+        bot.paper_trade,
+        execution_context.as_ref(),
+    );
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
     let execution_hash_override = build_direct_execution_hash(
         &req.target_protocol,
@@ -1068,8 +1118,13 @@ async fn validate_multi_bot(
     )?;
     let action_kind = action_kind_for_protocol(&req.target_protocol);
 
-    // Real validation: fan out to validator endpoints
-    let client = ValidatorClient::new(validator_endpoints, state.min_validator_score);
+    // Real validation: fan out to validator endpoints. Match the off-chain
+    // quorum to the vault's on-chain TradeValidator requirement.
+    let min_validators =
+        required_validator_signatures(&bot.vault_address, Some(&bot.rpc_url), bot.paper_trade)
+            .await?;
+    let client = ValidatorClient::new(validator_endpoints, state.min_validator_score)
+        .with_min_validators(min_validators);
     let result = client
         .validate_with_context(
             &parsed.intent,
@@ -1088,6 +1143,89 @@ async fn validate_multi_bot(
         parsed.deadline,
         bot.paper_trade,
     )))
+}
+
+async fn required_validator_signatures(
+    vault_address: &str,
+    rpc_url: Option<&str>,
+    paper_trade: bool,
+) -> Result<usize, (StatusCode, String)> {
+    if paper_trade {
+        return Ok(1);
+    }
+
+    let Some(rpc_url) = rpc_url else {
+        return Ok(1);
+    };
+
+    let vault: Address = vault_address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault address '{vault_address}': {e}"),
+        )
+    })?;
+    let provider = ProviderBuilder::new().connect_http(rpc_url.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid RPC URL '{rpc_url}': {e}"),
+        )
+    })?);
+
+    let validator_addr = eth_call_address(
+        &provider,
+        vault,
+        ITradingVault::tradeValidatorCall {}.abi_encode(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read vault TradeValidator: {e}"),
+        )
+    })?;
+    if validator_addr == Address::ZERO {
+        return Ok(1);
+    }
+
+    let required = eth_call_u256(
+        &provider,
+        validator_addr,
+        ITradeValidator::getRequiredSignaturesCall { vault }.abi_encode(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read validator quorum: {e}"),
+        )
+    })?;
+
+    Ok(required.to::<usize>().max(1))
+}
+
+async fn eth_call_address(
+    provider: &impl Provider,
+    to: Address,
+    data: Vec<u8>,
+) -> Result<Address, String> {
+    let result = eth_call(provider, to, data).await?;
+    Address::abi_decode(&result).map_err(|e| format!("ABI decode address failed: {e}"))
+}
+
+async fn eth_call_u256(
+    provider: &impl Provider,
+    to: Address,
+    data: Vec<u8>,
+) -> Result<U256, String> {
+    let result = eth_call(provider, to, data).await?;
+    U256::abi_decode(&result).map_err(|e| format!("ABI decode uint256 failed: {e}"))
+}
+
+async fn eth_call(provider: &impl Provider, to: Address, data: Vec<u8>) -> Result<Bytes, String> {
+    let tx = TransactionRequest::default()
+        .to(to)
+        .input(Bytes::from(data).into());
+    provider.call(tx).await.map_err(|e| format!("{e}"))
 }
 
 fn validate_chain_tokens(
@@ -1274,6 +1412,41 @@ mod tests {
         assert!(requires_production_simulation("aave_v3", false));
         assert!(!requires_production_simulation("uniswap_v3", true));
         assert!(!requires_production_simulation("hyperliquid", false));
+    }
+
+    #[test]
+    fn test_atomic_vault_approvals_do_not_require_raw_prevalidation_simulation() {
+        let ctx = ExecutionContext {
+            execution_hash: zero_hash(),
+            chain_id: 31337,
+            target: ZERO_ADDRESS.into(),
+            calldata: "0x".into(),
+            calldata_decoded: "noop()".into(),
+            value: "0".into(),
+            min_output: "0".into(),
+            output_token: ZERO_ADDRESS.into(),
+            postcondition_kind: "output_increase".into(),
+            input_token: String::new(),
+            max_input: String::new(),
+            debt_token: String::new(),
+            min_debt_decrease: String::new(),
+            health_pool: String::new(),
+            health_account: String::new(),
+            min_health_factor: String::new(),
+            approvals: vec![ExecutionApproval {
+                token: ZERO_ADDRESS.into(),
+                spender: "0x0000000000000000000000000000000000000001".into(),
+                amount: "100".into(),
+            }],
+            simulation_result: None,
+        };
+
+        assert!(!requires_prevalidation_simulation(
+            "uniswap_v3",
+            false,
+            Some(&ctx)
+        ));
+        assert!(requires_prevalidation_simulation("uniswap_v3", false, None));
     }
 
     #[test]

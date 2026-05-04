@@ -676,7 +676,10 @@ fn expected_validation_hashes(
         token_out,
         amount: decimal_to_u256_for_hash(&intent.amount_in)?,
         min_output: decimal_to_u256_for_hash(&intent.min_amount_out)?,
-        extra: intent.metadata.clone(),
+        extra: metadata_with_execution_deadline(
+            &intent.metadata,
+            intent.deadline.timestamp().max(0) as u64,
+        ),
         vault_address,
     };
     let encoded = adapter
@@ -734,6 +737,21 @@ fn ensure_validation_hash_binding(
     }
 
     Ok(expected_intent_hash)
+}
+
+fn metadata_with_execution_deadline(
+    metadata: &serde_json::Value,
+    deadline: u64,
+) -> serde_json::Value {
+    let mut extra = metadata.clone();
+    match extra {
+        serde_json::Value::Object(ref mut map) => {
+            map.entry("execution_deadline".to_string())
+                .or_insert_with(|| serde_json::json!(deadline));
+            extra
+        }
+        _ => serde_json::json!({ "execution_deadline": deadline }),
+    }
 }
 
 #[derive(Clone, Debug)]
