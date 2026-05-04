@@ -11,14 +11,18 @@ use axum::http::StatusCode;
 use http_body_util::BodyExt;
 use hyper::Request;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use alloy::primitives::{Address, U256};
+use alloy::sol_types::{SolCall, SolValue};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
+use trading_runtime::contracts::{ITradeValidator, ITradingVault};
 use trading_runtime::execution_hash::{
-    ACTION_KIND_CLOB_ORDER, format_b256, hash_clob_order, hash_hyperliquid_order,
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, format_b256, hash_clob_order,
+    hash_hyperliquid_order,
 };
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::signed_envelope::SignedTradingEnvelope;
@@ -383,6 +387,44 @@ fn attach_signed_validation(
             }
         ]),
     );
+}
+
+fn rpc_result_hex(encoded: Vec<u8>) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": format!("0x{}", hex::encode(encoded)),
+    })
+}
+
+async fn mock_direct_validator_approval(rpc_mock: &MockServer, approved: bool) {
+    let validator: Address = TEST_VERIFYING_CONTRACT.parse().expect("validator address");
+    let trade_validator_selector = format!(
+        "0x{}",
+        hex::encode(ITradingVault::tradeValidatorCall::SELECTOR)
+    );
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains(trade_validator_selector))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(rpc_result_hex(validator.abi_encode())),
+        )
+        .mount(rpc_mock)
+        .await;
+
+    let validate_selector = format!(
+        "0x{}",
+        hex::encode(ITradeValidator::validateWithSignaturesCall::SELECTOR)
+    );
+    let valid_count = if approved { 1 } else { 0 };
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains(validate_selector))
+        .respond_with(ResponseTemplate::new(200).set_body_json(rpc_result_hex(
+            (approved, U256::from(valid_count)).abi_encode(),
+        )))
+        .mount(rpc_mock)
+        .await;
 }
 
 fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
@@ -1686,6 +1728,44 @@ async fn test_live_direct_hyperliquid_order_route_rejects() {
         .unwrap();
 
     assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+
+    let bot_id = format!("bot-hl-denied-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let state = multi_bot_state_for_bot("bot-token-hl-denied", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-denied")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
 }
 
 #[tokio::test]
@@ -3851,6 +3931,9 @@ async fn test_multi_bot_clob_execute() {
 
     // Mock CLOB server: order endpoint only (credentials pre-supplied, caches pre-populated)
     let clob_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+    let rpc_mock_uri = rpc_mock.uri();
 
     Mock::given(method("POST"))
         .and(path("/order"))
@@ -3899,14 +3982,14 @@ async fn test_multi_bot_clob_execute() {
         market_data_base_url: "http://localhost:1234".to_string(),
         validation_deadline_secs: 300,
         min_validator_score: 50,
-        resolve_bot: Box::new(|token: &str| {
+        resolve_bot: Box::new(move |token: &str| {
             if token == "bot-token-abc" {
                 Some(BotContext {
                     bot_id: "bot-clob".to_string(),
                     vault_address: "0x0000000000000000000000000000000000000001".to_string(),
                     paper_trade: false,
                     chain_id: 137,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: rpc_mock_uri.clone(),
                     strategy_config: serde_json::json!({}),
                     risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
@@ -3985,10 +4068,36 @@ async fn test_multi_bot_clob_execute() {
     assert!(json["block_number"].is_null());
 }
 
-/// Execute with polymarket_clob but no ClobClient configured → 503.
 #[tokio::test]
-async fn test_multi_bot_clob_execute_not_configured() {
+async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
     ensure_state_dir();
+
+    let clob_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+    let rpc_mock_uri = rpc_mock.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/order"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "orderID": "should-not-submit",
+            "status": "LIVE",
+            "success": true
+        })))
+        .expect(0)
+        .mount(&clob_mock)
+        .await;
+
+    let clob_client = trading_runtime::polymarket_clob::ClobClient::with_config(
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        clob_mock.uri(),
+        Some(trading_runtime::polymarket_clob::ClobClient::test_credentials()),
+    )
+    .expect("clob client");
+    clob_client
+        .configure_token_cache("48328953829", "0.01", false, 0)
+        .await
+        .unwrap();
 
     let state = Arc::new(MultiBotTradingState {
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -3996,14 +4105,99 @@ async fn test_multi_bot_clob_execute_not_configured() {
         market_data_base_url: "http://localhost:1234".to_string(),
         validation_deadline_secs: 300,
         min_validator_score: 50,
-        resolve_bot: Box::new(|token: &str| {
+        resolve_bot: Box::new(move |token: &str| {
+            if token == "bot-token-denied" {
+                Some(BotContext {
+                    bot_id: "bot-clob-denied".to_string(),
+                    vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    paper_trade: false,
+                    chain_id: 137,
+                    rpc_url: rpc_mock_uri.clone(),
+                    strategy_config: serde_json::json!({}),
+                    risk_params: serde_json::json!({}),
+                    validator_endpoints: vec![],
+                    validation_trust: trading_runtime::ValidationTrust::PerTrade,
+                })
+            } else {
+                None
+            }
+        }),
+        clob_client: Some(Arc::new(clob_client)),
+        chain_client: None,
+        chain_client_rpc_url: None,
+        chain_client_chain_id: None,
+    });
+    let app = build_multi_bot_router(state);
+
+    let mut execute_body = serde_json::json!({
+        "intent": {
+            "strategy_id": "prediction-strat-denied",
+            "action": "buy",
+            "token_in": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+            "token_out": "0x0000000000000000000000000000000000000000",
+            "amount_in": "100.0",
+            "min_amount_out": "0",
+            "target_protocol": "polymarket_clob",
+            "metadata": {
+                "token_id": "48328953829",
+                "price": 0.65,
+                "order_type": "GTC"
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 75,
+            "validator_responses": []
+        }
+    });
+    attach_signed_validation(
+        &mut execute_body,
+        137,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_CLOB_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-denied")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+}
+
+/// Execute with polymarket_clob but no ClobClient configured → 503.
+#[tokio::test]
+async fn test_multi_bot_clob_execute_not_configured() {
+    ensure_state_dir();
+
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+    let rpc_mock_uri = rpc_mock.uri();
+
+    let state = Arc::new(MultiBotTradingState {
+        operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .to_string(),
+        market_data_base_url: "http://localhost:1234".to_string(),
+        validation_deadline_secs: 300,
+        min_validator_score: 50,
+        resolve_bot: Box::new(move |token: &str| {
             if token == "bot-token-abc" {
                 Some(BotContext {
                     bot_id: "bot-no-clob".to_string(),
                     vault_address: "0x0000000000000000000000000000000000000001".to_string(),
                     paper_trade: false,
                     chain_id: 137,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: rpc_mock_uri.clone(),
                     strategy_config: serde_json::json!({}),
                     risk_params: serde_json::json!({}),
                     validator_endpoints: vec![],
