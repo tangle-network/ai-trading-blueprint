@@ -45,6 +45,28 @@ function apiCall(config, method, path, body) {
   });
 }
 
+function isVaultSpotPosition(position) {
+  const protocol = String(position.protocol || '').trim().toLowerCase();
+  const positionType = String(position.position_type || '').trim().toLowerCase();
+  const amount = Number(position.amount || 0);
+  return protocol === 'vault' && positionType === 'spot' && amount > 0;
+}
+
+function annotatePosition(position) {
+  const tokenSymbol = api.knownTokenSymbol(position.token);
+  const vaultSpot = isVaultSpotPosition(position);
+  return {
+    ...position,
+    token_symbol: tokenSymbol,
+    token_display: tokenSymbol ? `${tokenSymbol} (${position.token})` : position.token,
+    ...(vaultSpot ? {
+      available_for_vault_swap: true,
+      execution_protocol: 'uniswap_v3',
+      custody_note: 'protocol=vault means vault-held spot custody, not a locked protocol position',
+    } : {}),
+  };
+}
+
 async function main() {
   const config = loadConfig();
 
@@ -69,19 +91,24 @@ async function main() {
   try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
 
   // Compact output
-  const positions = ((portfolio && portfolio.positions) || []).map((position) => {
-    const tokenSymbol = api.knownTokenSymbol(position.token);
-    return {
-      ...position,
-      token_symbol: tokenSymbol,
-      token_display: tokenSymbol ? `${tokenSymbol} (${position.token})` : position.token,
-    };
-  });
+  const positions = ((portfolio && portfolio.positions) || []).map(annotatePosition);
+  const vaultSpotBalances = positions
+    .filter((position) => position.available_for_vault_swap)
+    .map((position) => ({
+      token: position.token,
+      token_symbol: position.token_symbol,
+      amount: position.amount,
+      execution_protocol: position.execution_protocol,
+    }));
 
   const output = {
     portfolio: portfolio
       ? { ...portfolio, positions }
       : { positions: [], note: 'No portfolio data from API (paper trade mode)' },
+    vault_trading_note: vaultSpotBalances.length > 0
+      ? 'Vault spot balances are available to the bot as token_in for vault-backed swaps; use target_protocol=uniswap_v3 and the Trading API validation/execution flow.'
+      : undefined,
+    vault_spot_balances: vaultSpotBalances,
     recent_trades: recentDecisions.map(d => ({
       action: d.action,
       condition_id: d.condition_id || d.trade?.condition_id,

@@ -54,6 +54,7 @@ pub fn build_pack_loop_prompt(
                 format!(
                     "Trading tick ({name}). Run these steps:\n\n\
                      1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
+                        If a spot position has `protocol:\"vault\"`, that means the token is held in the trading vault and can be used as `token_in` for vault-backed swaps. It is not locked; do not skip only because the protocol field is `vault`.\n\
                      2. Fetch current WETH/USDC pricing and market context using the Trading API client:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                         Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
@@ -278,9 +279,10 @@ Updated: 2026-04-19T19:00Z | Iteration: 58
 pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
     format!(
         "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
-         1. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
-         2. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         3. If actionable setup exists → build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
+         1. Run `node /home/agent/tools/get-portfolio.js`. A spot position with `protocol:\"vault\"` is a vault-held balance available for vault-backed swaps, not a locked protocol position.\n\
+         2. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
+         3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
+         4. If actionable setup exists → choose `token_in` from an available spot balance, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
          Record the candle and log your decision. Report: price, action, reason (one line)."
     )
 }
@@ -628,8 +630,30 @@ mod tests {
             "dex loop prompt must describe swap amounts as raw base units"
         );
         assert!(
+            prompt.contains("protocol:\"vault\"") && prompt.contains("not locked"),
+            "dex loop prompt must clarify that vault spot balances are tradeable custody"
+        );
+        assert!(
             prompt.contains("2000000000"),
             "dex loop prompt must give a concrete USDC base-unit example"
+        );
+    }
+
+    #[test]
+    fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
+        let prompt = build_fast_tick_prompt("dex");
+
+        assert!(
+            prompt.contains("get-portfolio.js"),
+            "fast tick must inspect portfolio before deciding"
+        );
+        assert!(
+            prompt.contains("protocol:\"vault\"") && prompt.contains("not a locked protocol"),
+            "fast tick must not treat vault custody as an unswappable lock"
+        );
+        assert!(
+            prompt.contains("choose `token_in` from an available spot balance"),
+            "fast tick must size swaps from actual spot inventory"
         );
     }
 
