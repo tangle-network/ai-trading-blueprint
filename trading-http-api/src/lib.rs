@@ -68,6 +68,7 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .merge(routes::candles::router())
         .merge(routes::evolution::router())
         .merge(routes::session::router())
+        .merge(routes::supported_assets::router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -530,6 +531,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())
+        .merge(routes::supported_assets::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use trading_runtime::aave_v3_registry::market_for_chain;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::calldata_decoder;
-use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::contracts::{IAssetValuator, ITradeValidator, ITradingVault};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
@@ -21,6 +21,9 @@ use trading_runtime::executor::get_adapter;
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::polymarket_clob;
+use trading_runtime::supported_assets::{
+    TradeAssetRole, is_supported_trade_asset, normalize_strategy_type,
+};
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
 use trading_runtime::validator_client::ValidatorClient;
@@ -164,6 +167,22 @@ fn zero_hash() -> String {
 
 fn uses_direct_non_vault_execution(protocol: &str) -> bool {
     matches!(protocol, "polymarket_clob" | "hyperliquid")
+}
+
+fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {
+    match protocol {
+        "uniswap_v3" | "aerodrome" => Some("dex"),
+        "aave_v3" => Some("yield"),
+        "polymarket_clob" => Some("prediction"),
+        "hyperliquid" => Some("perp"),
+        _ => None,
+    }
+}
+
+pub(crate) fn strategy_type_from_config(strategy_config: &serde_json::Value) -> Option<&str> {
+    strategy_config
+        .get("strategy_type")
+        .and_then(serde_json::Value::as_str)
 }
 
 fn action_kind_for_protocol(protocol: &str) -> u64 {
@@ -597,6 +616,17 @@ async fn validate(
         &request.token_out,
     );
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
+    validate_supported_trade_assets(
+        None,
+        protocol_chain_id,
+        &request.target_protocol,
+        &token_in,
+        &token_out,
+        Some(&state.vault_address),
+        state.rpc_url.as_deref(),
+        !state.paper_trade && requires_execution_context(&request.target_protocol),
+    )
+    .await?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
         protocol_chain_id.unwrap_or(parsed.intent.chain_id),
@@ -1036,6 +1066,17 @@ async fn validate_multi_bot(
         &req.token_out,
     );
     validate_chain_tokens(Some(protocol_chain_id), &token_in, &token_out)?;
+    validate_supported_trade_assets(
+        strategy_type_from_config(&bot.strategy_config),
+        Some(protocol_chain_id),
+        &req.target_protocol,
+        &token_in,
+        &token_out,
+        Some(&bot.vault_address),
+        Some(&bot.rpc_url),
+        !bot.paper_trade && requires_execution_context(&req.target_protocol),
+    )
+    .await?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
         protocol_chain_id,
@@ -1253,6 +1294,163 @@ fn validate_chain_tokens(
     Ok(())
 }
 
+pub(crate) async fn validate_supported_trade_assets(
+    strategy_type: Option<&str>,
+    chain_id: Option<u64>,
+    protocol: &str,
+    token_in: &str,
+    token_out: &str,
+    vault_address: Option<&str>,
+    rpc_url: Option<&str>,
+    require_vault_valuation: bool,
+) -> Result<(), (StatusCode, String)> {
+    if uses_direct_non_vault_execution(protocol) {
+        return Ok(());
+    }
+    let Some(chain_id) = chain_id else {
+        return Ok(());
+    };
+    let Some(strategy_type) = strategy_type.or_else(|| strategy_type_for_protocol(protocol)) else {
+        return Ok(());
+    };
+
+    let input_asset = require_supported_asset(
+        strategy_type,
+        chain_id,
+        protocol,
+        token_in,
+        TradeAssetRole::Input,
+    )?;
+    let output_asset = require_supported_asset(
+        strategy_type,
+        chain_id,
+        protocol,
+        token_out,
+        TradeAssetRole::Output,
+    )?;
+
+    if !require_vault_valuation {
+        return Ok(());
+    }
+    let (Some(vault_address), Some(rpc_url)) = (vault_address, rpc_url) else {
+        return Ok(());
+    };
+
+    ensure_vault_valuation_adapter(rpc_url, vault_address, &input_asset).await?;
+    ensure_vault_valuation_adapter(rpc_url, vault_address, &output_asset).await?;
+    Ok(())
+}
+
+fn require_supported_asset(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    token: &str,
+    role: TradeAssetRole,
+) -> Result<trading_runtime::supported_assets::SupportedAsset, (StatusCode, String)> {
+    is_supported_trade_asset(strategy_type, chain_id, protocol, token, role).ok_or_else(|| {
+        let strategy = normalize_strategy_type(strategy_type).to_ascii_uppercase();
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Token {token} is not supported for {strategy} bots on chain {chain_id}"),
+        )
+    })
+}
+
+async fn ensure_vault_valuation_adapter(
+    rpc_url: &str,
+    vault_address: &str,
+    asset: &trading_runtime::supported_assets::SupportedAsset,
+) -> Result<(), (StatusCode, String)> {
+    let provider = ProviderBuilder::new().connect_http(rpc_url.parse().map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Invalid RPC URL for vault valuation check: {e}"),
+        )
+    })?);
+    let vault: Address = vault_address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault address for valuation check: {e}"),
+        )
+    })?;
+    let token: Address = asset.address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid supported token address for {}: {e}", asset.symbol),
+        )
+    })?;
+    let deposit_asset =
+        eth_call_address(&provider, vault, ITradingVault::assetCall {}.abi_encode())
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Vault asset lookup failed for valuation check: {e}"),
+                )
+            })?;
+    if token == deposit_asset {
+        return Ok(());
+    }
+
+    let adapter = eth_call_address(
+        &provider,
+        vault,
+        ITradingVault::valuationAdaptersCall { token }.abi_encode(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Vault valuation adapter lookup failed: {e}"),
+        )
+    })?;
+    if adapter == Address::ZERO {
+        return Err((
+            StatusCode::FAILED_DEPENDENCY,
+            format!(
+                "{} is supported but missing vault valuation adapter",
+                asset.symbol
+            ),
+        ));
+    }
+
+    let supported_result = eth_call(
+        &provider,
+        adapter,
+        IAssetValuator::isSupportedCall {
+            token,
+            asset: deposit_asset,
+        }
+        .abi_encode(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Vault valuation adapter support check failed: {e}"),
+        )
+    })?;
+    let supported = IAssetValuator::isSupportedCall::abi_decode_returns(&supported_result)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Vault valuation adapter support decode failed: {e}"),
+            )
+        })?;
+    if !supported {
+        return Err((
+            StatusCode::FAILED_DEPENDENCY,
+            format!(
+                "{} is supported but vault valuation adapter cannot value it against the vault deposit asset",
+                asset.symbol
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1268,6 +1466,41 @@ mod tests {
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("Ethereum mainnet"));
         assert!(err.1.contains("Base Sepolia"));
+    }
+
+    #[tokio::test]
+    async fn supported_asset_check_allows_weth_usdc_dex() {
+        validate_supported_trade_assets(
+            Some("dex"),
+            Some(31339),
+            "uniswap_v3",
+            MAINNET_WETH_ADDRESS,
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            None,
+            None,
+            false,
+        )
+        .await
+        .expect("WETH/USDC should be supported");
+    }
+
+    #[tokio::test]
+    async fn supported_asset_check_rejects_unknown_dex_token() {
+        let err = validate_supported_trade_assets(
+            Some("dex"),
+            Some(31339),
+            "uniswap_v3",
+            MAINNET_WETH_ADDRESS,
+            "0x000000000000000000000000000000000000dEaD",
+            None,
+            None,
+            false,
+        )
+        .await
+        .expect_err("unknown token should fail");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("not supported for DEX bots on chain 31339"));
     }
 
     #[test]

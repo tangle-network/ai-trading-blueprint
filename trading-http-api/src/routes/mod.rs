@@ -13,5 +13,6 @@ pub mod metrics;
 pub mod portfolio;
 pub mod session;
 pub mod strategy;
+pub mod supported_assets;
 pub mod trades;
 pub mod validate;

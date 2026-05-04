@@ -20,6 +20,7 @@ use crate::simulator::{
     SimulationRequest, TransactionSimulator,
     risk_analyzer::{TradeContext, analyze_simulation},
 };
+use crate::supported_assets::{TradeAssetRole, is_supported_trade_asset};
 use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
@@ -155,6 +156,8 @@ impl TradeExecutor {
                     protocol: intent.target_protocol.clone(),
                     message: format!("Invalid token_out address: {e}"),
                 })?;
+
+        validate_supported_execution_tokens(intent)?;
 
         // Convert Decimal amounts to U256 (treating as raw token units)
         let amount = decimal_to_u256(&intent.amount_in)?;
@@ -331,6 +334,46 @@ impl TradeExecutor {
             output_token,
             output_gained,
         })
+    }
+}
+
+fn validate_supported_execution_tokens(intent: &TradeIntent) -> Result<(), TradingError> {
+    let Some(strategy_type) = strategy_type_for_protocol(&intent.target_protocol) else {
+        return Ok(());
+    };
+    for (token, role) in [
+        (&intent.token_in, TradeAssetRole::Input),
+        (&intent.token_out, TradeAssetRole::Output),
+    ] {
+        if is_supported_trade_asset(
+            strategy_type,
+            intent.chain_id,
+            &intent.target_protocol,
+            token,
+            role,
+        )
+        .is_none()
+        {
+            return Err(TradingError::AdapterError {
+                protocol: intent.target_protocol.clone(),
+                message: format!(
+                    "Token {token} is not supported for {} bots on chain {}",
+                    strategy_type.to_ascii_uppercase(),
+                    intent.chain_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {
+    match protocol {
+        "uniswap_v3" | "aerodrome" => Some("dex"),
+        "aave_v3" => Some("yield"),
+        "polymarket_clob" => Some("prediction"),
+        "hyperliquid" => Some("perp"),
+        _ => None,
     }
 }
 
