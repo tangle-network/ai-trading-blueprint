@@ -5,6 +5,10 @@ use crate::trade_store::{
     TradeExecutionStatus, TradeRecord,
 };
 use crate::{MultiBotTradingState, TradingApiState};
+use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol_types::{SolCall, SolValue};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
@@ -17,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::adapters::ActionParams;
+use trading_runtime::contracts::{ITradeValidator, ITradingVault};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
@@ -369,6 +374,165 @@ fn verify_signatures_offchain(
     })?;
 
     Ok(())
+}
+
+async fn verify_direct_exchange_validator_approval(
+    validation: &ValidationPayload,
+    vault_address: &str,
+    rpc_url: Option<&str>,
+    action_kind: u64,
+    min_aggregate_score: Option<u32>,
+) -> Result<(), (StatusCode, String)> {
+    verify_signatures_offchain(validation, vault_address, action_kind, min_aggregate_score)?;
+
+    let rpc_url = rpc_url.ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Live direct exchange execution requires rpc_url for on-chain validator approval"
+                .to_string(),
+        )
+    })?;
+    let vault: Address = vault_address.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid vault address '{vault_address}': {e}"),
+        )
+    })?;
+    let intent_hash = parse_b256_hex(&validation.intent_hash, "intent_hash")?;
+    let execution_hash = parse_b256_hex(&validation.execution_hash, "execution_hash")?;
+    let deadline = validation.deadline.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Validation deadline is required for on-chain validator approval".to_string(),
+        )
+    })?;
+    let signatures = validation_signatures(validation)?;
+    let scores = validation_scores(validation);
+
+    let provider = ProviderBuilder::new().connect_http(rpc_url.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid RPC URL '{rpc_url}': {e}"),
+        )
+    })?);
+
+    let validator_addr = eth_call_address(
+        &provider,
+        vault,
+        ITradingVault::tradeValidatorCall {}.abi_encode(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read vault TradeValidator: {e}"),
+        )
+    })?;
+    if validator_addr == Address::ZERO {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "Vault TradeValidator is not configured".to_string(),
+        ));
+    }
+
+    let call = ITradeValidator::validateWithSignaturesCall {
+        intentHash: intent_hash,
+        executionHash: execution_hash,
+        vault,
+        signatures,
+        scores,
+        deadline: U256::from(deadline),
+        actionKind: U256::from(action_kind),
+    };
+    let result = eth_call(&provider, validator_addr, call.abi_encode())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to validate direct exchange signatures on-chain: {e}"),
+            )
+        })?;
+    let (approved, valid_count) = <(bool, U256)>::abi_decode(&result).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("ABI decode validator approval failed: {e}"),
+        )
+    })?;
+    if !approved {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            format!(
+                "On-chain validator approval rejected direct exchange signatures: valid_count={valid_count}"
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validation_signatures(
+    validation: &ValidationPayload,
+) -> Result<Vec<Bytes>, (StatusCode, String)> {
+    validation
+        .validator_responses
+        .iter()
+        .map(|response| {
+            let signature = response
+                .signature
+                .strip_prefix("0x")
+                .unwrap_or(&response.signature);
+            let bytes = hex::decode(signature).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid signature hex from {}: {e}", response.validator),
+                )
+            })?;
+            if bytes.len() != 65 {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Signature from {} must be 65 bytes, got {}",
+                        response.validator,
+                        bytes.len()
+                    ),
+                ));
+            }
+            Ok(Bytes::from(bytes))
+        })
+        .collect()
+}
+
+fn validation_scores(validation: &ValidationPayload) -> Vec<U256> {
+    validation
+        .validator_responses
+        .iter()
+        .map(|response| U256::from(response.score))
+        .collect()
+}
+
+fn parse_b256_hex(value: &str, field: &str) -> Result<B256, (StatusCode, String)> {
+    value.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid {field} '{value}': {e}"),
+        )
+    })
+}
+
+async fn eth_call_address(
+    provider: &impl Provider,
+    to: Address,
+    data: Vec<u8>,
+) -> Result<Address, String> {
+    let result = eth_call(provider, to, data).await?;
+    Address::abi_decode(&result).map_err(|e| format!("ABI decode address failed: {e}"))
+}
+
+async fn eth_call(provider: &impl Provider, to: Address, data: Vec<u8>) -> Result<Bytes, String> {
+    let tx = TransactionRequest::default()
+        .to(to)
+        .input(Bytes::from(data).into());
+    provider.call(tx).await.map_err(|e| format!("{e}"))
 }
 
 fn ensure_validation_score_binding(
@@ -2063,12 +2227,23 @@ async fn execute(
     // Off-chain signature verification prevents fabricated validator signatures
     // from reaching direct exchange paths and fails early before vault execution.
     if !state.paper_trade {
-        verify_signatures_offchain(
-            &request.validation,
-            &state.vault_address,
-            action_kind,
-            Some(state.min_validator_score),
-        )?;
+        if uses_direct_non_vault_execution(&normalized_request.intent.target_protocol) {
+            verify_direct_exchange_validator_approval(
+                &request.validation,
+                &state.vault_address,
+                state.rpc_url.as_deref(),
+                action_kind,
+                Some(state.min_validator_score),
+            )
+            .await?;
+        } else {
+            verify_signatures_offchain(
+                &request.validation,
+                &state.vault_address,
+                action_kind,
+                Some(state.min_validator_score),
+            )?;
+        }
     }
 
     if check_and_insert_intent(&canonical_intent_hash) {
@@ -2274,12 +2449,23 @@ async fn execute_multi_bot(
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
-                verify_signatures_offchain(
-                    &req.validation,
-                    &bot.vault_address,
-                    action_kind,
-                    Some(state.min_validator_score),
-                )?;
+                if uses_direct_non_vault_execution(&normalized_req.intent.target_protocol) {
+                    verify_direct_exchange_validator_approval(
+                        &req.validation,
+                        &bot.vault_address,
+                        Some(&bot.rpc_url),
+                        action_kind,
+                        Some(state.min_validator_score),
+                    )
+                    .await?;
+                } else {
+                    verify_signatures_offchain(
+                        &req.validation,
+                        &bot.vault_address,
+                        action_kind,
+                        Some(state.min_validator_score),
+                    )?;
+                }
             }
             ValidationTrust::Envelope => {
                 if normalized_req.intent.target_protocol != "hyperliquid" {
