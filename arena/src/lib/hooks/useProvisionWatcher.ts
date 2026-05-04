@@ -74,6 +74,21 @@ function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
   return false;
 }
 
+function logMatchesProvisionBlock(
+  provision: TrackedProvision,
+  log: { blockNumber?: bigint | null },
+): boolean {
+  if (!provision.submittedBlockNumber) return true;
+  if (log.blockNumber == null) return true;
+  return log.blockNumber >= BigInt(provision.submittedBlockNumber);
+}
+
+function provisionResultPhase(provision: TrackedProvision | undefined): 'awaiting_secrets' | 'active' {
+  // Provision is a two-phase flow. The on-chain result means infrastructure is
+  // ready; only the secrets endpoint/operator bot lifecycle can prove activation.
+  return provision?.phase === 'active' ? 'active' : 'awaiting_secrets';
+}
+
 /**
  * Global provision watcher. Mount once near the app root.
  *
@@ -146,6 +161,7 @@ export function useProvisionWatcher() {
             updateProvision(prov.id, {
               phase: 'job_submitted',
               callId,
+              submittedBlockNumber: receipt.blockNumber.toString(),
               ...(serviceId != null ? { serviceId } : {}),
             });
           })
@@ -161,6 +177,26 @@ export function useProvisionWatcher() {
       }
 
       // ── Stage 2: Contract event watchers ──
+      for (const prov of provisions) {
+        if (!['job_submitted', 'job_processing'].includes(prov.phase)) continue;
+        if (!prov.txHash || prov.submittedBlockNumber) continue;
+        if (watchingTxs.current.has(`block:${prov.id}`)) continue;
+        watchingTxs.current.add(`block:${prov.id}`);
+        publicClient
+          .getTransactionReceipt({ hash: prov.txHash })
+          .then((receipt) => {
+            updateProvision(prov.id, {
+              submittedBlockNumber: receipt.blockNumber.toString(),
+            });
+          })
+          .catch(() => {
+            // Best-effort only; polling can still complete the provision.
+          })
+          .finally(() => {
+            watchingTxs.current.delete(`block:${prov.id}`);
+          });
+      }
+
       const hasPending = provisions.some(
         (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
       );
@@ -171,6 +207,15 @@ export function useProvisionWatcher() {
         // Historical check first
         (async () => {
           try {
+            const waitingBeforeFetch = provisionsStore.get().filter(
+              (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
+            );
+            const fromBlock = waitingBeforeFetch.reduce<bigint | undefined>((min, p) => {
+              if (!p.submittedBlockNumber) return min;
+              const block = BigInt(p.submittedBlockNumber);
+              return min == null || block < min ? block : min;
+            }, undefined) ?? 0n;
+
             const logs = await publicClient.getLogs({
               address: addresses.tangle,
               event: {
@@ -183,7 +228,7 @@ export function useProvisionWatcher() {
                   { name: 'output', type: 'bytes', indexed: false },
                 ],
               },
-              fromBlock: 0n,
+              fromBlock,
             });
             if (cancelled) return;
             const waiting = provisionsStore.get().filter(
@@ -195,6 +240,7 @@ export function useProvisionWatcher() {
               const output = log.args.output;
               if (sid == null || cid == null) continue;
               for (const prov of waiting) {
+                if (!logMatchesProvisionBlock(prov, log)) continue;
                 if (prov.callId !== Number(cid)) continue;
                 if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
                 applyResultToProvision(prov.id, output, Number(sid), Number(cid));
@@ -209,7 +255,7 @@ export function useProvisionWatcher() {
           address: addresses.tangle,
           abi: tangleJobsAbi,
           eventName: 'JobResultSubmitted',
-          onLogs(logs: Array<{ args: { serviceId?: bigint; callId?: bigint; output?: `0x${string}` } }>) {
+          onLogs(logs: Array<{ blockNumber?: bigint | null; args: { serviceId?: bigint; callId?: bigint; output?: `0x${string}` } }>) {
             const waiting = provisionsStore.get().filter(
               (p: TrackedProvision) => p.phase === 'job_submitted' || p.phase === 'job_processing',
             );
@@ -220,6 +266,7 @@ export function useProvisionWatcher() {
               const output = log.args.output;
               if (sid == null || cid == null) continue;
               for (const prov of waiting) {
+                if (!logMatchesProvisionBlock(prov, log)) continue;
                 if (prov.callId !== Number(cid)) continue;
                 if (prov.serviceId != null && prov.serviceId !== Number(sid)) continue;
                 applyResultToProvision(prov.id, output, Number(sid), Number(cid));
@@ -232,11 +279,12 @@ export function useProvisionWatcher() {
           address: addresses.tangle,
           abi: tangleJobsAbi,
           eventName: 'JobCompleted',
-          onLogs(logs: Array<{ args: { callId?: bigint } }>) {
+          onLogs(logs: Array<{ blockNumber?: bigint | null; args: { callId?: bigint } }>) {
             for (const log of logs) {
               const cid = log.args.callId;
               if (cid == null) continue;
               for (const prov of provisionsStore.get()) {
+                if (!logMatchesProvisionBlock(prov, log)) continue;
                 if (prov.callId !== Number(cid)) continue;
                 if (prov.phase === 'job_submitted') {
                   updateProvision(prov.id, { phase: 'job_processing' });
@@ -451,10 +499,10 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
 
   if (vaultAddress) {
     updateProvision(provId, {
-      phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
+      phase: provisionResultPhase(prov),
       vaultAddress,
       sandboxId,
-      workflowId,
+      ...(workflowId && workflowId !== '0' ? { workflowId } : {}),
       serviceId,
     });
   } else if (resolvedCallId != null && serviceId > 0 && addresses.tradingBlueprint !== zeroAddress) {
@@ -467,10 +515,10 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
       const vault = vaultAddr as Address;
       console.log('[provision-watcher] botVaults resolved:', vault, 'for callId=', resolvedCallId);
       updateProvision(provId, {
-        phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
+        phase: provisionResultPhase(prov),
         vaultAddress: vault !== zeroAddress ? vault : undefined,
         sandboxId,
-        workflowId,
+        ...(workflowId && workflowId !== '0' ? { workflowId } : {}),
         serviceId,
       });
     }).catch((err: unknown) => {
@@ -484,9 +532,9 @@ function applyResultToProvision(provId: string, output: `0x${string}` | undefine
   } else {
     // No BSM or no callId — update without vault
     updateProvision(provId, {
-      phase: workflowId == null || workflowId === '0' ? 'awaiting_secrets' : 'active',
+      phase: provisionResultPhase(prov),
       sandboxId,
-      ...(workflowId ? { workflowId } : {}),
+      ...(workflowId && workflowId !== '0' ? { workflowId } : {}),
       ...(serviceId > 0 ? { serviceId } : {}),
     });
   }

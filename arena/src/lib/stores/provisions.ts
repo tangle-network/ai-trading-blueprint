@@ -20,6 +20,8 @@ export interface TrackedProvision {
   operators: Address[];
   blueprintId: string;
   txHash?: `0x${string}`;
+  /** Block where the provision submit transaction was confirmed. Used to ignore stale local-dev logs. */
+  submittedBlockNumber?: string;
   serviceId?: number;
   callId?: number;
   jobIndex?: number;
@@ -64,6 +66,7 @@ export type PersistedTrackedProvision = Pick<
 > & Partial<Pick<
   TrackedProvision,
   | 'txHash'
+  | 'submittedBlockNumber'
   | 'serviceId'
   | 'callId'
   | 'jobIndex'
@@ -142,6 +145,7 @@ export function serializeProvisionForPersistence(
   };
 
   if (provision.txHash) persisted.txHash = provision.txHash;
+  if (provision.submittedBlockNumber) persisted.submittedBlockNumber = provision.submittedBlockNumber;
   if (provision.serviceId != null) persisted.serviceId = provision.serviceId;
   if (provision.callId != null) persisted.callId = provision.callId;
   if (provision.jobIndex != null) persisted.jobIndex = provision.jobIndex;
@@ -187,6 +191,9 @@ export function sanitizePersistedProvision(record: unknown): TrackedProvision | 
   };
 
   if (typeof raw.txHash === 'string' && raw.txHash.startsWith('0x')) sanitized.txHash = raw.txHash;
+  if (typeof raw.submittedBlockNumber === 'string' && /^\d+$/.test(raw.submittedBlockNumber)) {
+    sanitized.submittedBlockNumber = raw.submittedBlockNumber;
+  }
   if (typeof raw.serviceId === 'number' && Number.isFinite(raw.serviceId)) sanitized.serviceId = raw.serviceId;
   if (typeof raw.callId === 'number' && Number.isFinite(raw.callId)) sanitized.callId = raw.callId;
   if (typeof raw.jobIndex === 'number' && Number.isFinite(raw.jobIndex)) sanitized.jobIndex = raw.jobIndex;
@@ -217,6 +224,7 @@ export function getProvisionStructuralFingerprint(provisions: TrackedProvision[]
     .map((p) => [
       p.id,
       p.phase,
+      p.submittedBlockNumber ?? '',
       p.serviceId ?? '',
       p.vaultAddress ?? '',
       p.callId ?? '',

@@ -33,6 +33,7 @@ describe('provision storage helpers', () => {
     const serialized = serializeProvisionForPersistence(makeProvision({
       serviceId: 7,
       callId: 9,
+      submittedBlockNumber: '123',
       vaultAddress: '0x00000000000000000000000000000000000000aa',
       botId: 'bot-1',
       sandboxId: 'sandbox-1',
@@ -54,6 +55,7 @@ describe('provision storage helpers', () => {
       chainId: 31337,
       serviceId: 7,
       callId: 9,
+      submittedBlockNumber: '123',
       vaultAddress: '0x00000000000000000000000000000000000000aa',
       botId: 'bot-1',
       sandboxId: 'sandbox-1',
