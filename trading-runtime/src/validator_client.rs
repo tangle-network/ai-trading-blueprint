@@ -46,6 +46,14 @@ pub struct ExecutionApproval {
     pub amount: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ValidationExecutionOptions {
+    pub execution_context: Option<ExecutionContext>,
+    pub require_simulation: bool,
+    pub execution_hash_override: Option<String>,
+    pub action_kind: u64,
+}
+
 /// Simulation summary for validator communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationSummary {
@@ -162,8 +170,13 @@ impl ValidatorClient {
         vault_address: &str,
         deadline: u64,
     ) -> Result<ValidationResult, TradingError> {
-        self.validate_with_context(intent, vault_address, deadline, None, false, None, 0)
-            .await
+        self.validate_with_context(
+            intent,
+            vault_address,
+            deadline,
+            ValidationExecutionOptions::default(),
+        )
+        .await
     }
 
     /// Fan out validation request with execution context to all validator endpoints.
@@ -175,10 +188,7 @@ impl ValidatorClient {
         intent: &TradeIntent,
         vault_address: &str,
         deadline: u64,
-        execution_context: Option<ExecutionContext>,
-        require_simulation: bool,
-        execution_hash_override: Option<String>,
-        action_kind: u64,
+        options: ValidationExecutionOptions,
     ) -> Result<ValidationResult, TradingError> {
         let mut intent = intent.clone();
         if deadline > i64::MAX as u64 {
@@ -189,10 +199,11 @@ impl ValidatorClient {
         intent.deadline = chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0)
             .ok_or_else(|| TradingError::ValidatorError(format!("Invalid deadline: {deadline}")))?;
         let intent_hash = hash_intent(&intent);
-        let execution_hash = execution_context
+        let execution_hash = options
+            .execution_context
             .as_ref()
             .map(|ctx| ctx.execution_hash.clone())
-            .or(execution_hash_override)
+            .or(options.execution_hash_override)
             .unwrap_or_else(|| format!("0x{}", "00".repeat(32)));
         let request = ValidateRequest {
             intent: intent.clone(),
@@ -200,9 +211,9 @@ impl ValidatorClient {
             execution_hash: execution_hash.clone(),
             vault_address: vault_address.to_string(),
             deadline,
-            action_kind,
-            require_simulation,
-            execution_context,
+            action_kind: options.action_kind,
+            require_simulation: options.require_simulation,
+            execution_context: options.execution_context,
         };
 
         let body = serde_json::to_string(&request)

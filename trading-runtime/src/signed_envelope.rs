@@ -192,7 +192,10 @@ impl SignedTradingEnvelope {
                 "Envelope chain_id does not match authenticated bot".into(),
             ));
         }
-        if self.protocol.trim().to_ascii_lowercase() != binding.protocol.trim().to_ascii_lowercase()
+        if !self
+            .protocol
+            .trim()
+            .eq_ignore_ascii_case(binding.protocol.trim())
         {
             return Err(TradingError::ValidatorError(
                 "Envelope protocol does not match execution protocol".into(),

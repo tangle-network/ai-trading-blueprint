@@ -72,6 +72,26 @@ pub struct UniswapV3Adapter {
     router_address: Address,
 }
 
+struct ExactInputSingleArgs {
+    token_in: Address,
+    token_out: Address,
+    amount_in: U256,
+    amount_out_min: U256,
+    fee_tier: u32,
+    recipient: Address,
+    deadline: u64,
+}
+
+struct ExactOutputSingleArgs {
+    token_in: Address,
+    token_out: Address,
+    amount_out: U256,
+    amount_in_max: U256,
+    fee_tier: u32,
+    recipient: Address,
+    deadline: u64,
+}
+
 impl UniswapV3Adapter {
     pub fn new() -> Self {
         Self {
@@ -86,25 +106,16 @@ impl UniswapV3Adapter {
     }
 
     /// Encode an exactInputSingle call.
-    fn encode_exact_input_single(
-        &self,
-        token_in: Address,
-        token_out: Address,
-        amount_in: U256,
-        amount_out_min: U256,
-        fee_tier: u32,
-        recipient: Address,
-        deadline: u64,
-    ) -> Bytes {
+    fn encode_exact_input_single(&self, args: ExactInputSingleArgs) -> Bytes {
         let call = ISwapRouter::exactInputSingleCall {
             params: ISwapRouter::ExactInputSingleParams {
-                tokenIn: token_in,
-                tokenOut: token_out,
-                fee: Uint24::from(fee_tier),
-                recipient,
-                deadline: U256::from(deadline),
-                amountIn: amount_in,
-                amountOutMinimum: amount_out_min,
+                tokenIn: args.token_in,
+                tokenOut: args.token_out,
+                fee: Uint24::from(args.fee_tier),
+                recipient: args.recipient,
+                deadline: U256::from(args.deadline),
+                amountIn: args.amount_in,
+                amountOutMinimum: args.amount_out_min,
                 sqrtPriceLimitX96: Uint160::ZERO, // No price limit
             },
         };
@@ -112,25 +123,16 @@ impl UniswapV3Adapter {
     }
 
     /// Encode an exactOutputSingle call.
-    fn encode_exact_output_single(
-        &self,
-        token_in: Address,
-        token_out: Address,
-        amount_out: U256,
-        amount_in_max: U256,
-        fee_tier: u32,
-        recipient: Address,
-        deadline: u64,
-    ) -> Bytes {
+    fn encode_exact_output_single(&self, args: ExactOutputSingleArgs) -> Bytes {
         let call = ISwapRouter::exactOutputSingleCall {
             params: ISwapRouter::ExactOutputSingleParams {
-                tokenIn: token_in,
-                tokenOut: token_out,
-                fee: Uint24::from(fee_tier),
-                recipient,
-                deadline: U256::from(deadline),
-                amountOut: amount_out,
-                amountInMaximum: amount_in_max,
+                tokenIn: args.token_in,
+                tokenOut: args.token_out,
+                fee: Uint24::from(args.fee_tier),
+                recipient: args.recipient,
+                deadline: U256::from(args.deadline),
+                amountOut: args.amount_out,
+                amountInMaximum: args.amount_in_max,
                 sqrtPriceLimitX96: Uint160::ZERO,
             },
         };
@@ -171,15 +173,15 @@ impl ProtocolAdapter for UniswapV3Adapter {
 
         match params.action {
             Action::Swap => {
-                let calldata = self.encode_exact_input_single(
-                    params.token_in,
-                    params.token_out,
-                    params.amount,
-                    params.min_output,
+                let calldata = self.encode_exact_input_single(ExactInputSingleArgs {
+                    token_in: params.token_in,
+                    token_out: params.token_out,
+                    amount_in: params.amount,
+                    amount_out_min: params.min_output,
                     fee_tier,
-                    params.vault_address,
+                    recipient: params.vault_address,
                     deadline,
-                );
+                });
                 Ok(EncodedAction {
                     target: self.router_address,
                     calldata,
@@ -198,15 +200,15 @@ impl ProtocolAdapter for UniswapV3Adapter {
                     .and_then(|v| v.as_str())
                     .and_then(|s| U256::from_str_radix(s, 10).ok())
                     .unwrap_or(params.amount);
-                let calldata = self.encode_exact_output_single(
-                    params.token_in,
-                    params.token_out,
-                    params.amount,
+                let calldata = self.encode_exact_output_single(ExactOutputSingleArgs {
+                    token_in: params.token_in,
+                    token_out: params.token_out,
+                    amount_out: params.amount,
                     amount_in_max,
                     fee_tier,
-                    params.vault_address,
+                    recipient: params.vault_address,
                     deadline,
-                );
+                });
                 Ok(EncodedAction {
                     target: self.router_address,
                     calldata,

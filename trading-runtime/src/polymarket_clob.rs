@@ -668,10 +668,10 @@ impl ClobClient {
             }
             Err(e) => {
                 let msg = e.to_string();
-                if is_rate_limit_error(&msg) {
-                    if let Some(book) = self.cached_book(&cache_key, CLOB_STALE_CACHE_SECS).await {
-                        return Ok(book);
-                    }
+                if is_rate_limit_error(&msg)
+                    && let Some(book) = self.cached_book(&cache_key, CLOB_STALE_CACHE_SECS).await
+                {
+                    return Ok(book);
                 }
                 Err(sdk_err(msg))
             }
@@ -699,13 +699,12 @@ impl ClobClient {
             }
             Err(e) => {
                 let msg = e.to_string();
-                if is_rate_limit_error(&msg) {
-                    if let Some(midpoint) = self
+                if is_rate_limit_error(&msg)
+                    && let Some(midpoint) = self
                         .cached_midpoint(&cache_key, CLOB_STALE_CACHE_SECS)
                         .await
-                    {
-                        return Ok(midpoint);
-                    }
+                {
+                    return Ok(midpoint);
                 }
                 Err(sdk_err(msg))
             }

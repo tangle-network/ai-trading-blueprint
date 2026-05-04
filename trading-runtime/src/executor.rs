@@ -845,7 +845,10 @@ mod tests {
                 token_out: intent.token_out.parse().unwrap(),
                 amount: decimal_to_u256(&intent.amount_in).unwrap(),
                 min_output: decimal_to_u256(&intent.min_amount_out).unwrap(),
-                extra: intent.metadata.clone(),
+                extra: metadata_with_execution_deadline(
+                    &intent.metadata,
+                    intent.deadline.timestamp().max(0) as u64,
+                ),
                 vault_address,
             })
             .unwrap();

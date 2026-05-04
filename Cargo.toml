@@ -19,16 +19,13 @@ edition = "2024"
 description = "AI Trading Blueprints for Tangle Network"
 license = "MIT OR Apache-2.0"
 
-# Local overrides for development. These path patches are used when sibling
-# repos are checked out next to this one. CI and deploy use the git URLs above.
-# Comment out if building without local checkouts.
 [patch."https://github.com/tangle-network/blueprint.git"]
-blueprint-sdk = { path = "../blueprint/crates/sdk" }
-blueprint-anvil-testing-utils = { path = "../blueprint/crates/testing-utils/anvil" }
-blueprint-producers-extra = { path = "../blueprint/crates/producers-extra" }
-blueprint-qos = { path = "../blueprint/crates/qos" }
-blueprint-webhooks = { path = "../blueprint/crates/webhooks" }
-blueprint-x402 = { path = "../blueprint/crates/x402" }
+workspace-hack = { path = "patches/workspace-hack" }
+
+[patch.crates-io]
+libp2p = { path = "patches/libp2p" }
+libp2p-dns = { path = "patches/libp2p-dns" }
+libp2p-mdns = { path = "patches/libp2p-mdns" }
 
 [patch."https://github.com/tangle-network/ai-agent-sandbox-blueprint.git"]
 sandbox-runtime = { path = "../ai-agent-sandbox-blueprint/sandbox-runtime" }

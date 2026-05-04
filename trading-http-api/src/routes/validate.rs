@@ -26,9 +26,9 @@ use trading_runtime::supported_assets::{
 };
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
-use trading_runtime::validator_client::ValidatorClient;
 use trading_runtime::validator_client::{
     BalanceChangeSummary, ExecutionApproval, ExecutionContext, SimulationSummary,
+    ValidationExecutionOptions, ValidatorClient,
 };
 use trading_runtime::{Action, TradeIntent, TradeIntentBuilder};
 
@@ -616,16 +616,16 @@ async fn validate(
         &request.token_out,
     );
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
-    validate_supported_trade_assets(
-        None,
-        protocol_chain_id,
-        &request.target_protocol,
-        &token_in,
-        &token_out,
-        Some(&state.vault_address),
-        state.rpc_url.as_deref(),
-        !state.paper_trade && requires_execution_context(&request.target_protocol),
-    )
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: None,
+        chain_id: protocol_chain_id,
+        protocol: &request.target_protocol,
+        token_in: &token_in,
+        token_out: &token_out,
+        vault_address: Some(&state.vault_address),
+        rpc_url: state.rpc_url.as_deref(),
+        require_vault_valuation: false,
+    })
     .await?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
@@ -700,6 +700,18 @@ async fn validate(
         execution_context.as_ref(),
     );
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: None,
+        chain_id: protocol_chain_id,
+        protocol: &request.target_protocol,
+        token_in: &token_in,
+        token_out: &token_out,
+        vault_address: Some(&state.vault_address),
+        rpc_url: state.rpc_url.as_deref(),
+        require_vault_valuation: !state.paper_trade
+            && requires_execution_context(&request.target_protocol),
+    })
+    .await?;
     let execution_hash_override = build_direct_execution_hash(
         &request.target_protocol,
         &parsed.intent,
@@ -709,12 +721,16 @@ async fn validate(
     )?;
     let action_kind = action_kind_for_protocol(&request.target_protocol);
 
-    let min_validators = required_validator_signatures(
-        &state.vault_address,
-        state.rpc_url.as_deref(),
-        state.paper_trade,
-    )
-    .await?;
+    let min_validators = if uses_direct_non_vault_execution(&request.target_protocol) {
+        1
+    } else {
+        required_validator_signatures(
+            &state.vault_address,
+            state.rpc_url.as_deref(),
+            state.paper_trade,
+        )
+        .await?
+    };
     let validator_client = state
         .validator_client
         .clone()
@@ -724,10 +740,12 @@ async fn validate(
             &parsed.intent,
             &state.vault_address,
             parsed.deadline,
-            execution_context,
-            require_simulation,
-            execution_hash_override,
-            action_kind,
+            ValidationExecutionOptions {
+                execution_context,
+                require_simulation,
+                execution_hash_override,
+                action_kind,
+            },
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -1066,16 +1084,16 @@ async fn validate_multi_bot(
         &req.token_out,
     );
     validate_chain_tokens(Some(protocol_chain_id), &token_in, &token_out)?;
-    validate_supported_trade_assets(
-        strategy_type_from_config(&bot.strategy_config),
-        Some(protocol_chain_id),
-        &req.target_protocol,
-        &token_in,
-        &token_out,
-        Some(&bot.vault_address),
-        Some(&bot.rpc_url),
-        !bot.paper_trade && requires_execution_context(&req.target_protocol),
-    )
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: strategy_type_from_config(&bot.strategy_config),
+        chain_id: Some(protocol_chain_id),
+        protocol: &req.target_protocol,
+        token_in: &token_in,
+        token_out: &token_out,
+        vault_address: Some(&bot.vault_address),
+        rpc_url: Some(&bot.rpc_url),
+        require_vault_valuation: false,
+    })
     .await?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
@@ -1150,6 +1168,18 @@ async fn validate_multi_bot(
         execution_context.as_ref(),
     );
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
+    validate_supported_trade_assets(SupportedTradeAssetValidation {
+        strategy_type: strategy_type_from_config(&bot.strategy_config),
+        chain_id: Some(protocol_chain_id),
+        protocol: &req.target_protocol,
+        token_in: &token_in,
+        token_out: &token_out,
+        vault_address: Some(&bot.vault_address),
+        rpc_url: Some(&bot.rpc_url),
+        require_vault_valuation: !bot.paper_trade
+            && requires_execution_context(&req.target_protocol),
+    })
+    .await?;
     let execution_hash_override = build_direct_execution_hash(
         &req.target_protocol,
         &parsed.intent,
@@ -1161,9 +1191,12 @@ async fn validate_multi_bot(
 
     // Real validation: fan out to validator endpoints. Match the off-chain
     // quorum to the vault's on-chain TradeValidator requirement.
-    let min_validators =
+    let min_validators = if uses_direct_non_vault_execution(&req.target_protocol) {
+        1
+    } else {
         required_validator_signatures(&bot.vault_address, Some(&bot.rpc_url), bot.paper_trade)
-            .await?;
+            .await?
+    };
     let client = ValidatorClient::new(validator_endpoints, state.min_validator_score)
         .with_min_validators(min_validators);
     let result = client
@@ -1171,10 +1204,12 @@ async fn validate_multi_bot(
             &parsed.intent,
             &bot.vault_address,
             parsed.deadline,
-            execution_context,
-            require_simulation,
-            execution_hash_override,
-            action_kind,
+            ValidationExecutionOptions {
+                execution_context,
+                require_simulation,
+                execution_hash_override,
+                action_kind,
+            },
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -1294,16 +1329,31 @@ fn validate_chain_tokens(
     Ok(())
 }
 
+pub(crate) struct SupportedTradeAssetValidation<'a> {
+    pub strategy_type: Option<&'a str>,
+    pub chain_id: Option<u64>,
+    pub protocol: &'a str,
+    pub token_in: &'a str,
+    pub token_out: &'a str,
+    pub vault_address: Option<&'a str>,
+    pub rpc_url: Option<&'a str>,
+    pub require_vault_valuation: bool,
+}
+
 pub(crate) async fn validate_supported_trade_assets(
-    strategy_type: Option<&str>,
-    chain_id: Option<u64>,
-    protocol: &str,
-    token_in: &str,
-    token_out: &str,
-    vault_address: Option<&str>,
-    rpc_url: Option<&str>,
-    require_vault_valuation: bool,
+    request: SupportedTradeAssetValidation<'_>,
 ) -> Result<(), (StatusCode, String)> {
+    let SupportedTradeAssetValidation {
+        strategy_type,
+        chain_id,
+        protocol,
+        token_in,
+        token_out,
+        vault_address,
+        rpc_url,
+        require_vault_valuation,
+    } = request;
+
     if uses_direct_non_vault_execution(protocol) {
         return Ok(());
     }
@@ -1470,32 +1520,32 @@ mod tests {
 
     #[tokio::test]
     async fn supported_asset_check_allows_weth_usdc_dex() {
-        validate_supported_trade_assets(
-            Some("dex"),
-            Some(31339),
-            "uniswap_v3",
-            MAINNET_WETH_ADDRESS,
-            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-            None,
-            None,
-            false,
-        )
+        validate_supported_trade_assets(SupportedTradeAssetValidation {
+            strategy_type: Some("dex"),
+            chain_id: Some(31339),
+            protocol: "uniswap_v3",
+            token_in: MAINNET_WETH_ADDRESS,
+            token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            vault_address: None,
+            rpc_url: None,
+            require_vault_valuation: false,
+        })
         .await
         .expect("WETH/USDC should be supported");
     }
 
     #[tokio::test]
     async fn supported_asset_check_rejects_unknown_dex_token() {
-        let err = validate_supported_trade_assets(
-            Some("dex"),
-            Some(31339),
-            "uniswap_v3",
-            MAINNET_WETH_ADDRESS,
-            "0x000000000000000000000000000000000000dEaD",
-            None,
-            None,
-            false,
-        )
+        let err = validate_supported_trade_assets(SupportedTradeAssetValidation {
+            strategy_type: Some("dex"),
+            chain_id: Some(31339),
+            protocol: "uniswap_v3",
+            token_in: MAINNET_WETH_ADDRESS,
+            token_out: "0x000000000000000000000000000000000000dEaD",
+            vault_address: None,
+            rpc_url: None,
+            require_vault_valuation: false,
+        })
         .await
         .expect_err("unknown token should fail");
 
