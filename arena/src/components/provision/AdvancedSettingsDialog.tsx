@@ -2,6 +2,8 @@ import {
   Button, Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogDescription, Input, Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@tangle-network/blueprint-ui/components';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { Info } from 'lucide-react';
 import type { StrategyPackDef } from '~/lib/blueprints';
 import { cronToHuman } from '~/routes/provision/types';
 
@@ -30,6 +32,14 @@ interface AdvancedSettingsDialogProps {
   setCustomInstructions: (v: string) => void;
   customCron: string;
   setCustomCron: (v: string) => void;
+  customConversationCron: string;
+  setCustomConversationCron: (v: string) => void;
+  customResearchCron: string;
+  setCustomResearchCron: (v: string) => void;
+  conversationEnabled: boolean;
+  setConversationEnabled: (v: boolean) => void;
+  researchEnabled: boolean;
+  setResearchEnabled: (v: boolean) => void;
   validatorMode: 'default' | 'custom';
   setValidatorMode: (v: 'default' | 'custom') => void;
   customValidatorIds: string;
@@ -60,6 +70,14 @@ export function AdvancedSettingsDialog({
   setCustomInstructions,
   customCron,
   setCustomCron,
+  customConversationCron,
+  setCustomConversationCron,
+  customResearchCron,
+  setCustomResearchCron,
+  conversationEnabled,
+  setConversationEnabled,
+  researchEnabled,
+  setResearchEnabled,
   validatorMode,
   setValidatorMode,
   customValidatorIds,
@@ -80,7 +98,45 @@ export function AdvancedSettingsDialog({
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
   const canResetRuntime = !isTeeBlueprint && runtimeBackend !== 'docker';
-  const canResetSettings = !!(customCron || validatorMode === 'custom' || canResetRuntime);
+  const defaultConversationCron =
+    selectedPack.conversationCron ?? '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
+  const defaultResearchCron =
+    selectedPack.researchCron ?? '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
+  const canResetSettings = !!(
+    customCron ||
+    customConversationCron ||
+    customResearchCron ||
+    !conversationEnabled ||
+    !researchEnabled ||
+    validatorMode === 'custom' ||
+    canResetRuntime
+  );
+
+  function ScheduleTooltip({ label, children }: { label: string; children: string }) {
+    return (
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-arena-elements-textTertiary hover:text-arena-elements-textPrimary"
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side="top"
+            sideOffset={8}
+            className="z-[100] max-w-xs rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-2 text-xs text-arena-elements-textSecondary shadow-lg"
+          >
+            {children}
+            <Tooltip.Arrow className="fill-[var(--arena-elements-background-depth-2)]" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -307,21 +363,103 @@ export function AdvancedSettingsDialog({
                   Open Infrastructure Settings
                 </Button>
               </div>
-              <div>
-                <label htmlFor="cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
-                  Cron Schedule
-                </label>
-                <Input
-                  id="cron-schedule"
-                  value={customCron || selectedPack.cron}
-                  onChange={(e) => setCustomCron(e.target.value)}
-                  className="font-data"
-                />
-                <p className="text-xs text-arena-elements-textTertiary mt-1.5">
-                  6-field cron. Default: {selectedPack.cron} = every{' '}
-                  {cronToHuman(selectedPack.cron)}
-                </p>
-              </div>
+              <Tooltip.Provider delayDuration={150}>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
+                      Schedules
+                    </span>
+                    <ScheduleTooltip label="Schedule defaults">
+                      {selectedPack.scheduleReason ??
+                        'Defaults balance owner messages, research, and trading capacity.'}
+                    </ScheduleTooltip>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center gap-2">
+                      <label htmlFor="cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
+                        Trading
+                      </label>
+                      <ScheduleTooltip label="Trading schedule">
+                        How often the bot checks markets and may act. Faster schedules react sooner but use more AI capacity.
+                      </ScheduleTooltip>
+                    </div>
+                    <Input
+                      id="cron-schedule"
+                      value={customCron || selectedPack.cron}
+                      onChange={(e) => setCustomCron(e.target.value)}
+                      className="font-data"
+                    />
+                    <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                      Default: {selectedPack.cron} = every {cronToHuman(selectedPack.cron)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="conversation-cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
+                          Conversation
+                        </label>
+                        <ScheduleTooltip label="Conversation schedule">
+                          How often the bot checks owner messages. AI is only used when a message needs a response.
+                        </ScheduleTooltip>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-arena-elements-textSecondary">
+                        <input
+                          type="checkbox"
+                          checked={conversationEnabled}
+                          onChange={(e) => setConversationEnabled(e.target.checked)}
+                          className="accent-violet-600"
+                        />
+                        Enabled
+                      </label>
+                    </div>
+                    <Input
+                      id="conversation-cron-schedule"
+                      value={customConversationCron || defaultConversationCron}
+                      onChange={(e) => setCustomConversationCron(e.target.value)}
+                      disabled={!conversationEnabled}
+                      className="font-data disabled:opacity-60"
+                    />
+                    <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                      Default: {defaultConversationCron} = every {cronToHuman(defaultConversationCron)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="research-cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
+                          Research
+                        </label>
+                        <ScheduleTooltip label="Research schedule">
+                          How often the bot reviews performance and looks for improvements. Less frequent research leaves more room for trading.
+                        </ScheduleTooltip>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-arena-elements-textSecondary">
+                        <input
+                          type="checkbox"
+                          checked={researchEnabled}
+                          onChange={(e) => setResearchEnabled(e.target.checked)}
+                          className="accent-violet-600"
+                        />
+                        Enabled
+                      </label>
+                    </div>
+                    <Input
+                      id="research-cron-schedule"
+                      value={customResearchCron || defaultResearchCron}
+                      onChange={(e) => setCustomResearchCron(e.target.value)}
+                      disabled={!researchEnabled}
+                      className="font-data disabled:opacity-60"
+                    />
+                    <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                      Default: {defaultResearchCron} = every {cronToHuman(defaultResearchCron)}
+                    </p>
+                  </div>
+                </div>
+              </Tooltip.Provider>
               <div>
                 <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                   Max Turns
@@ -414,6 +552,10 @@ export function AdvancedSettingsDialog({
                   size="sm"
                   onClick={() => {
                     setCustomCron('');
+                    setCustomConversationCron('');
+                    setCustomResearchCron('');
+                    setConversationEnabled(true);
+                    setResearchEnabled(true);
                     setValidatorMode('default');
                     setCustomValidatorIds('');
                     if (!isTeeBlueprint) setRuntimeBackend('docker');

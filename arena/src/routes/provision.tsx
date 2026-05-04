@@ -104,6 +104,10 @@ interface StrategyConfigOptions {
   paperTrade?: boolean;
   protocolChainId?: number;
   availableProtocols?: string[];
+  conversationCron?: string;
+  researchCron?: string;
+  conversationEnabled?: boolean;
+  researchEnabled?: boolean;
 }
 
 type DexExecutionTargetId =
@@ -421,6 +425,10 @@ export function buildStrategyConfigForProvision({
   paperTrade,
   protocolChainId,
   availableProtocols,
+  conversationCron,
+  researchCron,
+  conversationEnabled = true,
+  researchEnabled = true,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -439,6 +447,14 @@ export function buildStrategyConfigForProvision({
   }
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
+  if (conversationCron || researchCron || !conversationEnabled || !researchEnabled) {
+    config.workflow_schedules = {
+      ...(conversationCron ? { conversation_cron: conversationCron } : {}),
+      ...(researchCron ? { research_cron: researchCron } : {}),
+      conversation_enabled: conversationEnabled,
+      research_enabled: researchEnabled,
+    };
+  }
   if (customExpertKnowledge)
     config.expert_knowledge_override = customExpertKnowledge;
   if (customInstructions) config.custom_instructions = customInstructions;
@@ -921,6 +937,10 @@ export default function ProvisionPage() {
   const [customInstructions, setCustomInstructions] = useState('');
   const [customExpertKnowledge, setCustomExpertKnowledge] = useState('');
   const [customCron, setCustomCron] = useState('');
+  const [customConversationCron, setCustomConversationCron] = useState('');
+  const [customResearchCron, setCustomResearchCron] = useState('');
+  const [conversationEnabled, setConversationEnabled] = useState(true);
+  const [researchEnabled, setResearchEnabled] = useState(true);
   const [collateralCapPct, setCollateralCapPct] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>(
@@ -1048,6 +1068,14 @@ export default function ProvisionPage() {
   })();
   const effectiveExpert = customExpertKnowledge || selectedPack.expertKnowledge;
   const effectiveCron = customCron || selectedPack.cron;
+  const effectiveConversationCron =
+    customConversationCron ||
+    selectedPack.conversationCron ||
+    '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
+  const effectiveResearchCron =
+    customResearchCron ||
+    selectedPack.researchCron ||
+    '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
   const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
 
@@ -1058,6 +1086,10 @@ export default function ProvisionPage() {
     setCustomExpertKnowledge('');
     setCustomInstructions('');
     setCustomCron('');
+    setCustomConversationCron('');
+    setCustomResearchCron('');
+    setConversationEnabled(true);
+    setResearchEnabled(true);
   }
 
   // Auto-set service mode to 'new' for instance blueprints
@@ -1345,6 +1377,10 @@ export default function ProvisionPage() {
                       selectedExecutionTarget,
                     )
                   : undefined,
+                conversationCron: effectiveConversationCron,
+                researchCron: effectiveResearchCron,
+                conversationEnabled,
+                researchEnabled,
               }),
             ),
             risk_params_json:
@@ -1423,6 +1459,10 @@ export default function ProvisionPage() {
       runtimeBackend,
       selectedBlueprint?.isTee,
       effectiveCron,
+      effectiveConversationCron,
+      effectiveResearchCron,
+      conversationEnabled,
+      researchEnabled,
       validatorMode,
       customValidatorIds,
       customExpertKnowledge,
@@ -1876,6 +1916,10 @@ export default function ProvisionPage() {
             selectedExecutionTarget,
           )
         : undefined,
+      conversationCron: effectiveConversationCron,
+      researchCron: effectiveResearchCron,
+      conversationEnabled,
+      researchEnabled,
     });
     if (requiresExecutionTarget && executionConfig) {
       strategyConfig.vault_binding = executionConfig.vaultBinding;
@@ -2109,6 +2153,10 @@ export default function ProvisionPage() {
                   isTeeBlueprint: !!selectedBlueprint?.isTee,
                   customExpertKnowledge,
                   customInstructions,
+                  conversationCron: effectiveConversationCron,
+                  researchCron: effectiveResearchCron,
+                  conversationEnabled,
+                  researchEnabled,
                 }),
               )
             : '{}',
@@ -2976,6 +3024,14 @@ export default function ProvisionPage() {
         setCustomInstructions={setCustomInstructions}
         customCron={customCron}
         setCustomCron={setCustomCron}
+        customConversationCron={customConversationCron}
+        setCustomConversationCron={setCustomConversationCron}
+        customResearchCron={customResearchCron}
+        setCustomResearchCron={setCustomResearchCron}
+        conversationEnabled={conversationEnabled}
+        setConversationEnabled={setConversationEnabled}
+        researchEnabled={researchEnabled}
+        setResearchEnabled={setResearchEnabled}
         validatorMode={validatorMode}
         setValidatorMode={setValidatorMode}
         customValidatorIds={customValidatorIds}

@@ -8,6 +8,9 @@ export interface StrategyPackDef {
   executionMode: 'single-chain' | 'paper-only' | 'none';
   supportedChainIds: number[];
   cron: string;
+  conversationCron?: string;
+  researchCron?: string;
+  scheduleReason?: string;
   maxTurns: number;
   timeoutMs: number;
   expertKnowledge: string;

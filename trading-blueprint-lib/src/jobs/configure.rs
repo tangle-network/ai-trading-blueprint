@@ -39,6 +39,14 @@ pub async fn configure_core(
     if let Ok(Some(updated_bot)) = get_bot(&bot_id) {
         if let Some(workflow_id) = updated_bot.workflow_id {
             rebuild_workflow_profile(&updated_bot, workflow_id);
+            if let Err(err) =
+                super::activate::refresh_split_workflow_schedules(&updated_bot, workflow_id)
+            {
+                tracing::warn!(
+                    "Failed to refresh split workflow schedules for bot {} after configure: {err}",
+                    updated_bot.id
+                );
+            }
         }
         if let Ok(record) = sandbox_runtime::runtime::get_sandbox_by_id(&updated_bot.sandbox_id) {
             let sidecar_bot = super::activate::build_sidecar_bot_config(&updated_bot);

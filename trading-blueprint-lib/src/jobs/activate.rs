@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use serde_json::Value;
 use serde_json::json;
 
 use crate::state::{
@@ -26,6 +27,12 @@ static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
     Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 > = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+const CONVERSATION_CRON_5_MIN: &str = "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *";
+const CONVERSATION_CRON_10_MIN: &str = "0 1,11,21,31,41,51 * * * *";
+const RESEARCH_CRON_1_HOUR: &str = "0 2 * * * *";
+const RESEARCH_CRON_2_HOURS: &str = "0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *";
+const RESEARCH_CRON_6_HOURS: &str = "0 2 0,6,12,18 * * *";
+
 fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let mut map = BOT_LIFECYCLE_LOCKS
         .lock()
@@ -33,6 +40,138 @@ fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     map.entry(bot_id.to_string())
         .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
         .clone()
+}
+
+#[derive(Clone, Debug)]
+struct WorkflowScheduleSettings {
+    conversation_cron: String,
+    research_cron: String,
+    conversation_enabled: bool,
+    research_enabled: bool,
+}
+
+fn default_workflow_schedules_for_strategy(strategy_type: &str) -> (&'static str, &'static str) {
+    match strategy_type {
+        "dex" => (CONVERSATION_CRON_5_MIN, RESEARCH_CRON_1_HOUR),
+        "mm" => (CONVERSATION_CRON_10_MIN, RESEARCH_CRON_6_HOURS),
+        "prediction"
+        | "prediction_politics"
+        | "prediction_crypto"
+        | "prediction_war"
+        | "prediction_trending"
+        | "prediction_celebrity" => (CONVERSATION_CRON_5_MIN, RESEARCH_CRON_1_HOUR),
+        "yield" | "perp" | "multi" | "volatility" => {
+            (CONVERSATION_CRON_5_MIN, RESEARCH_CRON_2_HOURS)
+        }
+        _ => (CONVERSATION_CRON_5_MIN, RESEARCH_CRON_2_HOURS),
+    }
+}
+
+fn schedule_string(
+    schedules: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+    default: &str,
+) -> String {
+    schedules
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn schedule_bool(
+    schedules: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+    default: bool,
+) -> bool {
+    schedules
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(default)
+}
+
+fn validate_workflow_cron(label: &str, cron: &str) -> Result<(), String> {
+    ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
+        .map(|_| ())
+        .map_err(|err| format!("Invalid {label} workflow cron '{cron}': {err}"))
+}
+
+fn workflow_schedule_settings(bot: &TradingBotRecord) -> Result<WorkflowScheduleSettings, String> {
+    let (default_conversation_cron, default_research_cron) =
+        default_workflow_schedules_for_strategy(&bot.strategy_type);
+    let schedules = bot
+        .strategy_config
+        .get("workflow_schedules")
+        .and_then(Value::as_object);
+
+    let conversation_cron =
+        schedule_string(schedules, "conversation_cron", default_conversation_cron);
+    let research_cron = schedule_string(schedules, "research_cron", default_research_cron);
+
+    validate_workflow_cron("conversation", &conversation_cron)?;
+    validate_workflow_cron("research", &research_cron)?;
+
+    Ok(WorkflowScheduleSettings {
+        conversation_cron,
+        research_cron,
+        conversation_enabled: schedule_bool(schedules, "conversation_enabled", true),
+        research_enabled: schedule_bool(schedules, "research_enabled", true),
+    })
+}
+
+pub(crate) fn refresh_split_workflow_schedules(
+    bot: &TradingBotRecord,
+    workflow_id: u64,
+) -> Result<(), String> {
+    let schedules = workflow_schedule_settings(bot)?;
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+    let updates = [
+        (
+            workflow_id + 1,
+            schedules.research_cron,
+            schedules.research_enabled,
+            "research",
+        ),
+        (
+            workflow_id + 2,
+            schedules.conversation_cron,
+            schedules.conversation_enabled,
+            "conversation",
+        ),
+    ];
+
+    for (id, cron, enabled, label) in updates {
+        let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id);
+        let cron_for_next = cron.clone();
+        let updated = store
+            .update(&key, |entry| {
+                entry.trigger_config = cron.clone();
+                entry.active = enabled;
+                entry.next_run_at = if enabled {
+                    ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+                        &entry.trigger_type,
+                        &cron_for_next,
+                        entry.last_run_at,
+                    )
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                };
+            })
+            .map_err(|e| e.to_string())?;
+        if !updated {
+            tracing::warn!(
+                "Skipped {label} workflow schedule refresh for bot {}; workflow {} not found",
+                bot.id,
+                id
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Result of successful activation.
@@ -321,6 +460,7 @@ pub async fn activate_bot_with_secrets(
         None => crate::prompts::build_generic_agent_profile(&bot.strategy_type, &sidecar_bot),
     };
     let profile_json = serde_json::to_string(&backend_profile).unwrap_or_default();
+    let workflow_schedules = workflow_schedule_settings(&bot)?;
 
     // --- FAST trading tick (3 turns, every 5 min) ---
     let fast_prompt = match &pack {
@@ -371,9 +511,9 @@ pub async fn activate_bot_with_secrets(
         )
         .map_err(|e| format!("Failed to store fast workflow: {e}"))?;
 
-    // --- RESEARCH tick (15 turns, every 30 min, offset by 2 min) ---
+    // --- RESEARCH tick (15 turns, schedule depends on strategy, offset by 2 min) ---
     let research_prompt = crate::prompts::build_research_tick_prompt(&sidecar_bot);
-    let research_cron = "0 2,32 * * * *".to_string();
+    let research_cron = workflow_schedules.research_cron.clone();
 
     let research_wf = json!({
         "sidecar_url": record.sidecar_url,
@@ -402,17 +542,20 @@ pub async fn activate_bot_with_secrets(
                 target_kind: 0,
                 target_sandbox_id: record.id.clone(),
                 target_service_id: 0,
-                active: true,
-                next_run_at: research_next,
+                active: workflow_schedules.research_enabled,
+                next_run_at: workflow_schedules
+                    .research_enabled
+                    .then_some(research_next)
+                    .flatten(),
                 last_run_at: None,
                 owner: String::new(),
             },
         )
         .map_err(|e| format!("Failed to store research workflow: {e}"))?;
 
-    // --- CONVERSATION tick (10 turns, every 5 min, offset by 1 min) ---
+    // --- CONVERSATION tick (10 turns, schedule depends on strategy, offset by 1 min) ---
     let conversation_prompt = crate::prompts::build_conversation_tick_prompt();
-    let conversation_cron = "0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *".to_string();
+    let conversation_cron = workflow_schedules.conversation_cron.clone();
 
     let conversation_wf = json!({
         "sidecar_url": record.sidecar_url,
@@ -444,8 +587,11 @@ pub async fn activate_bot_with_secrets(
                 target_kind: 0,
                 target_sandbox_id: record.id.clone(),
                 target_service_id: 0,
-                active: true,
-                next_run_at: convo_next,
+                active: workflow_schedules.conversation_enabled,
+                next_run_at: workflow_schedules
+                    .conversation_enabled
+                    .then_some(convo_next)
+                    .flatten(),
                 last_run_at: None,
                 owner: String::new(),
             },

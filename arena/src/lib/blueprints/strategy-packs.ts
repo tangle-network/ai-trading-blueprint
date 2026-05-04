@@ -1,5 +1,11 @@
 import type { StrategyPackDef } from './types';
 
+export const CONVERSATION_CRON_5_MIN = '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
+export const CONVERSATION_CRON_10_MIN = '0 1,11,21,31,41,51 * * * *';
+export const RESEARCH_CRON_1_HOUR = '0 2 * * * *';
+export const RESEARCH_CRON_2_HOURS = '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
+export const RESEARCH_CRON_6_HOURS = '0 2 0,6,12,18 * * *';
+
 export function buildFullInstructions(expertKnowledge: string, strategyType: string): string {
   return `# Trading Agent Instructions
 
@@ -110,6 +116,9 @@ export const strategyPacks: StrategyPackDef[] = [
     executionMode: 'single-chain',
     supportedChainIds: [1, 8453, 42161, 137, 10, 31339, 84532],
     cron: '0 */5 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'DEX prices move faster, so trading runs more often.',
     maxTurns: 12,
     timeoutMs: 150_000,
     expertKnowledge: `### Uniswap V3 Expert Knowledge
@@ -142,6 +151,9 @@ Build tools for:
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Polymarket Expert Knowledge
@@ -171,6 +183,9 @@ Build probability estimation tools from news analysis and market data cross-refe
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Politics Prediction Markets
@@ -187,6 +202,9 @@ Edge: Markets anchor on single polls, overweight recency, neglect base rates.`,
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Crypto Prediction Markets
@@ -203,6 +221,9 @@ Formula: prob = 1 - \u03A6((ln(target) - ln(current)) / (\u03C3_daily * sqrt(day
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Geopolitics Prediction Markets
@@ -219,6 +240,9 @@ Caution: High tail risk \u2014 max 5% position size per market.`,
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Trending Prediction Markets
@@ -235,6 +259,9 @@ Caution: New markets have thin liquidity and sometimes ambiguous resolution crit
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_1_HOUR,
+    scheduleReason: 'Prediction bots benefit from periodic news and context research.',
     maxTurns: 20,
     timeoutMs: 240_000,
     expertKnowledge: `### Celebrity & Entertainment Markets
@@ -251,6 +278,9 @@ Best timing: Enter 7-30 days before resolution when consensus is forming but odd
     executionMode: 'single-chain',
     supportedChainIds: [1, 8453],
     cron: '0 */15 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_2_HOURS,
+    scheduleReason: 'Yield markets move slower, so research can run less often.',
     maxTurns: 10,
     timeoutMs: 120_000,
     expertKnowledge: `### Aave V3 Expert Knowledge
@@ -280,6 +310,9 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
     executionMode: 'single-chain',
     supportedChainIds: [42161],
     cron: '0 */2 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_2_HOURS,
+    scheduleReason: 'Perps are fast-moving, so trading gets priority over research.',
     maxTurns: 15,
     timeoutMs: 180_000,
     expertKnowledge: `### GMX V2 (Arbitrum)
@@ -312,6 +345,9 @@ When funding rates diverge between GMX and Vertex:
     executionMode: 'paper-only',
     supportedChainIds: [],
     cron: '0 */10 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_2_HOURS,
+    scheduleReason: 'Volatility bots balance market checks with background research.',
     maxTurns: 12,
     timeoutMs: 150_000,
     expertKnowledge: `### Implied Volatility Proxies
@@ -344,6 +380,9 @@ Crypto markets lack traditional options IV. Use these proxies:
     executionMode: 'paper-only',
     supportedChainIds: [],
     cron: '0 */1 * * * *',
+    conversationCron: CONVERSATION_CRON_10_MIN,
+    researchCron: RESEARCH_CRON_6_HOURS,
+    scheduleReason: 'Market making runs often, so background research is limited.',
     maxTurns: 15,
     timeoutMs: 180_000,
     expertKnowledge: `### Market Selection
@@ -377,6 +416,9 @@ Select 3-5 markets: Volume > $100k, spread < 3%, moderate volatility.
     executionMode: 'none',
     supportedChainIds: [],
     cron: '0 */5 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_2_HOURS,
+    scheduleReason: 'Multi-strategy bots are heavier, so research is spaced out.',
     maxTurns: 20,
     timeoutMs: 300_000,
     expertKnowledge: `### Capital Allocation Model
