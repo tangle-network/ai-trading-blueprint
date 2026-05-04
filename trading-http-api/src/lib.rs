@@ -24,6 +24,8 @@ use trading_runtime::validator_client::ValidatorClient;
 pub struct TradingApiState {
     pub market_client: MarketDataClient,
     pub validator_client: ValidatorClient,
+    /// Minimum validator score for trade approval.
+    pub min_validator_score: u32,
     pub executor: TradeExecutor,
     pub portfolio: RwLock<PortfolioState>,
     pub api_token: String,

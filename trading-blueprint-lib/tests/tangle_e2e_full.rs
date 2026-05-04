@@ -275,6 +275,7 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
                 "http://localhost:0".to_string(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{vault_addr}"),
                 &rpc_url,
@@ -615,6 +616,7 @@ async fn test_vault_execute_on_chain() -> Result<()> {
                 "http://localhost:0".into(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{}", stack.vault),
                 &rpc_url,
@@ -1089,6 +1091,7 @@ async fn test_fee_settlement_on_chain() -> Result<()> {
                 "http://localhost:0".into(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{}", stack.vault),
                 &rpc_url,
@@ -1327,6 +1330,7 @@ async fn test_adversarial_contract_paths() -> Result<()> {
                 "http://localhost:0".into(),
             ),
             validator_client: cluster.client.clone(),
+            min_validator_score: 50,
             executor: trading_runtime::executor::TradeExecutor::new(
                 &format!("{}", stack.vault),
                 &rpc_url,

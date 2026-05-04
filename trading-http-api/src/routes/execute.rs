@@ -2069,7 +2069,12 @@ async fn execute(
     // Off-chain signature verification prevents fabricated validator signatures
     // from reaching direct exchange paths and fails early before vault execution.
     if !state.paper_trade {
-        verify_signatures_offchain(&request.validation, &state.vault_address, action_kind, None)?;
+        verify_signatures_offchain(
+            &request.validation,
+            &state.vault_address,
+            action_kind,
+            Some(state.min_validator_score),
+        )?;
     }
 
     // Circuit breaker check before any execution.
