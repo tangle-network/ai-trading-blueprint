@@ -45,12 +45,12 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   } = useBotMetrics(bot.id, 30, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
-    refetchInterval: isLive ? 15_000 : false,
+    refetchInterval: isLive ? 30_000 : false,
   });
   const { data: metricsSummary } = useBotMetricsSummary(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
-    refetchInterval: isLive ? 15_000 : false,
+    refetchInterval: isLive ? 30_000 : false,
   });
 
   const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);

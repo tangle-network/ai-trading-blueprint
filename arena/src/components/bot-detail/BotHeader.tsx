@@ -30,6 +30,7 @@ export function BotHeader({ bot }: BotHeaderProps) {
     botName: displayName,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
+    chainId: bot.chainId,
   });
   const validatorCount = detail?.validator_endpoints?.length ?? 0;
 

@@ -3450,37 +3450,13 @@ async fn get_bot_metrics(
         .filter_map(|t| t.get("pnl").and_then(|v| v.as_f64()))
         .sum();
 
-    let portfolio_value_usd = match fetch_trading_api_json_with_method(
-        &bot,
-        reqwest::Method::POST,
-        "/portfolio/state",
-        &[],
-    )
-    .await
-    {
-        Ok(Some(payload)) => map_trading_api_portfolio(payload)
-            .ok()
-            .map(|portfolio| {
-                if portfolio.has_unpriced_positions {
-                    0.0
-                } else {
-                    portfolio.total_value_usd.unwrap_or(0.0)
-                }
-            })
-            .or_else(|| latest_snapshot.map(|snapshot| snapshot.account_value_usd))
-            .unwrap_or_else(|| {
-                fallback_portfolio_state(&bot)
-                    .total_value_usd
-                    .unwrap_or(0.0)
-            }),
-        Ok(None) | Err(_) => latest_snapshot
-            .map(|snapshot| snapshot.account_value_usd)
-            .unwrap_or_else(|| {
-                fallback_portfolio_state(&bot)
-                    .total_value_usd
-                    .unwrap_or(0.0)
-            }),
-    };
+    let portfolio_value_usd = latest_snapshot
+        .map(|snapshot| snapshot.account_value_usd)
+        .unwrap_or_else(|| {
+            fallback_portfolio_state(&bot)
+                .total_value_usd
+                .unwrap_or(0.0)
+        });
 
     Ok(Json(BotMetricsResponse {
         portfolio_value_usd,

@@ -150,6 +150,7 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
     botName: bot.name,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
+    chainId: bot.chainId,
   });
   const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(
     bot.id,

@@ -10,6 +10,7 @@
 use alloy::primitives::{Address, U256};
 use alloy::signers::Signer as _;
 use alloy::signers::local::PrivateKeySigner;
+use chrono::{DateTime, Duration, Utc};
 use polymarket_client_sdk::auth::{Credentials, Normal};
 use polymarket_client_sdk::clob::Client as SdkClient;
 use polymarket_client_sdk::clob::types::Side as SdkSide;
@@ -21,6 +22,7 @@ use polymarket_client_sdk::clob::types::response::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -262,6 +264,8 @@ pub struct ClobClient {
     base_url: String,
     /// Pre-configured credentials from env vars (skips L1 auth derivation).
     pre_credentials: Option<Credentials>,
+    midpoint_cache: RwLock<HashMap<String, CachedClobValue<Decimal>>>,
+    book_cache: RwLock<HashMap<String, CachedClobValue<OrderBook>>>,
 }
 
 /// Maximum retry attempts for transient CLOB API errors.
@@ -269,6 +273,15 @@ const MAX_CLOB_RETRIES: u32 = 3;
 
 /// Backoff durations between CLOB retries (ms).
 const CLOB_RETRY_BACKOFF_MS: [u64; 3] = [100, 500, 2000];
+const CLOB_MIDPOINT_CACHE_TTL_SECS: i64 = 15;
+const CLOB_BOOK_CACHE_TTL_SECS: i64 = 10;
+const CLOB_STALE_CACHE_SECS: i64 = 5 * 60;
+
+#[derive(Debug, Clone)]
+struct CachedClobValue<T> {
+    value: T,
+    fetched_at: DateTime<Utc>,
+}
 
 /// Check if an error message indicates an auth failure (401/expired token).
 fn is_auth_error(msg: &str) -> bool {
@@ -291,6 +304,11 @@ fn is_retryable_error(msg: &str) -> bool {
         || lower.contains("timeout")
         || lower.contains("connection")
         || lower.contains("reset")
+}
+
+fn is_rate_limit_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
 }
 
 /// Convert an SDK error into our TradingError.
@@ -359,6 +377,8 @@ impl ClobClient {
             address,
             base_url,
             pre_credentials,
+            midpoint_cache: RwLock::new(HashMap::new()),
+            book_cache: RwLock::new(HashMap::new()),
         })
     }
 
@@ -587,26 +607,109 @@ impl ClobClient {
         Ok(())
     }
 
+    async fn cached_book(&self, token_id: &str, max_age_secs: i64) -> Option<OrderBook> {
+        let cache = self.book_cache.read().await;
+        let cached = cache.get(token_id)?;
+        if Utc::now().signed_duration_since(cached.fetched_at) <= Duration::seconds(max_age_secs) {
+            return Some(cached.value.clone());
+        }
+        None
+    }
+
+    async fn cache_book(&self, token_id: &str, book: OrderBook) {
+        let mut cache = self.book_cache.write().await;
+        cache.insert(
+            token_id.to_string(),
+            CachedClobValue {
+                value: book,
+                fetched_at: Utc::now(),
+            },
+        );
+    }
+
+    async fn cached_midpoint(&self, token_id: &str, max_age_secs: i64) -> Option<Decimal> {
+        let cache = self.midpoint_cache.read().await;
+        let cached = cache.get(token_id)?;
+        if Utc::now().signed_duration_since(cached.fetched_at) <= Duration::seconds(max_age_secs) {
+            return Some(cached.value);
+        }
+        None
+    }
+
+    async fn cache_midpoint(&self, token_id: &str, midpoint: Decimal) {
+        let mut cache = self.midpoint_cache.write().await;
+        cache.insert(
+            token_id.to_string(),
+            CachedClobValue {
+                value: midpoint,
+                fetched_at: Utc::now(),
+            },
+        );
+    }
+
     /// Get the order book for a token (public endpoint).
     pub async fn get_book(&self, token_id: &str) -> Result<OrderBook, TradingError> {
+        let cache_key = token_id.trim().to_string();
+        if let Some(book) = self.cached_book(&cache_key, CLOB_BOOK_CACHE_TTL_SECS).await {
+            return Ok(book);
+        }
+
         let client = self.client().await?;
         let token_id =
             U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
         let request = OrderBookSummaryRequest::builder()
             .token_id(token_id)
             .build();
-        let response = client.order_book(&request).await.map_err(sdk_err)?;
-        Ok(OrderBook::from(response))
+        match client.order_book(&request).await {
+            Ok(response) => {
+                let book = OrderBook::from(response);
+                self.cache_book(&cache_key, book.clone()).await;
+                Ok(book)
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if is_rate_limit_error(&msg) {
+                    if let Some(book) = self.cached_book(&cache_key, CLOB_STALE_CACHE_SECS).await {
+                        return Ok(book);
+                    }
+                }
+                Err(sdk_err(msg))
+            }
+        }
     }
 
     /// Get the midpoint price for a token (public endpoint).
     pub async fn get_midpoint(&self, token_id: &str) -> Result<Decimal, TradingError> {
+        let cache_key = token_id.trim().to_string();
+        if let Some(midpoint) = self
+            .cached_midpoint(&cache_key, CLOB_MIDPOINT_CACHE_TTL_SECS)
+            .await
+        {
+            return Ok(midpoint);
+        }
+
         let client = self.client().await?;
         let token_id =
             U256::from_str(token_id).map_err(|e| sdk_err(format!("Invalid token_id: {e}")))?;
         let request = MidpointRequest::builder().token_id(token_id).build();
-        let response = client.midpoint(&request).await.map_err(sdk_err)?;
-        Ok(response.mid)
+        match client.midpoint(&request).await {
+            Ok(response) => {
+                self.cache_midpoint(&cache_key, response.mid).await;
+                Ok(response.mid)
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if is_rate_limit_error(&msg) {
+                    if let Some(midpoint) = self
+                        .cached_midpoint(&cache_key, CLOB_STALE_CACHE_SECS)
+                        .await
+                    {
+                        return Ok(midpoint);
+                    }
+                }
+                Err(sdk_err(msg))
+            }
+        }
     }
 
     // ── Order status queries ─────────────────────────────────────────────
