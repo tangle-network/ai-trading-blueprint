@@ -24,7 +24,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     operatorApiUrl,
     operatorKind,
     enabled: true,
-    refetchInterval: isLive ? 10_000 : false,
+    refetchInterval: isLive ? 30_000 : false,
   });
 
   if (isLoading) {

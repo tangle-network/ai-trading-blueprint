@@ -23,10 +23,17 @@ pub struct EthCallSimulator {
 
 impl EthCallSimulator {
     pub fn new(rpc_url: String) -> Self {
-        Self {
-            rpc_url,
-            client: reqwest::Client::new(),
-        }
+        let timeout = std::time::Duration::from_secs(
+            std::env::var("SIMULATOR_RPC_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+        );
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { rpc_url, client }
     }
 
     /// Query ERC20 balanceOf via eth_call.

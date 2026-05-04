@@ -18,6 +18,7 @@ interface BotLiveSummaryOptions {
   botName?: string;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
+  chainId?: number;
   enabled?: boolean;
 }
 
@@ -154,25 +155,28 @@ export function useBotLiveSummary({
   botName = '',
   operatorApiUrl,
   operatorKind,
+  chainId,
   enabled = true,
 }: BotLiveSummaryOptions): BotLiveSummary {
   const metricsQuery = useBotMetrics(botId, 30, {
     operatorApiUrl,
     operatorKind,
     enabled,
-    refetchInterval: enabled ? 15_000 : false,
+    refetchInterval: enabled ? 30_000 : false,
   });
   const portfolioQuery = useBotPortfolio(botId, {
     operatorApiUrl,
     operatorKind,
+    chainId,
     enabled,
-    refetchInterval: enabled ? 10_000 : false,
+    refetchInterval: enabled ? 30_000 : false,
   });
   const tradesQuery = useBotTrades(botId, botName, 100, {
     operatorApiUrl,
     operatorKind,
+    chainId,
     enabled,
-    refetchInterval: enabled ? 15_000 : false,
+    refetchInterval: enabled ? 30_000 : false,
   });
 
   useEffect(() => {

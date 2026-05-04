@@ -1,10 +1,11 @@
 use crate::error::TradingError;
 use crate::token_metadata::coingecko_id_for_token as shared_coingecko_id_for_token;
 use crate::types::PriceData;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct MarketDataClient {
@@ -51,6 +52,87 @@ struct CoinGeckoQuote {
     usd: f64,
 }
 
+const PRICE_CACHE_TTL_SECS: i64 = 30;
+const PRICE_CACHE_STALE_SECS: i64 = 15 * 60;
+const DEFAULT_RATE_LIMIT_BACKOFF_SECS: i64 = 60;
+
+#[derive(Debug, Clone)]
+struct CachedPrice {
+    price: PriceData,
+    fetched_at: DateTime<Utc>,
+}
+
+static PRICE_CACHE: LazyLock<Mutex<HashMap<String, CachedPrice>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static PROVIDER_BACKOFF: LazyLock<Mutex<HashMap<String, DateTime<Utc>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn cache_key(base_url: &str, chain_id: Option<u64>, token: &str) -> String {
+    format!(
+        "{}|{}|{}",
+        normalize_base_url(base_url),
+        chain_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".into()),
+        token.trim().to_ascii_lowercase()
+    )
+}
+
+fn provider_key(base_url: &str) -> String {
+    normalize_base_url(base_url).to_ascii_lowercase()
+}
+
+fn cached_price(
+    base_url: &str,
+    chain_id: Option<u64>,
+    token: &str,
+    max_age_secs: i64,
+) -> Option<PriceData> {
+    let key = cache_key(base_url, chain_id, token);
+    let cache = PRICE_CACHE.lock().ok()?;
+    let cached = cache.get(&key)?;
+    if Utc::now().signed_duration_since(cached.fetched_at) <= Duration::seconds(max_age_secs) {
+        return Some(cached.price.clone());
+    }
+    None
+}
+
+fn cache_price(base_url: &str, chain_id: Option<u64>, price: PriceData) {
+    let key = cache_key(base_url, chain_id, &price.token);
+    if let Ok(mut cache) = PRICE_CACHE.lock() {
+        cache.insert(
+            key,
+            CachedPrice {
+                price,
+                fetched_at: Utc::now(),
+            },
+        );
+    }
+}
+
+fn provider_backoff_until(base_url: &str) -> Option<DateTime<Utc>> {
+    let key = provider_key(base_url);
+    let backoff = PROVIDER_BACKOFF.lock().ok()?;
+    let until = *backoff.get(&key)?;
+    (until > Utc::now()).then_some(until)
+}
+
+fn set_provider_backoff(base_url: &str, response: &reqwest::Response) {
+    let retry_after_secs = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_RATE_LIMIT_BACKOFF_SECS);
+    if let Ok(mut backoff) = PROVIDER_BACKOFF.lock() {
+        backoff.insert(
+            provider_key(base_url),
+            Utc::now() + Duration::seconds(retry_after_secs),
+        );
+    }
+}
+
 impl MarketDataClient {
     pub fn new(base_url: String) -> Self {
         Self {
@@ -76,6 +158,21 @@ impl MarketDataClient {
         chain_id: Option<u64>,
         token: &str,
     ) -> Result<PriceData, TradingError> {
+        if let Some(price) = cached_price(&self.base_url, chain_id, token, PRICE_CACHE_TTL_SECS) {
+            return Ok(price);
+        }
+
+        if provider_backoff_until(&self.base_url).is_some() {
+            if let Some(price) =
+                cached_price(&self.base_url, chain_id, token, PRICE_CACHE_STALE_SECS)
+            {
+                return Ok(price);
+            }
+            return Err(TradingError::MarketDataUnavailable(format!(
+                "market data provider is rate limited for token {token}"
+            )));
+        }
+
         let url = format!("{}/price/{}", normalize_base_url(&self.base_url), token);
         let response = self.client.get(&url).send().await?;
 
@@ -85,13 +182,24 @@ impl MarketDataClient {
                 .await
                 .map_err(|e| TradingError::MarketDataUnavailable(e.to_string()))?;
 
-            return Ok(PriceData {
+            let price = PriceData {
                 token: token.to_string(),
                 price_usd: Decimal::try_from(resp.price)
                     .map_err(|e| TradingError::MarketDataUnavailable(e.to_string()))?,
                 source: self.base_url.clone(),
                 timestamp: Utc::now(),
-            });
+            };
+            cache_price(&self.base_url, chain_id, price.clone());
+            return Ok(price);
+        }
+
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            set_provider_backoff(&self.base_url, &response);
+            if let Some(price) =
+                cached_price(&self.base_url, chain_id, token, PRICE_CACHE_STALE_SECS)
+            {
+                return Ok(price);
+            }
         }
 
         if should_try_coingecko_fallback(&self.base_url) {
@@ -152,7 +260,41 @@ impl MarketDataClient {
             )));
         }
 
-        let ids = token_pairs
+        let mut cached = Vec::new();
+        let mut missing_pairs = Vec::new();
+        for (token, coin_id) in token_pairs {
+            if let Some(price) =
+                cached_price(&self.base_url, chain_id, &token, PRICE_CACHE_TTL_SECS)
+            {
+                cached.push(price);
+            } else {
+                missing_pairs.push((token, coin_id));
+            }
+        }
+
+        if missing_pairs.is_empty() {
+            return Ok(cached);
+        }
+
+        if provider_backoff_until(&self.base_url).is_some() {
+            let mut stale = cached;
+            for (token, _) in &missing_pairs {
+                if let Some(price) =
+                    cached_price(&self.base_url, chain_id, token, PRICE_CACHE_STALE_SECS)
+                {
+                    stale.push(price);
+                }
+            }
+            if !stale.is_empty() {
+                return Ok(stale);
+            }
+            return Err(TradingError::MarketDataUnavailable(format!(
+                "CoinGecko is rate limited for tokens {}",
+                tokens.join(",")
+            )));
+        }
+
+        let ids = missing_pairs
             .iter()
             .map(|(_, coin_id)| *coin_id)
             .collect::<Vec<_>>()
@@ -166,6 +308,20 @@ impl MarketDataClient {
             .await?;
         let status = response.status();
         if !status.is_success() {
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                set_provider_backoff(&self.base_url, &response);
+                let mut stale = cached;
+                for (token, _) in &missing_pairs {
+                    if let Some(price) =
+                        cached_price(&self.base_url, chain_id, token, PRICE_CACHE_STALE_SECS)
+                    {
+                        stale.push(price);
+                    }
+                }
+                if !stale.is_empty() {
+                    return Ok(stale);
+                }
+            }
             return Err(TradingError::MarketDataUnavailable(format!(
                 "CoinGecko request failed with status {status} for tokens {}",
                 tokens.join(",")
@@ -177,20 +333,22 @@ impl MarketDataClient {
             .await
             .map_err(|e| TradingError::MarketDataUnavailable(e.to_string()))?;
         let timestamp = Utc::now();
-        let mut prices = Vec::new();
-        for (token, coin_id) in token_pairs {
+        let mut prices = cached;
+        for (token, coin_id) in missing_pairs {
             let quote = body.get(coin_id).ok_or_else(|| {
                 TradingError::MarketDataUnavailable(format!(
                     "CoinGecko response missing usd quote for token {token}"
                 ))
             })?;
-            prices.push(PriceData {
+            let price = PriceData {
                 token,
                 price_usd: Decimal::try_from(quote.usd)
                     .map_err(|e| TradingError::MarketDataUnavailable(e.to_string()))?,
                 source: url.clone(),
                 timestamp,
-            });
+            };
+            cache_price(&self.base_url, chain_id, price.clone());
+            prices.push(price);
         }
 
         Ok(prices)
