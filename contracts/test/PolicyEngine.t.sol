@@ -228,6 +228,48 @@ contract PolicyEngineTest is Setup {
         assertFalse(valid);
     }
 
+    function test_nativeEthWithNoPositionLimitDoesNotCallZeroAddress() public {
+        _initVault(testVault);
+        pe.whitelistToken(testVault, address(0), true);
+
+        address[] memory targets = new address[](1);
+        targets[0] = testTarget;
+        pe.setTargetWhitelist(testVault, targets, true);
+
+        bool valid = pe.validateTrade(testVault, address(0), 5 ether, testTarget, 0);
+        assertTrue(valid);
+    }
+
+    function test_nativeEthPositionLimitUsesVaultBalance() public {
+        _initVault(testVault);
+        pe.whitelistToken(testVault, address(0), true);
+
+        address[] memory targets = new address[](1);
+        targets[0] = testTarget;
+        pe.setTargetWhitelist(testVault, targets, true);
+
+        vm.deal(testVault, 75 ether);
+        pe.setPositionLimit(testVault, address(0), 100 ether);
+
+        bool valid = pe.validateTrade(testVault, address(0), 20 ether, testTarget, 0);
+        assertTrue(valid);
+    }
+
+    function test_nativeEthPositionLimitRejectsOverLimitWithoutZeroAddressRevert() public {
+        _initVault(testVault);
+        pe.whitelistToken(testVault, address(0), true);
+
+        address[] memory targets = new address[](1);
+        targets[0] = testTarget;
+        pe.setTargetWhitelist(testVault, targets, true);
+
+        vm.deal(testVault, 75 ether);
+        pe.setPositionLimit(testVault, address(0), 100 ether);
+
+        bool valid = pe.validateTrade(testVault, address(0), 30 ether, testTarget, 0);
+        assertFalse(valid);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // LEVERAGE CAP TESTS
     // ═══════════════════════════════════════════════════════════════════════════

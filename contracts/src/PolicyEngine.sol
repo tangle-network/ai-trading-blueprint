@@ -295,10 +295,12 @@ contract PolicyEngine is Ownable2Step {
         }
 
         uint256 limit = positionLimit[vault][token];
-        uint256 currentExposure = IERC20(token).balanceOf(vault);
-        if (limit > 0 && currentExposure + amount > limit) {
-            emit TradeRejected(vault, token, amount, REJECT_POSITION_LIMIT);
-            return false;
+        if (limit > 0) {
+            uint256 currentExposure = token == address(0) ? vault.balance : IERC20(token).balanceOf(vault);
+            if (currentExposure + amount > limit) {
+                emit TradeRejected(vault, token, amount, REJECT_POSITION_LIMIT);
+                return false;
+            }
         }
 
         // Rate limit (anti-churning via circular buffer)
