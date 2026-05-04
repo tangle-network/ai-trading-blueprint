@@ -44,6 +44,7 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         extra_ports: std::collections::HashMap::new(),
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
+        capabilities_json: String::new(),
         tee_attestation_json: None,
     }
 }

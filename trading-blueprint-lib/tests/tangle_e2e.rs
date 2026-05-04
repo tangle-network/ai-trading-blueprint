@@ -223,6 +223,7 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             extra_ports: std::collections::HashMap::new(),
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
+            capabilities_json: String::new(),
             tee_attestation_json: None,
         };
         let mut user_env = serde_json::Map::new();
