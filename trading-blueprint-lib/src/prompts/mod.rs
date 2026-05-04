@@ -82,8 +82,9 @@ pub fn build_pack_loop_prompt(
                 `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
              4. Check the circuit breaker before any action:\n\
                 `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-             5. If there is a clear yield action, build a `supply`, `withdraw`, `borrow`, or `repay` intent for `aave_v3`, or a `supply`/`withdraw` intent for allowlisted `morpho_vault`, validate it, then execute it with `api-client.js`.\n\
-                For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
+             5. If there is a clear yield action, build an intent with `action:'supply'`, `action:'withdraw'`, `action:'borrow'`, or `action:'repay'` for `aave_v3`, or `action:'supply'`/`action:'withdraw'` for allowlisted `morpho_vault`, validate it, then execute it with `api-client.js`.\n\
+                For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, use raw base-unit amounts (for example `\"3000000000000000000\"` for 3 WETH), do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
+                Required intent shape: `{{strategy_id, action, token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol}}`; use `action`, not `intent_type`.\n\
                 For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
                 Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
                 Do not manually rebuild the validation payload or validator signatures.\n\
@@ -117,6 +118,7 @@ pub fn build_pack_loop_prompt(
 
 /// Build the complete system prompt for a trading bot sidecar.
 pub fn build_system_prompt(strategy_type: &str, config: &crate::state::TradingBotRecord) -> String {
+    let supported_assets = supported_assets_prompt_line(&config.strategy_config);
     let base = format!(
         r#"You are an autonomous DeFi trading agent operating within a secure sandbox.
 Your role is to analyze market conditions and execute trades through the Trading HTTP API.
@@ -128,6 +130,7 @@ Authorization: Bearer {token}
 - POST /market-data/prices — Get current token prices
   Body: {{ "tokens": ["ETH", "BTC"] }}
 - POST /portfolio/state — Get current portfolio positions
+- GET /supported-assets — Get the exact assets this bot may trade
 - POST /validate — Submit a trade intent for validator approval
   Body: {{ "strategy_id": "...", "action": "swap", "token_in": "0x...", "token_out": "0x...", "amount_in": "1000", "min_amount_out": "950", "target_protocol": "uniswap_v3" }}
 - POST /execute — Execute an approved trade on-chain (or via CLOB/Hyperliquid)
@@ -145,6 +148,7 @@ Authorization: Bearer {token}
 - Vault address: {vault}
 - Execution chain ID: {chain_id}
 - Execution RPC: {rpc_url}
+- Supported trade assets: {supported_assets}
 - For Aave decisions, use `/home/agent/tools/aave-reserve-status.js` before trading so you only consider assets available on the live fork.
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
@@ -201,6 +205,7 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         vault = config.vault_address,
         chain_id = config.chain_id,
         rpc_url = config.rpc_url,
+        supported_assets = supported_assets,
         risk_params = serde_json::to_string_pretty(&config.risk_params).unwrap_or_default(),
     );
 
@@ -215,6 +220,31 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
     };
 
     format!("{base}\n## Strategy\n{strategy_fragment}\n\n{MEMORY_BLOCK}")
+}
+
+fn supported_assets_prompt_line(strategy_config: &serde_json::Value) -> String {
+    let Some(assets) = strategy_config
+        .get("supported_assets")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return "Use only assets returned by GET /supported-assets for this bot.".to_string();
+    };
+
+    let symbols = assets
+        .iter()
+        .filter_map(|asset| asset.get("symbol").and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .filter(|symbol| !symbol.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    if symbols.is_empty() {
+        "Use only assets returned by GET /supported-assets for this bot.".to_string()
+    } else {
+        format!(
+            "{}. Do not propose trades outside this list.",
+            symbols.into_iter().collect::<Vec<_>>().join(", ")
+        )
+    }
 }
 
 const MEMORY_BLOCK: &str = r#"## Memory

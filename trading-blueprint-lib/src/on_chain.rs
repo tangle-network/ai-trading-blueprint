@@ -12,8 +12,10 @@ use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use trading_runtime::chain::ChainClient;
 use trading_runtime::contracts::{
-    IFeeDistributor, IStrategyRegistry, ITangleServices, IVaultFactory,
+    IAssetValuator, IFeeDistributor, IPolicyEngine, IStrategyRegistry, ITangleServices,
+    ITradingVault, IVaultFactory,
 };
+use trading_runtime::supported_assets::ValuationAdapterKind;
 
 /// Result of deploying a vault via VaultFactory.
 #[derive(Debug, Clone)]
@@ -21,6 +23,14 @@ pub struct VaultDeployment {
     pub vault_address: Address,
     pub share_token: Address,
     pub tx_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct VaultSupportedAssetConfig {
+    pub token: Address,
+    pub symbol: String,
+    pub valuation_adapter: ValuationAdapterKind,
+    pub adapter_address: Option<Address>,
 }
 
 /// Deploy a new vault via `VaultFactory.createVault()`.
@@ -169,6 +179,107 @@ pub async fn deploy_bot_vault(
         share_token,
         tx_hash,
     })
+}
+
+pub async fn configure_vault_supported_assets(
+    chain: &ChainClient,
+    vault_address: Address,
+    policy_engine: Address,
+    deposit_asset: Address,
+    assets: &[VaultSupportedAssetConfig],
+) -> Result<(), String> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+
+    let whitelist_tokens = assets.iter().map(|asset| asset.token).collect::<Vec<_>>();
+    let whitelist_call = IPolicyEngine::setWhitelistCall {
+        vault: vault_address,
+        tokens: whitelist_tokens,
+        allowed: true,
+    };
+    send_contract_call(
+        chain,
+        policy_engine,
+        Bytes::from(whitelist_call.abi_encode()),
+        "PolicyEngine.setWhitelist",
+    )
+    .await?;
+
+    for asset in assets {
+        if asset.token == deposit_asset || asset.valuation_adapter == ValuationAdapterKind::None {
+            continue;
+        }
+        let adapter = asset.adapter_address.ok_or_else(|| {
+            format!(
+                "{} is supported but missing vault valuation adapter for {:?}",
+                asset.symbol, asset.valuation_adapter
+            )
+        })?;
+
+        let supported_call = IAssetValuator::isSupportedCall {
+            token: asset.token,
+            asset: deposit_asset,
+        };
+        let supported = IAssetValuator::isSupportedCall::abi_decode_returns(
+            &chain
+                .provider
+                .call(
+                    alloy::rpc::types::TransactionRequest::default()
+                        .to(adapter)
+                        .input(Bytes::from(supported_call.abi_encode()).into()),
+                )
+                .await
+                .map_err(|e| {
+                    format!(
+                        "{} valuation adapter support check failed for token {}: {e}",
+                        asset.symbol, asset.token
+                    )
+                })?,
+        )
+        .map_err(|e| format!("Failed to decode valuation adapter support check: {e}"))?;
+        if !supported {
+            return Err(format!(
+                "{} is supported but valuation adapter {adapter:#x} does not support valuing {} against deposit asset {deposit_asset:#x}",
+                asset.symbol, asset.token,
+            ));
+        }
+
+        let adapter_call = ITradingVault::setValuationAdapterCall {
+            token: asset.token,
+            adapter,
+        };
+        send_contract_call(
+            chain,
+            vault_address,
+            Bytes::from(adapter_call.abi_encode()),
+            "TradingVault.setValuationAdapter",
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn send_contract_call(
+    chain: &ChainClient,
+    to: Address,
+    data: Bytes,
+    label: &str,
+) -> Result<(), String> {
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(to)
+        .input(data.into());
+    let pending = chain
+        .provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| format!("{label} tx send failed: {e}"))?;
+    pending
+        .get_receipt()
+        .await
+        .map_err(|e| format!("{label} receipt failed: {e}"))?;
+    Ok(())
 }
 
 /// Parse VaultCreated event from transaction receipt.

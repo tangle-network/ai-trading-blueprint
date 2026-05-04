@@ -10,6 +10,9 @@ use crate::state::{TradingBotRecord, bot_key, bots};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
+use trading_runtime::supported_assets::{
+    ValuationAdapterKind, default_protocol_for_strategy, supported_assets_for,
+};
 
 /// Keyed lock set for provision dedup — prevents TOCTOU race between
 /// find_bot_by_call and insert. A (service_id, call_id) pair is inserted
@@ -199,6 +202,10 @@ fn apply_strategy_defaults(
     request: &TradingProvisionRequest,
     paper_trade: bool,
 ) {
+    strategy_config
+        .entry("strategy_type".to_string())
+        .or_insert_with(|| Value::String(request.strategy_type.clone()));
+
     if has_configured_asset_token(request.asset_token) {
         strategy_config
             .entry("asset_token".to_string())
@@ -216,9 +223,10 @@ fn apply_strategy_defaults(
         }
     }
 
+    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
+
     if !strategy_config.contains_key("protocol_chain_id") {
-        let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
-        let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
         if protocol_chain_id != execution_chain_id {
             strategy_config.insert(
                 "protocol_chain_id".to_string(),
@@ -226,6 +234,96 @@ fn apply_strategy_defaults(
             );
         }
     }
+
+    if let Some(default_protocol) = default_protocol_for_strategy(&request.strategy_type) {
+        strategy_config
+            .entry("available_protocols".to_string())
+            .or_insert_with(|| Value::Array(vec![Value::String(default_protocol.to_string())]));
+
+        let supported_assets =
+            supported_assets_for(&request.strategy_type, protocol_chain_id, default_protocol);
+        if !supported_assets.is_empty() {
+            strategy_config
+                .entry("supported_assets".to_string())
+                .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
+        }
+    }
+}
+
+fn env_address(candidates: &[&str]) -> Option<Address> {
+    candidates
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse().ok())
+}
+
+fn policy_engine_address_from_env() -> Option<Address> {
+    env_address(&[
+        "POLICY_ENGINE_ADDRESS",
+        "EXECUTION_POLICY_ENGINE",
+        "DEPLOY_POLICY_ENGINE",
+    ])
+}
+
+fn valuation_adapter_address_from_env(kind: ValuationAdapterKind) -> Option<Address> {
+    match kind {
+        ValuationAdapterKind::None => None,
+        ValuationAdapterKind::ChainlinkUsd => env_address(&[
+            "CHAINLINK_USD_VALUATOR_ADDRESS",
+            "EXECUTION_CHAINLINK_USD_VALUATOR",
+            "CHAINLINK_VALUATOR_ADDRESS",
+            "DEPLOY_CHAINLINK_USD_VALUATOR",
+        ]),
+        ValuationAdapterKind::WrappedAsset => env_address(&[
+            "WRAPPED_ASSET_VALUATOR_ADDRESS",
+            "EXECUTION_WRAPPED_ASSET_VALUATOR",
+            "WRAPPED_VALUATOR_ADDRESS",
+            "DEPLOY_WRAPPED_ASSET_VALUATOR",
+        ]),
+    }
+}
+
+fn vault_supported_asset_configs(
+    strategy_type: &str,
+    protocol_chain_id: u64,
+    deposit_asset: Address,
+) -> Result<Vec<crate::on_chain::VaultSupportedAssetConfig>, String> {
+    let Some(protocol) = default_protocol_for_strategy(strategy_type) else {
+        return Ok(Vec::new());
+    };
+
+    supported_assets_for(strategy_type, protocol_chain_id, protocol)
+        .into_iter()
+        .map(|asset| {
+            let token: Address = asset.address.parse().map_err(|e| {
+                format!(
+                    "Invalid supported asset address for {} on chain {}: {e}",
+                    asset.symbol, asset.chain_id
+                )
+            })?;
+            let adapter_address = if token == deposit_asset {
+                None
+            } else {
+                match asset.valuation_adapter {
+                    ValuationAdapterKind::None => None,
+                    kind => Some(valuation_adapter_address_from_env(kind).ok_or_else(|| {
+                        format!(
+                            "{} is supported but missing vault valuation adapter for {:?}. Set the corresponding valuator address env var.",
+                            asset.symbol, kind
+                        )
+                    })?),
+                }
+            };
+            Ok(crate::on_chain::VaultSupportedAssetConfig {
+                token,
+                symbol: asset.symbol,
+                valuation_adapter: asset.valuation_adapter,
+                adapter_address,
+            })
+        })
+        .collect()
 }
 
 fn mark_provision_failed(call_id: u64, error: &str) {
@@ -461,6 +559,34 @@ pub async fn provision_core(
             msg
         })?;
 
+        let protocol_chain_id = configured_protocol_chain_id(strategy_config_obj, chain_id);
+        let supported_asset_configs = vault_supported_asset_configs(
+            &request.strategy_type,
+            protocol_chain_id,
+            request.asset_token,
+        )
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
+        if !supported_asset_configs.is_empty() {
+            let policy_engine = policy_engine_address_from_env().ok_or_else(|| {
+                let msg = "Execution-chain vault provisioning requires POLICY_ENGINE_ADDRESS or EXECUTION_POLICY_ENGINE to whitelist supported assets".to_string();
+                mark_provision_failed(call_id, &msg);
+                msg
+            })?;
+            crate::on_chain::configure_vault_supported_assets(
+                &chain,
+                deployment.vault_address,
+                policy_engine,
+                request.asset_token,
+                &supported_asset_configs,
+            )
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to configure supported vault assets: {e}");
+                mark_provision_failed(call_id, &msg);
+                msg
+            })?;
+        }
+
         provision_output_vault = deployment.vault_address;
         provision_output_share = deployment.share_token;
         (
@@ -513,10 +639,6 @@ pub async fn provision_core(
         "STRATEGY_TYPE".into(),
         serde_json::Value::String(request.strategy_type.clone()),
     );
-    env.insert(
-        "STRATEGY_CONFIG".into(),
-        serde_json::Value::String(request.strategy_config_json.clone()),
-    );
     env.insert("RPC_URL".into(), serde_json::Value::String(rpc_url.clone()));
     env.insert(
         "CHAIN_ID".into(),
@@ -537,6 +659,15 @@ pub async fn provision_core(
             serde_json::Value::String(validator_endpoints.join(",")),
         );
     }
+
+    let effective_strategy_config_json = serde_json::to_string(&Value::Object(
+        parsed_strategy_config.clone().unwrap_or_default(),
+    ))
+    .unwrap_or_else(|_| request.strategy_config_json.clone());
+    env.insert(
+        "STRATEGY_CONFIG".into(),
+        serde_json::Value::String(effective_strategy_config_json),
+    );
 
     let env_json = serde_json::to_string(&env).unwrap_or_default();
 
