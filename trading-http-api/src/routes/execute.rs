@@ -37,6 +37,7 @@ use trading_runtime::{
 
 use super::validate::{
     PAPER_MODE_VALIDATOR, has_usable_validator_signature, normalize_protocol_token, parse_action,
+    strategy_type_from_config, validate_supported_trade_assets,
 };
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -2000,6 +2001,18 @@ async fn execute(
     let normalized_intent = normalize_intent_payload(request.intent.clone(), protocol_chain_id);
     let mut normalized_request = request.clone();
     normalized_request.intent = normalized_intent;
+    validate_supported_trade_assets(
+        None,
+        protocol_chain_id,
+        &normalized_request.intent.target_protocol,
+        &normalized_request.intent.token_in,
+        &normalized_request.intent.token_out,
+        Some(&state.vault_address),
+        state.rpc_url.as_deref(),
+        !state.paper_trade
+            && !uses_direct_non_vault_execution(&normalized_request.intent.target_protocol),
+    )
+    .await?;
     normalized_request.intent.metadata = crate::enrich_yield_safety_metadata(
         &normalized_request.intent.target_protocol,
         &normalized_request.intent.action,
@@ -2188,6 +2201,18 @@ async fn execute_multi_bot(
     let normalized_intent = normalize_intent_payload(req.intent.clone(), Some(protocol_chain_id));
     let mut normalized_req = req.clone();
     normalized_req.intent = normalized_intent;
+    validate_supported_trade_assets(
+        strategy_type_from_config(&bot.strategy_config),
+        Some(protocol_chain_id),
+        &normalized_req.intent.target_protocol,
+        &normalized_req.intent.token_in,
+        &normalized_req.intent.token_out,
+        Some(&bot.vault_address),
+        Some(&bot.rpc_url),
+        !bot.paper_trade
+            && !uses_direct_non_vault_execution(&normalized_req.intent.target_protocol),
+    )
+    .await?;
     normalized_req.intent.metadata = crate::enrich_yield_safety_metadata(
         &normalized_req.intent.target_protocol,
         &normalized_req.intent.action,
