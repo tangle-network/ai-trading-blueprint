@@ -19,11 +19,13 @@ use alloy::sol_types::{SolCall, SolValue};
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
+use trading_runtime::adapters::ActionParams;
 use trading_runtime::contracts::{ITradeValidator, ITradingVault};
 use trading_runtime::execution_hash::{
-    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, format_b256, hash_clob_order,
-    hash_hyperliquid_order,
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
+    hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
 };
+use trading_runtime::executor::get_adapter;
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::signed_envelope::SignedTradingEnvelope;
 use trading_runtime::trading_envelope::TradingEnvelope;
@@ -192,6 +194,38 @@ async fn test_state_with_chain_id(mock_uri: &str, chain_id: u64) -> Arc<TradingA
     })
 }
 
+async fn live_test_state(market_uri: &str, rpc_uri: &str) -> Arc<TradingApiState> {
+    ensure_state_dir();
+    let bot_id = format!("live-test-bot-{}", uuid::Uuid::new_v4());
+
+    Arc::new(TradingApiState {
+        market_client: MarketDataClient::new(market_uri.to_string()),
+        validator_client: ValidatorClient::new(vec![], 50),
+        min_validator_score: 50,
+        executor: TradeExecutor::new(
+            "0x0000000000000000000000000000000000000001",
+            rpc_uri,
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            42161,
+        )
+        .expect("test executor"),
+        portfolio: RwLock::new(PortfolioState::default()),
+        api_token: TEST_TOKEN.to_string(),
+        vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+        validator_endpoints: vec![],
+        validation_deadline_secs: 3600,
+        bot_id,
+        paper_trade: false,
+        operator_address: String::new(),
+        submitter_address: String::new(),
+        sidecar_url: String::new(),
+        sidecar_token: String::new(),
+        rpc_url: Some(rpc_uri.to_string()),
+        chain_id: None,
+        clob_client: None,
+    })
+}
+
 fn auth_header() -> String {
     format!("Bearer {TEST_TOKEN}")
 }
@@ -331,7 +365,15 @@ fn attach_signed_validation(
     action_kind: u64,
 ) {
     attach_validation_hashes(body, Some(execution_chain_id));
+    attach_validator_signature(body, execution_chain_id, vault_address, action_kind);
+}
 
+fn attach_validator_signature(
+    body: &mut serde_json::Value,
+    execution_chain_id: u64,
+    vault_address: &str,
+    action_kind: u64,
+) {
     let validation = body
         .get_mut("validation")
         .and_then(|value| value.as_object_mut())
@@ -389,12 +431,180 @@ fn attach_signed_validation(
     );
 }
 
+fn attach_vault_execution_hash(body: &mut serde_json::Value, execution_chain_id: u64) {
+    attach_validation_hashes(body, None);
+
+    let intent_json = body["intent"].clone();
+    let validation = body
+        .get_mut("validation")
+        .and_then(|value| value.as_object_mut())
+        .expect("validation object");
+    let intent_hash: alloy::primitives::B256 = validation["intent_hash"]
+        .as_str()
+        .expect("intent_hash")
+        .parse()
+        .expect("intent hash b256");
+    let deadline = validation
+        .get("deadline")
+        .and_then(|value| value.as_u64())
+        .expect("deadline");
+    let token_in = intent_json["token_in"]
+        .as_str()
+        .expect("token_in")
+        .parse()
+        .expect("token_in address");
+    let token_out = intent_json["token_out"]
+        .as_str()
+        .expect("token_out")
+        .parse()
+        .expect("token_out address");
+    let amount_in: rust_decimal::Decimal = intent_json["amount_in"]
+        .as_str()
+        .expect("amount_in")
+        .parse()
+        .expect("amount_in decimal");
+    let min_amount_out: rust_decimal::Decimal = intent_json["min_amount_out"]
+        .as_str()
+        .expect("min_amount_out")
+        .parse()
+        .expect("min_amount_out decimal");
+    let mut extra = intent_json
+        .get("metadata")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    match extra {
+        serde_json::Value::Object(ref mut map) => {
+            map.entry("execution_deadline".to_string())
+                .or_insert_with(|| serde_json::json!(deadline));
+        }
+        _ => extra = serde_json::json!({ "execution_deadline": deadline }),
+    }
+
+    let amount = U256::from_str_radix(&amount_in.trunc().to_string(), 10).expect("amount u256");
+    let min_output =
+        U256::from_str_radix(&min_amount_out.trunc().to_string(), 10).expect("min output u256");
+    let vault_address: Address = "0x0000000000000000000000000000000000000001"
+        .parse()
+        .expect("vault address");
+    let adapter = get_adapter(
+        intent_json["target_protocol"].as_str().expect("protocol"),
+        None,
+    )
+    .expect("adapter");
+    let encoded = adapter
+        .encode_action(&ActionParams {
+            action: parse_test_action(intent_json["action"].as_str().expect("action")),
+            token_in,
+            token_out,
+            amount,
+            min_output,
+            extra,
+            vault_address,
+        })
+        .expect("encoded action");
+    let execution_hash = hash_execution_payload(
+        &encoded,
+        intent_hash,
+        U256::from(deadline),
+        execution_chain_id,
+    );
+    validation.insert(
+        "execution_hash".into(),
+        serde_json::json!(format_b256(execution_hash)),
+    );
+}
+
 fn rpc_result_hex(encoded: Vec<u8>) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "result": format!("0x{}", hex::encode(encoded)),
     })
+}
+
+fn rpc_error(message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+            "code": -32000,
+            "message": message,
+        },
+    })
+}
+
+fn selector_hex(selector: [u8; 4]) -> String {
+    format!("0x{}", hex::encode(selector))
+}
+
+async fn mock_rpc_selector(rpc_mock: &MockServer, selector: &str, response: ResponseTemplate) {
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains(selector.to_string()))
+        .respond_with(response)
+        .mount(rpc_mock)
+        .await;
+}
+
+async fn mock_live_vault_reconciliation_base(
+    rpc_mock: &MockServer,
+    outstanding_response: ResponseTemplate,
+) {
+    let asset: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        .parse()
+        .expect("asset address");
+
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::assetCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(asset.abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::totalAssetsCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::isNavSafeCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(true.abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::totalOutstandingCollateralCall::SELECTOR),
+        outstanding_response,
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::getHeldTokensCall::SELECTOR),
+        ResponseTemplate::new(200)
+            .set_body_json(rpc_result_hex(Vec::<Address>::new().abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::getBalanceCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+    )
+    .await;
+}
+
+async fn mock_live_aave_debt_balance(
+    rpc_mock: &MockServer,
+    debt_token: &str,
+    response: ResponseTemplate,
+) {
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("0x70a08231"))
+        .and(body_string_contains(debt_token.to_ascii_lowercase()))
+        .respond_with(response)
+        .mount(rpc_mock)
+        .await;
 }
 
 async fn mock_direct_validator_approval(rpc_mock: &MockServer, approved: bool) {
@@ -764,6 +974,221 @@ async fn test_circuit_breaker_no_drawdown() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["should_break"], false);
+}
+
+#[tokio::test]
+async fn test_live_reconciliation_portfolio_state_fails_on_outstanding_collateral_rpc_error() {
+    let market_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_live_vault_reconciliation_base(
+        &rpc_mock,
+        ResponseTemplate::new(200).set_body_json(rpc_error("collateral read reverted")),
+    )
+    .await;
+
+    let state = live_test_state(&market_mock.uri(), &rpc_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    assert!(
+        body.contains("totalOutstandingCollateral read failed"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_live_reconciliation_portfolio_state_fails_on_outstanding_collateral_decode_error() {
+    let market_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_live_vault_reconciliation_base(
+        &rpc_mock,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": "0x1234",
+        })),
+    )
+    .await;
+
+    let state = live_test_state(&market_mock.uri(), &rpc_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    assert!(
+        body.contains("totalOutstandingCollateral read failed")
+            && body.contains("Failed to decode live u256 response"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_live_reconciliation_portfolio_state_fails_on_aave_debt_rpc_error() {
+    let market_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_live_vault_reconciliation_base(
+        &rpc_mock,
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+    )
+    .await;
+    let weth_debt = trading_runtime::aave_v3_registry::reserve_by_symbol(1, "WETH")
+        .expect("WETH reserve")
+        .variable_debt_token;
+    let usdc_debt = trading_runtime::aave_v3_registry::reserve_by_symbol(1, "USDC")
+        .expect("USDC reserve")
+        .variable_debt_token;
+    mock_live_aave_debt_balance(
+        &rpc_mock,
+        weth_debt,
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+    )
+    .await;
+    mock_live_aave_debt_balance(
+        &rpc_mock,
+        usdc_debt,
+        ResponseTemplate::new(200).set_body_json(rpc_error("debt token read failed")),
+    )
+    .await;
+
+    let state = live_test_state(&market_mock.uri(), &rpc_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    assert!(
+        body.contains("Aave variable debt balanceOf failed for USDC"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_live_reconciliation_circuit_breaker_fails_on_outstanding_collateral_rpc_error() {
+    let market_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_live_vault_reconciliation_base(
+        &rpc_mock,
+        ResponseTemplate::new(200).set_body_json(rpc_error("collateral read reverted")),
+    )
+    .await;
+
+    let state = live_test_state(&market_mock.uri(), &rpc_mock.uri()).await;
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/circuit-breaker/check")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "max_drawdown_pct": "10.0"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    assert!(
+        body.contains("totalOutstandingCollateral read failed"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_live_reconciliation_execute_fails_before_submission_on_outstanding_collateral_rpc_error()
+ {
+    let market_mock = MockServer::start().await;
+    let rpc_mock = MockServer::start().await;
+    mock_live_vault_reconciliation_base(
+        &rpc_mock,
+        ResponseTemplate::new(200).set_body_json(rpc_error("collateral read reverted")),
+    )
+    .await;
+
+    let state = live_test_state(&market_mock.uri(), &rpc_mock.uri()).await;
+    let app = build_router(state);
+    let mut execute_body: serde_json::Value =
+        serde_json::from_str(&execute_body_for_chain(None)).expect("execute body");
+    attach_vault_execution_hash(&mut execute_body, 42161);
+    attach_validator_signature(
+        &mut execute_body,
+        42161,
+        "0x0000000000000000000000000000000000000001",
+        ACTION_KIND_VAULT_EXECUTE,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&execute_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    assert!(
+        body.contains("totalOutstandingCollateral read failed"),
+        "unexpected body: {body}"
+    );
 }
 
 #[tokio::test]

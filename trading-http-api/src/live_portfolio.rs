@@ -135,7 +135,12 @@ pub async fn reconcile_live_portfolio(
         ITradingVault::totalOutstandingCollateralCall {}.abi_encode(),
     )
     .await
-    .unwrap_or(U256::ZERO);
+    .map_err(|(status, message)| {
+        (
+            status,
+            format!("totalOutstandingCollateral read failed: {message}"),
+        )
+    })?;
     let held_tokens = eth_call_addresses(
         &provider,
         vault_addr,
@@ -278,7 +283,15 @@ pub async fn reconcile_live_portfolio(
             })?;
             let debt_raw = erc20_balance_of(&provider, debt_token, vault_addr)
                 .await
-                .unwrap_or(U256::ZERO);
+                .map_err(|(status, message)| {
+                    (
+                        status,
+                        format!(
+                            "Aave variable debt balanceOf failed for {}: {message}",
+                            reserve.symbol
+                        ),
+                    )
+                })?;
             if debt_raw.is_zero() {
                 continue;
             }
