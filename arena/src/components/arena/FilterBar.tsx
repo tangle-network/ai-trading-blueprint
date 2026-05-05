@@ -15,32 +15,50 @@ const timePeriods = [
 
 export function FilterBar({ search, onSearchChange, timePeriod, onTimePeriodChange }: FilterBarProps) {
   return (
-    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-6">
-      <div className="relative flex-1 max-w-xs">
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 i-ph:magnifying-glass text-arena-elements-textTertiary text-sm" />
+    <div className="flex flex-col lg:flex-row lg:items-end gap-3.5 mb-6">
+      <div className="flex-1 max-w-xl">
+        <label
+          htmlFor="bot-search"
+          className="mb-2 block text-[11px] font-data font-semibold uppercase tracking-[0.22em] text-arena-elements-textTertiary"
+        >
+          Search
+        </label>
+        <div className="arena-control-shell relative rounded-xl px-1.5">
+          <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 i-ph:magnifying-glass text-arena-elements-textTertiary text-sm" />
+          <div className="pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 text-[10px] font-data uppercase tracking-[0.22em] text-arena-elements-textTertiary md:block">
+            Bots / strategies
+          </div>
+        
         <Input
+          id="bot-search"
           placeholder="Search bots or strategies..."
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9"
+          className="arena-control-input h-12 pl-11 pr-28 text-sm font-data text-arena-elements-textPrimary placeholder:text-arena-elements-textTertiary"
           aria-label="Search bots or strategies"
         />
+        </div>
       </div>
 
-      <div className="flex items-center gap-0.5 glass-card rounded-lg p-1">
+      <div>
+        <span className="mb-2 block text-[11px] font-data font-semibold uppercase tracking-[0.22em] text-arena-elements-textTertiary">
+          Window
+        </span>
+        <div className="arena-control-shell flex items-center gap-1 rounded-xl p-1.5">
         {timePeriods.map((tp) => (
           <button
             key={tp.value}
             onClick={() => onTimePeriodChange(tp.value)}
-            className={`px-3.5 py-2 text-sm font-data font-semibold uppercase tracking-wider rounded-md transition-all duration-200 ${
+            className={`px-3.5 py-2 text-sm font-data font-semibold uppercase tracking-[0.18em] rounded-lg transition-all duration-200 ${
               timePeriod === tp.value
-                ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400 shadow-[0_0_10px_rgba(142,89,255,0.08)]'
-                : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'
+                ? 'bg-violet-500/12 text-violet-700 dark:text-violet-400 shadow-[0_10px_26px_rgba(109,40,217,0.12)]'
+                : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover/70'
             }`}
           >
             {tp.label}
           </button>
         ))}
+        </div>
       </div>
     </div>
   );

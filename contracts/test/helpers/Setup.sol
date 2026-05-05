@@ -135,7 +135,7 @@ abstract contract Setup is Test {
         tradeValidator = new TradeValidator();
         feeDistributor = new FeeDistributor(owner);
         vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        vaultDeployer = vaultFactory.deployer();
+        vaultDeployer = vaultFactory.vaultDeployer();
 
         // Transfer ownership of PolicyEngine, TradeValidator, and FeeDistributor to VaultFactory
         // (since factory calls their onlyOwner functions: configureVault, initializeVault, initializeVaultFees)

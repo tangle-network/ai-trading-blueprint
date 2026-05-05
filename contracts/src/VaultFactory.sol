@@ -8,6 +8,7 @@ import "./TradeValidator.sol";
 import "./PolicyEngine.sol";
 import "./FeeDistributor.sol";
 import "./VaultDeployer.sol";
+import "./ShareDeployer.sol";
 
 /// @title VaultFactory
 /// @notice Deploys full ERC-7575 vault stacks via CREATE2
@@ -42,7 +43,8 @@ contract VaultFactory is Ownable2Step {
     // IMMUTABLES
     // ═══════════════════════════════════════════════════════════════════════════
 
-    VaultDeployer public immutable deployer;
+    VaultDeployer public immutable vaultDeployer;
+    ShareDeployer public immutable shareDeployer;
     PolicyEngine public immutable policyEngine;
     TradeValidator public immutable tradeValidator;
     FeeDistributor public immutable feeDistributor;
@@ -88,7 +90,8 @@ contract VaultFactory is Ownable2Step {
         policyEngine = _policyEngine;
         tradeValidator = _tradeValidator;
         feeDistributor = _feeDistributor;
-        deployer = new VaultDeployer(_policyEngine, _tradeValidator, _feeDistributor);
+        vaultDeployer = new VaultDeployer(_policyEngine, _tradeValidator, _feeDistributor);
+        shareDeployer = new ShareDeployer();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -195,13 +198,13 @@ contract VaultFactory is Ownable2Step {
         bytes32 shareSalt = isBotVault
             ? keccak256(abi.encodePacked(serviceId, "bot-share", salt))
             : keccak256(abi.encodePacked(serviceId, "share", salt));
-        VaultShare shareToken = deployer.deployShare(shareSalt, name, symbol, address(this));
+        VaultShare shareToken = shareDeployer.deployShare(shareSalt, name, symbol, address(this));
         shareAddr = address(shareToken);
         emit ShareTokenCreated(serviceId, shareAddr);
 
         // Deploy TradingVault via VaultDeployer
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
-        TradingVault v = deployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
+        TradingVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
         vault = address(v);
         serviceVaults[serviceId].push(vault);
         vaultServiceId[vault] = serviceId;

@@ -1,8 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { MetaFunction } from 'react-router'
 import { useNavigate } from 'react-router'
-import { useAccount } from 'wagmi'
+import { useStore } from '@nanostores/react'
+import { selectedChainIdStore } from '@tangle-network/blueprint-ui'
+import { useAccount, useSwitchChain } from 'wagmi'
 import { Button } from '@tangle-network/blueprint-ui/components'
+import { networks } from '~/lib/contracts/chains'
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
 import {
   ALL_TRADING_OPERATOR_API_URLS,
@@ -32,14 +35,29 @@ const STRATEGY_HINTS = [
   },
 ]
 
+function normalizeCreateStatus(message: string): string {
+  if (message.includes('1003')) {
+    return 'Operator authentication is temporarily unavailable from this public app origin.'
+  }
+  if (message.startsWith('Error: Challenge failed:')) {
+    return 'Operator authentication is temporarily unavailable from this public app origin.'
+  }
+  return message
+}
+
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
-  const { address } = useAccount()
-  const { authHeaders } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
+  const selectedChainId = useStore(selectedChainIdStore)
+  const selectedNetwork = networks[selectedChainId]
+  const targetChain = selectedNetwork?.chain
+  const { address, chainId, isConnected } = useAccount()
+  const { switchChainAsync } = useSwitchChain()
+  const operatorAuth = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
+  const isWrongChain = Boolean(isConnected && targetChain && chainId !== targetChain.id)
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -47,6 +65,24 @@ export default function CreateAgent() {
 
   const handleCreate = useCallback(async () => {
     if (!prompt.trim() || isCreating) return
+    if (!HAS_TRADING_OPERATOR_API) {
+      setStatus('Operator API is not configured for this environment.')
+      return
+    }
+    if (!address) {
+      setStatus('Connect your wallet first.')
+      return
+    }
+    if (isWrongChain && targetChain) {
+      try {
+        await switchChainAsync({ chainId: targetChain.id })
+        setStatus(`Switched to ${targetChain.name}. Review the prompt and try again.`)
+      } catch {
+        setStatus(`Switch to ${targetChain.name} in your wallet before creating an agent.`)
+      }
+      return
+    }
+
     setIsCreating(true)
     setStatus('Parsing your strategy...')
 
@@ -66,11 +102,16 @@ export default function CreateAgent() {
 
       // Call the operator API to provision a bot with the user's prompt
       const operatorUrl = ALL_TRADING_OPERATOR_API_URLS[0]
+      const token = await operatorAuth.getToken()
+      if (!token) {
+        const message = operatorAuth.error ?? 'Operator authentication is not available from this app origin yet.'
+        throw new Error(message)
+      }
       const res = await fetch(`${operatorUrl}/api/bots`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...authHeaders,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           prompt,
@@ -91,10 +132,10 @@ export default function CreateAgent() {
         navigate(`/arena/bot/${data.bot_id || data.id}`)
       }, 500)
     } catch (err) {
-      setStatus(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setStatus(normalizeCreateStatus(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`))
       setIsCreating(false)
     }
-  }, [prompt, isCreating, authHeaders, navigate])
+  }, [prompt, isCreating, address, isWrongChain, navigate, operatorAuth, switchChainAsync, targetChain])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -104,74 +145,99 @@ export default function CreateAgent() {
   }, [handleCreate])
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-2xl space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-3">
-          <h1 className="text-4xl font-display font-bold tracking-tight">
-            What do you want to trade?
-          </h1>
-          <p className="text-lg text-arena-elements-textSecondary">
-            Describe your strategy. Your AI agent will build itself, learn, and evolve.
-          </p>
-        </div>
+    <div className="arena-compose-shell mx-auto max-w-5xl px-4 py-3 sm:px-6 sm:py-4">
+      <div className="glass-card flex min-h-[calc(100vh-var(--header-height)-1.5rem)] flex-col rounded-[28px] p-5 sm:p-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center">
+          <div className="space-y-5">
+            <div className="space-y-3 text-center">
+              <h1 className="text-4xl font-display font-bold tracking-tight">
+                What do you want to trade?
+              </h1>
+              <p className="mx-auto max-w-2xl text-base text-arena-elements-textSecondary sm:text-lg">
+                Describe your strategy and the agent will translate it into a live deployment flow.
+              </p>
+            </div>
 
-        {/* Main prompt input */}
-        <div className="relative">
-          <textarea
-            ref={textareaRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="I want an agent that..."
-            rows={4}
-            disabled={isCreating}
-            className="w-full px-5 py-4 rounded-xl bg-arena-elements-bg border border-arena-elements-border
-                       text-base placeholder:text-arena-elements-textTertiary
-                       focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500/40
-                       resize-none disabled:opacity-50 transition-all"
-          />
-          <div className="absolute bottom-3 right-3">
-            <Button
-              onClick={handleCreate}
-              disabled={!prompt.trim() || isCreating}
-              className="px-4 py-2 text-sm"
-            >
-              {isCreating ? status : 'Create Agent →'}
-            </Button>
+            {isWrongChain && targetChain && (
+              <div className="rounded-[20px] border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    Your wallet is on chain {chainId}. Switch to <span className="font-semibold">{targetChain.name}</span> before creating an agent.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-10 px-4"
+                    onClick={() => switchChainAsync({ chainId: targetChain.id }).catch(() => {
+                      setStatus(`Switch to ${targetChain.name} in your wallet before continuing.`)
+                    })}
+                  >
+                    Switch Network
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
 
-        {/* Strategy hints */}
-        <div className="space-y-3">
-          <p className="text-sm text-arena-elements-textTertiary text-center">
-            Or try one of these:
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            {STRATEGY_HINTS.map((hint) => (
-              <button
-                key={hint.label}
-                onClick={() => setPrompt(hint.prompt)}
+          <div className="space-y-3 pt-4">
+            <div className="rounded-[24px] border border-white/10 bg-white/6 p-3 shadow-[0_14px_36px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <textarea
+                ref={textareaRef}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="I want an agent that..."
+                rows={4}
                 disabled={isCreating}
-                className="text-left px-4 py-3 rounded-lg border border-arena-elements-border
-                           hover:border-violet-500/30 hover:bg-violet-500/5
-                           transition-all text-sm disabled:opacity-50"
-              >
-                <span className="font-semibold block mb-1">{hint.label}</span>
-                <span className="text-arena-elements-textTertiary text-xs line-clamp-2">
-                  {hint.prompt}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
+                className="w-full rounded-[20px] border border-transparent bg-transparent px-3 py-3
+                       text-base placeholder:text-arena-elements-textTertiary
+                       focus:outline-none focus:ring-0 focus:border-transparent
+                       resize-none disabled:opacity-50 transition-all"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="text-xs text-arena-elements-textTertiary">
+                  Paper trading first. You can wire capital and secrets after the agent is provisioned.
+                </p>
+                <Button
+                  onClick={handleCreate}
+                  disabled={!prompt.trim() || isCreating || !address || isWrongChain}
+                  className="h-11 shrink-0 px-4 text-sm"
+                >
+                  {isCreating ? 'Creating…' : !address ? 'Connect Wallet' : isWrongChain ? 'Switch Network' : 'Create Agent →'}
+                </Button>
+              </div>
+            </div>
 
-        {/* Footer */}
-        <p className="text-center text-xs text-arena-elements-textTertiary">
-          Your agent starts in paper trading mode. It will build its own tools,
-          backtest strategies, and evolve over time. You can chat with it anytime.
-        </p>
-      </div>
-    </div>
+            <div className="space-y-2">
+              <p className="text-center text-xs text-arena-elements-textTertiary">
+                Quick starts
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {STRATEGY_HINTS.map((hint) => (
+                  <button
+                    key={hint.label}
+                    onClick={() => setPrompt(hint.prompt)}
+                    disabled={isCreating}
+                    className="rounded-full border border-white/8 bg-white/5 px-3 py-2 text-xs font-data text-arena-elements-textSecondary transition-all hover:border-violet-500/20 hover:bg-violet-500/8 hover:text-arena-elements-textPrimary disabled:opacity-50"
+                  >
+                    {hint.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {status && (
+              <div className={`rounded-[20px] px-4 py-3 text-sm ${
+	                status.startsWith('Error:')
+	                  ? 'border border-crimson-500/20 bg-crimson-500/8 text-crimson-300'
+	                  : 'border border-arena-elements-borderColor bg-arena-elements-background-depth-3 text-arena-elements-textSecondary'
+	              }`}>
+	                {status}
+	              </div>
+	            )}
+	          </div>
+	        </div>
+	      </div>
+	    </div>
   )
 }

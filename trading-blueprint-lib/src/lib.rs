@@ -43,11 +43,11 @@ pub const JOB_STOP_TRADING: u8 = 3;
 pub const JOB_STATUS: u8 = 4;
 pub const JOB_DEPROVISION: u8 = 5;
 pub const JOB_EXTEND: u8 = 6;
-pub const JOB_PROMPT: u8 = 10;
-pub const JOB_TASK: u8 = 11;
-pub const JOB_EXEC: u8 = 12;
-pub const JOB_WORKFLOW_TICK: u8 = 30;
-pub const JOB_WEBHOOK_EVENT: u8 = 40;
+pub const JOB_PROMPT: u8 = 7;
+pub const JOB_TASK: u8 = 8;
+pub const JOB_EXEC: u8 = 9;
+pub const JOB_WORKFLOW_TICK: u8 = 10;
+pub const JOB_WEBHOOK_EVENT: u8 = 11;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ABI types — must match TradingBlueprint.sol structs

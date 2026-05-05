@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
+import { useStore } from '@nanostores/react';
+import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
 import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn } from '@tangle-network/blueprint-ui';
+import { networks } from '~/lib/contracts/chains';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
@@ -13,6 +16,8 @@ const navItems = [
 
 export function Header() {
   const location = useLocation();
+  const selectedChainId = useStore(selectedChainIdStore);
+  const currentNetwork = networks[selectedChainId];
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isDesktopNav, setIsDesktopNav] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 640 : true,
@@ -86,9 +91,31 @@ export function Header() {
         )}
 
         {/* Actions — pushed to the right */}
-        <div className="flex items-center gap-2 ml-auto shrink-0">
-          <ChainSwitcher />
-          <ThemeToggle />
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="arena-control-shell hidden items-center gap-1.5 rounded-xl px-1.5 py-1.5 lg:flex">
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-left">
+              <div className="i-ph:globe-hemisphere-west text-sm text-violet-500" />
+              <div className="leading-tight">
+                <div className="text-[10px] font-data uppercase tracking-[0.18em] text-arena-elements-textTertiary">
+                  Network
+                </div>
+                <div className="text-xs font-display font-medium text-arena-elements-textPrimary">
+                  {currentNetwork?.label ?? 'Unknown'}
+                </div>
+              </div>
+            </div>
+            <ChainSwitcher />
+            <div className="h-8 w-px bg-arena-elements-dividerColor/60" />
+            <div className="rounded-lg bg-arena-elements-background-depth-3/70 p-1">
+              <ThemeToggle />
+            </div>
+          </div>
+          <div className="arena-control-shell flex items-center gap-1.5 rounded-xl p-1.5 lg:hidden">
+            <ChainSwitcher />
+            <div className="rounded-lg bg-arena-elements-background-depth-3/70 p-1">
+              <ThemeToggle />
+            </div>
+          </div>
           <TxDropdown />
           <WalletButton />
         </div>

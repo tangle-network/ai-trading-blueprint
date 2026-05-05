@@ -3,14 +3,50 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use sandbox_runtime::api_types::{
-    CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
-};
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
+
+#[derive(Debug, Deserialize)]
+struct CreateLiveTerminalSessionRequest {
+    #[serde(default)]
+    cwd: String,
+    #[serde(default)]
+    cols: Option<u16>,
+    #[serde(default)]
+    rows: Option<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalResizeApiRequest {
+    cols: u16,
+    rows: u16,
+}
+
+impl TerminalResizeApiRequest {
+    fn validate(&self) -> Result<(), String> {
+        if self.cols == 0 || self.rows == 0 {
+            return Err("terminal dimensions must be greater than zero".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalInputApiRequest {
+    data: String,
+}
+
+impl TerminalInputApiRequest {
+    fn validate(&self) -> Result<(), String> {
+        if self.data.is_empty() {
+            return Err("terminal input cannot be empty".to_string());
+        }
+        Ok(())
+    }
+}
 
 /// Error returned by terminal relay helpers.
 struct TerminalRelayError {

@@ -131,6 +131,16 @@ function persistSession(key: string, session: OperatorSession | null) {
   }
 }
 
+function normalizeOperatorAuthMessage(message: string): string {
+  if (message.includes('1003')) {
+    return 'Operator authentication is temporarily unavailable from this public app origin.'
+  }
+  if (message.includes('Challenge failed:')) {
+    return message.replace(/^Challenge failed:\s*/i, '')
+  }
+  return message
+}
+
 export function useOperatorAuth(apiUrl: string): OperatorAuth {
   let address: string | undefined;
   let signMessageAsync: ReturnType<typeof useSignMessage>['signMessageAsync'] | undefined;
@@ -239,7 +249,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
         });
         return token as string;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Auth failed';
+        const message = normalizeOperatorAuthMessage(err instanceof Error ? err.message : 'Auth failed');
         setState(cacheKey, {
           ...getState(cacheKey),
           session: null,

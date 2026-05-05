@@ -1,12 +1,10 @@
 import 'virtual:uno.css';
-import '@tangle-network/blueprint-ui/styles.css';
 import '@tangle-network/sandbox-ui/styles';
 import './styles/global.scss';
 
 import { Outlet } from 'react-router';
 import { AppDocument, AppToaster } from '@tangle-network/blueprint-ui/components';
 import { Header } from '~/components/layout/Header';
-import { Footer } from '~/components/layout/Footer';
 import { MotionProvider } from '~/providers/MotionProvider';
 import { TradingSyncProvider } from '~/providers/TradingSyncProvider';
 import { useState, useEffect, type ReactNode } from 'react';
@@ -54,7 +52,6 @@ export default function App() {
               <main id="main-content" className="flex-1 pt-[var(--header-height)] relative z-1">
                 <Outlet />
               </main>
-              <Footer />
             </div>
           </TradingSyncProvider>
         </ClientWeb3Provider>

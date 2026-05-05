@@ -40,8 +40,8 @@ DEFAULT_TANGLE_RPC="wss://rpc.tangle.tools"
 DEFAULT_TANGLE_HTTP_RPC="https://rpc.tangle.tools"
 DEFAULT_CHAIN_ID="5845"
 
-TANGLE_RPC="${TANGLE_RPC:-$DEFAULT_TANGLE_RPC}"
-TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-$DEFAULT_TANGLE_HTTP_RPC}"
+TANGLE_RPC="${TANGLE_RPC:-${WS_RPC_URL:-$DEFAULT_TANGLE_RPC}}"
+TANGLE_HTTP_RPC="${TANGLE_HTTP_RPC:-${HTTP_RPC_URL:-$DEFAULT_TANGLE_HTTP_RPC}}"
 CHAIN_ID="${CHAIN_ID:-$DEFAULT_CHAIN_ID}"
 HL_TESTNET="${HYPERLIQUID_TESTNET:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -51,12 +51,15 @@ SKIP_OPERATOR_REGISTER="${SKIP_OPERATOR_REGISTER:-0}"
 SKIP_SERVICE_CREATE="${SKIP_SERVICE_CREATE:-0}"
 BLUEPRINT_ID="${BLUEPRINT_ID:-}"
 SERVICE_ID="${SERVICE_ID:-}"
+BLUEPRINT_MANAGER_ADDRESS="${BLUEPRINT_MANAGER_ADDRESS:-}"
+VAULT_FACTORY_ADDRESS="${VAULT_FACTORY_ADDRESS:-}"
 REPO_URL="${REPO_URL:-$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "https://github.com/tangle-network/ai-trading-blueprint.git")}"
 REPO_REF="${REPO_REF:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 LOCAL_KEYSTORE_DIR="${LOCAL_KEYSTORE_DIR:-$REPO_DIR/.deploy-keystore}"
 BLUEPRINT_DEFINITION="${BLUEPRINT_DEFINITION:-$REPO_DIR/blueprint-definition.json}"
 OPERATOR_STAKE_AMOUNT="${OPERATOR_STAKE_AMOUNT:-1000000000000000000}"
 TNT_CORE_DEPLOYMENT_MANIFEST="${TNT_CORE_DEPLOYMENT_MANIFEST:-$MANIFEST_DEFAULT}"
+LOCAL_BLUEPRINT_CLI_MANIFEST="${LOCAL_BLUEPRINT_CLI_MANIFEST:-$HOME/code/blueprint/cli/Cargo.toml}"
 
 if [[ -z "${TANGLE_CONTRACT:-}" && -f "$TNT_CORE_DEPLOYMENT_MANIFEST" ]]; then
   # shellcheck source=/dev/null
@@ -75,12 +78,21 @@ fi
 : "${TANGLE_CONTRACT:?TANGLE_CONTRACT must be set}"
 : "${STAKING_CONTRACT:?STAKING_CONTRACT must be set}"
 : "${STATUS_REGISTRY_CONTRACT:?STATUS_REGISTRY_CONTRACT must be set}"
+export RESTAKING_CONTRACT="${RESTAKING_CONTRACT:-$STAKING_CONTRACT}"
 
 OPERATOR_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || true)"
 [ -n "$OPERATOR_ADDRESS" ] || { echo "ERROR: 'cast' (foundry) is required"; exit 1; }
 [ -f "$BLUEPRINT_DEFINITION" ] || { echo "ERROR: blueprint definition not found: $BLUEPRINT_DEFINITION"; exit 1; }
 
-if ! command -v cargo-tangle >/dev/null 2>&1; then
+cargo_tangle() {
+  if [[ -f "$LOCAL_BLUEPRINT_CLI_MANIFEST" ]]; then
+    cargo run --manifest-path "$LOCAL_BLUEPRINT_CLI_MANIFEST" -- tangle "$@"
+  else
+    cargo-tangle "$@"
+  fi
+}
+
+if [[ ! -f "$LOCAL_BLUEPRINT_CLI_MANIFEST" ]] && ! command -v cargo-tangle >/dev/null 2>&1; then
   echo "ERROR: cargo-tangle is required locally" >&2
   exit 1
 fi
@@ -140,7 +152,7 @@ TANGLE_ARGS=(
   --ws-rpc-url  "$TANGLE_RPC"
   --keystore-path "$LOCAL_KEYSTORE_DIR"
   --tangle-contract "$TANGLE_CONTRACT"
-  --staking-contract "$STAKING_CONTRACT"
+  --restaking-contract "$STAKING_CONTRACT"
   --status-registry-contract "$STATUS_REGISTRY_CONTRACT"
 )
 
@@ -152,6 +164,10 @@ cast_uint() {
 
 service_count() {
   cast_uint "$(cast call "$TANGLE_CONTRACT" "serviceCount()(uint64)" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || echo 0)"
+}
+
+service_request_count() {
+  cast_uint "$(cast call "$TANGLE_CONTRACT" "serviceRequestCount()(uint64)" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || echo 0)"
 }
 
 # Poll until `serviceCount()` exceeds `$1`, or timeout.
@@ -182,7 +198,11 @@ set -euo pipefail
 apt-get update -qq
 apt-get install -y --no-install-recommends \
   build-essential pkg-config libssl-dev protobuf-compiler libprotobuf-dev git \
-  cmake clang libclang-dev curl docker.io >/dev/null 2>&1
+  cmake clang libclang-dev curl >/dev/null 2>&1
+
+if ! command -v docker &>/dev/null; then
+  apt-get install -y --no-install-recommends docker.io >/dev/null 2>&1
+fi
 
 if ! command -v rustc &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.0
@@ -210,11 +230,14 @@ if [ "$SKIP_BUILD" = "1" ]; then
   echo "=== Step 2: skipped (SKIP_BUILD=1) ==="
 else
   echo "=== Step 2: Build on $SERVER_IP ==="
-  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" bash <<'REMOTE'
+ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" bash <<'REMOTE'
 set -euo pipefail
 source ~/.cargo/env
 
 cd /opt/trading-blueprint
+if [ -d repo ] && [ -n "$(cd repo && git status --porcelain 2>/dev/null || true)" ]; then
+  mv repo "repo.backup-$(date +%Y%m%d-%H%M%S)"
+fi
 [ -d repo ] || git clone "$REPO_URL" repo
 cd repo
 git fetch --all --tags
@@ -230,7 +253,9 @@ ls -lh target/release/trading-blueprint | awk '{print "Binary: "$5}'
 [ -d /opt/trading-blueprint/blueprint-sdk ] || \
   git clone https://github.com/tangle-network/blueprint.git /opt/trading-blueprint/blueprint-sdk
 cd /opt/trading-blueprint/blueprint-sdk
-CARGO_BUILD_JOBS=2 cargo install --path cli 2>&1 | tail -3
+INSTALL_LOG=/tmp/cargo-tangle-install.log
+CARGO_BUILD_JOBS=2 cargo install --path cli >"\$INSTALL_LOG" 2>&1
+tail -3 "\$INSTALL_LOG"
 cargo tangle --version || true
 REMOTE
 fi
@@ -241,7 +266,7 @@ fi
 echo "=== Step 3: Keystores ==="
 mkdir -p "$LOCAL_KEYSTORE_DIR"
 if [ -z "$(find "$LOCAL_KEYSTORE_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-  cargo tangle key import \
+  cargo_tangle key import \
     --key-type ecdsa \
     --secret "${PRIVATE_KEY#0x}" \
     --keystore-path "$LOCAL_KEYSTORE_DIR" \
@@ -279,14 +304,39 @@ cd "$REPO_DIR"
 if [ -n "$BLUEPRINT_ID" ]; then
   echo "Using existing blueprint ID: $BLUEPRINT_ID"
 else
-  cargo tangle blueprint deploy tangle \
+  if [[ -z "$BLUEPRINT_MANAGER_ADDRESS" || -z "$VAULT_FACTORY_ADDRESS" ]]; then
+    SCRIPT_PRIVATE_KEY="$PRIVATE_KEY" forge script contracts/script/DeployTradingManager.s.sol:DeployTradingManager \
+      --rpc-url "$TANGLE_HTTP_RPC" \
+      --broadcast \
+      --slow 2>&1 | tee /tmp/deploy-manager-output.txt
+
+    BLUEPRINT_MANAGER_ADDRESS="$(sed -n 's/.*DEPLOY_MANAGER=\(0x[0-9a-fA-F]\{40\}\).*/\1/p' /tmp/deploy-manager-output.txt | tail -1)"
+    VAULT_FACTORY_ADDRESS="$(sed -n 's/.*DEPLOY_VAULT_FACTORY=\(0x[0-9a-fA-F]\{40\}\).*/\1/p' /tmp/deploy-manager-output.txt | tail -1)"
+    [ -n "$BLUEPRINT_MANAGER_ADDRESS" ] || { echo "ERROR: could not parse manager address"; exit 1; }
+    [ -n "$VAULT_FACTORY_ADDRESS" ] || { echo "ERROR: could not parse vault factory address"; exit 1; }
+  fi
+
+  TMP_BLUEPRINT_DEFINITION="$(mktemp)"
+  python3 - "$BLUEPRINT_DEFINITION" "$TMP_BLUEPRINT_DEFINITION" "$BLUEPRINT_MANAGER_ADDRESS" <<'PY'
+import json, sys
+src, dst, manager = sys.argv[1:4]
+with open(src, 'r', encoding='utf-8') as fh:
+    doc = json.load(fh)
+doc['manager'] = manager
+with open(dst, 'w', encoding='utf-8') as fh:
+    json.dump(doc, fh, indent=2)
+    fh.write('\n')
+PY
+
+  cargo_tangle blueprint deploy tangle \
     --network testnet \
-    --definition "$BLUEPRINT_DEFINITION" \
+    --definition "$TMP_BLUEPRINT_DEFINITION" \
     "${TANGLE_ARGS[@]}" 2>&1 | tee /tmp/deploy-output.txt
 
   BLUEPRINT_ID="$(sed -n 's/.*blueprint=\([0-9][0-9]*\).*/\1/p' /tmp/deploy-output.txt | tail -1)"
-  [ -n "$BLUEPRINT_ID" ] && [ "$BLUEPRINT_ID" != "0" ] || { echo "ERROR: could not parse blueprint_id from deploy output"; exit 1; }
+  [ -n "$BLUEPRINT_ID" ] || { echo "ERROR: could not parse blueprint_id from deploy output"; exit 1; }
   echo "Deployed blueprint ID: $BLUEPRINT_ID"
+  rm -f "$TMP_BLUEPRINT_DEFINITION"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -296,11 +346,11 @@ if [[ "$SKIP_OPERATOR_REGISTER" = "1" ]]; then
   echo "=== Step 5: skipped (SKIP_OPERATOR_REGISTER=1) ==="
 else
   echo "=== Step 5: Register operator ==="
-  cargo tangle operator register \
+  cargo_tangle operator register \
     "${TANGLE_ARGS[@]}" \
     --amount "$OPERATOR_STAKE_AMOUNT" 2>&1 || echo "(staking registration already exists, continuing)"
 
-  cargo tangle blueprint register \
+  cargo_tangle blueprint register \
     "${TANGLE_ARGS[@]}" \
     --blueprint-id "$BLUEPRINT_ID" 2>&1 || echo "(blueprint registration already exists, continuing)"
 fi
@@ -318,7 +368,7 @@ else
   echo "=== Step 6: Request + approve service ==="
   SERVICE_COUNT_BEFORE="$(service_count)"
 
-  SERVICE_REQUEST_OUTPUT="$(cargo tangle blueprint service request \
+  SERVICE_REQUEST_OUTPUT="$(cargo_tangle blueprint service request \
     "${TANGLE_ARGS[@]}" \
     --blueprint-id "$BLUEPRINT_ID" \
     --operator "$OPERATOR_ADDRESS" \
@@ -328,10 +378,10 @@ else
   REQUEST_ID="$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' || true)"
   [ -n "$REQUEST_ID" ] || { echo "ERROR: could not parse request_id"; echo "$SERVICE_REQUEST_OUTPUT"; exit 1; }
 
-  cargo tangle blueprint service approve \
+  cargo_tangle blueprint service approve \
     "${TANGLE_ARGS[@]}" \
     --request-id "$REQUEST_ID" \
-    --staking-percent 100 \
+    --restaking-percent 100 \
     --json
 
   SERVICE_COUNT_AFTER="$(wait_for_service_count_above "$SERVICE_COUNT_BEFORE")"
@@ -343,7 +393,7 @@ fi
 # Step 7: Install systemd unit + settings.env
 # ──────────────────────────────────────────────────────────────────────────────
 echo "=== Step 7: Install BPM systemd unit ==="
-ssh "root@$SERVER_IP" env AI_PROVIDER_SETTINGS="$AI_PROVIDER_SETTINGS" bash <<REMOTE
+ssh "root@$SERVER_IP" env AI_PROVIDER_SETTINGS="${AI_PROVIDER_SETTINGS:-}" bash <<REMOTE
 set -euo pipefail
 cat > /etc/systemd/system/blueprint-manager.service <<'EOF'
 [Unit]
@@ -385,7 +435,10 @@ BLUEPRINT_ID=${BLUEPRINT_ID}
 SERVICE_ID=${SERVICE_ID}
 TANGLE_CONTRACT=${TANGLE_CONTRACT}
 STAKING_CONTRACT=${STAKING_CONTRACT}
+RESTAKING_CONTRACT=${STAKING_CONTRACT}
 STATUS_REGISTRY_CONTRACT=${STATUS_REGISTRY_CONTRACT}
+BLUEPRINT_MANAGER_ADDRESS=${BLUEPRINT_MANAGER_ADDRESS}
+VAULT_FACTORY_ADDRESS=${VAULT_FACTORY_ADDRESS}
 PRIVATE_KEY=${PRIVATE_KEY}
 OPERATOR_ADDRESS=${OPERATOR_ADDRESS}
 HTTP_RPC_URL=${TANGLE_HTTP_RPC}
@@ -401,7 +454,7 @@ HYPERLIQUID_TESTNET=${HL_TESTNET}
 BLUEPRINT_STATE_DIR=/mnt/trading-data/blueprint-state
 EOF
 chmod 600 /opt/trading-blueprint/repo/settings.env
-printf '%s' "\$AI_PROVIDER_SETTINGS" >> /opt/trading-blueprint/repo/settings.env
+printf '%s' "${AI_PROVIDER_SETTINGS-}" >> /opt/trading-blueprint/repo/settings.env
 
 # SESSION_AUTH_SECRET is derived on first boot by the binary
 # (trading_blueprint_lib::session_auth::ensure_from_env) using the keystore

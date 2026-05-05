@@ -1787,71 +1787,70 @@ export default function ProvisionPage() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
-      <Link
-        to="/"
-        className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 font-display font-medium transition-colors"
-      >
-        <span>&larr;</span> Leaderboard
-      </Link>
+    <div className="arena-compose-shell mx-auto max-w-5xl px-4 sm:px-6 py-6">
+      <div className="space-y-6">
+        <div className="glass-card rounded-[28px] p-6 sm:p-8">
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <h1 className="font-display font-bold text-3xl tracking-tight">
+                Provision Trading Agent
+              </h1>
+              <p className="max-w-3xl text-base text-arena-elements-textSecondary">
+                {step === 'blueprint' && 'Choose a blueprint type for your trading agent.'}
+                {step === 'configure' && `Configure your ${selectedBlueprint?.name ?? 'trading'} agent, then provision it on-chain.`}
+                {step === 'deploy' && 'Your agent is being provisioned on the network.'}
+                {step === 'secrets' && 'Provide your API keys to activate the trading agent.'}
+              </p>
+            </div>
 
-      <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">
-        Provision Trading Agent
-      </h1>
-      <p className="text-base text-arena-elements-textSecondary mb-6">
-        {step === 'blueprint' && 'Choose a blueprint type for your trading agent.'}
-        {step === 'configure' && `Configure your ${selectedBlueprint?.name ?? 'trading'} agent, then provision it on-chain.`}
-        {step === 'deploy' && 'Your agent is being provisioned on the network.'}
-        {step === 'secrets' && 'Provide your API keys to activate the trading agent.'}
-      </p>
+            <div className="arena-panel-inset rounded-[24px] p-4 sm:p-5">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                {STEP_ORDER.map((s, i) => {
+                  const isCurrent = s === step;
+                  const isDone = i < stepIndex;
+                  return (
+                    <Fragment key={s}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isDone) return;
+                          if (txHash && STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')) return;
+                          setStep(s);
+                        }}
+                        disabled={!isDone && !isCurrent}
+                        className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-display font-medium transition-colors ${
+                          isCurrent
+                            ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400'
+                            : isDone
+                              ? 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-violet-600 dark:hover:text-violet-400 cursor-pointer'
+                              : 'text-arena-elements-textTertiary cursor-default'
+                        }`}
+                      >
+                        <span
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-data font-bold shrink-0 transition-all duration-300 ${
+                            isCurrent
+                              ? 'bg-violet-500 text-white shadow-[0_0_10px_rgba(139,92,246,0.3)]'
+                              : isDone
+                                ? 'bg-emerald-400 text-white shadow-[0_0_8px_rgba(0,255,136,0.2)]'
+                                : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textTertiary border border-arena-elements-borderColor'
+                          }`}
+                        >
+                          {isDone ? '\u2713' : i + 1}
+                        </span>
+                        {STEP_LABELS[s]}
+                      </button>
+                      {i < STEP_ORDER.length - 1 && (
+                        <div
+                          className={`hidden h-px flex-1 transition-colors duration-300 sm:block ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </div>
+            </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center mb-8">
-        {STEP_ORDER.map((s, i) => {
-          const isCurrent = s === step;
-          const isDone = i < stepIndex;
-          return (
-            <Fragment key={s}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isDone) return;
-                  if (txHash && STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')) return;
-                  setStep(s);
-                }}
-                disabled={!isDone && !isCurrent}
-                className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isCurrent
-                    ? 'text-violet-700 dark:text-violet-400'
-                    : isDone
-                      ? 'text-arena-elements-textSecondary hover:text-violet-600 dark:hover:text-violet-400 cursor-pointer'
-                      : 'text-arena-elements-textTertiary cursor-default'
-                }`}
-              >
-                <span
-                  className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-data font-bold shrink-0 transition-all duration-300 ${
-                    isCurrent
-                      ? 'bg-violet-500 text-white shadow-[0_0_10px_rgba(139,92,246,0.3)]'
-                      : isDone
-                        ? 'bg-emerald-400 text-white shadow-[0_0_8px_rgba(0,255,136,0.2)]'
-                        : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textTertiary border border-arena-elements-borderColor'
-                  }`}
-                >
-                  {isDone ? '\u2713' : i + 1}
-                </span>
-                {STEP_LABELS[s]}
-              </button>
-              {i < STEP_ORDER.length - 1 && (
-                <div
-                  className={`flex-1 h-px mx-3 transition-colors duration-300 ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
-                />
-              )}
-            </Fragment>
-          );
-        })}
-      </div>
-
-      <div className="space-y-5">
+            <div className="space-y-5">
         {ambiguousInstanceProvisionMessage && (
           <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
             <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
@@ -1868,7 +1867,7 @@ export default function ProvisionPage() {
 
         {/* Wrong chain banner */}
         {isWrongChain && (
-          <div className="flex items-center gap-3 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
             <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse shrink-0" />
             <div className="flex-1">
               <div className="text-sm font-display font-medium text-amber-700 dark:text-amber-400">
@@ -1917,81 +1916,90 @@ export default function ProvisionPage() {
 
         {/* Step 1: Configure */}
         {step === 'configure' && (
-          <ConfigureStep
-            name={name}
-            setName={setName}
-            strategyType={strategyType}
-            setStrategyType={setStrategyType}
-            selectedPack={selectedPack}
-            isInstance={isInstance}
-            serviceId={serviceId}
-            serviceInfo={serviceInfo}
-            serviceLoading={serviceLoading}
-            serviceError={serviceError}
-            selectedOperators={selectedOperators}
-            setShowAdvanced={setShowAdvanced}
-            collateralCapPct={collateralCapPct}
-            setCollateralCapPct={setCollateralCapPct}
-            canNext={canNext ?? false}
-            goNext={goNext}
-          />
+          <div>
+            <ConfigureStep
+              name={name}
+              setName={setName}
+              strategyType={strategyType}
+              setStrategyType={setStrategyType}
+              selectedPack={selectedPack}
+              isInstance={isInstance}
+              serviceId={serviceId}
+              serviceInfo={serviceInfo}
+              serviceLoading={serviceLoading}
+              serviceError={serviceError}
+              selectedOperators={selectedOperators}
+              setShowAdvanced={setShowAdvanced}
+              collateralCapPct={collateralCapPct}
+              setCollateralCapPct={setCollateralCapPct}
+              canNext={canNext ?? false}
+              goNext={goNext}
+            />
+          </div>
         )}
 
         {/* Step 2: Deploy */}
         {step === 'deploy' && (
-          <DeployStep
-            isInstance={isInstance}
-            latestDeployment={latestDeployment}
-            txHash={txHash}
-            selectedBlueprint={selectedBlueprint}
-            selectedPack={selectedPack}
-            name={name}
-            effectiveCron={effectiveCron}
-            serviceId={serviceId}
-            serviceInfo={serviceInfo}
-            selectedOperators={selectedOperators}
-            isConnected={isConnected}
-            isPending={isPending}
-            isNewServicePending={isNewServicePending}
-            newServiceDeploying={newServiceDeploying}
-            instanceProvisioning={instanceProvisioning}
-            instanceProvisionError={instanceProvisionError}
-            isQuoting={isQuoting}
-            quotes={quotes}
-            totalCost={totalCost}
-            handleSubmit={handleSubmit}
-            handleDeployNewService={handleDeployNewService}
-            setShowInfra={setShowInfra}
-            refetchQuotes={refetchQuotes}
-            setStep={setStep}
-            goBack={goBack}
-            resetTx={resetTx}
-          />
+          <div>
+            <DeployStep
+              isInstance={isInstance}
+              latestDeployment={latestDeployment}
+              txHash={txHash}
+              selectedBlueprint={selectedBlueprint}
+              selectedPack={selectedPack}
+              name={name}
+              effectiveCron={effectiveCron}
+              serviceId={serviceId}
+              serviceInfo={serviceInfo}
+              selectedOperators={selectedOperators}
+              isConnected={isConnected}
+              isPending={isPending}
+              isNewServicePending={isNewServicePending}
+              newServiceDeploying={newServiceDeploying}
+              instanceProvisioning={instanceProvisioning}
+              instanceProvisionError={instanceProvisionError}
+              isQuoting={isQuoting}
+              quotes={quotes}
+              totalCost={totalCost}
+              handleSubmit={handleSubmit}
+              handleDeployNewService={handleDeployNewService}
+              setShowInfra={setShowInfra}
+              refetchQuotes={refetchQuotes}
+              setStep={setStep}
+              goBack={goBack}
+              resetTx={resetTx}
+            />
+          </div>
         )}
 
         {/* Step 3: Activate */}
         {step === 'secrets' && latestDeployment && (
-          <SecretsStep
-            latestDeployment={latestDeployment}
-            isInstance={isInstance}
-            aiProvider={aiProvider}
-            setAiProvider={setAiProvider}
-            apiKey={apiKey}
-            setApiKey={setApiKey}
-            extraEnvs={extraEnvs}
-            setExtraEnvs={setExtraEnvs}
-            envIdRef={envIdRef}
-            useOperatorKey={useOperatorKey}
-            setUseOperatorKey={setUseOperatorKey}
-            isSubmittingSecrets={isSubmittingSecrets}
-            activationPhase={activationPhase}
-            secretsLookupError={operatorRouteMismatchMessage ?? secretsLookupError}
-            handleSubmitSecrets={handleSubmitSecrets}
-            setStep={setStep}
-            resetTx={resetTx}
-            defaultProvider={defaultProvider}
-          />
+          <div>
+            <SecretsStep
+              latestDeployment={latestDeployment}
+              isInstance={isInstance}
+              aiProvider={aiProvider}
+              setAiProvider={setAiProvider}
+              apiKey={apiKey}
+              setApiKey={setApiKey}
+              extraEnvs={extraEnvs}
+              setExtraEnvs={setExtraEnvs}
+              envIdRef={envIdRef}
+              useOperatorKey={useOperatorKey}
+              setUseOperatorKey={setUseOperatorKey}
+              isSubmittingSecrets={isSubmittingSecrets}
+              activationPhase={activationPhase}
+              secretsLookupError={operatorRouteMismatchMessage ?? secretsLookupError}
+              handleSubmitSecrets={handleSubmitSecrets}
+              setStep={setStep}
+              resetTx={resetTx}
+              defaultProvider={defaultProvider}
+            />
+          </div>
         )}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Dialogs */}

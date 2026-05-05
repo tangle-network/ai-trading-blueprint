@@ -25,6 +25,7 @@ import {FeeDistributor} from "../FeeDistributor.sol";
 contract TradingBlueprint is BlueprintServiceManagerBase {
     string public constant BLUEPRINT_NAME = "trading-blueprint";
     string public constant BLUEPRINT_VERSION = "0.1.0";
+    address public immutable bootstrapAuthority;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // COMMON JOB IDS
@@ -37,7 +38,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     uint8 public constant JOB_STATUS = 4;
     uint8 public constant JOB_DEPROVISION = 5;
     uint8 public constant JOB_EXTEND = 6;
-    uint8 public constant JOB_WORKFLOW_TICK = 30;
+    uint8 public constant JOB_WORKFLOW_TICK = 10;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -137,6 +138,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     error BaseRateTooLarge(uint256 baseRate, uint256 maxBaseRate);
     error NotProvisioned(uint64 serviceId);
     error InstanceLifecycleIsNotAJob(uint8 jobId);
+    error OnlyBootstrapAuthority(address caller, address bootstrapAuthority, address blueprintOwner);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -154,6 +156,23 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     // ═══════════════════════════════════════════════════════════════════════════
     // CONFIGURATION
     // ═══════════════════════════════════════════════════════════════════════════
+
+    constructor() {
+        bootstrapAuthority = msg.sender;
+    }
+
+    /// @notice Bootstrap configuration for live deployments where Tangle cannot impersonate itself.
+    /// @dev Allows the deployer or eventual blueprint owner to set the initial factory/mode once the
+    ///      manager contract exists onchain. After blueprint creation, normal Tangle-only hooks still apply.
+    function bootstrapConfigure(address _factory, bool _mode) external {
+        address owner = blueprintOwner;
+        if (msg.sender != bootstrapAuthority && msg.sender != owner) {
+            revert OnlyBootstrapAuthority(msg.sender, bootstrapAuthority, owner);
+        }
+
+        vaultFactory = _factory;
+        instanceMode = _mode;
+    }
 
     /// @notice Set the VaultFactory address.  Called once after deployment.
     function setVaultFactory(address _factory) external onlyFromTangle {
