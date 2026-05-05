@@ -10403,6 +10403,7 @@ dependencies = [
  "blueprint-sdk",
  "chacha20poly1305",
  "chrono",
+ "dashmap",
  "docktopus",
  "gcp_auth",
  "hex",
@@ -11667,8 +11668,9 @@ dependencies = [
 
 [[package]]
 name = "tnt-core-bindings"
-version = "0.10.7"
-source = "git+https://github.com/tangle-network/tnt-core.git?tag=v0.10.7#93e601438b75b8cf0125c2410bea515e36b10393"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64e9f2317a2114fea16cf751974bbb9c0121416d56bd12cf342506548642ae18"
 dependencies = [
  "alloy",
  "alloy-contract",

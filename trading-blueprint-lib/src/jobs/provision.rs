@@ -371,6 +371,8 @@ pub async fn provision_core(
             owner: String::new(),
             user_env_json: String::new(), // Two-phase: user secrets arrive via operator API
             port_mappings: Vec::new(),
+            // TODO(handoff): plumb actual capabilities; sibling crate added this field, see ai-agent-sandbox-blueprint::lib.rs
+            capabilities_json: String::new(),
         };
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
