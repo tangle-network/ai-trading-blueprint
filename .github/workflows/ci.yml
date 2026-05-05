@@ -48,13 +48,6 @@ jobs:
         with:
           submodules: recursive
 
-      # Sibling path deps: sandbox-runtime + blueprint SDK
-      # actions/checkout can't clone outside the workspace, so use git clone.
-      - name: Clone sibling repos
-        run: |
-          git clone --depth 1 https://github.com/tangle-network/ai-agent-sandbox-blueprint.git ../ai-agent-sandbox-blueprint
-          git clone --depth 1 https://github.com/tangle-network/blueprint.git ../blueprint
-
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -65,8 +58,8 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      # Check our crates (not --workspace: bin crates depend on sibling
-      # repo APIs that may drift on the default branch).
+      # Check our crates (not --workspace: bin crates pull in heavier
+      # deployment-only dependencies).
       - name: Check
         run: |
           cargo check -p trading-runtime
@@ -94,12 +87,6 @@ jobs:
         with:
           submodules: recursive
 
-      # git clone for sibling repos (actions/checkout path restriction)
-      - name: Clone sibling repos
-        run: |
-          git clone --depth 1 https://github.com/tangle-network/ai-agent-sandbox-blueprint.git ../ai-agent-sandbox-blueprint
-          git clone --depth 1 https://github.com/tangle-network/blueprint.git ../blueprint
-
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -122,11 +109,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Clone sibling repos
-        run: |
-          git clone --depth 1 https://github.com/tangle-network/ai-agent-sandbox-blueprint.git ../ai-agent-sandbox-blueprint
-          git clone --depth 1 https://github.com/tangle-network/blueprint.git ../blueprint
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -152,9 +134,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Ignore known transitive advisories from blueprint-sdk → substrate deps.
+      # Ignore known transitive advisories from blueprint-sdk -> substrate deps.
       # These come through libp2p, ring, aws-lc-sys, and legacy rustls stacks
-      # pulled in via sibling Blueprint dependencies — tracked upstream.
+      # pulled in via Blueprint git dependencies; tracked upstream.
       - name: Run audit
         run: |
           cargo audit \
@@ -179,4 +161,6 @@ jobs:
             --ignore RUSTSEC-2026-0097 \
             --ignore RUSTSEC-2026-0098 \
             --ignore RUSTSEC-2026-0099 \
-            --ignore RUSTSEC-2026-0104
+            --ignore RUSTSEC-2026-0104 \
+            --ignore RUSTSEC-2026-0118 \
+            --ignore RUSTSEC-2026-0119
