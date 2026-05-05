@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { decodeAbiParameters, parseAbiParameters } from 'viem';
 import type { TrackedProvision } from '~/lib/stores/provisions';
 
 const setSearchParams = vi.fn();
@@ -253,6 +254,113 @@ describe('provision runtime backend helpers', () => {
       available_protocols: ['gmx_v2', 'vertex'],
       expert_knowledge_override: 'expert notes',
       custom_instructions: 'custom prompt',
+    });
+  });
+
+  it('parses positive validator service IDs consistently', async () => {
+    const { parsePositiveServiceIds, resolveValidatorServiceIds } = await import(
+      '../provision'
+    );
+
+    expect(parsePositiveServiceIds(' 1, 2 ,3 ', 'Validators')).toEqual({
+      ok: true,
+      ids: [1n, 2n, 3n],
+    });
+    expect(parsePositiveServiceIds('', 'Validators')).toEqual({
+      ok: true,
+      ids: [],
+    });
+    expect(parsePositiveServiceIds('0', 'Validators')).toMatchObject({
+      ok: false,
+    });
+    expect(parsePositiveServiceIds('1,nope', 'Validators')).toMatchObject({
+      ok: false,
+    });
+    expect(
+      resolveValidatorServiceIds({
+        validatorMode: 'default',
+        customValidatorIds: '',
+        defaultValidatorServiceId: 'not-a-number',
+      }),
+    ).toEqual({ ok: true, ids: [] });
+  });
+
+  it('blocks invalid custom validator IDs instead of silently dropping them', async () => {
+    const { resolveValidatorServiceIds } = await import('../provision');
+
+    expect(
+      resolveValidatorServiceIds({
+        validatorMode: 'custom',
+        customValidatorIds: '7, invalid',
+        defaultValidatorServiceId: '9',
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it('shares normalized strategy runtime and schedules across provision payload builders', async () => {
+    const {
+      buildProvisionStrategyConfig,
+      buildOperatorProvisionBody,
+      buildInstanceServiceConfig,
+    } = await import('../provision');
+    const strategyOptions = {
+      strategyType: 'dex',
+      runtimeBackend: 'tee' as const,
+      isTeeBlueprint: false,
+      customExpertKnowledge: 'notes',
+      customInstructions: 'instructions',
+      conversationCron: '0 */2 * * * *',
+      researchCron: '0 0 * * * *',
+      conversationEnabled: false,
+      researchEnabled: true,
+    };
+
+    const directConfig = buildProvisionStrategyConfig({
+      ...strategyOptions,
+      includeExecutionTarget: false,
+    });
+    const operatorBody = buildOperatorProvisionBody({
+      ...strategyOptions,
+      name: 'Bot',
+      fallbackName: 'Fallback Bot',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      includeExecutionTarget: false,
+    });
+    const serviceConfig = buildInstanceServiceConfig({
+      ...strategyOptions,
+      isInstance: true,
+      name: 'Bot',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      vaultSigners: [],
+      collateralBps: 2500n,
+      targetChainId: 31337,
+      assetAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      blueprintDefaults: {
+        cpuCores: 1n,
+        memoryMb: 512n,
+        maxLifetimeDays: 7n,
+      },
+    });
+    const [decoded] = decodeAbiParameters(
+      parseAbiParameters(
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      ),
+      serviceConfig,
+    );
+    const instanceStrategyConfig = JSON.parse(decoded[2]);
+
+    expect(JSON.parse(operatorBody.strategy_config_json)).toEqual(directConfig);
+    expect(instanceStrategyConfig).toEqual(directConfig);
+    expect(directConfig).toMatchObject({
+      runtime_backend: 'docker',
+      workflow_schedules: {
+        conversation_cron: '0 */2 * * * *',
+        research_cron: '0 0 * * * *',
+        conversation_enabled: false,
+        research_enabled: true,
+      },
     });
   });
 

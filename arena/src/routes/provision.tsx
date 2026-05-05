@@ -110,6 +110,42 @@ interface StrategyConfigOptions {
   researchEnabled?: boolean;
 }
 
+interface ProvisionStrategyConfigOptions extends StrategyConfigOptions {
+  strategyType: string;
+  selectedExecutionTarget?: DexExecutionTargetOption;
+  includeExecutionTarget: boolean;
+  executionConfig?: ExecutionTargetProvisionConfig | null;
+}
+
+interface OperatorProvisionBodyOptions extends ProvisionStrategyConfigOptions {
+  name: string;
+  fallbackName: string;
+  effectiveCron: string;
+  validatorServiceIds: bigint[];
+  vaultAddress?: Address;
+}
+
+interface InstanceServiceConfigOptions extends StrategyConfigOptions {
+  isInstance: boolean;
+  name: string;
+  strategyType: string;
+  effectiveCron: string;
+  validatorServiceIds: bigint[];
+  vaultSigners: Address[];
+  collateralBps: bigint;
+  targetChainId: number;
+  assetAddress: Address;
+  blueprintDefaults: {
+    cpuCores: bigint;
+    memoryMb: bigint;
+    maxLifetimeDays: bigint;
+  };
+}
+
+type ParsedServiceIds =
+  | { ok: true; ids: bigint[] }
+  | { ok: false; message: string };
+
 type DexExecutionTargetId =
   | 'ethereum'
   | 'ethereum-mainnet'
@@ -137,6 +173,30 @@ interface DexExecutionTargetOption {
 }
 
 type VaultBinding = 'factory' | 'direct';
+
+interface ExecutionTargetProvisionConfig {
+  chainId: bigint;
+  rpcUrl: string;
+  vaultBinding: VaultBinding;
+  provisionVaultAddress: Address;
+  vaultFactoryAddress: Address | undefined;
+  vaultAddress: Address;
+  assetAddress: Address;
+  paperTrade: boolean;
+  protocolChainId: number | undefined;
+}
+
+interface SubmitSnapshot {
+  name: string;
+  selectedPackName: string;
+  targetChainId: number;
+  owner?: Address;
+  strategyType: string;
+  operators: Address[];
+  blueprintId: string;
+  blueprintType?: string;
+  serviceId?: number;
+}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -411,6 +471,7 @@ export function resolveRuntimeBackendForProvision(
   firecrackerRuntimeSupported = FIRECRACKER_RUNTIME_SUPPORTED,
 ): RuntimeBackend {
   if (isTeeBlueprint) return 'tee';
+  if (runtimeBackend === 'tee') return 'docker';
   if (!firecrackerRuntimeSupported && runtimeBackend === 'firecracker')
     return 'docker';
   return runtimeBackend;
@@ -461,9 +522,173 @@ export function buildStrategyConfigForProvision({
   return config;
 }
 
+export function parsePositiveServiceIds(
+  value: string | undefined,
+  label = 'Service IDs',
+): ParsedServiceIds {
+  if (!value?.trim()) return { ok: true, ids: [] };
+
+  const ids: bigint[] = [];
+  for (const rawToken of value.split(',')) {
+    const token = rawToken.trim();
+    if (!token) continue;
+    if (!/^\d+$/.test(token)) {
+      return {
+        ok: false,
+        message: `${label} must be comma-separated positive whole numbers.`,
+      };
+    }
+    const id = BigInt(token);
+    if (id <= 0n) {
+      return {
+        ok: false,
+        message: `${label} must be greater than zero.`,
+      };
+    }
+    ids.push(id);
+  }
+
+  return { ok: true, ids };
+}
+
+export function resolveValidatorServiceIds({
+  validatorMode,
+  customValidatorIds,
+  defaultValidatorServiceId,
+}: {
+  validatorMode: 'default' | 'custom';
+  customValidatorIds: string;
+  defaultValidatorServiceId?: string;
+}): ParsedServiceIds {
+  if (validatorMode === 'custom') {
+    return parsePositiveServiceIds(customValidatorIds, 'Validator service IDs');
+  }
+
+  const parsed = parsePositiveServiceIds(
+    defaultValidatorServiceId ?? '',
+    'Default validator service ID',
+  );
+  return parsed.ok ? parsed : { ok: true, ids: [] };
+}
+
+export function buildProvisionStrategyConfig({
+  strategyType,
+  selectedExecutionTarget,
+  includeExecutionTarget,
+  executionConfig,
+  ...strategyConfigOptions
+}: ProvisionStrategyConfigOptions): Record<string, unknown> {
+  const config = buildStrategyConfigForProvision({
+    ...strategyConfigOptions,
+    protocolChainId: includeExecutionTarget
+      ? executionConfig?.protocolChainId
+      : undefined,
+    availableProtocols: includeExecutionTarget
+      ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+      : undefined,
+  });
+
+  if (includeExecutionTarget && executionConfig) {
+    config.vault_binding = executionConfig.vaultBinding;
+    if (
+      executionConfig.vaultBinding === 'direct' &&
+      executionConfig.vaultAddress &&
+      executionConfig.vaultAddress !== zeroAddress
+    ) {
+      config.direct_vault_address = executionConfig.vaultAddress;
+    }
+  }
+
+  return config;
+}
+
+export function buildOperatorProvisionBody({
+  name,
+  fallbackName,
+  strategyType,
+  effectiveCron,
+  validatorServiceIds,
+  vaultAddress,
+  selectedExecutionTarget,
+  includeExecutionTarget,
+  executionConfig,
+  ...strategyConfigOptions
+}: OperatorProvisionBodyOptions) {
+  const strategyConfig = buildProvisionStrategyConfig({
+    ...strategyConfigOptions,
+    strategyType,
+    selectedExecutionTarget,
+    includeExecutionTarget,
+    executionConfig,
+  });
+
+  return {
+    name: name || fallbackName,
+    strategy_type: strategyType,
+    strategy_config_json: JSON.stringify(strategyConfig),
+    risk_params_json:
+      strategyType === 'yield'
+        ? JSON.stringify({ min_aave_health_factor: 1.5 })
+        : '{}',
+    trading_loop_cron: effectiveCron,
+    validator_service_ids: validatorServiceIds.map((id) => Number(id)),
+    ...(includeExecutionTarget && executionConfig
+      ? {
+          chain_id: Number(executionConfig.chainId),
+          rpc_url: executionConfig.rpcUrl,
+          ...(vaultAddress ? { vault_address: vaultAddress } : {}),
+          asset_token: executionConfig.assetAddress,
+          paper_trade: executionConfig.paperTrade,
+        }
+      : {}),
+  };
+}
+
+export function buildInstanceServiceConfig({
+  isInstance,
+  name,
+  strategyType,
+  effectiveCron,
+  validatorServiceIds,
+  vaultSigners,
+  collateralBps,
+  targetChainId,
+  assetAddress,
+  blueprintDefaults,
+  ...strategyConfigOptions
+}: InstanceServiceConfigOptions): `0x${string}` {
+  return encodeAbiParameters(
+    parseAbiParameters(
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+    ),
+    [
+      [
+        isInstance ? name || 'Instance Bot' : '',
+        isInstance ? strategyType : '',
+        isInstance
+          ? JSON.stringify(buildStrategyConfigForProvision(strategyConfigOptions))
+          : '{}',
+        '{}',
+        zeroAddress,
+        assetAddress,
+        isInstance ? vaultSigners : [],
+        isInstance && vaultSigners.length > 0 ? 1n : 0n,
+        BigInt(targetChainId),
+        '',
+        isInstance ? effectiveCron : '',
+        blueprintDefaults.cpuCores,
+        blueprintDefaults.memoryMb,
+        blueprintDefaults.maxLifetimeDays,
+        isInstance ? validatorServiceIds : [],
+        collateralBps,
+      ],
+    ],
+  );
+}
+
 export function resolveExecutionTargetProvisionConfig(
   target: DexExecutionTargetOption | undefined,
-) {
+): ExecutionTargetProvisionConfig | null {
   const configuredFactoryAddress = nonZeroAddress(target?.vaultFactoryAddress);
   const configuredVaultAddress = nonZeroAddress(target?.vaultAddress);
   const hasDistinctFactory =
@@ -847,7 +1072,13 @@ export default function ProvisionPage() {
       );
       return false;
     }
-  }, [isConnected, walletChainId, switchChainAsync]);
+  }, [
+    isConnected,
+    walletChainId,
+    switchChainAsync,
+    targetChain.id,
+    targetChain.name,
+  ]);
 
   // URL params for pre-selecting a blueprint or targeting an instance draft
   const [searchParams, setSearchParams] = useSearchParams();
@@ -915,6 +1146,8 @@ export default function ProvisionPage() {
   const handledActivationAttemptKeysRef = useRef<Set<string>>(new Set());
   const instanceAutoProvisionInFlightRef = useRef<string | null>(null);
   const activationGuardTxHashRef = useRef<`0x${string}` | undefined>();
+  const submitSnapshotRef = useRef<SubmitSnapshot | null>(null);
+  const processedSubmitTxHashesRef = useRef<Set<`0x${string}`>>(new Set());
   const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(
     () => ({
       serviceId: targetServiceId ?? undefined,
@@ -1081,7 +1314,8 @@ export default function ProvisionPage() {
 
   // Reset customizations when strategy changes
   const prevStrategyRef = useRef(strategyType);
-  if (prevStrategyRef.current !== strategyType) {
+  useEffect(() => {
+    if (prevStrategyRef.current === strategyType) return;
     prevStrategyRef.current = strategyType;
     setCustomExpertKnowledge('');
     setCustomInstructions('');
@@ -1090,7 +1324,7 @@ export default function ProvisionPage() {
     setCustomResearchCron('');
     setConversationEnabled(true);
     setResearchEnabled(true);
-  }
+  }, [strategyType]);
 
   // Auto-set service mode to 'new' for instance blueprints
   useEffect(() => {
@@ -1124,7 +1358,7 @@ export default function ProvisionPage() {
     } else if (runtimeBackend === 'tee') {
       setRuntimeBackend('docker');
     }
-  }, [selectedBlueprint?.id, selectedBlueprint?.isTee]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runtimeBackend, selectedBlueprint?.id, selectedBlueprint?.isTee]);
 
   useEffect(() => {
     if (FIRECRACKER_RUNTIME_SUPPORTED || runtimeBackend !== 'firecracker')
@@ -1161,29 +1395,48 @@ export default function ProvisionPage() {
 
   // Track TX in history + create provision entry
   useEffect(() => {
-    if (!txHash || !userAddress) return;
+    if (!txHash || processedSubmitTxHashesRef.current.has(txHash)) return;
+    const snapshot = submitSnapshotRef.current;
+    const owner = snapshot?.owner ?? userAddress;
+    if (!owner) return;
+    const provisionName = snapshot?.name || name || 'Agent';
+    const packName = snapshot?.selectedPackName ?? selectedPack?.name;
+    const chainId = snapshot?.targetChainId ?? targetChain.id;
     addTx(
       txHash,
-      `Deploy ${name || 'Agent'} (${selectedPack?.name})`,
-      targetChain.id,
+      `Deploy ${provisionName} (${packName})`,
+      chainId,
     );
     addProvision({
       id: txHash,
-      owner: userAddress,
-      name: name || 'Agent',
-      strategyType,
-      operators: serviceInfo?.operators ?? [],
-      blueprintId,
-      blueprintType: selectedBlueprint?.id,
+      owner,
+      name: provisionName,
+      strategyType: snapshot?.strategyType ?? strategyType,
+      operators: snapshot?.operators ?? serviceInfo?.operators ?? [],
+      blueprintId: snapshot?.blueprintId ?? blueprintId,
+      blueprintType: snapshot?.blueprintType ?? selectedBlueprint?.id,
       txHash,
-      serviceId: serviceInfo ? Number(serviceId) : undefined,
+      serviceId:
+        snapshot?.serviceId ?? (serviceInfo ? Number(serviceId) : undefined),
       jobIndex: 0,
       phase: 'pending_confirmation',
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      chainId: targetChain.id,
+      chainId,
     });
-  }, [txHash]); // eslint-disable-line react-hooks/exhaustive-deps
+    processedSubmitTxHashesRef.current.add(txHash);
+  }, [
+    blueprintId,
+    name,
+    selectedBlueprint?.id,
+    selectedPack?.name,
+    serviceId,
+    serviceInfo,
+    strategyType,
+    targetChain.id,
+    txHash,
+    userAddress,
+  ]);
 
   const latestDeployment = useMemo(() => {
     const txMatch = myProvisions.find((p) => p.txHash === txHash);
@@ -1298,6 +1551,61 @@ export default function ProvisionPage() {
     apiUrl: operatorApiUrl,
   });
 
+  const handleInstanceProvisionSuccess = useCallback(
+    (
+      activatedServiceId: string,
+      result: { bot_id: string; sandbox_id: string },
+    ) => {
+      if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
+        instanceAutoProvisionInFlightRef.current = null;
+      }
+      setInstanceProvisioning(false);
+      setServiceId(activatedServiceId);
+      syncInstanceRouteTarget({
+        serviceId: activatedServiceId,
+        botId: result.bot_id,
+        sandboxId: result.sandbox_id,
+      });
+
+      if (userAddress) {
+        upsertInstanceProvision({
+          id: `instance-${activatedServiceId}`,
+          owner: userAddress,
+          name: name || 'Instance Agent',
+          strategyType,
+          operators: [],
+          blueprintId,
+          blueprintType: selectedBlueprint?.id,
+          serviceId: Number(activatedServiceId),
+          jobIndex: 0,
+          phase: 'awaiting_secrets',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          chainId: targetChain.id,
+          botId: result.bot_id,
+          sandboxId: result.sandbox_id,
+          callId: 0,
+        });
+      }
+
+      resetTx();
+      toast.success(
+        `Instance provisioned! Configure API keys to start trading.`,
+      );
+      setStep('secrets');
+    },
+    [
+      userAddress,
+      name,
+      strategyType,
+      blueprintId,
+      selectedBlueprint?.id,
+      targetChain.id,
+      resetTx,
+      syncInstanceRouteTarget,
+    ],
+  );
+
   // Auto-provision instance bot via operator API after service activation
   const autoProvisionInstance = useCallback(
     async (activatedServiceId: string) => {
@@ -1317,18 +1625,14 @@ export default function ProvisionPage() {
             if (!authToken) throw new Error('Wallet authentication failed');
           }
 
-          const resolvedValidatorIds: number[] =
-            validatorMode === 'custom' && customValidatorIds.trim()
-              ? customValidatorIds.split(',').flatMap((s) => {
-                  const n = parseInt(s.trim(), 10);
-                  return !isNaN(n) && n > 0 ? [n] : [];
-                })
-              : (() => {
-                  const defaultId =
-                    import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-                  const n = parseInt(defaultId, 10);
-                  return !isNaN(n) && n > 0 ? [n] : [];
-                })();
+          const resolvedValidatorIds = resolveValidatorServiceIds({
+            validatorMode,
+            customValidatorIds,
+            defaultValidatorServiceId: import.meta.env.VITE_VALIDATOR_SERVICE_ID,
+          });
+          if (!resolvedValidatorIds.ok) {
+            throw new Error(resolvedValidatorIds.message);
+          }
 
           const strategyExecution = validateStrategyExecutionSelection(
             strategyType,
@@ -1358,49 +1662,26 @@ export default function ProvisionPage() {
                 )
               : undefined;
 
-          const provisionBody = {
-            name: name || `Instance Bot (service ${activatedServiceId})`,
-            strategy_type: strategyType,
-            strategy_config_json: JSON.stringify(
-              buildStrategyConfigForProvision({
-                runtimeBackend,
-                isTeeBlueprint: !!selectedBlueprint?.isTee,
-                customExpertKnowledge,
-                customInstructions,
-                paperTrade: provisionPaperTrade,
-                protocolChainId: usesExecutionTarget
-                  ? executionConfig?.protocolChainId
-                  : undefined,
-                availableProtocols: usesExecutionTarget
-                  ? availableProtocolsForStrategyTarget(
-                      strategyType,
-                      selectedExecutionTarget,
-                    )
-                  : undefined,
-                conversationCron: effectiveConversationCron,
-                researchCron: effectiveResearchCron,
-                conversationEnabled,
-                researchEnabled,
-              }),
-            ),
-            risk_params_json:
-              strategyType === 'yield'
-                ? JSON.stringify({ min_aave_health_factor: 1.5 })
-                : '{}',
-            trading_loop_cron: effectiveCron,
-            validator_service_ids: resolvedValidatorIds,
-            ...(usesExecutionTarget && executionConfig
-              ? {
-                  chain_id: Number(executionConfig.chainId),
-                  rpc_url: executionConfig.rpcUrl,
-                  ...(instanceVaultAddress
-                    ? { vault_address: instanceVaultAddress }
-                    : {}),
-                  asset_token: executionConfig.assetAddress,
-                  paper_trade: provisionPaperTrade,
-                }
-              : {}),
-          };
+          const provisionBody = buildOperatorProvisionBody({
+            name,
+            fallbackName: `Instance Bot (service ${activatedServiceId})`,
+            strategyType,
+            runtimeBackend,
+            isTeeBlueprint: !!selectedBlueprint?.isTee,
+            customExpertKnowledge,
+            customInstructions,
+            paperTrade: provisionPaperTrade,
+            selectedExecutionTarget,
+            includeExecutionTarget: usesExecutionTarget,
+            executionConfig,
+            conversationCron: effectiveConversationCron,
+            researchCron: effectiveResearchCron,
+            conversationEnabled,
+            researchEnabled,
+            effectiveCron,
+            validatorServiceIds: resolvedValidatorIds.ids,
+            vaultAddress: instanceVaultAddress,
+          });
 
           const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
             method: 'POST',
@@ -1471,61 +1752,7 @@ export default function ProvisionPage() {
       operatorAuth,
       selectedExecutionTarget,
       provisionPaperTrade,
-    ],
-  );
-
-  const handleInstanceProvisionSuccess = useCallback(
-    (
-      activatedServiceId: string,
-      result: { bot_id: string; sandbox_id: string },
-    ) => {
-      if (instanceAutoProvisionInFlightRef.current === activatedServiceId) {
-        instanceAutoProvisionInFlightRef.current = null;
-      }
-      setInstanceProvisioning(false);
-      setServiceId(activatedServiceId);
-      syncInstanceRouteTarget({
-        serviceId: activatedServiceId,
-        botId: result.bot_id,
-        sandboxId: result.sandbox_id,
-      });
-
-      if (userAddress) {
-        upsertInstanceProvision({
-          id: `instance-${activatedServiceId}`,
-          owner: userAddress,
-          name: name || 'Instance Agent',
-          strategyType,
-          operators: [],
-          blueprintId,
-          blueprintType: selectedBlueprint?.id,
-          serviceId: Number(activatedServiceId),
-          jobIndex: 0,
-          phase: 'awaiting_secrets',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          chainId: targetChain.id,
-          botId: result.bot_id,
-          sandboxId: result.sandbox_id,
-          callId: 0,
-        });
-      }
-
-      resetTx();
-      toast.success(
-        `Instance provisioned! Configure API keys to start trading.`,
-      );
-      setStep('secrets');
-    },
-    [
-      userAddress,
-      name,
-      strategyType,
-      blueprintId,
-      selectedBlueprint,
-      targetChain.id,
-      resetTx,
-      syncInstanceRouteTarget,
+      handleInstanceProvisionSuccess,
     ],
   );
 
@@ -1901,58 +2128,39 @@ export default function ProvisionPage() {
       return;
     }
 
-    const strategyConfig = buildStrategyConfigForProvision({
+    const strategyConfig = buildProvisionStrategyConfig({
+      strategyType,
       runtimeBackend,
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
       paperTrade: provisionPaperTrade,
-      protocolChainId: requiresExecutionTarget
-        ? executionConfig?.protocolChainId
-        : undefined,
-      availableProtocols: requiresExecutionTarget
-        ? availableProtocolsForStrategyTarget(
-            strategyType,
-            selectedExecutionTarget,
-          )
-        : undefined,
+      selectedExecutionTarget,
+      includeExecutionTarget: requiresExecutionTarget,
+      executionConfig,
       conversationCron: effectiveConversationCron,
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
     });
-    if (requiresExecutionTarget && executionConfig) {
-      strategyConfig.vault_binding = executionConfig.vaultBinding;
-      if (
-        executionConfig.vaultBinding === 'direct' &&
-        executionConfig.vaultAddress &&
-        executionConfig.vaultAddress !== zeroAddress
-      ) {
-        strategyConfig.direct_vault_address = executionConfig.vaultAddress;
-      }
-    }
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
 
-    const resolvedValidatorIds: bigint[] =
-      validatorMode === 'custom' && customValidatorIds.trim()
-        ? customValidatorIds.split(',').flatMap((s) => {
-            const trimmed = s.trim();
-            if (!trimmed || !/^\d+$/.test(trimmed)) return [];
-            const n = BigInt(trimmed);
-            return n > 0n ? [n] : [];
-          })
-        : (() => {
-            const defaultId = import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-            const n = BigInt(defaultId);
-            return n > 0n ? [n] : [];
-          })();
+    const resolvedValidatorIds = resolveValidatorServiceIds({
+      validatorMode,
+      customValidatorIds,
+      defaultValidatorServiceId: import.meta.env.VITE_VALIDATOR_SERVICE_ID,
+    });
+    if (!resolvedValidatorIds.ok) {
+      toast.error(resolvedValidatorIds.message);
+      return;
+    }
 
     let vaultSigners: Address[] = [];
-    if (resolvedValidatorIds.length > 0) {
+    if (resolvedValidatorIds.ids.length > 0) {
       try {
         const operatorResults = await Promise.all(
-          resolvedValidatorIds.map((vid) =>
+          resolvedValidatorIds.ids.map((vid) =>
             publicClient.readContract({
               address: addresses.tangle,
               abi: tangleServicesAbi,
@@ -2015,11 +2223,23 @@ export default function ProvisionPage() {
       cpuCores: bp.defaults.cpuCores,
       memoryMb: bp.defaults.memoryMb,
       maxLifetimeDays: bp.defaults.maxLifetimeDays,
-      validatorServiceIds: resolvedValidatorIds,
+      validatorServiceIds: resolvedValidatorIds.ids,
       maxCollateralBps: collateralCapPct
         ? BigInt(Math.round(Number(collateralCapPct) * 100))
         : 0n,
     });
+
+    submitSnapshotRef.current = {
+      name: name || 'Agent',
+      selectedPackName: selectedPack.name,
+      targetChainId: targetChain.id,
+      owner: userAddress,
+      strategyType,
+      operators: serviceInfo?.operators ?? [],
+      blueprintId,
+      blueprintType: selectedBlueprint?.id,
+      serviceId: serviceInfo ? Number(serviceId) : undefined,
+    };
 
     writeContract(
       {
@@ -2088,18 +2308,16 @@ export default function ProvisionPage() {
     let instanceValidatorIds: bigint[] = [];
     let instanceVaultSigners: Address[] = [];
     if (isInstance) {
-      instanceValidatorIds =
-        validatorMode === 'custom' && customValidatorIds.trim()
-          ? customValidatorIds.split(',').flatMap((s) => {
-              const n = BigInt(s.trim() || '0');
-              return n > 0n ? [n] : [];
-            })
-          : (() => {
-              const defaultId =
-                import.meta.env.VITE_VALIDATOR_SERVICE_ID ?? '0';
-              const n = BigInt(defaultId);
-              return n > 0n ? [n] : [];
-            })();
+      const resolvedValidatorIds = resolveValidatorServiceIds({
+        validatorMode,
+        customValidatorIds,
+        defaultValidatorServiceId: import.meta.env.VITE_VALIDATOR_SERVICE_ID,
+      });
+      if (!resolvedValidatorIds.ok) {
+        toast.error(resolvedValidatorIds.message);
+        return;
+      }
+      instanceValidatorIds = resolvedValidatorIds.ids;
 
       if (instanceValidatorIds.length > 0) {
         try {
@@ -2138,45 +2356,27 @@ export default function ProvisionPage() {
       ? BigInt(Math.round(Number(collateralCapPct) * 100))
       : 0n;
 
-    const config = encodeAbiParameters(
-      parseAbiParameters(
-        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
-      ),
-      [
-        [
-          isInstance ? name || 'Instance Bot' : '',
-          isInstance ? strategyType : '',
-          isInstance
-            ? JSON.stringify(
-                buildStrategyConfigForProvision({
-                  runtimeBackend,
-                  isTeeBlueprint: !!selectedBlueprint?.isTee,
-                  customExpertKnowledge,
-                  customInstructions,
-                  conversationCron: effectiveConversationCron,
-                  researchCron: effectiveResearchCron,
-                  conversationEnabled,
-                  researchEnabled,
-                }),
-              )
-            : '{}',
-          '{}',
-          zeroAddress,
-          (import.meta.env.VITE_USDC_ADDRESS ??
-            '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
-          isInstance ? instanceVaultSigners : [],
-          isInstance && instanceVaultSigners.length > 0 ? 1n : 0n,
-          BigInt(targetChain.id),
-          '',
-          isInstance ? effectiveCron : '',
-          bp.defaults.cpuCores,
-          bp.defaults.memoryMb,
-          bp.defaults.maxLifetimeDays,
-          isInstance ? instanceValidatorIds : [],
-          collateralBps,
-        ],
-      ],
-    );
+    const config = buildInstanceServiceConfig({
+      isInstance,
+      name,
+      strategyType,
+      runtimeBackend,
+      isTeeBlueprint: !!selectedBlueprint?.isTee,
+      customExpertKnowledge,
+      customInstructions,
+      conversationCron: effectiveConversationCron,
+      researchCron: effectiveResearchCron,
+      conversationEnabled,
+      researchEnabled,
+      effectiveCron,
+      validatorServiceIds: instanceValidatorIds,
+      vaultSigners: instanceVaultSigners,
+      collateralBps,
+      targetChainId: targetChain.id,
+      assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
+        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+      blueprintDefaults: bp.defaults,
+    });
 
     const quoteTuples = quotes.map((q) => ({
       details: {

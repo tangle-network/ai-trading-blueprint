@@ -422,8 +422,28 @@ describe('instance service activation auto-provision', () => {
     });
 
     const [, provisionRequest] = getProvisionRequestCalls()[0];
-    expect(JSON.parse((provisionRequest as RequestInit).body as string).vault_address).toBe(
-      shared.instanceVaultAddress,
+    const provisionBody = JSON.parse(
+      (provisionRequest as RequestInit).body as string,
+    );
+    expect(provisionBody).toMatchObject({
+      name: 'Instance Bot',
+      strategy_type: 'dex',
+      trading_loop_cron: '* * * * *',
+      vault_address: shared.instanceVaultAddress,
+    });
+    expect(shared.upsertInstanceProvision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'instance-77',
+        owner: '0x0000000000000000000000000000000000000001',
+        name: 'Instance Bot',
+        strategyType: 'dex',
+        blueprintId: '2',
+        blueprintType: 'trading-instance',
+        serviceId: 77,
+        chainId: 31337,
+        botId: 'bot-77',
+        sandboxId: 'sandbox-77',
+      }),
     );
 
     expect(await screen.findByTestId('secrets-step')).toBeInTheDocument();
