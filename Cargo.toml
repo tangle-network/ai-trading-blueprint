@@ -21,12 +21,3 @@ license = "MIT OR Apache-2.0"
 
 [patch."https://github.com/tangle-network/blueprint.git"]
 workspace-hack = { path = "patches/workspace-hack" }
-
-[patch.crates-io]
-libp2p = { path = "patches/libp2p" }
-libp2p-dns = { path = "patches/libp2p-dns" }
-libp2p-mdns = { path = "patches/libp2p-mdns" }
-
-[patch."https://github.com/tangle-network/ai-agent-sandbox-blueprint.git"]
-sandbox-runtime = { path = "../ai-agent-sandbox-blueprint/sandbox-runtime" }
-ai-agent-sandbox-blueprint-lib = { path = "../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }

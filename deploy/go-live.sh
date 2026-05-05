@@ -220,8 +220,6 @@ cd repo
 git fetch --all --tags
 git checkout "$REPO_REF"
 git pull --ff-only origin "$REPO_REF" || true
-# Strip local [patch] sections so the remote build does not look for sibling checkouts.
-sed -i '/^\[patch\./,/^$/s/^/#/' Cargo.toml
 
 CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
 ls -lh target/release/trading-blueprint | awk '{print "Binary: "$5}'
