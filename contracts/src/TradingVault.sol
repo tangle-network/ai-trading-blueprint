@@ -116,6 +116,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error OutstandingCollateralActive(uint256 amount);
     error DebtDecreaseNotMet(uint256 actual, uint256 required);
     error HealthFactorTooLow(uint256 actual, uint256 required);
+    error PositionLimitExceeded(address token, uint256 actual, uint256 limit);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -614,7 +615,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         bytes32 approvalsHash
     ) internal {
         if (windDownActive) revert WindDownBlocksExecute();
-        if (params.target == address(0) || params.outputToken == address(0) || params.pool == address(0) || params.account == address(0)) {
+        if (
+            params.target == address(0) || params.outputToken == address(0) || params.pool == address(0)
+                || params.account == address(0)
+        ) {
             revert ZeroAddress();
         }
         if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
@@ -779,6 +783,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 outputGained = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
+        _checkFinalPositionLimit(params.outputToken);
         _addHeldToken(params.outputToken);
 
         if (depositAssetReserveBps > 0) {
@@ -823,6 +828,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 outputGained = balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
+        _checkFinalPositionLimit(params.outputToken);
         _addHeldToken(params.outputToken);
 
         (,,,,, uint256 healthFactor) = IAavePoolHealth(params.pool).getUserAccountData(params.account);
@@ -1286,6 +1292,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (address(adapter) == address(0) || !adapter.isSupported(token, depositAsset)) {
             revert UnsupportedValuationAsset(token, depositAsset);
         }
+    }
+
+    function _checkFinalPositionLimit(address token) internal view {
+        uint256 limit = policyEngine.positionLimit(address(this), token);
+        if (limit == 0) return;
+
+        uint256 exposure = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
+        if (exposure > limit) revert PositionLimitExceeded(token, exposure, limit);
     }
 
     function _isNavSafe() internal view returns (bool) {

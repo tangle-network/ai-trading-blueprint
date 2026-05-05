@@ -419,6 +419,58 @@ contract TradingVaultTest is Setup {
         vault.execute(params, sigs, scores);
     }
 
+    function test_executeRevertsWhenActualOutputExceedsPositionLimit() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockTarget), address(tokenB), 100 ether);
+        tokenB.mint(address(vault), 90 ether);
+
+        bytes32 intentHash = keccak256("actual output exceeds position");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(50 ether, 10 ether, intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(TradingVault.PositionLimitExceeded.selector, address(tokenB), 140 ether, 100 ether)
+        );
+        vault.execute(params, sigs, scores);
+    }
+
+    function test_executeAllowsActualOutputAtPositionLimit() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockTarget), address(tokenB), 100 ether);
+        tokenB.mint(address(vault), 90 ether);
+
+        bytes32 intentHash = keccak256("actual output at position");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(10 ether, 10 ether, intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.execute(params, sigs, scores);
+
+        assertEq(tokenB.balanceOf(address(vault)), 100 ether);
+    }
+
+    function test_executeSkipsFinalPositionCheckWhenLimitDisabled() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockTarget), address(tokenB), 0);
+        tokenB.mint(address(vault), 90 ether);
+
+        bytes32 intentHash = keccak256("no position limit");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.ExecuteParams memory params = _buildExecuteParams(50 ether, 10 ether, intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.execute(params, sigs, scores);
+
+        assertEq(tokenB.balanceOf(address(vault)), 140 ether);
+    }
+
     function test_executeWithApprovalsMinOutputCheckLeavesNoAllowance() public {
         vm.prank(user);
         vault.deposit(10000 ether, user);
@@ -617,6 +669,37 @@ contract TradingVaultTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(TradingVault.HealthFactorTooLow.selector, 1.2 ether, 1.5 ether));
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+    }
+
+    function test_executeHealthFactorRevertsWhenActualOutputExceedsPositionLimit() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockTarget), address(tokenB), 100 ether);
+        tokenB.mint(address(vault), 90 ether);
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        bytes32 intentHash = keccak256("health factor position limit");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 50 ether),
+            value: 0,
+            minOutput: 10 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(TradingVault.PositionLimitExceeded.selector, address(tokenB), 140 ether, 100 ether)
+        );
         vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
     }
 
@@ -1119,6 +1202,42 @@ contract TradingVaultTest is Setup {
         vault.execute(params, sigs, scores);
 
         assertEq(address(vault).balance - vaultETHBefore, 5 ether, "Vault should receive ETH");
+    }
+
+    function test_execute_nativeETH_revertsWhenActualOutputExceedsPositionLimit() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        MockETHTarget ethTarget = new MockETHTarget();
+        vm.deal(address(ethTarget), 100 ether);
+
+        vm.startPrank(address(vaultFactory));
+        address[] memory targets = new address[](1);
+        targets[0] = address(ethTarget);
+        policyEngine.setTargetWhitelist(address(vault), targets, true);
+        policyEngine.whitelistToken(address(vault), address(0), true);
+        policyEngine.setPositionLimit(address(vault), address(0), 10 ether);
+        vm.stopPrank();
+
+        bytes32 intentHash = keccak256("eth position limit");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(ethTarget),
+            data: abi.encodeWithSelector(MockETHTarget.sendETH.selector, address(vault), 20 ether),
+            value: 0,
+            minOutput: 5 ether,
+            outputToken: address(0),
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
+
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(TradingVault.PositionLimitExceeded.selector, address(0), 20 ether, 10 ether)
+        );
+        vault.execute(params, sigs, scores);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
