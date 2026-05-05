@@ -829,7 +829,10 @@ async fn resolve_vault_from_factory(
                 .await
                 .map_err(|e| format!("botVaults call failed: {e}"))?;
 
-            let vault = <alloy::sol_types::sol_data::Address as alloy::sol_types::SolType>::abi_decode(&result)
+            let vault =
+                <alloy::sol_types::sol_data::Address as alloy::sol_types::SolType>::abi_decode(
+                    &result,
+                )
                 .map_err(|e| format!("Failed to decode bot vault address: {e}"))?;
 
             if vault != Address::ZERO {
