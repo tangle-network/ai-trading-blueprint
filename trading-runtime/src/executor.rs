@@ -22,6 +22,7 @@ use crate::simulator::{
 };
 use crate::supported_assets::{TradeAssetRole, is_supported_trade_asset};
 use crate::types::{TradeIntent, ValidationResult};
+use crate::uniswap_envelope::{SignedUniswapEnvelope, UniswapEnvelopeBinding};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
 const DEFAULT_EXECUTION_GAS_LIMIT: u64 = 3_000_000;
@@ -327,6 +328,161 @@ impl TradeExecutor {
         let (output_token, output_gained) =
             parse_trade_executed_event(&receipt).unwrap_or((None, None));
 
+        Ok(TransactionOutcome {
+            tx_hash,
+            block_number: Some(receipt.block_number.unwrap_or(0)),
+            gas_used: Some(receipt.gas_used.into()),
+            output_token,
+            output_gained,
+        })
+    }
+
+    /// Execute a Uniswap V3 exact-input swap authorized by a signed envelope.
+    pub async fn execute_uniswap_envelope_trade(
+        &self,
+        intent: &TradeIntent,
+        signed_envelope: &SignedUniswapEnvelope,
+        bot_id: &str,
+    ) -> Result<TransactionOutcome, TradingError> {
+        if intent.target_protocol != "uniswap_v3" {
+            return Err(TradingError::ValidatorError(
+                "Uniswap envelope execution only supports uniswap_v3".into(),
+            ));
+        }
+
+        let adapter = get_adapter(&intent.target_protocol, Some(self.vault_client.chain_id))?;
+        let token_in: Address =
+            intent
+                .token_in
+                .parse()
+                .map_err(|e| TradingError::AdapterError {
+                    protocol: intent.target_protocol.clone(),
+                    message: format!("Invalid token_in address: {e}"),
+                })?;
+        let token_out: Address =
+            intent
+                .token_out
+                .parse()
+                .map_err(|e| TradingError::AdapterError {
+                    protocol: intent.target_protocol.clone(),
+                    message: format!("Invalid token_out address: {e}"),
+                })?;
+        validate_supported_execution_tokens(intent)?;
+
+        let amount = decimal_to_u256(&intent.amount_in)?;
+        let min_output = decimal_to_u256(&intent.min_amount_out)?;
+        let vault_address: Address = self
+            .vault_client
+            .vault_address
+            .parse()
+            .map_err(|e| TradingError::VaultError(format!("Invalid vault address: {e}")))?;
+
+        let binding = UniswapEnvelopeBinding {
+            bot_id,
+            vault_address: &self.vault_client.vault_address,
+            chain_id: self.vault_client.chain_id,
+        };
+        signed_envelope.verify_binding(&binding)?;
+        signed_envelope.verify_local_signatures()?;
+
+        let params = ActionParams {
+            action: intent.action.clone(),
+            token_in,
+            token_out,
+            amount,
+            min_output,
+            extra: metadata_with_execution_deadline(
+                &intent.metadata,
+                intent.deadline.timestamp().max(0) as u64,
+            ),
+            vault_address,
+        };
+        let encoded = adapter.encode_action(&params)?;
+        if encoded.debt_reduction.is_some() || encoded.health_factor.is_some() {
+            return Err(TradingError::ValidatorError(
+                "Uniswap envelope execution only supports simple swap postconditions".into(),
+            ));
+        }
+
+        let simulation_tokens = {
+            let mut tokens = vec![token_in, token_out, encoded.output_token];
+            tokens.sort();
+            tokens.dedup();
+            tokens
+        };
+        let intent_hash = parse_intent_hash(&crate::intent::hash_intent(intent))?;
+        let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
+        let tx = self.vault_client.encode_execute_uniswap_envelope(
+            &format!("{}", encoded.target),
+            &encoded.calldata,
+            &encoded.value.to_string(),
+            &encoded.min_output.to_string(),
+            &format!("{}", encoded.output_token),
+            intent_hash,
+            deadline,
+            signed_envelope,
+        )?;
+        let tx_value = parse_tx_value(&tx.value);
+
+        if let Some(ref simulator) = self.simulator {
+            let sim_request = SimulationRequest {
+                from: self.chain_client.from_address,
+                to: vault_address,
+                data: alloy::primitives::Bytes::from(tx.data.clone()),
+                value: tx_value,
+                block_number: None,
+                token_addresses: simulation_tokens,
+                balance_check_account: Some(vault_address),
+            };
+            let sim_result = simulator.simulate(sim_request).await.map_err(|e| {
+                TradingError::SimulationUnavailable(format!(
+                    "final envelope transaction simulation failed: {e}"
+                ))
+            })?;
+            let risk = analyze_simulation(
+                &sim_result,
+                &TradeContext {
+                    vault_address,
+                    token_in,
+                    token_out: encoded.output_token,
+                    amount_in: params.amount,
+                    min_output: encoded.min_output,
+                    known_protocol_addresses: adapter.known_addresses(),
+                },
+            );
+            if !risk.safe {
+                return Err(TradingError::SimulationRejected {
+                    risk_score: risk.risk_score,
+                    warnings: risk.warnings.iter().map(|w| w.to_string()).collect(),
+                });
+            }
+        }
+
+        let to_addr: Address = tx
+            .to
+            .parse()
+            .map_err(|e| TradingError::VaultError(format!("Invalid vault address in tx: {e}")))?;
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .to(to_addr)
+            .input(alloy::primitives::Bytes::from(tx.data).into())
+            .value(tx_value)
+            .gas_limit(gas_limit_from_env(
+                "TRADING_EXECUTION_GAS_LIMIT",
+                DEFAULT_EXECUTION_GAS_LIMIT,
+            ));
+        let pending = self
+            .chain_client
+            .provider
+            .send_transaction(tx_request)
+            .await
+            .map_err(|e| TradingError::VaultError(format!("Transaction send failed: {e}")))?;
+        let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+        let receipt = pending
+            .get_receipt()
+            .await
+            .map_err(|e| TradingError::VaultError(format!("Receipt fetch failed: {e}")))?;
+        let (output_token, output_gained) =
+            parse_trade_executed_event(&receipt).unwrap_or((None, None));
         Ok(TransactionOutcome {
             tx_hash,
             block_number: Some(receipt.block_number.unwrap_or(0)),

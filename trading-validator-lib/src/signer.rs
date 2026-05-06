@@ -1,6 +1,7 @@
 use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::signers::SignerSync;
 use alloy::signers::local::PrivateKeySigner;
+use trading_runtime::uniswap_envelope::UniswapEnvelope;
 
 /// EIP-712 domain constants for TradeValidator contract
 const DOMAIN_NAME: &str = "TradeValidator";
@@ -106,6 +107,21 @@ impl ValidatorSigner {
         let sig_bytes = signature.as_bytes();
 
         Ok((sig_bytes, self.signer.address()))
+    }
+
+    /// Sign a validator-approved Uniswap envelope score.
+    pub fn sign_uniswap_envelope(
+        &self,
+        envelope: &UniswapEnvelope,
+        score: u64,
+    ) -> Result<([u8; 65], Address), Box<dyn std::error::Error + Send + Sync>> {
+        let digest = envelope.digest(
+            score,
+            self.chain_id,
+            &format!("{}", self.verifying_contract),
+        )?;
+        let signature = self.signer.sign_hash_sync(&digest)?;
+        Ok((signature.as_bytes(), self.signer.address()))
     }
 
     /// Compute the EIP-712 domain separator matching the Solidity contract.

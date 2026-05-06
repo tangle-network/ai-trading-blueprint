@@ -24,6 +24,26 @@ sol! {
             uint256 amount;
         }
 
+        struct UniswapEnvelope {
+            bytes32 envelopeId;
+            bytes32 botIdHash;
+            address vault;
+            uint256 chainId;
+            address router;
+            address tokenIn;
+            address tokenOut;
+            bytes32 action;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxSlippageBps;
+            uint256 minOutputPerInput;
+            uint256 validFrom;
+            uint256 validUntil;
+            uint256 nonce;
+            bytes32 approvalSignersHash;
+            uint256 minSignatures;
+        }
+
         struct DebtReductionParams {
             address target;
             bytes data;
@@ -80,6 +100,13 @@ sol! {
         function executeHealthFactorWithApprovals(
             HealthFactorParams calldata params,
             ApprovalCall[] calldata approvals,
+            bytes[] calldata signatures,
+            uint256[] calldata scores
+        ) external;
+        function executeUniswapEnvelope(
+            ExecuteParams calldata params,
+            UniswapEnvelope calldata envelope,
+            address[] calldata approvalSigners,
             bytes[] calldata signatures,
             uint256[] calldata scores
         ) external;
@@ -171,12 +198,38 @@ sol! {
 
     #[sol(rpc)]
     interface ITradeValidator {
+        struct UniswapEnvelope {
+            bytes32 envelopeId;
+            bytes32 botIdHash;
+            address vault;
+            uint256 chainId;
+            address router;
+            address tokenIn;
+            address tokenOut;
+            bytes32 action;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxSlippageBps;
+            uint256 minOutputPerInput;
+            uint256 validFrom;
+            uint256 validUntil;
+            uint256 nonce;
+            bytes32 approvalSignersHash;
+            uint256 minSignatures;
+        }
+
         function configureVault(address vault, address[] calldata signers, uint256 requiredSigs) external;
         function validateWithSignatures(
             bytes32 intentHash, bytes32 executionHash, address vault, bytes[] calldata signatures,
             uint256[] calldata scores, uint256 deadline, uint256 actionKind
         ) external view returns (bool approved, uint256 validCount);
+        function validateUniswapEnvelope(
+            UniswapEnvelope calldata envelope, address[] calldata approvalSigners, bytes[] calldata signatures,
+            uint256[] calldata scores
+        ) external view returns (bool approved, uint256 validCount);
         function computeDigest(bytes32 intentHash, bytes32 executionHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
+        function hashUniswapEnvelope(UniswapEnvelope calldata envelope) external pure returns (bytes32);
+        function computeUniswapEnvelopeDigest(UniswapEnvelope calldata envelope, uint256 score) external view returns (bytes32);
         function getVaultSigners(address vault) external view returns (address[] memory);
         function getRequiredSignatures(address vault) external view returns (uint256);
     }

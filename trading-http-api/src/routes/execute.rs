@@ -1,8 +1,8 @@
 use crate::live_portfolio::{LiveRiskInput, enforce_live_risk, max_drawdown_from_strategy_config};
 use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
-    self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
-    TradeExecutionStatus, TradeRecord,
+    self, PredictionTradeMetadata, StoredAuthorization, StoredSimulation, StoredValidation,
+    StoredValidatorResponse, TradeExecutionStatus, TradeRecord,
 };
 use crate::{MultiBotTradingState, TradingApiState};
 use alloy::primitives::{Address, B256, Bytes, U256};
@@ -35,9 +35,10 @@ use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 use trading_runtime::token_metadata::{
     address_chain_mismatch, chain_display_name, known_token_decimals,
 };
+use trading_runtime::uniswap_envelope::SignedUniswapEnvelope;
 use trading_runtime::{
-    PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, ValidationResult,
-    ValidatorResponse, ValuationStatus,
+    PortfolioState, Position, PositionType, TradeIntent, TradeIntentBuilder, TradingError,
+    ValidationResult, ValidatorResponse, ValuationStatus,
 };
 
 use super::validate::{
@@ -90,6 +91,8 @@ pub struct ValidationPayload {
     pub validator_responses: Vec<ValidatorResponsePayload>,
     #[serde(default)]
     pub simulation: Option<SimulationPayload>,
+    #[serde(default)]
+    pub uniswap_envelope: Option<SignedUniswapEnvelope>,
 }
 
 fn default_zero_hash() -> String {
@@ -254,7 +257,52 @@ fn build_stored_validation(v: &ValidationPayload) -> StoredValidation {
             warnings: s.warnings.clone(),
             output_amount: s.output_amount.clone(),
         }),
+        authorization: None,
     }
+}
+
+fn stored_uniswap_envelope_validation(
+    envelope: &SignedUniswapEnvelope,
+    intent_hash: String,
+) -> Result<StoredValidation, (StatusCode, String)> {
+    let envelope_hash = envelope
+        .envelope
+        .envelope_hash()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(StoredValidation {
+        approved: true,
+        aggregate_score: envelope
+            .signatures
+            .iter()
+            .map(|sig| sig.score)
+            .sum::<u32>()
+            .checked_div(envelope.signatures.len() as u32)
+            .unwrap_or(0),
+        intent_hash,
+        responses: envelope
+            .signatures
+            .iter()
+            .map(|sig| StoredValidatorResponse {
+                validator: sig.signer.clone(),
+                score: sig.score,
+                reasoning: "Uniswap envelope approved".to_string(),
+                signature: sig.signature.clone(),
+                chain_id: Some(sig.chain_id),
+                verifying_contract: Some(sig.verifying_contract.clone()),
+                validated_at: sig.validated_at.clone(),
+            })
+            .collect(),
+        simulation: None,
+        authorization: Some(StoredAuthorization::UniswapEnvelope {
+            envelope_id: envelope.envelope.envelope_id.clone(),
+            envelope_hash: format!("0x{}", hex::encode(envelope_hash.as_slice())),
+            token_in: envelope.envelope.token_in.clone(),
+            token_out: envelope.envelope.token_out.clone(),
+            valid_until: envelope.envelope.valid_until,
+            min_signatures: envelope.envelope.min_signatures,
+            signature_count: envelope.signatures.len(),
+        }),
+    })
 }
 
 fn is_explicit_paper_validation_bypass(validation: &ValidationPayload) -> bool {
@@ -587,8 +635,9 @@ fn ensure_validation_score_binding(
 fn parse_execute_request(
     req: &ExecuteRequest,
     chain_id: Option<u64>,
+    require_validation_approved: bool,
 ) -> Result<TradeIntent, (StatusCode, String)> {
-    if !req.validation.approved {
+    if require_validation_approved && !req.validation.approved {
         return Err((StatusCode::BAD_REQUEST, "Validation not approved".into()));
     }
 
@@ -1837,6 +1886,125 @@ async fn execute_real_trade(
     }))
 }
 
+async fn execute_uniswap_envelope_real_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    req: &ExecuteRequest,
+    signed_envelope: &SignedUniswapEnvelope,
+    valuation: &TradeValuationSnapshot,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    if let Some(slippage_bps) = req
+        .intent
+        .metadata
+        .get("slippage_bps")
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+        && slippage_bps > signed_envelope.envelope.max_slippage_bps
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Trade rejected by Uniswap envelope slippage limit: {slippage_bps} bps > {} bps",
+                signed_envelope.envelope.max_slippage_bps
+            ),
+        ));
+    }
+
+    let outcome = match executor
+        .execute_uniswap_envelope_trade(intent, signed_envelope, bot_id)
+        .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Err(clear_error) = super::uniswap::remove_signed_uniswap_envelope(
+                bot_id,
+                &signed_envelope.envelope.envelope_id,
+            ) {
+                tracing::warn!(
+                    bot_id,
+                    envelope_id = %signed_envelope.envelope.envelope_id,
+                    error = %clear_error.1,
+                    "failed to clear Uniswap envelope after failed execution"
+                );
+            }
+            let message = match &error {
+                TradingError::SimulationRejected { warnings, .. }
+                    if warnings
+                        .iter()
+                        .any(|warning| warning.contains("ExecutionFailed()")) =>
+                {
+                    format!(
+                        "{error}; Uniswap router execution failed, likely because min_amount_out is above the executable route quote"
+                    )
+                }
+                _ => error.to_string(),
+            };
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, message));
+        }
+    };
+
+    let stored_validation =
+        stored_uniswap_envelope_validation(signed_envelope, hash_intent(intent))?;
+    let trade_id = uuid::Uuid::new_v4().to_string();
+    let confirmed_output_token = outcome
+        .output_token
+        .map(|token| format!("{token}"))
+        .unwrap_or_else(|| req.intent.token_out.clone());
+    let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
+    let record = TradeRecord {
+        id: trade_id,
+        bot_id: bot_id.to_string(),
+        timestamp: Utc::now(),
+        action: req.intent.action.clone(),
+        token_in: req.intent.token_in.clone(),
+        token_out: confirmed_output_token,
+        amount_in: req.intent.amount_in.clone(),
+        min_amount_out: req.intent.min_amount_out.clone(),
+        target_protocol: req.intent.target_protocol.clone(),
+        tx_hash: outcome.tx_hash.clone(),
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Confirmed),
+        clob_order_id: None,
+        amount_out: confirmed_amount_out
+            .clone()
+            .or_else(|| valuation.amount_out.map(|value| value.to_string())),
+        entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
+        notional_usd: valuation.notional_usd.map(|value| value.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: confirmed_amount_out,
+        slippage_bps: None,
+        execution_reason: Some("Confirmed by TradingVault Uniswap envelope guard".to_string()),
+        prediction_metadata: extract_prediction_metadata(&req.intent),
+        valuation_status: valuation.valuation_status,
+        validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+    };
+    if let Err(e) = trade_store::record_trade(record).await {
+        tracing::error!(
+            tx_hash = %outcome.tx_hash,
+            error = %e,
+            "CRITICAL: Envelope trade executed on-chain but persistence failed"
+        );
+    }
+
+    Ok(Json(ExecuteResponse {
+        tx_hash: outcome.tx_hash,
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        clob_order_id: None,
+    }))
+}
+
 // ── CLOB execution (Polymarket off-chain order book) ─────────────────────────
 
 /// Execute a trade via Polymarket's CLOB API.
@@ -2200,7 +2368,7 @@ async fn execute(
         ensure_paper_validation_consistency(&request.validation)?;
     }
 
-    let intent = parse_execute_request(&normalized_request, protocol_chain_id)?;
+    let intent = parse_execute_request(&normalized_request, protocol_chain_id, true)?;
     if !state.paper_trade
         && !uses_direct_non_vault_execution(&normalized_request.intent.target_protocol)
         && intent.min_amount_out <= Decimal::ZERO
@@ -2416,7 +2584,14 @@ async fn execute_multi_bot(
         ensure_paper_validation_consistency(&req.validation)?;
     }
 
-    let intent = parse_execute_request(&normalized_req, Some(protocol_chain_id))?;
+    let is_uniswap_envelope_mode = !bot.paper_trade
+        && bot.validation_trust == trading_runtime::ValidationTrust::Envelope
+        && normalized_req.intent.target_protocol == "uniswap_v3";
+    let intent = parse_execute_request(
+        &normalized_req,
+        Some(protocol_chain_id),
+        !is_uniswap_envelope_mode,
+    )?;
     if !bot.paper_trade
         && !uses_direct_non_vault_execution(&normalized_req.intent.target_protocol)
         && intent.min_amount_out <= Decimal::ZERO
@@ -2426,14 +2601,18 @@ async fn execute_multi_bot(
             "Live vault-backed execution requires min_amount_out > 0".to_string(),
         ));
     }
-    let canonical_intent_hash = ensure_validation_hash_binding(
-        &req.validation,
-        &intent,
-        &bot.vault_address,
-        Some(protocol_chain_id),
-        bot.chain_id,
-        !bot.paper_trade,
-    )?;
+    let canonical_intent_hash = if is_uniswap_envelope_mode {
+        hash_intent(&intent)
+    } else {
+        ensure_validation_hash_binding(
+            &req.validation,
+            &intent,
+            &bot.vault_address,
+            Some(protocol_chain_id),
+            bot.chain_id,
+            !bot.paper_trade,
+        )?
+    };
 
     let stored_validation = build_stored_validation(&req.validation);
 
@@ -2446,6 +2625,7 @@ async fn execute_multi_bot(
     // - SelfOperated: no external validation, local policy only (instant)
     use trading_runtime::ValidationTrust;
     let mut signed_envelope = None;
+    let mut signed_uniswap_envelope = None;
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
@@ -2468,30 +2648,51 @@ async fn execute_multi_bot(
                 }
             }
             ValidationTrust::Envelope => {
-                if normalized_req.intent.target_protocol != "hyperliquid" {
+                if normalized_req.intent.target_protocol == "hyperliquid" {
+                    let envelope =
+                        super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+                            (
+                                StatusCode::FORBIDDEN,
+                                "Live Envelope trust mode requires a signed per-bot envelope approval"
+                                    .to_string(),
+                            )
+                        })?;
+                    let binding = EnvelopeBinding {
+                        bot_id: &bot.bot_id,
+                        vault_address: &bot.vault_address,
+                        chain_id: bot.chain_id,
+                        protocol: "hyperliquid",
+                    };
+                    envelope
+                        .verify(&binding, &state.trusted_envelope_signers())
+                        .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+                    signed_envelope = Some(envelope);
+                } else if normalized_req.intent.target_protocol == "uniswap_v3" {
+                    let envelope = if let Some(envelope) = req.validation.uniswap_envelope.clone() {
+                        envelope
+                    } else {
+                        super::uniswap::get_signed_uniswap_envelope_for_intent(
+                            &bot,
+                            &intent,
+                        )
+                        .await?
+                        .ok_or_else(|| {
+                            (
+                                StatusCode::FORBIDDEN,
+                                "Live Uniswap Envelope trust mode requires a signed Uniswap envelope proof"
+                                    .to_string(),
+                            )
+                        })?
+                    };
+                    super::uniswap::set_signed_uniswap_envelope_on_chain_time(&bot, &envelope)
+                        .await?;
+                    signed_uniswap_envelope = Some(envelope);
+                } else {
                     return Err((
                         StatusCode::FORBIDDEN,
-                        "Live Envelope trust mode is only implemented for Hyperliquid; non-Hyperliquid live trades require PerTrade validation".into(),
+                        "Live Envelope trust mode is only implemented for Hyperliquid and Uniswap V3; other live trades require PerTrade validation".into(),
                     ));
                 }
-                let envelope =
-                    super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
-                        (
-                            StatusCode::FORBIDDEN,
-                            "Live Envelope trust mode requires a signed per-bot envelope approval"
-                                .to_string(),
-                        )
-                    })?;
-                let binding = EnvelopeBinding {
-                    bot_id: &bot.bot_id,
-                    vault_address: &bot.vault_address,
-                    chain_id: bot.chain_id,
-                    protocol: "hyperliquid",
-                };
-                envelope
-                    .verify(&binding, &state.trusted_envelope_signers())
-                    .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
-                signed_envelope = Some(envelope);
             }
             ValidationTrust::SelfOperated => {
                 return Err((
@@ -2672,6 +2873,30 @@ async fn execute_multi_bot(
         })?
     };
 
+    if normalized_req.intent.target_protocol == "uniswap_v3"
+        && let Some(envelope) = signed_uniswap_envelope.as_ref()
+    {
+        let response = execute_uniswap_envelope_real_trade(
+            &bot.bot_id,
+            &executor,
+            &intent,
+            &normalized_req,
+            envelope,
+            &valuation,
+        )
+        .await?;
+        if let Err(error) =
+            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        {
+            tracing::warn!(
+                bot_id = %bot.bot_id,
+                %error,
+                "failed to capture metrics snapshot after Uniswap envelope trade"
+            );
+        }
+        return Ok(response);
+    }
+
     let response = execute_real_trade(
         &bot.bot_id,
         &executor,
@@ -2819,6 +3044,7 @@ mod tests {
                 deadline,
                 validator_responses: vec![],
                 simulation: None,
+                uniswap_envelope: None,
             },
         }
     }
@@ -2828,7 +3054,7 @@ mod tests {
         adapter_chain_id: Option<u64>,
         execution_chain_id: u64,
     ) {
-        let intent = parse_execute_request(req, adapter_chain_id).expect("intent");
+        let intent = parse_execute_request(req, adapter_chain_id, true).expect("intent");
         let (intent_hash, execution_hash) = expected_validation_hashes(
             &intent,
             "0x0000000000000000000000000000000000000001",
@@ -2882,7 +3108,7 @@ mod tests {
     #[test]
     fn parse_execute_request_uses_validation_deadline_when_present() {
         let req = make_execute_request(Some(1_777_777_777));
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
         assert_eq!(intent.deadline.timestamp(), 1_777_777_777);
     }
 
@@ -2890,7 +3116,7 @@ mod tests {
     fn parse_execute_request_uses_default_deadline_when_missing() {
         let req = make_execute_request(None);
         let before = chrono::Utc::now().timestamp();
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
         let after = chrono::Utc::now().timestamp();
         let ts = intent.deadline.timestamp();
         assert!(ts >= before + 290);
@@ -2905,7 +3131,7 @@ mod tests {
         req.intent.token_in = "0x0000000000000000000000000000000000000000".to_string();
         req.intent.token_out = "0x0000000000000000000000000000000000000000".to_string();
 
-        let intent = parse_execute_request(&req, Some(31339)).expect("intent");
+        let intent = parse_execute_request(&req, Some(31339), true).expect("intent");
         assert_eq!(
             intent.token_in,
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -2920,7 +3146,7 @@ mod tests {
     fn validation_hash_binding_accepts_matching_request() {
         let mut req = make_execute_request(Some(1_999_999_999));
         attach_expected_hashes(&mut req, Some(1), 1);
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
 
         let result = ensure_validation_hash_binding(
             &req.validation,
@@ -2939,7 +3165,7 @@ mod tests {
         let mut req = make_execute_request(Some(1_999_999_999));
         attach_expected_hashes(&mut req, Some(1), 1);
         req.intent.min_amount_out = "2000000".to_string();
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
 
         let err = ensure_validation_hash_binding(
             &req.validation,
@@ -2961,7 +3187,7 @@ mod tests {
         req.intent.metadata = serde_json::json!({"pool_fee": 3000, "route": ["weth", "usdc"]});
         attach_expected_hashes(&mut req, Some(1), 1);
         req.intent.metadata = serde_json::json!({"pool_fee": 500, "route": ["weth", "usdc"]});
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
 
         let err = ensure_validation_hash_binding(
             &req.validation,
@@ -2982,7 +3208,7 @@ mod tests {
         let mut req = make_execute_request(Some(1_999_999_999));
         attach_expected_hashes(&mut req, Some(1), 1);
         req.validation.deadline = Some(2_000_000_000);
-        let intent = parse_execute_request(&req, Some(1)).expect("intent");
+        let intent = parse_execute_request(&req, Some(1), true).expect("intent");
 
         let err = ensure_validation_hash_binding(
             &req.validation,
@@ -3019,7 +3245,7 @@ mod tests {
             "price": "0.66",
             "order_type": "GTC"
         });
-        let intent = parse_execute_request(&req, Some(137)).expect("intent");
+        let intent = parse_execute_request(&req, Some(137), true).expect("intent");
 
         let err = ensure_validation_hash_binding(
             &req.validation,
@@ -3054,7 +3280,7 @@ mod tests {
             "asset": "ETH",
             "limit_price": "3100"
         });
-        let intent = parse_execute_request(&req, Some(42161)).expect("intent");
+        let intent = parse_execute_request(&req, Some(42161), true).expect("intent");
 
         let err = ensure_validation_hash_binding(
             &req.validation,

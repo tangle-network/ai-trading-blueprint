@@ -123,6 +123,22 @@ pub struct StoredValidation {
     pub responses: Vec<StoredValidatorResponse>,
     #[serde(default)]
     pub simulation: Option<StoredSimulation>,
+    #[serde(default)]
+    pub authorization: Option<StoredAuthorization>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum StoredAuthorization {
+    UniswapEnvelope {
+        envelope_id: String,
+        envelope_hash: String,
+        token_in: String,
+        token_out: String,
+        valid_until: u64,
+        min_signatures: u64,
+        signature_count: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

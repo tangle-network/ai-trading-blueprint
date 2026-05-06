@@ -17,6 +17,9 @@ use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::polymarket_clob;
 use trading_runtime::types::Action;
+use trading_runtime::uniswap_envelope::{
+    SignedUniswapEnvelope, UniswapEnvelope, UniswapEnvelopeSignature, approval_signers_hash,
+};
 
 #[derive(Debug, Clone)]
 pub struct ValidatorServer {
@@ -158,6 +161,25 @@ pub struct ValidateResponse {
     pub validated_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ValidateEnvelopeRequest {
+    pub envelope: UniswapEnvelope,
+    pub approval_signers: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidateEnvelopeResponse {
+    pub approved: bool,
+    pub score: u32,
+    pub signature: String,
+    pub reasoning: String,
+    pub validator: String,
+    pub chain_id: Option<u64>,
+    pub verifying_contract: Option<String>,
+    pub validated_at: String,
+    pub signed_envelope: Option<SignedUniswapEnvelope>,
+}
+
 impl ValidatorServer {
     /// Create a new ValidatorServer, reading AI config from environment.
     ///
@@ -235,9 +257,143 @@ impl ValidatorServer {
         let state = Arc::new(self);
         axum::Router::new()
             .route("/validate", post(handle_validate))
+            .route("/envelopes/validate", post(handle_validate_envelope))
             .route("/health", axum::routing::get(handle_health))
             .with_state(state)
     }
+}
+
+async fn handle_validate_envelope(
+    State(server): State<Arc<ValidatorServer>>,
+    Json(request): Json<ValidateEnvelopeRequest>,
+) -> Json<ValidateEnvelopeResponse> {
+    let validated_at = chrono::Utc::now().to_rfc3339();
+    let (signer_chain_id, signer_contract) = server.signer.as_ref().map_or((None, None), |s| {
+        (
+            Some(s.chain_id()),
+            Some(format!("{}", s.verifying_contract())),
+        )
+    });
+    let validator_address = server.signer.as_ref().map_or_else(
+        || "0x0000000000000000000000000000000000000000".to_string(),
+        |signer| format!("0x{}", hex::encode(signer.address().as_slice())),
+    );
+
+    let mut reasoning = "Uniswap envelope policy accepted".to_string();
+    let mut approved = true;
+    if request.envelope.chain_id == 0
+        || request.envelope.vault.trim().is_empty()
+        || request.envelope.router.trim().is_empty()
+        || request.envelope.token_in.trim().is_empty()
+        || request.envelope.token_out.trim().is_empty()
+        || request.envelope.valid_until <= chrono::Utc::now().timestamp().max(0) as u64
+        || request.envelope.min_signatures == 0
+        || request.approval_signers.len() < request.envelope.min_signatures as usize
+        || request.envelope.action != "swap"
+    {
+        approved = false;
+        reasoning = "Uniswap envelope rejected: invalid or expired envelope bounds".to_string();
+    } else if request
+        .envelope
+        .max_single_amount_in
+        .parse::<u128>()
+        .unwrap_or(0)
+        == 0
+        || request
+            .envelope
+            .max_total_amount_in
+            .parse::<u128>()
+            .unwrap_or(0)
+            == 0
+        || request
+            .envelope
+            .min_output_per_input
+            .parse::<u128>()
+            .unwrap_or(0)
+            == 0
+    {
+        approved = false;
+        reasoning =
+            "Uniswap envelope rejected: amount and rate limits must be positive".to_string();
+    } else if let Ok(hash) = approval_signers_hash(&request.approval_signers) {
+        let expected = format!("0x{}", hex::encode(hash.as_slice()));
+        if !request
+            .envelope
+            .approval_signers_hash
+            .eq_ignore_ascii_case(&expected)
+        {
+            approved = false;
+            reasoning =
+                "Uniswap envelope rejected: approval_signers_hash does not match approval_signers"
+                    .to_string();
+        }
+    } else {
+        approved = false;
+        reasoning = "Uniswap envelope rejected: invalid approval signer address".to_string();
+    }
+
+    let score = if approved { 80 } else { 0 };
+    if !approved {
+        return Json(ValidateEnvelopeResponse {
+            approved,
+            score,
+            signature: zero_signature(),
+            reasoning,
+            validator: validator_address,
+            chain_id: signer_chain_id,
+            verifying_contract: signer_contract,
+            validated_at,
+            signed_envelope: None,
+        });
+    }
+
+    if let Some(ref signer) = server.signer {
+        match signer.sign_uniswap_envelope(&request.envelope, score as u64) {
+            Ok((sig_bytes, addr)) => {
+                let sig = UniswapEnvelopeSignature {
+                    signer: format!("{addr}"),
+                    score,
+                    signature: format!("0x{}", hex::encode(sig_bytes)),
+                    chain_id: signer.chain_id(),
+                    verifying_contract: format!("{}", signer.verifying_contract()),
+                    validated_at: Some(validated_at.clone()),
+                };
+                let signed_envelope = SignedUniswapEnvelope {
+                    envelope: request.envelope,
+                    approval_signers: request.approval_signers,
+                    signatures: vec![sig.clone()],
+                };
+                return Json(ValidateEnvelopeResponse {
+                    approved: true,
+                    score,
+                    signature: sig.signature,
+                    reasoning,
+                    validator: sig.signer,
+                    chain_id: signer_chain_id,
+                    verifying_contract: signer_contract,
+                    validated_at,
+                    signed_envelope: Some(signed_envelope),
+                });
+            }
+            Err(error) => {
+                reasoning = format!("Uniswap envelope signing error: {error}");
+            }
+        }
+    } else {
+        reasoning = "Uniswap envelope accepted, but validator signer is not configured".to_string();
+    }
+
+    Json(ValidateEnvelopeResponse {
+        approved: false,
+        score: 0,
+        signature: zero_signature(),
+        reasoning,
+        validator: validator_address,
+        chain_id: signer_chain_id,
+        verifying_contract: signer_contract,
+        validated_at,
+        signed_envelope: None,
+    })
 }
 
 async fn handle_validate(

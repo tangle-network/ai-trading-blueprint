@@ -8,6 +8,7 @@ use alloy::sol_types::SolCall;
 
 use crate::contracts::ITradingVault;
 use crate::error::TradingError;
+use crate::uniswap_envelope::SignedUniswapEnvelope;
 use serde::{Deserialize, Serialize};
 
 /// Represents a vault on-chain
@@ -362,6 +363,52 @@ impl VaultClient {
         let call = ITradingVault::executeHealthFactorWithApprovalsCall {
             params,
             approvals: encoded_approvals,
+            signatures: sig_bytes,
+            scores,
+        };
+
+        Ok(EncodedTransaction {
+            to: self.vault_address.clone(),
+            data: call.abi_encode(),
+            value: value.into(),
+        })
+    }
+
+    /// Encode `executeUniswapEnvelope` for signed Uniswap V3 envelope execution.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_execute_uniswap_envelope(
+        &self,
+        target: &str,
+        calldata: &[u8],
+        value: &str,
+        min_output: &str,
+        output_token: &str,
+        intent_hash: [u8; 32],
+        deadline: U256,
+        signed_envelope: &SignedUniswapEnvelope,
+    ) -> Result<EncodedTransaction, TradingError> {
+        let target_addr = Self::parse_address(target)?;
+        let tx_value = Self::parse_u256(value)?;
+        let min_output_amount = Self::parse_u256(min_output)?;
+        let output_token_addr = Self::parse_address(output_token)?;
+        let (signatures, scores) = signed_envelope.signatures_and_scores()?;
+        let sig_bytes: Vec<Bytes> = signatures.into_iter().map(Bytes::from).collect();
+        let approval_signers = signed_envelope.approval_signer_addresses()?;
+
+        let params = ITradingVault::ExecuteParams {
+            target: target_addr,
+            data: Bytes::from(calldata.to_vec()),
+            value: tx_value,
+            minOutput: min_output_amount,
+            outputToken: output_token_addr,
+            intentHash: FixedBytes::from(intent_hash),
+            deadline,
+        };
+
+        let call = ITradingVault::executeUniswapEnvelopeCall {
+            params,
+            envelope: signed_envelope.envelope.to_vault_contract()?,
+            approvalSigners: approval_signers,
             signatures: sig_bytes,
             scores,
         };

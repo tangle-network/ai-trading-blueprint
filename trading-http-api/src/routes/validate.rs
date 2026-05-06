@@ -26,6 +26,7 @@ use trading_runtime::supported_assets::{
 };
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
+use trading_runtime::uniswap_envelope::SignedUniswapEnvelope;
 use trading_runtime::validator_client::{
     BalanceChangeSummary, ExecutionApproval, ExecutionContext, SimulationSummary,
     ValidationExecutionOptions, ValidatorClient,
@@ -97,6 +98,8 @@ pub struct ValidateResponse {
     /// The exact Unix timestamp deadline that validators signed over (needed for on-chain verification)
     pub deadline: u64,
     pub validator_responses: Vec<ValidatorResponseEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uniswap_envelope: Option<SignedUniswapEnvelope>,
 }
 
 #[derive(Serialize)]
@@ -158,6 +161,7 @@ fn paper_mode_bypass_response(
             verifying_contract: None,
             validated_at: Some(chrono::Utc::now().to_rfc3339()),
         }],
+        uniswap_envelope: None,
     }
 }
 
@@ -568,6 +572,15 @@ fn build_validate_response(
     deadline: u64,
     paper_trade: bool,
 ) -> ValidateResponse {
+    build_validate_response_with_uniswap_envelope(result, deadline, paper_trade, None)
+}
+
+fn build_validate_response_with_uniswap_envelope(
+    result: &ValidationResult,
+    deadline: u64,
+    paper_trade: bool,
+    uniswap_envelope: Option<SignedUniswapEnvelope>,
+) -> ValidateResponse {
     let responses = result
         .validator_responses
         .iter()
@@ -589,6 +602,7 @@ fn build_validate_response(
         execution_hash: result.execution_hash.clone(),
         deadline,
         validator_responses: responses,
+        uniswap_envelope,
     }
 }
 
@@ -1214,10 +1228,37 @@ async fn validate_multi_bot(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    Ok(Json(build_validate_response(
+    let uniswap_envelope = if !bot.paper_trade
+        && bot.validation_trust == trading_runtime::ValidationTrust::Envelope
+        && req.target_protocol == "uniswap_v3"
+        && result.approved
+    {
+        super::uniswap::ensure_uniswap_min_output_executable(&bot, &parsed.intent).await?;
+        let approval_signers = result
+            .validator_responses
+            .iter()
+            .filter(|response| response.score >= state.min_validator_score)
+            .map(|response| response.validator.clone())
+            .collect::<Vec<_>>();
+        Some(
+            super::uniswap::get_or_request_signed_uniswap_envelope(
+                &state,
+                &bot,
+                &parsed.intent,
+                approval_signers,
+                min_validators,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    Ok(Json(build_validate_response_with_uniswap_envelope(
         &result,
         parsed.deadline,
         bot.paper_trade,
+        uniswap_envelope,
     )))
 }
 

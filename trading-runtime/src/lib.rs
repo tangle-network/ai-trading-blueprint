@@ -23,6 +23,7 @@ pub mod supported_assets;
 pub mod token_metadata;
 pub mod trading_envelope;
 pub mod types;
+pub mod uniswap_envelope;
 pub mod url_validation;
 pub mod validator_client;
 pub mod vault_client;

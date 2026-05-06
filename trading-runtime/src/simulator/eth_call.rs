@@ -84,11 +84,11 @@ impl EthCallSimulator {
         Ok(U256::from_str_radix(stripped, 16).unwrap_or(U256::ZERO))
     }
 
-    /// Execute eth_call and return (success, return_data, gas_used).
+    /// Execute eth_call and return (success, return_data, gas_used, revert_reason).
     async fn eth_call(
         &self,
         request: &SimulationRequest,
-    ) -> Result<(bool, Bytes, u64), TradingError> {
+    ) -> Result<(bool, Bytes, u64, Option<String>), TradingError> {
         let block_tag = request
             .block_number
             .map(|b| format!("0x{b:x}"))
@@ -122,8 +122,13 @@ impl EthCallSimulator {
             .map_err(|e| TradingError::HttpError(format!("eth_call response parse: {e}")))?;
 
         if let Some(error) = body.get("error") {
-            let _message = error["message"].as_str().unwrap_or("unknown error");
-            return Ok((false, Bytes::new(), 0));
+            let reason = describe_revert_error(error);
+            return Ok((
+                false,
+                Bytes::from(reason.clone().into_bytes()),
+                0,
+                Some(reason),
+            ));
         }
 
         let result_hex = body["result"].as_str().unwrap_or("0x");
@@ -133,7 +138,7 @@ impl EthCallSimulator {
         // eth_call doesn't return gas_used directly; estimate separately
         let gas_used = self.estimate_gas(&body, request).await;
 
-        Ok((true, return_data, gas_used))
+        Ok((true, return_data, gas_used, None))
     }
 
     /// Attempt to get gas estimate (best-effort).
@@ -183,13 +188,14 @@ impl EthCallSimulator {
 #[async_trait::async_trait]
 impl TransactionSimulator for EthCallSimulator {
     async fn simulate(&self, request: SimulationRequest) -> Result<SimulationResult, TradingError> {
-        let (success, return_data, gas_used) = self.eth_call(&request).await?;
+        let (success, return_data, gas_used, revert_reason) = self.eth_call(&request).await?;
 
         let mut warnings = Vec::new();
 
         if !success {
             warnings.push(SimulationWarning::SimulationReverted {
-                reason: String::from_utf8_lossy(&return_data).to_string(),
+                reason: revert_reason
+                    .unwrap_or_else(|| String::from_utf8_lossy(&return_data).to_string()),
             });
         }
 
@@ -221,6 +227,56 @@ impl TransactionSimulator for EthCallSimulator {
             transfer_events: Vec::new(),
             warnings,
         })
+    }
+}
+
+fn describe_revert_error(error: &serde_json::Value) -> String {
+    let message = error["message"].as_str().unwrap_or("execution reverted");
+    let revert_data = extract_revert_data(error);
+    match revert_data {
+        Some(data) => {
+            let selector = data.get(0..10).unwrap_or(data.as_str());
+            let known = known_revert_selector(selector);
+            match known {
+                Some(name) => {
+                    format!("{message}; revert_data={data}; selector={selector} ({name})")
+                }
+                None => format!("{message}; revert_data={data}; selector={selector}"),
+            }
+        }
+        None => message.to_string(),
+    }
+}
+
+fn extract_revert_data(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) if text.starts_with("0x") => Some(text.clone()),
+        serde_json::Value::Object(map) => {
+            for key in ["data", "result", "returnData", "revertData"] {
+                if let Some(found) = map.get(key).and_then(extract_revert_data) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn known_revert_selector(selector: &str) -> Option<&'static str> {
+    match selector.to_ascii_lowercase().as_str() {
+        "0x1ab7da6b" => Some("EnvelopeExpired()"),
+        "0x475a5fc2" => Some("EnvelopeCheckFailed()"),
+        "0xa661ff2b" => Some("ValidatorCheckFailed()"),
+        "0xb6fb1063" => Some("EnvelopeRateTooLow(uint256,uint256)"),
+        "0xacfdb444" => Some("ExecutionFailed()"),
+        "0xf015d789" => Some("PolicyCheckFailed()"),
+        "0x04477f00" => Some("MinOutputNotMet(uint256,uint256)"),
+        "0xf029b2e9" => Some("UnsupportedValuationAsset(address,address)"),
+        "0xfd048e97" => Some("PositionLimitExceeded(address,uint256,uint256)"),
+        "0xe2517d3f" => Some("AccessControlUnauthorizedAccount(address,bytes32)"),
+        "0x5274afe7" => Some("SafeERC20FailedOperation(address)"),
+        _ => None,
     }
 }
 
@@ -268,6 +324,17 @@ mod tests {
         .abi_encode();
         // balanceOf(address) selector = 0x70a08231
         assert_eq!(&calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
+    }
+
+    #[test]
+    fn test_describe_revert_error_includes_known_selector() {
+        let error = serde_json::json!({
+            "message": "execution reverted",
+            "data": "0x1ab7da6b"
+        });
+        let reason = describe_revert_error(&error);
+        assert!(reason.contains("EnvelopeExpired()"));
+        assert!(reason.contains("0x1ab7da6b"));
     }
 
     #[tokio::test]
