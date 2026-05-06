@@ -15,7 +15,6 @@ use axum::{Json, Router, extract::State, routing::post};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +22,10 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::envelope::{
+    ClobContext, EnvelopeBinding, PerpsContext, SignedEnvelope, UniversalContext, VaultContext,
+    check_clob, check_perps, check_universal, check_vault,
+};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
@@ -32,7 +35,6 @@ use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
-use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 use trading_runtime::token_metadata::{
     address_chain_mismatch, chain_display_name, known_token_decimals,
 };
@@ -1184,72 +1186,108 @@ fn current_hyperliquid_exposure_usd(
 }
 
 fn effective_max_drawdown(
-    envelope: Option<&SignedTradingEnvelope>,
+    envelope: Option<&SignedEnvelope>,
     strategy_config: &serde_json::Value,
 ) -> Decimal {
     let config = max_drawdown_from_strategy_config(strategy_config);
     match envelope {
-        Some(env) => rust_decimal::Decimal::from_f64(env.envelope.max_drawdown_pct * 100.0)
-            .filter(|d| *d > Decimal::ZERO)
-            .map(|d| d.min(config))
-            .unwrap_or(config),
+        Some(env) => config.min(env.policy.max_drawdown_pct),
         None => config,
     }
 }
 
-fn check_envelope_trade_constraints(
-    signed_envelope: &SignedTradingEnvelope,
+fn is_open_action(action: &str) -> bool {
+    matches!(
+        action.to_ascii_lowercase().as_str(),
+        "open_long" | "open_short" | "buy"
+    )
+}
+
+fn apply_envelope_checks(
+    env: &SignedEnvelope,
     intent: &IntentPayload,
-    size_usd: f64,
-    current_exposure: f64,
+    size_usd: Decimal,
+    current_exposure_usd: Decimal,
+    is_open: bool,
 ) -> Result<(), (StatusCode, String)> {
-    let action = parse_action(&intent.action)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
-    let is_open = matches!(
-        action,
-        trading_runtime::types::Action::OpenLong
-            | trading_runtime::types::Action::OpenShort
-            | trading_runtime::types::Action::Buy
-    );
+    let universal_ctx = UniversalContext {
+        trade_size_usd: size_usd,
+        current_total_exposure_usd: current_exposure_usd,
+        is_open,
+    };
+    check_universal(&env.policy, &universal_ctx).map_err(<(StatusCode, String)>::from)?;
+
     if !is_open {
         return Ok(());
     }
-    let envelope = &signed_envelope.envelope;
-    let asset = intent
-        .metadata
-        .get("asset")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&intent.token_out);
-    let leverage: u32 = intent
-        .metadata
-        .get("leverage")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1) as u32;
-    let stop_loss_distance = extract_stop_loss_distance(&intent.metadata).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Envelope mode requires stop_loss_distance or stop_loss_pct metadata".to_string(),
-        )
-    })?;
-    let sl_check = envelope.check_stop_loss(stop_loss_distance);
-    if !sl_check.allowed {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!(
-                "Trade rejected by envelope stop-loss bounds: {}",
-                sl_check.reason.unwrap_or_default()
-            ),
-        ));
-    }
-    let check = envelope.check_trade(asset, size_usd, leverage, true, current_exposure);
-    if !check.allowed {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!(
-                "Trade rejected by envelope: {}",
-                check.reason.unwrap_or_default()
-            ),
-        ));
+
+    let protocol = intent.target_protocol.as_str();
+    match protocol {
+        "hyperliquid" | "gmx_v2" | "vertex" => {
+            let asset = intent
+                .metadata
+                .get("asset")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&intent.token_out);
+            let leverage: u32 = intent
+                .metadata
+                .get("leverage")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as u32;
+            let stop_loss_distance = extract_stop_loss_distance(&intent.metadata)
+                .and_then(|f| Decimal::try_from(f).ok());
+            check_perps(
+                &env.policy,
+                &PerpsContext {
+                    asset,
+                    leverage,
+                    stop_loss_distance,
+                },
+            )
+            .map_err(<(StatusCode, String)>::from)?;
+            // If the perps policy requires stop-loss but it parsed as None, surface
+            // a clearer 400 error if the metadata couldn't be parsed.
+            if env
+                .policy
+                .perps
+                .as_ref()
+                .is_some_and(|p| p.require_stop_loss)
+                && stop_loss_distance.is_none()
+                && extract_stop_loss_distance(&intent.metadata).is_some()
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "stop_loss metadata could not be parsed as Decimal".to_string(),
+                ));
+            }
+        }
+        "polymarket_clob" => {
+            let market_id = intent
+                .metadata
+                .get("token_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            check_clob(&env.policy, &ClobContext { market_id })
+                .map_err(<(StatusCode, String)>::from)?;
+        }
+        _ => {
+            // Vault-backed DeFi: uniswap_v3, aave_v3, morpho, aerodrome, etc.
+            let slippage_bps: u32 = intent
+                .metadata
+                .get("max_slippage_bps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            check_vault(
+                &env.policy,
+                &VaultContext {
+                    protocol,
+                    token_in: &intent.token_in,
+                    token_out: &intent.token_out,
+                    slippage_bps,
+                },
+            )
+            .map_err(<(StatusCode, String)>::from)?;
+        }
     }
     Ok(())
 }
@@ -2012,7 +2050,7 @@ async fn execute_hyperliquid_trade(
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
-    signed_envelope: Option<&SignedTradingEnvelope>,
+    signed_envelope: Option<&SignedEnvelope>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
@@ -2037,16 +2075,15 @@ async fn execute_hyperliquid_trade(
                     format!("HL account lookup failed: {e}"),
                 )
             })?;
-            let current_exposure = current_hyperliquid_exposure_usd(&account)?;
-            let size_usd: f64 = valuation
-                .notional_usd
-                .and_then(|d| d.try_into().ok())
-                .unwrap_or(0.0);
-            check_envelope_trade_constraints(
+            let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
+            let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
+            let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+            apply_envelope_checks(
                 signed_envelope,
                 &req.intent,
                 size_usd,
                 current_exposure,
+                true,
             )?;
         }
     }
@@ -2477,17 +2514,11 @@ async fn execute_multi_bot(
     let action_kind = action_kind_for_protocol(&normalized_req.intent.target_protocol);
 
     use trading_runtime::ValidationTrust;
-    let mut signed_envelope: Option<SignedTradingEnvelope> = None;
+    let mut signed_envelope: Option<SignedEnvelope> = None;
 
     // Envelope loading and verification applies to both paper and live modes:
     // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
     if bot.validation_trust == ValidationTrust::Envelope {
-        if normalized_req.intent.target_protocol != "hyperliquid" {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "Envelope trust mode is only implemented for Hyperliquid; other protocols require PerTrade validation".into(),
-            ));
-        }
         let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
             (
                 StatusCode::FORBIDDEN,
@@ -2498,11 +2529,11 @@ async fn execute_multi_bot(
             bot_id: &bot.bot_id,
             vault_address: &bot.vault_address,
             chain_id: bot.chain_id,
-            protocol: "hyperliquid",
+            protocol: &normalized_req.intent.target_protocol,
         };
         envelope
             .verify(&binding, &state.trusted_envelope_signers())
-            .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+            .map_err(<(StatusCode, String)>::from)?;
         signed_envelope = Some(envelope);
     }
 
@@ -2579,11 +2610,15 @@ async fn execute_multi_bot(
     // Live HL trades re-check with real account exposure inside execute_hyperliquid_trade.
     if bot.paper_trade {
         if let Some(ref env) = signed_envelope {
-            let size_usd: f64 = valuation
-                .notional_usd
-                .and_then(|d| d.try_into().ok())
-                .unwrap_or(0.0);
-            check_envelope_trade_constraints(env, &normalized_req.intent, size_usd, 0.0)?;
+            let is_open = is_open_action(&normalized_req.intent.action);
+            let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+            apply_envelope_checks(
+                env,
+                &normalized_req.intent,
+                size_usd,
+                Decimal::ZERO,
+                is_open,
+            )?;
         }
     }
 

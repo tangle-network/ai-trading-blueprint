@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use trading_runtime::envelope::{EnvelopeBinding, SignedEnvelope};
 use trading_runtime::hyperliquid::{
     AccountInfo, CancelOrderRequest, PlaceOrderRequest, SetLeverageRequest,
 };
-use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 
 use crate::{BotContext, MultiBotTradingState};
 
@@ -74,13 +74,13 @@ fn envelope_path(bot_id: &str) -> PathBuf {
     envelope_dir().join(format!("{safe_bot_id}.json"))
 }
 
-pub(crate) fn get_signed_envelope(bot_id: &str) -> Option<SignedTradingEnvelope> {
+pub(crate) fn get_signed_envelope(bot_id: &str) -> Option<SignedEnvelope> {
     std::fs::read_to_string(envelope_path(bot_id))
         .ok()
         .and_then(|data| serde_json::from_str(&data).ok())
 }
 
-fn set_signed_envelope(bot_id: &str, env: &SignedTradingEnvelope) -> Result<(), String> {
+fn set_signed_envelope(bot_id: &str, env: &SignedEnvelope) -> Result<(), String> {
     std::fs::create_dir_all(envelope_dir())
         .map_err(|e| format!("Failed to create envelope directory: {e}"))?;
     let json = serde_json::to_string_pretty(env)
@@ -212,23 +212,23 @@ async fn get_prices(
 
 async fn get_envelope_handler(
     Extension(bot): Extension<BotContext>,
-) -> Json<Option<SignedTradingEnvelope>> {
+) -> Json<Option<SignedEnvelope>> {
     Json(get_signed_envelope(&bot.bot_id))
 }
 
 async fn update_envelope_handler(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<BotContext>,
-    Json(env): Json<SignedTradingEnvelope>,
-) -> Result<Json<SignedTradingEnvelope>, (StatusCode, String)> {
+    Json(env): Json<SignedEnvelope>,
+) -> Result<Json<SignedEnvelope>, (StatusCode, String)> {
     let binding = EnvelopeBinding {
         bot_id: &bot.bot_id,
         vault_address: &bot.vault_address,
         chain_id: bot.chain_id,
-        protocol: "hyperliquid",
+        protocol: &env.protocol,
     };
     env.verify(&binding, &state.trusted_envelope_signers())
-        .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+        .map_err(<(StatusCode, String)>::from)?;
     if let Some(current) = get_signed_envelope(&bot.bot_id) {
         if env.nonce <= current.nonce {
             return Err((
@@ -243,9 +243,11 @@ async fn update_envelope_handler(
     set_signed_envelope(&bot.bot_id, &env).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     tracing::info!(
         bot_id = %bot.bot_id,
-        assets = ?env.envelope.allowed_assets,
-        max_pos = env.envelope.max_position_usd,
-        max_lev = env.envelope.max_leverage,
+        protocol = %env.protocol,
+        max_trade_usd = %env.policy.max_trade_size_usd,
+        max_total_exposure_usd = %env.policy.max_total_exposure_usd,
+        perps_assets = ?env.policy.perps.as_ref().map(|p| &p.allowed_assets),
+        max_lev = ?env.policy.perps.as_ref().map(|p| p.max_leverage),
         "Trading envelope updated"
     );
     Ok(Json(env))
