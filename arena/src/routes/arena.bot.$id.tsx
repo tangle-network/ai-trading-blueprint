@@ -24,6 +24,7 @@ import { ChatTab } from "~/components/bot-detail/ChatTab";
 import { RunsTab } from "~/components/bot-detail/RunsTab";
 import { ControlsTab } from "~/components/bot-detail/ControlsTab";
 import { SecretsTab } from "~/components/bot-detail/SecretsTab";
+import { EnvelopeTab } from "~/components/bot-detail/EnvelopeTab";
 import { TerminalTab } from "~/components/bot-detail/TerminalTab";
 import {
   SecretsModal,
@@ -290,6 +291,7 @@ export default function BotDetailPage() {
               <TabsTrigger value="terminal">Terminal</TabsTrigger>
             )}
             <TabsTrigger value="secrets">Secrets</TabsTrigger>
+            <TabsTrigger value="envelope">Envelope</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
@@ -395,6 +397,12 @@ export default function BotDetailPage() {
           <TabsContent value="secrets" className="mt-6">
             <ErrorBoundary>
               <SecretsTab bot={bot} />
+            </ErrorBoundary>
+          </TabsContent>
+
+          <TabsContent value="envelope" className="mt-6">
+            <ErrorBoundary>
+              <EnvelopeTab bot={bot} />
             </ErrorBoundary>
           </TabsContent>
 
