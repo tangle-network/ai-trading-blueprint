@@ -2032,6 +2032,7 @@ fn signed_envelope_for_bot(bot: &BotContext) -> SignedEnvelope {
         expires_at: chrono::Utc::now().timestamp() as u64 + 3600,
         nonce: 1,
         verifying_contract: TEST_ENVELOPE_CONTRACT.to_string(),
+        enforcement: None,
         signatures: vec![],
     };
     signed

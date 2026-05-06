@@ -27,8 +27,11 @@ pub mod validator_client;
 pub mod vault_client;
 
 pub use envelope::{
-    ClobContext, ClobPolicy, EnvelopeBinding, EnvelopeError, EnvelopeSignature, PerpsContext,
-    PerpsPolicy, SignedEnvelope, TradingPolicy, UniversalContext, VaultContext, VaultPolicy,
+    AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
+    AerodromeSwapEnforcement, ClobContext, ClobPolicy, EnvelopeBinding, EnvelopeEnforcement,
+    EnvelopeError, EnvelopeSignature, MorphoBorrowEnforcement, MorphoRepayEnforcement,
+    MorphoSupplyEnforcement, MorphoWithdrawEnforcement, PerpsContext, PerpsPolicy, SignedEnvelope,
+    TradingPolicy, UniswapV3SwapEnforcement, UniversalContext, VaultContext, VaultPolicy,
     check_clob, check_perps, check_universal, check_vault,
 };
 pub use error::TradingError;

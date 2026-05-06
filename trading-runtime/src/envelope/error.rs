@@ -83,6 +83,20 @@ pub enum EnvelopeError {
     MissingVaultPolicy,
     #[error("Trade blocked: no CLOB policy configured in envelope")]
     MissingClobPolicy,
+    // Enforcement-binding errors
+    #[error("Invalid envelope enforcement: {reason}")]
+    InvalidEnforcementAmount { reason: String },
+    #[error(
+        "Envelope enforcement protocol '{enforcement}' does not match envelope.protocol '{envelope}'"
+    )]
+    EnforcementProtocolMismatch {
+        enforcement: String,
+        envelope: String,
+    },
+    #[error("Envelope has no enforcement binding for on-chain execution")]
+    MissingEnforcement,
+    #[error("Envelope enforcement variant {variant} is not supported on protocol '{protocol}'")]
+    UnsupportedEnforcementVariant { variant: String, protocol: String },
 }
 
 impl From<EnvelopeError> for (axum::http::StatusCode, String) {
@@ -124,7 +138,11 @@ impl From<EnvelopeError> for (axum::http::StatusCode, String) {
             | MarketNotAllowed { .. }
             | MissingPerpsPolicy
             | MissingVaultPolicy
-            | MissingClobPolicy => StatusCode::FORBIDDEN,
+            | MissingClobPolicy
+            | EnforcementProtocolMismatch { .. }
+            | MissingEnforcement
+            | UnsupportedEnforcementVariant { .. } => StatusCode::FORBIDDEN,
+            InvalidEnforcementAmount { .. } => StatusCode::BAD_REQUEST,
             InvalidAddress { .. }
             | InvalidSignatureHex { .. }
             | InvalidSignatureLength { .. }
