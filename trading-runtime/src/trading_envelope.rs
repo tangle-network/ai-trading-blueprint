@@ -317,4 +317,83 @@ mod tests {
         assert_eq!(parsed.max_leverage, env.max_leverage);
         assert_eq!(parsed.allowed_assets.len(), env.allowed_assets.len());
     }
+
+    #[test]
+    fn exact_at_position_limit_allowed() {
+        let env = TradingEnvelope::default();
+        let check = env.check_trade("ETH", 1000.0, 3, true, 0.0);
+        assert!(
+            check.allowed,
+            "exactly at limit should pass: {:?}",
+            check.reason
+        );
+    }
+
+    #[test]
+    fn one_above_position_limit_rejected() {
+        let env = TradingEnvelope::default();
+        let check = env.check_trade("ETH", 1000.01, 3, true, 0.0);
+        assert!(!check.allowed);
+    }
+
+    #[test]
+    fn exact_at_leverage_limit_allowed() {
+        let env = TradingEnvelope::default();
+        let check = env.check_trade("ETH", 100.0, 5, true, 0.0);
+        assert!(
+            check.allowed,
+            "leverage exactly at limit should pass: {:?}",
+            check.reason
+        );
+    }
+
+    #[test]
+    fn one_above_leverage_limit_rejected() {
+        let env = TradingEnvelope::default();
+        let check = env.check_trade("ETH", 100.0, 6, true, 0.0);
+        assert!(!check.allowed);
+    }
+
+    #[test]
+    fn exact_at_total_exposure_limit_allowed() {
+        let env = TradingEnvelope::default();
+        let check = env.check_trade("ETH", 200.0, 1, true, 2800.0);
+        assert!(
+            check.allowed,
+            "total at limit should pass: {:?}",
+            check.reason
+        );
+    }
+
+    #[test]
+    fn stop_loss_exactly_at_minimum_allowed() {
+        let env = TradingEnvelope::default();
+        let check = env.check_stop_loss(0.01);
+        assert!(
+            check.allowed,
+            "stop_loss exactly at min should pass: {:?}",
+            check.reason
+        );
+    }
+
+    #[test]
+    fn stop_loss_exactly_at_maximum_allowed() {
+        let env = TradingEnvelope::default();
+        let check = env.check_stop_loss(0.05);
+        assert!(
+            check.allowed,
+            "stop_loss exactly at max should pass: {:?}",
+            check.reason
+        );
+    }
+
+    #[test]
+    fn zero_leverage_always_within_any_limit() {
+        let env = TradingEnvelope {
+            max_leverage: 1,
+            ..Default::default()
+        };
+        let check = env.check_trade("ETH", 100.0, 0, true, 0.0);
+        assert!(check.allowed);
+    }
 }

@@ -15,6 +15,7 @@ use axum::{Json, Router, extract::State, routing::post};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1182,6 +1183,77 @@ fn current_hyperliquid_exposure_usd(
     Ok(total.abs())
 }
 
+fn effective_max_drawdown(
+    envelope: Option<&SignedTradingEnvelope>,
+    strategy_config: &serde_json::Value,
+) -> Decimal {
+    let config = max_drawdown_from_strategy_config(strategy_config);
+    match envelope {
+        Some(env) => rust_decimal::Decimal::from_f64(env.envelope.max_drawdown_pct * 100.0)
+            .filter(|d| *d > Decimal::ZERO)
+            .map(|d| d.min(config))
+            .unwrap_or(config),
+        None => config,
+    }
+}
+
+fn check_envelope_trade_constraints(
+    signed_envelope: &SignedTradingEnvelope,
+    intent: &IntentPayload,
+    size_usd: f64,
+    current_exposure: f64,
+) -> Result<(), (StatusCode, String)> {
+    let action = parse_action(&intent.action)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
+    let is_open = matches!(
+        action,
+        trading_runtime::types::Action::OpenLong
+            | trading_runtime::types::Action::OpenShort
+            | trading_runtime::types::Action::Buy
+    );
+    if !is_open {
+        return Ok(());
+    }
+    let envelope = &signed_envelope.envelope;
+    let asset = intent
+        .metadata
+        .get("asset")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&intent.token_out);
+    let leverage: u32 = intent
+        .metadata
+        .get("leverage")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+    let stop_loss_distance = extract_stop_loss_distance(&intent.metadata).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Envelope mode requires stop_loss_distance or stop_loss_pct metadata".to_string(),
+        )
+    })?;
+    let sl_check = envelope.check_stop_loss(stop_loss_distance);
+    if !sl_check.allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Trade rejected by envelope stop-loss bounds: {}",
+                sl_check.reason.unwrap_or_default()
+            ),
+        ));
+    }
+    let check = envelope.check_trade(asset, size_usd, leverage, true, current_exposure);
+    if !check.allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Trade rejected by envelope: {}",
+                check.reason.unwrap_or_default()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct PaperClobFill {
     filled_size: Decimal,
@@ -1957,61 +2029,25 @@ async fn execute_hyperliquid_trade(
             | trading_runtime::types::Action::OpenShort
             | trading_runtime::types::Action::Buy
     );
-    if is_open && let Some(signed_envelope) = signed_envelope {
-        let envelope = &signed_envelope.envelope;
-        let asset = req
-            .intent
-            .metadata
-            .get("asset")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&req.intent.token_out);
-        let size_usd = valuation
-            .notional_usd
-            .unwrap_or(rust_decimal::Decimal::ZERO);
-        let leverage: u32 = req
-            .intent
-            .metadata
-            .get("leverage")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
-        let stop_loss_distance = extract_stop_loss_distance(&req.intent.metadata).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "Signed Envelope execution requires stop_loss_distance or stop_loss_pct metadata".to_string(),
-            )
-        })?;
-        let stop_loss_check = envelope.check_stop_loss(stop_loss_distance);
-        if !stop_loss_check.allowed {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Trade rejected by envelope stop-loss bounds: {}",
-                    stop_loss_check.reason.unwrap_or_default()
-                ),
-            ));
-        }
-        let account = hl_client.get_account().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("HL account lookup failed: {e}"),
-            )
-        })?;
-        let current_exposure = current_hyperliquid_exposure_usd(&account)?;
-        let check = envelope.check_trade(
-            asset,
-            size_usd.try_into().unwrap_or(0.0),
-            leverage,
-            true,
-            current_exposure,
-        );
-        if !check.allowed {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Trade rejected by envelope: {}",
-                    check.reason.unwrap_or_default()
-                ),
-            ));
+    if is_open {
+        if let Some(signed_envelope) = signed_envelope {
+            let account = hl_client.get_account().await.map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("HL account lookup failed: {e}"),
+                )
+            })?;
+            let current_exposure = current_hyperliquid_exposure_usd(&account)?;
+            let size_usd: f64 = valuation
+                .notional_usd
+                .and_then(|d| d.try_into().ok())
+                .unwrap_or(0.0);
+            check_envelope_trade_constraints(
+                signed_envelope,
+                &req.intent,
+                size_usd,
+                current_exposure,
+            )?;
         }
     }
     let is_buy = matches!(
@@ -2440,12 +2476,36 @@ async fn execute_multi_bot(
     let is_clob_trade = normalized_req.intent.target_protocol == "polymarket_clob";
     let action_kind = action_kind_for_protocol(&normalized_req.intent.target_protocol);
 
-    // Validation trust level determines which authorization path fires:
-    // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
-    // - Envelope: trades within approved bounds skip validators (instant)
-    // - SelfOperated: no external validation, local policy only (instant)
     use trading_runtime::ValidationTrust;
-    let mut signed_envelope = None;
+    let mut signed_envelope: Option<SignedTradingEnvelope> = None;
+
+    // Envelope loading and verification applies to both paper and live modes:
+    // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
+    if bot.validation_trust == ValidationTrust::Envelope {
+        if normalized_req.intent.target_protocol != "hyperliquid" {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Envelope trust mode is only implemented for Hyperliquid; other protocols require PerTrade validation".into(),
+            ));
+        }
+        let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                "Envelope trust mode requires a signed per-bot envelope approval".to_string(),
+            )
+        })?;
+        let binding = EnvelopeBinding {
+            bot_id: &bot.bot_id,
+            vault_address: &bot.vault_address,
+            chain_id: bot.chain_id,
+            protocol: "hyperliquid",
+        };
+        envelope
+            .verify(&binding, &state.trusted_envelope_signers())
+            .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+        signed_envelope = Some(envelope);
+    }
+
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
@@ -2468,30 +2528,7 @@ async fn execute_multi_bot(
                 }
             }
             ValidationTrust::Envelope => {
-                if normalized_req.intent.target_protocol != "hyperliquid" {
-                    return Err((
-                        StatusCode::FORBIDDEN,
-                        "Live Envelope trust mode is only implemented for Hyperliquid; non-Hyperliquid live trades require PerTrade validation".into(),
-                    ));
-                }
-                let envelope =
-                    super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
-                        (
-                            StatusCode::FORBIDDEN,
-                            "Live Envelope trust mode requires a signed per-bot envelope approval"
-                                .to_string(),
-                        )
-                    })?;
-                let binding = EnvelopeBinding {
-                    bot_id: &bot.bot_id,
-                    vault_address: &bot.vault_address,
-                    chain_id: bot.chain_id,
-                    protocol: "hyperliquid",
-                };
-                envelope
-                    .verify(&binding, &state.trusted_envelope_signers())
-                    .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
-                signed_envelope = Some(envelope);
+                // Loaded and verified above; signed_envelope is already set.
             }
             ValidationTrust::SelfOperated => {
                 return Err((
@@ -2508,7 +2545,7 @@ async fn execute_multi_bot(
             ));
         }
 
-        let max_drawdown = max_drawdown_from_strategy_config(&bot.strategy_config);
+        let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
@@ -2537,6 +2574,18 @@ async fn execute_multi_bot(
         &normalized_req.intent,
     )
     .await?;
+
+    // For paper envelope trades, enforce constraints now (no live HL account data available).
+    // Live HL trades re-check with real account exposure inside execute_hyperliquid_trade.
+    if bot.paper_trade {
+        if let Some(ref env) = signed_envelope {
+            let size_usd: f64 = valuation
+                .notional_usd
+                .and_then(|d| d.try_into().ok())
+                .unwrap_or(0.0);
+            check_envelope_trade_constraints(env, &normalized_req.intent, size_usd, 0.0)?;
+        }
+    }
 
     if bot.paper_trade && is_clob_trade {
         let clob = state.clob_client.as_ref().ok_or_else(|| {
