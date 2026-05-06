@@ -35,6 +35,7 @@ export interface BotDetail {
   wind_down_started_at: number | null;
   validator_service_ids: number[];
   validator_endpoints: string[];
+  validation_trust?: 'per_trade' | 'envelope' | 'self_operated';
   call_id: number;
   service_id: number;
 }

@@ -24,7 +24,7 @@ interface ApiTrade {
   id: string;
   bot_id: string;
   timestamp: string;
-  action: 'buy' | 'sell';
+  action: 'buy' | 'sell' | 'swap';
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -55,6 +55,16 @@ interface ApiTrade {
       risk_score: number;
       warnings: string[];
       output_amount: string;
+    };
+    authorization?: {
+      mode: 'uniswap_envelope';
+      envelope_id: string;
+      envelope_hash: string;
+      token_in: string;
+      token_out: string;
+      valid_until: number;
+      min_signatures: number;
+      signature_count: number;
     };
   };
   status?: string;
@@ -163,6 +173,18 @@ function mapApiValidation(trade: ApiTrade): TradeValidation | undefined {
       validatedAt: response.validated_at,
     })),
     simulation: mapApiSimulation(trade),
+    authorization: validation.authorization
+      ? {
+          mode: validation.authorization.mode,
+          envelopeId: validation.authorization.envelope_id,
+          envelopeHash: validation.authorization.envelope_hash,
+          tokenIn: validation.authorization.token_in,
+          tokenOut: validation.authorization.token_out,
+          validUntil: validation.authorization.valid_until,
+          minSignatures: validation.authorization.min_signatures,
+          signatureCount: validation.authorization.signature_count,
+        }
+      : undefined,
   };
 }
 

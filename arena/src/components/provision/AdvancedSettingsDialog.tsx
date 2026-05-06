@@ -56,6 +56,16 @@ interface AdvancedSettingsDialogProps {
   liveModeDisabled?: boolean;
   provisionPaperTrade: boolean;
   setProvisionPaperTrade: (v: boolean) => void;
+  uniswapEnvelopeEnabled?: boolean;
+  setUniswapEnvelopeEnabled?: (v: boolean) => void;
+  uniswapEnvelopeMaxDurationSecs?: string;
+  setUniswapEnvelopeMaxDurationSecs?: (v: string) => void;
+  uniswapEnvelopeMaxSingleAmountIn?: string;
+  setUniswapEnvelopeMaxSingleAmountIn?: (v: string) => void;
+  uniswapEnvelopeMaxTotalAmountIn?: string;
+  setUniswapEnvelopeMaxTotalAmountIn?: (v: string) => void;
+  uniswapEnvelopeMaxSlippageBps?: string;
+  setUniswapEnvelopeMaxSlippageBps?: (v: string) => void;
   onOpenInfrastructure: () => void;
 }
 
@@ -94,10 +104,24 @@ export function AdvancedSettingsDialog({
   liveModeDisabled = false,
   provisionPaperTrade,
   setProvisionPaperTrade,
+  uniswapEnvelopeEnabled = false,
+  setUniswapEnvelopeEnabled = () => {},
+  uniswapEnvelopeMaxDurationSecs = '3600',
+  setUniswapEnvelopeMaxDurationSecs = () => {},
+  uniswapEnvelopeMaxSingleAmountIn = '',
+  setUniswapEnvelopeMaxSingleAmountIn = () => {},
+  uniswapEnvelopeMaxTotalAmountIn = '',
+  setUniswapEnvelopeMaxTotalAmountIn = () => {},
+  uniswapEnvelopeMaxSlippageBps = '100',
+  setUniswapEnvelopeMaxSlippageBps = () => {},
   onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
   const canResetRuntime = !isTeeBlueprint && runtimeBackend !== 'docker';
+  const supportsUniswapEnvelope = selectedPack.providers.some((provider) =>
+    provider.toLowerCase().includes('uniswap'),
+  );
+  const defaultUniswapEnvelopeEnabled = supportsUniswapEnvelope && !provisionPaperTrade;
   const defaultConversationCron =
     selectedPack.conversationCron ?? '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
   const defaultResearchCron =
@@ -109,6 +133,7 @@ export function AdvancedSettingsDialog({
     !conversationEnabled ||
     !researchEnabled ||
     validatorMode === 'custom' ||
+    uniswapEnvelopeEnabled ||
     canResetRuntime
   );
 
@@ -352,6 +377,57 @@ export function AdvancedSettingsDialog({
                     : 'Live mode may execute trades on-chain using the bot vault.'}
                 </p>
               </div>
+              {supportsUniswapEnvelope && (
+                <div className="pt-4 border-t border-arena-elements-dividerColor">
+                  <label className="flex items-start gap-3 cursor-pointer rounded-lg p-2.5 hover:bg-arena-elements-background-depth-2 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={uniswapEnvelopeEnabled}
+                      disabled={provisionPaperTrade}
+                      onChange={(event) => setUniswapEnvelopeEnabled(event.target.checked)}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-arena-elements-textPrimary">
+                        Uniswap envelope mode
+                      </span>
+                      <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                        Validator-approved DEX limits for live swaps.
+                      </p>
+                    </div>
+                  </label>
+                  {uniswapEnvelopeEnabled && !provisionPaperTrade && (
+                    <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                      <Input
+                        value={uniswapEnvelopeMaxDurationSecs}
+                        onChange={(event) => setUniswapEnvelopeMaxDurationSecs(event.target.value)}
+                        placeholder="Max duration seconds"
+                        className="font-data text-sm"
+                      />
+                      <Input
+                        value={uniswapEnvelopeMaxSlippageBps}
+                        onChange={(event) => setUniswapEnvelopeMaxSlippageBps(event.target.value)}
+                        placeholder="Max slippage bps"
+                        className="font-data text-sm"
+                      />
+                      <Input
+                        value={uniswapEnvelopeMaxSingleAmountIn}
+                        onChange={(event) => setUniswapEnvelopeMaxSingleAmountIn(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Max single ETH amount"
+                        className="font-data text-sm"
+                      />
+                      <Input
+                        value={uniswapEnvelopeMaxTotalAmountIn}
+                        onChange={(event) => setUniswapEnvelopeMaxTotalAmountIn(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Max total ETH amount"
+                        className="font-data text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               <div>
                 <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                   Infrastructure
@@ -558,6 +634,11 @@ export function AdvancedSettingsDialog({
                     setResearchEnabled(true);
                     setValidatorMode('default');
                     setCustomValidatorIds('');
+                    setUniswapEnvelopeEnabled(defaultUniswapEnvelopeEnabled);
+                    setUniswapEnvelopeMaxDurationSecs('3600');
+                    setUniswapEnvelopeMaxSingleAmountIn('');
+                    setUniswapEnvelopeMaxTotalAmountIn('');
+                    setUniswapEnvelopeMaxSlippageBps('100');
                     if (!isTeeBlueprint) setRuntimeBackend('docker');
                   }}
                   className="text-xs"

@@ -364,6 +364,151 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
+  it('converts Uniswap envelope ETH amount inputs to wei risk limits', async () => {
+    const {
+      buildOperatorProvisionBody,
+      buildInstanceServiceConfig,
+      buildProvisionRiskParams,
+      envelopeEthAmountToWei,
+    } = await import('../provision');
+    const strategyOptions = {
+      strategyType: 'dex',
+      runtimeBackend: 'docker' as const,
+      isTeeBlueprint: false,
+      uniswapEnvelopeEnabled: true,
+      uniswapEnvelopeMaxDurationSecs: 3600,
+      uniswapEnvelopeMaxSingleAmountIn: '0.01',
+      uniswapEnvelopeMaxTotalAmountIn: '1.5',
+      uniswapEnvelopeMaxSlippageBps: 100,
+    };
+
+    expect(envelopeEthAmountToWei('0.01')).toBe('10000000000000000');
+    expect(buildProvisionRiskParams(strategyOptions)).toMatchObject({
+      uniswap_envelope: {
+        enabled: true,
+        max_single_amount_in: '10000000000000000',
+        max_total_amount_in: '1500000000000000000',
+      },
+    });
+
+    const operatorBody = buildOperatorProvisionBody({
+      ...strategyOptions,
+      name: 'Bot',
+      fallbackName: 'Fallback Bot',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      includeExecutionTarget: false,
+    });
+    expect(JSON.parse(operatorBody.risk_params_json)).toMatchObject({
+      uniswap_envelope: {
+        enabled: true,
+        max_single_amount_in: '10000000000000000',
+        max_total_amount_in: '1500000000000000000',
+      },
+    });
+
+    const serviceConfig = buildInstanceServiceConfig({
+      ...strategyOptions,
+      isInstance: true,
+      name: 'Bot',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      vaultSigners: [],
+      collateralBps: 2500n,
+      targetChainId: 31337,
+      assetAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      blueprintDefaults: {
+        cpuCores: 1n,
+        memoryMb: 512n,
+        maxLifetimeDays: 7n,
+      },
+    });
+    const [decoded] = decodeAbiParameters(
+      parseAbiParameters(
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      ),
+      serviceConfig,
+    );
+    expect(JSON.parse(decoded[3])).toMatchObject({
+      uniswap_envelope: {
+        enabled: true,
+        max_single_amount_in: '10000000000000000',
+        max_total_amount_in: '1500000000000000000',
+      },
+    });
+  });
+
+  it('forces Uniswap envelope risk params off for paper trading', async () => {
+    const { buildProvisionRiskParams } = await import('../provision');
+
+    expect(
+      buildProvisionRiskParams({
+        strategyType: 'dex',
+        runtimeBackend: 'docker',
+        isTeeBlueprint: false,
+        paperTrade: true,
+        uniswapEnvelopeEnabled: true,
+        uniswapEnvelopeMaxSingleAmountIn: '0.01',
+        uniswapEnvelopeMaxTotalAmountIn: '1',
+      }),
+    ).toMatchObject({
+      uniswap_envelope: {
+        enabled: false,
+        max_single_amount_in: '10000000000000000',
+        max_total_amount_in: '1000000000000000000',
+      },
+    });
+  });
+
+  it('builds WETH-scoped Uniswap envelope limits for Ethereum live targets', async () => {
+    const {
+      buildOperatorProvisionBody,
+      resolveExecutionTargetProvisionConfig,
+    } = await import('../provision');
+    const weth = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+    const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+    const target = {
+      id: 'ethereum' as const,
+      label: 'Ethereum Fork',
+      description: 'Local fork',
+      enabled: true,
+      chainId: 31339,
+      protocolChainId: 1,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultFactoryAddress: '0x710e9fbed43da7da297c46e868de78d16e309afb',
+      assetToken: weth,
+      paperTrade: false,
+    };
+    const executionConfig = resolveExecutionTargetProvisionConfig(target);
+
+    const operatorBody = buildOperatorProvisionBody({
+      strategyType: 'dex',
+      runtimeBackend: 'docker',
+      isTeeBlueprint: false,
+      uniswapEnvelopeEnabled: true,
+      uniswapEnvelopeMaxSingleAmountIn: '0.5',
+      uniswapEnvelopeMaxTotalAmountIn: '2',
+      name: 'Bot',
+      fallbackName: 'Fallback Bot',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      selectedExecutionTarget: target,
+      includeExecutionTarget: true,
+      executionConfig,
+    });
+    const riskParams = JSON.parse(operatorBody.risk_params_json);
+
+    expect(riskParams.uniswap_envelope.allowed_pairs).toEqual([
+      { token_in: weth, token_out: usdc },
+    ]);
+    expect(riskParams.uniswap_envelope.max_single_amount_in_by_token).toEqual({
+      [weth]: '500000000000000000',
+    });
+    expect(riskParams.uniswap_envelope.max_total_amount_in_by_token).toEqual({
+      [weth]: '2000000000000000000',
+    });
+  });
+
   it('resolves a complete execution target into provision-safe values', async () => {
     const { resolveExecutionTargetProvisionConfig } =
       await import('../provision');
@@ -707,6 +852,28 @@ describe('provision runtime backend helpers', () => {
         protocolChainId: 1,
       }),
     ).toBeUndefined();
+  });
+
+  it('defaults Uniswap envelope mode for live Uniswap execution targets only', async () => {
+    const { shouldDefaultUniswapEnvelopeMode } = await import('../provision');
+    const liveDexTarget = {
+      id: 'ethereum',
+      label: 'Ethereum Fork',
+      description: 'Local Ethereum fork',
+      enabled: true,
+      chainId: 31339,
+    } as const;
+
+    expect(shouldDefaultUniswapEnvelopeMode('dex', liveDexTarget, false)).toBe(true);
+    expect(shouldDefaultUniswapEnvelopeMode('dex', liveDexTarget, true)).toBe(false);
+    expect(
+      shouldDefaultUniswapEnvelopeMode(
+        'dex',
+        { ...liveDexTarget, enabled: false },
+        false,
+      ),
+    ).toBe(false);
+    expect(shouldDefaultUniswapEnvelopeMode('perp', liveDexTarget, false)).toBe(false);
   });
 
   it('validates paper-only and unsupported single-chain strategies', async () => {

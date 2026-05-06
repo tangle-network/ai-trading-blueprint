@@ -4,6 +4,7 @@ const PAPER_MODE_VALIDATOR = 'paper-mode';
 
 export type TradeValidationDisplayState =
   | 'approved_signed'
+  | 'envelope_approved'
   | 'rejected'
   | 'paper_bypassed'
   | 'unsigned_error';
@@ -57,6 +58,15 @@ export function getTradeValidationDisplay(
       label: 'BYPASSED',
       badgeVariant: 'secondary',
       helperText: 'Paper mode bypassed validator signing because no validators were configured.',
+    };
+  }
+
+  if (validation.authorization?.mode === 'uniswap_envelope') {
+    return {
+      state: 'envelope_approved',
+      label: 'ENVELOPE',
+      badgeVariant: 'success',
+      helperText: 'Trade was authorized by a signed Uniswap envelope and checked on-chain.',
     };
   }
 

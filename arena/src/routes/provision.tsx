@@ -14,6 +14,7 @@ import {
   decodeEventLog,
   encodeAbiParameters,
   parseAbiParameters,
+  parseEther,
   parseGwei,
   zeroAddress,
 } from 'viem';
@@ -103,11 +104,17 @@ interface StrategyConfigOptions {
   firecrackerRuntimeSupported?: boolean;
   paperTrade?: boolean;
   protocolChainId?: number;
+  assetToken?: string;
   availableProtocols?: string[];
   conversationCron?: string;
   researchCron?: string;
   conversationEnabled?: boolean;
   researchEnabled?: boolean;
+  uniswapEnvelopeEnabled?: boolean;
+  uniswapEnvelopeMaxDurationSecs?: number;
+  uniswapEnvelopeMaxSingleAmountIn?: string;
+  uniswapEnvelopeMaxTotalAmountIn?: string;
+  uniswapEnvelopeMaxSlippageBps?: number;
 }
 
 interface ProvisionStrategyConfigOptions extends StrategyConfigOptions {
@@ -201,6 +208,7 @@ interface SubmitSnapshot {
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const ETHEREUM_USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const ETHEREUM_WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
 const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const POLYGON_USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const OPTIMISM_USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
@@ -602,6 +610,83 @@ export function buildProvisionStrategyConfig({
   return config;
 }
 
+export function envelopeEthAmountToWei(value?: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return '0';
+
+  try {
+    return parseEther(trimmed).toString();
+  } catch {
+    return '0';
+  }
+}
+
+function buildUniswapEnvelopeAllowedPairs({
+  assetToken,
+  protocolChainId,
+}: Pick<StrategyConfigOptions, 'assetToken' | 'protocolChainId'>): Array<{
+  token_in: string;
+  token_out: string;
+}> {
+  if (
+    protocolChainId === 1 &&
+    assetToken?.toLowerCase() === ETHEREUM_WETH_ADDRESS.toLowerCase()
+  ) {
+    return [{ token_in: ETHEREUM_WETH_ADDRESS, token_out: ETHEREUM_USDC_ADDRESS }];
+  }
+  return [];
+}
+
+export function buildProvisionRiskParams({
+  strategyType,
+  ...strategyConfigOptions
+}: { strategyType: string } & StrategyConfigOptions): Record<string, unknown> {
+  if (strategyType === 'yield') {
+    return { min_aave_health_factor: 1.5 };
+  }
+
+  if (strategyType !== 'dex') {
+    return {};
+  }
+
+  const maxSingleAmountIn = envelopeEthAmountToWei(
+    strategyConfigOptions.uniswapEnvelopeMaxSingleAmountIn,
+  );
+  const maxTotalAmountIn = envelopeEthAmountToWei(
+    strategyConfigOptions.uniswapEnvelopeMaxTotalAmountIn,
+  );
+  const allowedPairs = buildUniswapEnvelopeAllowedPairs(strategyConfigOptions);
+  const amountLimitsByToken =
+    strategyConfigOptions.assetToken &&
+    maxSingleAmountIn !== '0' &&
+    maxTotalAmountIn !== '0'
+      ? {
+          max_single_amount_in_by_token: {
+            [strategyConfigOptions.assetToken]: maxSingleAmountIn,
+          },
+          max_total_amount_in_by_token: {
+            [strategyConfigOptions.assetToken]: maxTotalAmountIn,
+          },
+        }
+      : {};
+
+  return {
+    uniswap_envelope: {
+      enabled:
+        !strategyConfigOptions.paperTrade &&
+        Boolean(strategyConfigOptions.uniswapEnvelopeEnabled),
+      allowed_pairs: strategyConfigOptions.availableProtocols?.includes('uniswap_v3')
+        ? allowedPairs
+        : [],
+      max_duration_secs: strategyConfigOptions.uniswapEnvelopeMaxDurationSecs ?? 3600,
+      max_single_amount_in: maxSingleAmountIn,
+      max_total_amount_in: maxTotalAmountIn,
+      ...amountLimitsByToken,
+      max_slippage_bps: strategyConfigOptions.uniswapEnvelopeMaxSlippageBps ?? 100,
+    },
+  };
+}
+
 export function buildOperatorProvisionBody({
   name,
   fallbackName,
@@ -622,14 +707,25 @@ export function buildOperatorProvisionBody({
     executionConfig,
   });
 
+  const riskParams = buildProvisionRiskParams({
+    ...strategyConfigOptions,
+    strategyType,
+    protocolChainId: includeExecutionTarget
+      ? executionConfig?.protocolChainId
+      : strategyConfigOptions.protocolChainId,
+    assetToken: includeExecutionTarget
+      ? executionConfig?.assetAddress
+      : strategyConfigOptions.assetToken,
+    availableProtocols: includeExecutionTarget
+      ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+      : strategyConfigOptions.availableProtocols,
+  });
+
   return {
     name: name || fallbackName,
     strategy_type: strategyType,
     strategy_config_json: JSON.stringify(strategyConfig),
-    risk_params_json:
-      strategyType === 'yield'
-        ? JSON.stringify({ min_aave_health_factor: 1.5 })
-        : '{}',
+    risk_params_json: JSON.stringify(riskParams),
     trading_loop_cron: effectiveCron,
     validator_service_ids: validatorServiceIds.map((id) => Number(id)),
     ...(includeExecutionTarget && executionConfig
@@ -657,6 +753,12 @@ export function buildInstanceServiceConfig({
   blueprintDefaults,
   ...strategyConfigOptions
 }: InstanceServiceConfigOptions): `0x${string}` {
+  const riskParams = buildProvisionRiskParams({
+    ...strategyConfigOptions,
+    strategyType,
+    assetToken: assetAddress,
+  });
+
   return encodeAbiParameters(
     parseAbiParameters(
       '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
@@ -668,7 +770,7 @@ export function buildInstanceServiceConfig({
         isInstance
           ? JSON.stringify(buildStrategyConfigForProvision(strategyConfigOptions))
           : '{}',
-        '{}',
+        isInstance ? JSON.stringify(riskParams) : '{}',
         zeroAddress,
         assetAddress,
         isInstance ? vaultSigners : [],
@@ -849,7 +951,26 @@ export function availableProtocolsForStrategyTarget(
   ) {
     return ['aave_v3', 'morpho_vault'];
   }
+  if (strategyType === 'dex' && effectiveChainId === 1) {
+    return ['uniswap_v3'];
+  }
   return undefined;
+}
+
+export function shouldDefaultUniswapEnvelopeMode(
+  strategyType: string,
+  target: DexExecutionTargetOption | undefined,
+  paperTrade: boolean,
+): boolean {
+  if (paperTrade || !target?.enabled) return false;
+  const pack = strategyPacks.find((p) => p.id === strategyType);
+  if (
+    pack?.executionMode !== 'single-chain' ||
+    !pack.providers.some((provider) => provider.toLowerCase().includes('uniswap'))
+  ) {
+    return false;
+  }
+  return strategyUsesExecutionTarget(strategyType, target, paperTrade);
 }
 
 export function validateStrategyExecutionSelection(
@@ -1180,6 +1301,16 @@ export default function ProvisionPage() {
     'default',
   );
   const [customValidatorIds, setCustomValidatorIds] = useState('');
+  const [uniswapEnvelopeEnabled, setUniswapEnvelopeEnabledState] = useState(false);
+  const uniswapEnvelopeUserTouchedRef = useRef(false);
+  const setUniswapEnvelopeEnabled = useCallback((enabled: boolean) => {
+    uniswapEnvelopeUserTouchedRef.current = true;
+    setUniswapEnvelopeEnabledState(enabled);
+  }, []);
+  const [uniswapEnvelopeMaxDurationSecs, setUniswapEnvelopeMaxDurationSecs] = useState('3600');
+  const [uniswapEnvelopeMaxSingleAmountIn, setUniswapEnvelopeMaxSingleAmountIn] = useState('');
+  const [uniswapEnvelopeMaxTotalAmountIn, setUniswapEnvelopeMaxTotalAmountIn] = useState('');
+  const [uniswapEnvelopeMaxSlippageBps, setUniswapEnvelopeMaxSlippageBps] = useState('100');
 
   // Deploy step
   const {
@@ -1311,6 +1442,11 @@ export default function ProvisionPage() {
     '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
   const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
+  const defaultUniswapEnvelopeEnabled = shouldDefaultUniswapEnvelopeMode(
+    strategyType,
+    selectedExecutionTarget,
+    provisionPaperTrade,
+  );
 
   // Reset customizations when strategy changes
   const prevStrategyRef = useRef(strategyType);
@@ -1324,7 +1460,22 @@ export default function ProvisionPage() {
     setCustomResearchCron('');
     setConversationEnabled(true);
     setResearchEnabled(true);
+    uniswapEnvelopeUserTouchedRef.current = false;
   }, [strategyType]);
+
+  useEffect(() => {
+    uniswapEnvelopeUserTouchedRef.current = false;
+  }, [provisionPaperTrade, selectedExecutionTarget?.id, strategyType]);
+
+  useEffect(() => {
+    if (!defaultUniswapEnvelopeEnabled) {
+      setUniswapEnvelopeEnabledState(false);
+      return;
+    }
+    if (!uniswapEnvelopeUserTouchedRef.current) {
+      setUniswapEnvelopeEnabledState(true);
+    }
+  }, [defaultUniswapEnvelopeEnabled]);
 
   // Auto-set service mode to 'new' for instance blueprints
   useEffect(() => {
@@ -1678,6 +1829,11 @@ export default function ProvisionPage() {
             researchCron: effectiveResearchCron,
             conversationEnabled,
             researchEnabled,
+            uniswapEnvelopeEnabled,
+            uniswapEnvelopeMaxDurationSecs: Number(uniswapEnvelopeMaxDurationSecs) || 3600,
+            uniswapEnvelopeMaxSingleAmountIn,
+            uniswapEnvelopeMaxTotalAmountIn,
+            uniswapEnvelopeMaxSlippageBps: Number(uniswapEnvelopeMaxSlippageBps) || 100,
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
@@ -2143,6 +2299,28 @@ export default function ProvisionPage() {
       conversationEnabled,
       researchEnabled,
     });
+    const riskParams = buildProvisionRiskParams({
+      strategyType,
+      runtimeBackend,
+      isTeeBlueprint: !!selectedBlueprint?.isTee,
+      paperTrade: provisionPaperTrade,
+      protocolChainId: requiresExecutionTarget
+        ? executionConfig?.protocolChainId
+        : undefined,
+      assetToken: requiresExecutionTarget ? executionConfig?.assetAddress : undefined,
+      availableProtocols: requiresExecutionTarget
+        ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+        : undefined,
+      conversationCron: effectiveConversationCron,
+      researchCron: effectiveResearchCron,
+      conversationEnabled,
+      researchEnabled,
+      uniswapEnvelopeEnabled,
+      uniswapEnvelopeMaxDurationSecs: Number(uniswapEnvelopeMaxDurationSecs) || 3600,
+      uniswapEnvelopeMaxSingleAmountIn,
+      uniswapEnvelopeMaxTotalAmountIn,
+      uniswapEnvelopeMaxSlippageBps: Number(uniswapEnvelopeMaxSlippageBps) || 100,
+    });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
 
@@ -2210,7 +2388,7 @@ export default function ProvisionPage() {
       name,
       strategyType,
       strategyConfig,
-      riskParams: '{}',
+      riskParams: JSON.stringify(riskParams),
       vaultAddress: executionConfig?.provisionVaultAddress ?? zeroAddress,
       assetAddress:
         executionConfig?.assetAddress ??
@@ -2368,6 +2546,11 @@ export default function ProvisionPage() {
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
+      uniswapEnvelopeEnabled,
+      uniswapEnvelopeMaxDurationSecs: Number(uniswapEnvelopeMaxDurationSecs) || 3600,
+      uniswapEnvelopeMaxSingleAmountIn,
+      uniswapEnvelopeMaxTotalAmountIn,
+      uniswapEnvelopeMaxSlippageBps: Number(uniswapEnvelopeMaxSlippageBps) || 100,
       effectiveCron,
       validatorServiceIds: instanceValidatorIds,
       vaultSigners: instanceVaultSigners,
@@ -3253,6 +3436,16 @@ export default function ProvisionPage() {
         }
         provisionPaperTrade={provisionPaperTrade}
         setProvisionPaperTrade={setProvisionPaperTrade}
+        uniswapEnvelopeEnabled={uniswapEnvelopeEnabled}
+        setUniswapEnvelopeEnabled={setUniswapEnvelopeEnabled}
+        uniswapEnvelopeMaxDurationSecs={uniswapEnvelopeMaxDurationSecs}
+        setUniswapEnvelopeMaxDurationSecs={setUniswapEnvelopeMaxDurationSecs}
+        uniswapEnvelopeMaxSingleAmountIn={uniswapEnvelopeMaxSingleAmountIn}
+        setUniswapEnvelopeMaxSingleAmountIn={setUniswapEnvelopeMaxSingleAmountIn}
+        uniswapEnvelopeMaxTotalAmountIn={uniswapEnvelopeMaxTotalAmountIn}
+        setUniswapEnvelopeMaxTotalAmountIn={setUniswapEnvelopeMaxTotalAmountIn}
+        uniswapEnvelopeMaxSlippageBps={uniswapEnvelopeMaxSlippageBps}
+        setUniswapEnvelopeMaxSlippageBps={setUniswapEnvelopeMaxSlippageBps}
         onOpenInfrastructure={() => {
           setShowAdvanced(false);
           setShowInfra(true);

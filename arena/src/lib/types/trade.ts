@@ -28,6 +28,16 @@ export interface TradeValidation {
   intentHash: string;
   responses: ValidatorResponseDetail[];
   simulation?: TradeSimulation;
+  authorization?: {
+    mode: 'uniswap_envelope';
+    envelopeId: string;
+    envelopeHash: string;
+    tokenIn: string;
+    tokenOut: string;
+    validUntil: number;
+    minSignatures: number;
+    signatureCount: number;
+  };
 }
 
 export interface TradeExecutionDetails {

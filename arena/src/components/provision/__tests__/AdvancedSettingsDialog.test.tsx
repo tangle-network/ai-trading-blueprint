@@ -147,6 +147,13 @@ describe('AdvancedSettingsDialog', () => {
     expect(screen.getByText('Paper mode validates and simulates trades without on-chain execution.')).toBeInTheDocument();
   });
 
+  it('labels Uniswap envelope limits as ETH amounts', () => {
+    render(<AdvancedSettingsDialog {...defaultProps({ uniswapEnvelopeEnabled: true })} />);
+
+    expect(screen.getByPlaceholderText('Max single ETH amount')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Max total ETH amount')).toBeInTheDocument();
+  });
+
   it('shows enabled firecracker option when supported', () => {
     render(<AdvancedSettingsDialog {...defaultProps({ firecrackerSupported: true })} />);
     const firecrackerOption = screen.getByRole('option', { name: 'Firecracker (microVM)' });
@@ -158,6 +165,7 @@ describe('AdvancedSettingsDialog', () => {
     const setCustomCron = vi.fn();
     const setValidatorMode = vi.fn();
     const setCustomValidatorIds = vi.fn();
+    const setUniswapEnvelopeEnabled = vi.fn();
     const user = userEvent.setup();
     render(
       <AdvancedSettingsDialog
@@ -166,10 +174,12 @@ describe('AdvancedSettingsDialog', () => {
           customCron: '0 */10 * * *',
           validatorMode: 'custom',
           customValidatorIds: '1,2',
+          uniswapEnvelopeEnabled: false,
           setRuntimeBackend,
           setCustomCron,
           setValidatorMode,
           setCustomValidatorIds,
+          setUniswapEnvelopeEnabled,
         })}
       />,
     );
@@ -177,6 +187,7 @@ describe('AdvancedSettingsDialog', () => {
     expect(setCustomCron).toHaveBeenCalledWith('');
     expect(setValidatorMode).toHaveBeenCalledWith('default');
     expect(setCustomValidatorIds).toHaveBeenCalledWith('');
+    expect(setUniswapEnvelopeEnabled).toHaveBeenCalledWith(true);
     expect(setRuntimeBackend).toHaveBeenCalledWith('docker');
   });
 

@@ -217,7 +217,7 @@ export function TradeHistoryTab({
           const signedCount = countUsableValidatorSignatures(responses);
           const validationDisplay = getTradeValidationDisplay(trade);
           const pairLabel = getTradePairLabel(trade);
-          const hasValidation = responses.length > 0 || trade.validatorScore != null;
+          const hasValidation = responses.length > 0 || trade.validatorScore != null || Boolean(trade.validation?.authorization);
           const isExpanded = expandedId === trade.id;
 
           return (
@@ -302,6 +302,32 @@ export function TradeHistoryTab({
                       <p className="mb-3 px-1 text-sm leading-relaxed text-arena-elements-textSecondary">
                         {validationDisplay.helperText}
                       </p>
+                    )}
+
+                    {trade.validation?.authorization?.mode === 'uniswap_envelope' && (
+                      <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-3">
+                        <div className="mb-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                          Envelope Authorization
+                        </div>
+                        <div className="grid gap-2 text-sm text-arena-elements-textSecondary md:grid-cols-2">
+                          <div>
+                            <span className="text-arena-elements-textTertiary">Envelope:</span>{' '}
+                            <code className="font-data text-xs">{trade.validation.authorization.envelopeId.slice(0, 10)}…</code>
+                          </div>
+                          <div>
+                            <span className="text-arena-elements-textTertiary">Quorum:</span>{' '}
+                            {trade.validation.authorization.signatureCount}/{trade.validation.authorization.minSignatures}
+                          </div>
+                          <div>
+                            <span className="text-arena-elements-textTertiary">Pair:</span>{' '}
+                            <code className="font-data text-xs">{trade.validation.authorization.tokenIn.slice(0, 6)}…/{trade.validation.authorization.tokenOut.slice(0, 6)}…</code>
+                          </div>
+                          <div>
+                            <span className="text-arena-elements-textTertiary">Expires:</span>{' '}
+                            {new Date(trade.validation.authorization.validUntil * 1000).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
                     )}
 
                     {trade.execution && (

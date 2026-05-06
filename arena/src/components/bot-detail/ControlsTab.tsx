@@ -905,7 +905,10 @@ function ValidatorInfoCard({
       return display != null && display.state !== 'paper_bypassed';
     });
     const approved = measured.filter(
-      (trade) => getTradeValidationDisplay(trade)?.state === 'approved_signed',
+      (trade) => {
+        const state = getTradeValidationDisplay(trade)?.state;
+        return state === 'approved_signed' || state === 'envelope_approved';
+      },
     );
     return {
       approvalRate: measured.length > 0 ? Math.round((approved.length / measured.length) * 100) : null,
@@ -916,6 +919,10 @@ function ValidatorInfoCard({
   const endpoints = detail.validator_endpoints ?? [];
   const serviceIds = detail.validator_service_ids ?? [];
   const hasValidators = endpoints.length > 0 || serviceIds.length > 0;
+  const envelopePolicy = (detail.risk_params?.uniswap_envelope ?? detail.risk_params?.envelope) as
+    | Record<string, unknown>
+    | undefined;
+  const validationMode = detail.validation_trust ?? 'per_trade';
 
   return (
     <div className="glass-card rounded-xl p-5">
@@ -925,6 +932,31 @@ function ValidatorInfoCard({
       </div>
 
       <div className="space-y-3 text-sm">
+        {/* Service IDs */}
+        <div className="flex justify-between items-center">
+          <span className="text-arena-elements-textTertiary">Mode</span>
+          <Badge variant={validationMode === 'envelope' ? 'success' : 'outline'} className="text-xs">
+            {validationMode === 'envelope' ? 'Envelope' : validationMode === 'self_operated' ? 'Self-operated' : 'Per-trade'}
+          </Badge>
+        </div>
+
+        {validationMode === 'envelope' && (
+          <div className="rounded-lg border border-arena-border/60 bg-arena-elements-background-depth-2 p-3 space-y-2">
+            <div className="flex justify-between">
+              <span className="text-arena-elements-textTertiary">Protocol</span>
+              <span className="font-data text-xs">Uniswap V3</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-arena-elements-textTertiary">Max Duration</span>
+              <span className="font-data text-xs">{String(envelopePolicy?.max_duration_secs ?? '—')}s</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-arena-elements-textTertiary">Max Total</span>
+              <span className="font-data text-xs">{String(envelopePolicy?.max_total_amount_in ?? '—')}</span>
+            </div>
+          </div>
+        )}
+
         {/* Service IDs */}
         <div className="flex justify-between items-start">
           <span className="text-arena-elements-textTertiary">Service IDs</span>
