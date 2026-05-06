@@ -438,6 +438,70 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
+  it('requires positive Uniswap envelope limits for live envelope mode', async () => {
+    const { validateUniswapEnvelopeLimitInputs } = await import('../provision');
+
+    expect(
+      validateUniswapEnvelopeLimitInputs({
+        strategyType: 'dex',
+        paperTrade: false,
+        uniswapEnvelopeEnabled: true,
+        uniswapEnvelopeMaxSingleAmountIn: '',
+        uniswapEnvelopeMaxTotalAmountIn: '1',
+      }),
+    ).toEqual({
+      ok: false,
+      message: 'Enter positive Max single and Max total ETH amounts for Uniswap envelope mode',
+    });
+
+    expect(
+      validateUniswapEnvelopeLimitInputs({
+        strategyType: 'dex',
+        paperTrade: false,
+        uniswapEnvelopeEnabled: true,
+        uniswapEnvelopeMaxSingleAmountIn: '2',
+        uniswapEnvelopeMaxTotalAmountIn: '1',
+      }),
+    ).toEqual({
+      ok: false,
+      message: 'Max single ETH amount must be less than or equal to Max total ETH amount',
+    });
+
+    expect(
+      validateUniswapEnvelopeLimitInputs({
+        strategyType: 'dex',
+        paperTrade: false,
+        uniswapEnvelopeEnabled: true,
+        uniswapEnvelopeMaxSingleAmountIn: '0.25',
+        uniswapEnvelopeMaxTotalAmountIn: '1',
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it('does not require Uniswap envelope limits outside live envelope mode', async () => {
+    const { validateUniswapEnvelopeLimitInputs } = await import('../provision');
+
+    expect(
+      validateUniswapEnvelopeLimitInputs({
+        strategyType: 'dex',
+        paperTrade: true,
+        uniswapEnvelopeEnabled: true,
+        uniswapEnvelopeMaxSingleAmountIn: '',
+        uniswapEnvelopeMaxTotalAmountIn: '',
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateUniswapEnvelopeLimitInputs({
+        strategyType: 'dex',
+        paperTrade: false,
+        uniswapEnvelopeEnabled: false,
+        uniswapEnvelopeMaxSingleAmountIn: '',
+        uniswapEnvelopeMaxTotalAmountIn: '',
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it('forces Uniswap envelope risk params off for paper trading', async () => {
     const { buildProvisionRiskParams } = await import('../provision');
 

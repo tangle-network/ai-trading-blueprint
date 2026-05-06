@@ -154,6 +154,24 @@ describe('AdvancedSettingsDialog', () => {
     expect(screen.getByPlaceholderText('Max total ETH amount')).toBeInTheDocument();
   });
 
+  it('marks live Uniswap envelope limit inputs as required and exposes an explanation tooltip', () => {
+    render(
+      <AdvancedSettingsDialog
+        {...defaultProps({
+          uniswapEnvelopeEnabled: true,
+          uniswapEnvelopeLimitError: 'Enter positive Max single and Max total ETH amounts for Uniswap envelope mode',
+        })}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Max single ETH amount')).toBeRequired();
+    expect(screen.getByPlaceholderText('Max total ETH amount')).toBeRequired();
+    expect(
+      screen.getByText('Enter positive Max single and Max total ETH amounts for Uniswap envelope mode'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Envelope spend limits' })).toBeInTheDocument();
+  });
+
   it('shows enabled firecracker option when supported', () => {
     render(<AdvancedSettingsDialog {...defaultProps({ firecrackerSupported: true })} />);
     const firecrackerOption = screen.getByRole('option', { name: 'Firecracker (microVM)' });

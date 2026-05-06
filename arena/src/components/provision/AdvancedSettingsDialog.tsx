@@ -66,6 +66,7 @@ interface AdvancedSettingsDialogProps {
   setUniswapEnvelopeMaxTotalAmountIn?: (v: string) => void;
   uniswapEnvelopeMaxSlippageBps?: string;
   setUniswapEnvelopeMaxSlippageBps?: (v: string) => void;
+  uniswapEnvelopeLimitError?: string | null;
   onOpenInfrastructure: () => void;
 }
 
@@ -114,6 +115,7 @@ export function AdvancedSettingsDialog({
   setUniswapEnvelopeMaxTotalAmountIn = () => {},
   uniswapEnvelopeMaxSlippageBps = '100',
   setUniswapEnvelopeMaxSlippageBps = () => {},
+  uniswapEnvelopeLimitError = null,
   onOpenInfrastructure,
 }: AdvancedSettingsDialogProps) {
   const effectiveRuntimeBackend = isTeeBlueprint ? 'tee' : runtimeBackend;
@@ -122,6 +124,8 @@ export function AdvancedSettingsDialog({
     provider.toLowerCase().includes('uniswap'),
   );
   const defaultUniswapEnvelopeEnabled = supportsUniswapEnvelope && !provisionPaperTrade;
+  const requireUniswapEnvelopeLimits =
+    supportsUniswapEnvelope && uniswapEnvelopeEnabled && !provisionPaperTrade;
   const defaultConversationCron =
     selectedPack.conversationCron ?? '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
   const defaultResearchCron =
@@ -137,29 +141,31 @@ export function AdvancedSettingsDialog({
     canResetRuntime
   );
 
-  function ScheduleTooltip({ label, children }: { label: string; children: string }) {
+  function InfoTooltip({ label, children }: { label: string; children: string }) {
     return (
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <button
-            type="button"
-            aria-label={label}
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-arena-elements-textTertiary hover:text-arena-elements-textPrimary"
-          >
-            <Info className="h-3.5 w-3.5" />
-          </button>
-        </Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content
-            side="top"
-            sideOffset={8}
-            className="z-[100] max-w-xs rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-2 text-xs text-arena-elements-textSecondary shadow-lg"
-          >
-            {children}
-            <Tooltip.Arrow className="fill-[var(--arena-elements-background-depth-2)]" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
+      <Tooltip.Provider delayDuration={150}>
+        <Tooltip.Root>
+          <Tooltip.Trigger asChild>
+            <button
+              type="button"
+              aria-label={label}
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-arena-elements-textTertiary hover:text-arena-elements-textPrimary"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content
+              side="top"
+              sideOffset={8}
+              className="z-[100] max-w-xs rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-2 text-xs text-arena-elements-textSecondary shadow-lg"
+            >
+              {children}
+              <Tooltip.Arrow className="fill-[var(--arena-elements-background-depth-2)]" />
+            </Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip.Root>
+      </Tooltip.Provider>
     );
   }
 
@@ -397,33 +403,56 @@ export function AdvancedSettingsDialog({
                     </div>
                   </label>
                   {uniswapEnvelopeEnabled && !provisionPaperTrade && (
-                    <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                      <Input
-                        value={uniswapEnvelopeMaxDurationSecs}
-                        onChange={(event) => setUniswapEnvelopeMaxDurationSecs(event.target.value)}
-                        placeholder="Max duration seconds"
-                        className="font-data text-sm"
-                      />
-                      <Input
-                        value={uniswapEnvelopeMaxSlippageBps}
-                        onChange={(event) => setUniswapEnvelopeMaxSlippageBps(event.target.value)}
-                        placeholder="Max slippage bps"
-                        className="font-data text-sm"
-                      />
-                      <Input
-                        value={uniswapEnvelopeMaxSingleAmountIn}
-                        onChange={(event) => setUniswapEnvelopeMaxSingleAmountIn(event.target.value)}
-                        inputMode="decimal"
-                        placeholder="Max single ETH amount"
-                        className="font-data text-sm"
-                      />
-                      <Input
-                        value={uniswapEnvelopeMaxTotalAmountIn}
-                        onChange={(event) => setUniswapEnvelopeMaxTotalAmountIn(event.target.value)}
-                        inputMode="decimal"
-                        placeholder="Max total ETH amount"
-                        className="font-data text-sm"
-                      />
+                    <div className="mt-2 space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-arena-elements-textSecondary">
+                        Envelope spend limits
+                        <InfoTooltip label="Envelope spend limits">
+                          Required for live envelope mode: max single caps one swap; max total caps all approved envelope swaps.
+                        </InfoTooltip>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Input
+                          value={uniswapEnvelopeMaxDurationSecs}
+                          onChange={(event) => setUniswapEnvelopeMaxDurationSecs(event.target.value)}
+                          placeholder="Max duration seconds"
+                          className="font-data text-sm"
+                        />
+                        <Input
+                          value={uniswapEnvelopeMaxSlippageBps}
+                          onChange={(event) => setUniswapEnvelopeMaxSlippageBps(event.target.value)}
+                          placeholder="Max slippage bps"
+                          className="font-data text-sm"
+                        />
+                        <Input
+                          value={uniswapEnvelopeMaxSingleAmountIn}
+                          onChange={(event) => setUniswapEnvelopeMaxSingleAmountIn(event.target.value)}
+                          inputMode="decimal"
+                          placeholder="Max single ETH amount"
+                          required={requireUniswapEnvelopeLimits}
+                          aria-invalid={!!uniswapEnvelopeLimitError}
+                          className={`font-data text-sm ${
+                            uniswapEnvelopeLimitError
+                              ? 'border-crimson-400 focus-visible:ring-crimson-400'
+                              : ''
+                          }`}
+                        />
+                        <Input
+                          value={uniswapEnvelopeMaxTotalAmountIn}
+                          onChange={(event) => setUniswapEnvelopeMaxTotalAmountIn(event.target.value)}
+                          inputMode="decimal"
+                          placeholder="Max total ETH amount"
+                          required={requireUniswapEnvelopeLimits}
+                          aria-invalid={!!uniswapEnvelopeLimitError}
+                          className={`font-data text-sm ${
+                            uniswapEnvelopeLimitError
+                              ? 'border-crimson-400 focus-visible:ring-crimson-400'
+                              : ''
+                          }`}
+                        />
+                      </div>
+                      {uniswapEnvelopeLimitError && (
+                        <p className="text-xs text-crimson-300">{uniswapEnvelopeLimitError}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -445,10 +474,10 @@ export function AdvancedSettingsDialog({
                     <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
                       Schedules
                     </span>
-                    <ScheduleTooltip label="Schedule defaults">
+                    <InfoTooltip label="Schedule defaults">
                       {selectedPack.scheduleReason ??
                         'Defaults balance owner messages, research, and trading capacity.'}
-                    </ScheduleTooltip>
+                    </InfoTooltip>
                   </div>
 
                   <div>
@@ -456,9 +485,9 @@ export function AdvancedSettingsDialog({
                       <label htmlFor="cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
                         Trading
                       </label>
-                      <ScheduleTooltip label="Trading schedule">
+                      <InfoTooltip label="Trading schedule">
                         How often the bot checks markets and may act. Faster schedules react sooner but use more AI capacity.
-                      </ScheduleTooltip>
+                      </InfoTooltip>
                     </div>
                     <Input
                       id="cron-schedule"
@@ -477,9 +506,9 @@ export function AdvancedSettingsDialog({
                         <label htmlFor="conversation-cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
                           Conversation
                         </label>
-                        <ScheduleTooltip label="Conversation schedule">
+                        <InfoTooltip label="Conversation schedule">
                           How often the bot checks owner messages. AI is only used when a message needs a response.
-                        </ScheduleTooltip>
+                        </InfoTooltip>
                       </div>
                       <label className="flex items-center gap-2 text-xs text-arena-elements-textSecondary">
                         <input
@@ -509,9 +538,9 @@ export function AdvancedSettingsDialog({
                         <label htmlFor="research-cron-schedule" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary">
                           Research
                         </label>
-                        <ScheduleTooltip label="Research schedule">
+                        <InfoTooltip label="Research schedule">
                           How often the bot reviews performance and looks for improvements. Less frequent research leaves more room for trading.
-                        </ScheduleTooltip>
+                        </InfoTooltip>
                       </div>
                       <label className="flex items-center gap-2 text-xs text-arena-elements-textSecondary">
                         <input

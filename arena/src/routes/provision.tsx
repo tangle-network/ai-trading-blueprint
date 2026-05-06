@@ -621,6 +621,42 @@ export function envelopeEthAmountToWei(value?: string): string {
   }
 }
 
+export function validateUniswapEnvelopeLimitInputs({
+  strategyType,
+  paperTrade,
+  uniswapEnvelopeEnabled,
+  uniswapEnvelopeMaxSingleAmountIn,
+  uniswapEnvelopeMaxTotalAmountIn,
+}: Pick<
+  StrategyConfigOptions,
+  | 'paperTrade'
+  | 'uniswapEnvelopeEnabled'
+  | 'uniswapEnvelopeMaxSingleAmountIn'
+  | 'uniswapEnvelopeMaxTotalAmountIn'
+> & { strategyType: string }): { ok: true } | { ok: false; message: string } {
+  if (strategyType !== 'dex' || paperTrade || !uniswapEnvelopeEnabled) {
+    return { ok: true };
+  }
+
+  const maxSingleAmountIn = envelopeEthAmountToWei(uniswapEnvelopeMaxSingleAmountIn);
+  const maxTotalAmountIn = envelopeEthAmountToWei(uniswapEnvelopeMaxTotalAmountIn);
+  if (maxSingleAmountIn === '0' || maxTotalAmountIn === '0') {
+    return {
+      ok: false,
+      message: 'Enter positive Max single and Max total ETH amounts for Uniswap envelope mode',
+    };
+  }
+
+  if (BigInt(maxSingleAmountIn) > BigInt(maxTotalAmountIn)) {
+    return {
+      ok: false,
+      message: 'Max single ETH amount must be less than or equal to Max total ETH amount',
+    };
+  }
+
+  return { ok: true };
+}
+
 function buildUniswapEnvelopeAllowedPairs({
   assetToken,
   protocolChainId,
@@ -1446,6 +1482,23 @@ export default function ProvisionPage() {
     strategyType,
     selectedExecutionTarget,
     provisionPaperTrade,
+  );
+  const uniswapEnvelopeLimitValidation = useMemo(
+    () =>
+      validateUniswapEnvelopeLimitInputs({
+        strategyType,
+        paperTrade: provisionPaperTrade,
+        uniswapEnvelopeEnabled,
+        uniswapEnvelopeMaxSingleAmountIn,
+        uniswapEnvelopeMaxTotalAmountIn,
+      }),
+    [
+      strategyType,
+      provisionPaperTrade,
+      uniswapEnvelopeEnabled,
+      uniswapEnvelopeMaxSingleAmountIn,
+      uniswapEnvelopeMaxTotalAmountIn,
+    ],
   );
 
   // Reset customizations when strategy changes
@@ -2283,6 +2336,18 @@ export default function ProvisionPage() {
       );
       return;
     }
+    const envelopeLimits = validateUniswapEnvelopeLimitInputs({
+      strategyType,
+      paperTrade: provisionPaperTrade,
+      uniswapEnvelopeEnabled,
+      uniswapEnvelopeMaxSingleAmountIn,
+      uniswapEnvelopeMaxTotalAmountIn,
+    });
+    if (!envelopeLimits.ok) {
+      toast.error(envelopeLimits.message);
+      setShowAdvanced(true);
+      return;
+    }
 
     const strategyConfig = buildProvisionStrategyConfig({
       strategyType,
@@ -2480,6 +2545,18 @@ export default function ProvisionPage() {
     }
     if (quotes.length === 0) {
       toast.error('No quotes available — select operators first');
+      return;
+    }
+    const envelopeLimits = validateUniswapEnvelopeLimitInputs({
+      strategyType,
+      paperTrade: provisionPaperTrade,
+      uniswapEnvelopeEnabled,
+      uniswapEnvelopeMaxSingleAmountIn,
+      uniswapEnvelopeMaxTotalAmountIn,
+    });
+    if (!envelopeLimits.ok) {
+      toast.error(envelopeLimits.message);
+      setShowAdvanced(true);
       return;
     }
 
@@ -3446,6 +3523,9 @@ export default function ProvisionPage() {
         setUniswapEnvelopeMaxTotalAmountIn={setUniswapEnvelopeMaxTotalAmountIn}
         uniswapEnvelopeMaxSlippageBps={uniswapEnvelopeMaxSlippageBps}
         setUniswapEnvelopeMaxSlippageBps={setUniswapEnvelopeMaxSlippageBps}
+        uniswapEnvelopeLimitError={
+          uniswapEnvelopeLimitValidation.ok ? null : uniswapEnvelopeLimitValidation.message
+        }
         onOpenInfrastructure={() => {
           setShowAdvanced(false);
           setShowInfra(true);
