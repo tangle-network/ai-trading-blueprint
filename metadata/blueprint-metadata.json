@@ -204,6 +204,20 @@
           "paused"
         ]
       }
-    ]
+    ],
+    "externalApp": {
+      "url": "https://trading-arena.blueprint.tangle.tools/",
+      "mode": "iframe",
+      "label": "Open Trading Arena",
+      "iframe": {
+        "appId": "trading-arena",
+        "allowedChainIds": [],
+        "contracts": [],
+        "messages": [],
+        "allowReadAccount": true,
+        "allowChainSwitch": false,
+        "allowPopups": false
+      }
+    }
   }
 }
