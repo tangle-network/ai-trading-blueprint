@@ -6,10 +6,30 @@ import "@openzeppelin/contracts/access/IAccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
+contract MockUniswapV3Router {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut) {
+        MockERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
+        MockERC20(params.tokenOut).mint(params.recipient, params.amountOutMinimum);
+        return params.amountOutMinimum;
+    }
+}
+
 contract TradingVaultTest is Setup {
     TradingVault public vault;
     VaultShare public shareToken;
     MockTarget public mockTarget;
+    MockUniswapV3Router public mockUniswapRouter;
 
     function setUp() public override {
         super.setUp();
@@ -21,6 +41,7 @@ contract TradingVaultTest is Setup {
 
         // Deploy mock target that outputs tokenB
         mockTarget = new MockTarget(tokenB);
+        mockUniswapRouter = new MockUniswapV3Router();
 
         // Approve vault for deposits
         vm.prank(user);
@@ -165,6 +186,81 @@ contract TradingVaultTest is Setup {
             _signValidation(validator2Key, params.intentHash, executionHash, address(vault), scores[1], deadline);
     }
 
+    function _buildUniswapEnvelope(uint256 maxSingle, uint256 maxTotal, uint256 validUntil)
+        internal
+        view
+        returns (TradeValidator.UniswapEnvelope memory envelope, address[] memory approvalSigners)
+    {
+        approvalSigners = new address[](2);
+        approvalSigners[0] = validator1;
+        approvalSigners[1] = validator2;
+        envelope = TradeValidator.UniswapEnvelope({
+            envelopeId: keccak256("uniswap-envelope-1"),
+            botIdHash: keccak256("bot-1"),
+            vault: address(vault),
+            chainId: block.chainid,
+            router: address(mockUniswapRouter),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            action: vault.UNISWAP_ACTION_SWAP(),
+            maxSingleAmountIn: maxSingle,
+            maxTotalAmountIn: maxTotal,
+            maxSlippageBps: 100,
+            minOutputPerInput: 0.9 ether,
+            validFrom: block.timestamp,
+            validUntil: validUntil,
+            nonce: 1,
+            approvalSignersHash: keccak256(abi.encodePacked(validator1, validator2)),
+            minSignatures: 2
+        });
+    }
+
+    function _signUniswapEnvelope(TradeValidator.UniswapEnvelope memory envelope)
+        internal
+        view
+        returns (bytes[] memory signatures, uint256[] memory scores)
+    {
+        signatures = new bytes[](2);
+        scores = new uint256[](2);
+        scores[0] = 80;
+        scores[1] = 75;
+        bytes32 digest1 = tradeValidator.computeUniswapEnvelopeDigest(envelope, scores[0]);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest1);
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        bytes32 digest2 = tradeValidator.computeUniswapEnvelopeDigest(envelope, scores[1]);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest2);
+        signatures[1] = abi.encodePacked(r2, s2, v2);
+    }
+
+    function _buildUniswapParams(uint256 amountIn, uint256 minOut, bytes32 intentHash, uint256 deadline)
+        internal
+        view
+        returns (TradingVault.ExecuteParams memory params)
+    {
+        bytes memory data = abi.encodeWithSelector(
+            MockUniswapV3Router.exactInputSingle.selector,
+            MockUniswapV3Router.ExactInputSingleParams({
+                tokenIn: address(tokenA),
+                tokenOut: address(tokenB),
+                fee: 3000,
+                recipient: address(vault),
+                deadline: deadline,
+                amountIn: amountIn,
+                amountOutMinimum: minOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+        params = TradingVault.ExecuteParams({
+            target: address(mockUniswapRouter),
+            data: data,
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: intentHash,
+            deadline: deadline
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // DEPOSIT TESTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -305,6 +401,63 @@ contract TradingVaultTest is Setup {
 
         assertEq(vault.getBalance(address(tokenB)), expectedOutput);
         assertEq(tokenA.allowance(address(vault), address(mockTarget)), 123 ether);
+    }
+
+    function test_executeUniswapEnvelope() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockUniswapRouter), address(tokenB), 100_000 ether);
+
+        (TradeValidator.UniswapEnvelope memory envelope, address[] memory approvalSigners) =
+            _buildUniswapEnvelope(1000 ether, 1500 ether, block.timestamp + 1 hours);
+        (bytes[] memory sigs, uint256[] memory scores) = _signUniswapEnvelope(envelope);
+        TradingVault.ExecuteParams memory params =
+            _buildUniswapParams(100 ether, 95 ether, keccak256("uniswap envelope trade"), block.timestamp + 30 minutes);
+
+        vm.prank(operator);
+        vault.executeUniswapEnvelope(params, envelope, approvalSigners, sigs, scores);
+
+        bytes32 envelopeHash = tradeValidator.hashUniswapEnvelope(envelope);
+        assertEq(tokenB.balanceOf(address(vault)), 95 ether);
+        assertEq(vault.envelopeConsumedAmountIn(envelopeHash), 100 ether);
+    }
+
+    function test_executeUniswapEnvelopeRevertsExpired() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockUniswapRouter), address(tokenB), 100_000 ether);
+
+        (TradeValidator.UniswapEnvelope memory envelope, address[] memory approvalSigners) =
+            _buildUniswapEnvelope(1000 ether, 1500 ether, block.timestamp + 1 hours);
+        (bytes[] memory sigs, uint256[] memory scores) = _signUniswapEnvelope(envelope);
+        vm.warp(block.timestamp + 2 hours);
+        TradingVault.ExecuteParams memory params =
+            _buildUniswapParams(100 ether, 95 ether, keccak256("expired envelope"), block.timestamp + 30 minutes);
+
+        vm.prank(operator);
+        vm.expectRevert(TradingVault.EnvelopeExpired.selector);
+        vault.executeUniswapEnvelope(params, envelope, approvalSigners, sigs, scores);
+    }
+
+    function test_executeUniswapEnvelopeRevertsWhenTotalExhausted() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTarget(address(mockUniswapRouter), address(tokenB), 100_000 ether);
+
+        (TradeValidator.UniswapEnvelope memory envelope, address[] memory approvalSigners) =
+            _buildUniswapEnvelope(100 ether, 150 ether, block.timestamp + 1 hours);
+        (bytes[] memory sigs, uint256[] memory scores) = _signUniswapEnvelope(envelope);
+
+        TradingVault.ExecuteParams memory first =
+            _buildUniswapParams(100 ether, 95 ether, keccak256("first envelope trade"), block.timestamp + 30 minutes);
+        vm.prank(operator);
+        vault.executeUniswapEnvelope(first, envelope, approvalSigners, sigs, scores);
+
+        TradingVault.ExecuteParams memory second =
+            _buildUniswapParams(60 ether, 57 ether, keccak256("second envelope trade"), block.timestamp + 30 minutes);
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.EnvelopeTotalExceeded.selector, 60 ether, 50 ether));
+        vault.executeUniswapEnvelope(second, envelope, approvalSigners, sigs, scores);
     }
 
     function test_executeRevertsWithoutPolicy() public {

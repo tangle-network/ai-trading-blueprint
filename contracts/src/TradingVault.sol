@@ -83,6 +83,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     );
 
     bytes32 private constant EMPTY_APPROVALS_HASH = keccak256("");
+    bytes32 public constant UNISWAP_ACTION_SWAP = keccak256("swap");
+    bytes4 private constant UNISWAP_EXACT_INPUT_SINGLE_SELECTOR = 0x414bf389;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -117,6 +119,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error DebtDecreaseNotMet(uint256 actual, uint256 required);
     error HealthFactorTooLow(uint256 actual, uint256 required);
     error PositionLimitExceeded(address token, uint256 actual, uint256 limit);
+    error EnvelopeCheckFailed();
+    error EnvelopeExpired();
+    error EnvelopeAmountExceeded(uint256 requested, uint256 limit);
+    error EnvelopeTotalExceeded(uint256 requested, uint256 remaining);
+    error EnvelopeRateTooLow(uint256 actualMinOutput, uint256 requiredMinOutput);
+    error DeadlineExpired();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -150,6 +158,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event MaxCollateralBpsUpdated(uint256 bps);
     event ValuationAdapterUpdated(address indexed token, address indexed adapter);
     event InKindRedeemed(address indexed caller, address indexed receiver, address indexed owner, uint256 shares);
+    event UniswapEnvelopeConsumed(
+        bytes32 indexed envelopeHash, bytes32 indexed envelopeId, uint256 amountIn, uint256 totalConsumed
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -213,6 +224,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     uint256 public totalOutstandingCollateral;
     mapping(address => uint256) public operatorCollateral;
     uint256 public maxCollateralBps; // 0 = disabled (default)
+
+    /// @notice Consumed input-token amount for signed Uniswap envelopes, keyed by envelope hash.
+    mapping(bytes32 envelopeHash => uint256 amountIn) public envelopeConsumedAmountIn;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -497,6 +511,17 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 amount;
     }
 
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
     /// @notice Execute a validated trade through an arbitrary target contract
     /// @dev Requires OPERATOR_ROLE + PolicyEngine approval + TradeValidator m-of-n sigs.
     ///      Blocked when wind-down mode is active — use unwind() instead.
@@ -554,6 +579,26 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _executeHealthFactor(params);
     }
 
+    /// @notice Execute an exact-input Uniswap V3 swap authorized by a signed envelope.
+    /// @dev This path skips per-trade validator signatures only after the TradeValidator
+    ///      verifies the envelope proof against the vault signer set and this vault
+    ///      enforces pair, router, time, amount, rate, and total-consumption bounds.
+    function executeUniswapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.UniswapEnvelope calldata envelope,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        ExactInputSingleParams memory swapParams = _prepareUniswapEnvelope(
+            params, envelope, approvalSigners, signatures, scores
+        );
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: swapParams.tokenIn, spender: params.target, amount: swapParams.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
     function _prepareExecution(
         ExecuteParams calldata params,
         bytes[] calldata signatures,
@@ -585,6 +630,67 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             IERC20(approval.token).forceApprove(approval.spender, approval.amount);
             emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
         }
+    }
+
+    function _applyApprovalsMemory(ApprovalCall[] memory approvals, address target) internal {
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall memory approval = approvals[i];
+            if (approval.token == address(0) || approval.spender == address(0)) revert ZeroAddress();
+            if (approval.spender != target) revert ApprovalSpenderMismatch(approval.spender, target);
+            IERC20(approval.token).forceApprove(approval.spender, approval.amount);
+            emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
+        }
+    }
+
+    function _prepareUniswapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.UniswapEnvelope calldata envelope,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) internal returns (ExactInputSingleParams memory swapParams) {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (params.target == address(0) || params.outputToken == address(0)) revert ZeroAddress();
+        if (params.minOutput == 0) revert ZeroAmount();
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+
+        swapParams = _decodeExactInputSingle(params.data);
+        if (
+            envelope.vault != address(this) || envelope.chainId != block.chainid || envelope.router != params.target
+                || envelope.tokenIn != swapParams.tokenIn || envelope.tokenOut != swapParams.tokenOut
+                || envelope.action != UNISWAP_ACTION_SWAP || params.outputToken != swapParams.tokenOut
+                || params.minOutput != swapParams.amountOutMinimum || swapParams.recipient != address(this)
+        ) {
+            revert EnvelopeCheckFailed();
+        }
+        if (block.timestamp < envelope.validFrom || block.timestamp > envelope.validUntil) revert EnvelopeExpired();
+        if (swapParams.deadline < block.timestamp || params.deadline < block.timestamp) revert DeadlineExpired();
+        if (swapParams.amountIn > envelope.maxSingleAmountIn) {
+            revert EnvelopeAmountExceeded(swapParams.amountIn, envelope.maxSingleAmountIn);
+        }
+
+        uint256 requiredMinOutput = (swapParams.amountIn * envelope.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (swapParams.amountOutMinimum < requiredMinOutput) {
+            revert EnvelopeRateTooLow(swapParams.amountOutMinimum, requiredMinOutput);
+        }
+
+        bytes32 envelopeHash = tradeValidator.hashUniswapEnvelope(envelope);
+        uint256 consumed = envelopeConsumedAmountIn[envelopeHash];
+        uint256 remaining = envelope.maxTotalAmountIn > consumed ? envelope.maxTotalAmountIn - consumed : 0;
+        if (swapParams.amountIn > remaining) revert EnvelopeTotalExceeded(swapParams.amountIn, remaining);
+
+        (bool ok,) = tradeValidator.validateUniswapEnvelope(envelope, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+
+        _checkPolicy(params.outputToken, params.minOutput, params.target);
+        envelopeConsumedAmountIn[envelopeHash] = consumed + swapParams.amountIn;
+        emit UniswapEnvelopeConsumed(envelopeHash, envelope.envelopeId, swapParams.amountIn, consumed + swapParams.amountIn);
+    }
+
+    function _decodeExactInputSingle(bytes calldata data) internal pure returns (ExactInputSingleParams memory params) {
+        if (data.length < 4 || bytes4(data[:4]) != UNISWAP_EXACT_INPUT_SINGLE_SELECTOR) revert EnvelopeCheckFailed();
+        params = abi.decode(data[4:], (ExactInputSingleParams));
     }
 
     function _prepareDebtReduction(

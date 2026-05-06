@@ -27,6 +27,13 @@ contract TradeValidator is EIP712, Ownable2Step {
         "TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)"
     );
 
+    /// @notice EIP-712 type hash for validator-approved Uniswap V3 swap envelopes.
+    bytes32 public constant UNISWAP_ENVELOPE_TYPEHASH = keccak256(
+        "UniswapEnvelope(bytes32 envelopeId,bytes32 botIdHash,address vault,uint256 chainId,address router,address tokenIn,address tokenOut,bytes32 action,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxSlippageBps,uint256 minOutputPerInput,uint256 validFrom,uint256 validUntil,uint256 nonce,bytes32 approvalSignersHash,uint256 minSignatures)"
+    );
+    bytes32 public constant UNISWAP_ENVELOPE_APPROVAL_TYPEHASH =
+        keccak256("UniswapEnvelopeApproval(bytes32 envelopeHash,uint256 score)");
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -42,6 +49,7 @@ contract TradeValidator is EIP712, Ownable2Step {
     error SignerNotInSet(address signer);
     error InvalidScoreThreshold();
     error NotVaultConfigOwnerOrOwner();
+    error InvalidEnvelope();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -60,6 +68,26 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct VaultConfig {
         EnumerableSet.AddressSet signers;
         uint256 requiredSignatures;
+    }
+
+    struct UniswapEnvelope {
+        bytes32 envelopeId;
+        bytes32 botIdHash;
+        address vault;
+        uint256 chainId;
+        address router;
+        address tokenIn;
+        address tokenOut;
+        bytes32 action;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 maxSlippageBps;
+        uint256 minOutputPerInput;
+        uint256 validFrom;
+        uint256 validUntil;
+        uint256 nonce;
+        bytes32 approvalSignersHash;
+        uint256 minSignatures;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -270,6 +298,72 @@ contract TradeValidator is EIP712, Ownable2Step {
         return this.validateWithSignatures(intentHash, bytes32(0), vault, signatures, scores, deadline, actionKind);
     }
 
+    /// @notice Validate a Uniswap envelope by verifying m-of-n vault signers signed the envelope.
+    function validateUniswapEnvelope(
+        UniswapEnvelope calldata envelope,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool approved, uint256 validCount) {
+        if (
+            envelope.vault == address(0) || envelope.router == address(0) || envelope.tokenIn == address(0)
+                || envelope.tokenOut == address(0) || envelope.chainId == 0 || envelope.validUntil < block.timestamp
+                || envelope.validFrom > block.timestamp || envelope.maxSingleAmountIn == 0
+                || envelope.maxTotalAmountIn == 0 || envelope.maxSingleAmountIn > envelope.maxTotalAmountIn
+                || envelope.minOutputPerInput == 0 || envelope.minSignatures == 0
+        ) {
+            revert InvalidEnvelope();
+        }
+        if (signatures.length != scores.length) revert InvalidSignatureCount();
+        if (signatures.length == 0) revert InvalidSignatureCount();
+        if (approvalSigners.length < envelope.minSignatures) revert InsufficientSignatures(approvalSigners.length, envelope.minSignatures);
+        if (_hashApprovalSigners(approvalSigners) != envelope.approvalSignersHash) revert InvalidEnvelope();
+
+        VaultConfig storage config = _vaultConfigs[envelope.vault];
+        if (config.requiredSignatures == 0) revert VaultNotConfigured(envelope.vault);
+
+        bytes32 structHash = _hashUniswapEnvelope(envelope);
+        address[] memory seen = new address[](signatures.length);
+        uint256 seenCount = 0;
+        uint256 scoreSum = 0;
+
+        for (uint256 i = 0; i < signatures.length; i++) {
+            bytes32 digest = _hashTypedDataV4(
+                keccak256(abi.encode(UNISWAP_ENVELOPE_APPROVAL_TYPEHASH, structHash, scores[i]))
+            );
+            address signer = ECDSA.recover(digest, signatures[i]);
+            if (!config.signers.contains(signer)) continue;
+            if (!_addressInCalldata(approvalSigners, signer)) continue;
+
+            bool duplicate = false;
+            for (uint256 j = 0; j < seenCount; j++) {
+                if (seen[j] == signer) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+
+            seen[seenCount] = signer;
+            seenCount++;
+            validCount++;
+            scoreSum += scores[i];
+        }
+
+        uint256 required = config.requiredSignatures > envelope.minSignatures
+            ? config.requiredSignatures
+            : envelope.minSignatures;
+        approved = validCount >= required;
+
+        if (approved && validCount > 0) {
+            uint256 avgScore = scoreSum / validCount;
+            uint256 threshold = minScoreThreshold[envelope.vault];
+            if (threshold > 0 && avgScore < threshold) {
+                approved = false;
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // VIEW
     // ═══════════════════════════════════════════════════════════════════════════
@@ -308,6 +402,22 @@ contract TradeValidator is EIP712, Ownable2Step {
         return _hashTypedDataV4(structHash);
     }
 
+    /// @notice Compute the envelope hash used for signatures and consumed-volume accounting.
+    function hashUniswapEnvelope(UniswapEnvelope calldata envelope) external pure returns (bytes32) {
+        return _hashUniswapEnvelope(envelope);
+    }
+
+    /// @notice Compute the EIP-712 digest validators sign for a Uniswap envelope score.
+    function computeUniswapEnvelopeDigest(UniswapEnvelope calldata envelope, uint256 score)
+        external
+        view
+        returns (bytes32)
+    {
+        return _hashTypedDataV4(
+            keccak256(abi.encode(UNISWAP_ENVELOPE_APPROVAL_TYPEHASH, _hashUniswapEnvelope(envelope), score))
+        );
+    }
+
     /// @notice Backward-compatible digest helper for non-execution tests/tools.
     /// @dev Production vault execution signs a non-zero executionHash.
     function computeDigest(
@@ -325,5 +435,46 @@ contract TradeValidator is EIP712, Ownable2Step {
     /// @notice Get the EIP-712 domain separator (useful for off-chain tooling)
     function getDomainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
+    }
+
+    function _hashUniswapEnvelope(UniswapEnvelope calldata envelope) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                UNISWAP_ENVELOPE_TYPEHASH,
+                envelope.envelopeId,
+                envelope.botIdHash,
+                envelope.vault,
+                envelope.chainId,
+                envelope.router,
+                envelope.tokenIn,
+                envelope.tokenOut,
+                envelope.action,
+                envelope.maxSingleAmountIn,
+                envelope.maxTotalAmountIn,
+                envelope.maxSlippageBps,
+                envelope.minOutputPerInput,
+                envelope.validFrom,
+                envelope.validUntil,
+                envelope.nonce,
+                envelope.approvalSignersHash,
+                envelope.minSignatures
+            )
+        );
+    }
+
+    function _hashApprovalSigners(address[] calldata signers) internal pure returns (bytes32) {
+        bytes memory packed;
+        for (uint256 i = 0; i < signers.length; ++i) {
+            if (signers[i] == address(0)) revert ZeroAddress();
+            packed = bytes.concat(packed, abi.encodePacked(signers[i]));
+        }
+        return keccak256(packed);
+    }
+
+    function _addressInCalldata(address[] calldata values, address needle) internal pure returns (bool) {
+        for (uint256 i = 0; i < values.length; ++i) {
+            if (values[i] == needle) return true;
+        }
+        return false;
     }
 }
