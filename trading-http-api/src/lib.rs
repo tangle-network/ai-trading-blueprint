@@ -524,6 +524,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
         .merge(routes::collateral::multi_bot_router())
+        .merge(routes::envelope::multi_bot_router())
         .merge(routes::circuit::multi_bot_router())
         .merge(routes::adapters::multi_bot_router())
         .merge(routes::metrics::multi_bot_router())

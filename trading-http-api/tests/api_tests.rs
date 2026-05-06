@@ -2075,6 +2075,90 @@ fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn test_universal_envelope_route_accepts_signed_envelope() {
+    ensure_state_dir();
+    let bot_id = format!("bot-universal-env-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-universal-token", bot.clone());
+    let app = build_multi_bot_router(state);
+    let signed = signed_envelope_for_bot(&bot);
+
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-universal-token")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 200);
+
+    let get = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-universal-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 200);
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["bot_id"].as_str().unwrap(), bot.bot_id);
+}
+
+#[tokio::test]
+async fn test_universal_envelope_delete_clears_storage() {
+    ensure_state_dir();
+    let bot_id = format!("bot-env-delete-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-delete-token", bot.clone());
+    let signed = signed_envelope_for_bot(&bot);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "bot-delete-token",
+        &signed,
+    )
+    .await;
+
+    let del = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-delete-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), 204);
+
+    let get = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-delete-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(value.is_null());
+}
+
+#[tokio::test]
 async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope() {
     ensure_state_dir();
     let bot_id = format!("bot-envelope-{}", uuid::Uuid::new_v4());

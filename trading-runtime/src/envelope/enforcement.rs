@@ -22,6 +22,8 @@ use super::error::EnvelopeError;
 
 pub(super) const UNISWAP_V3_SWAP_TYPE: &str = "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)";
 
+pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)";
+
 pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)";
 
 pub(super) const AAVE_SUPPLY_TYPE: &str = "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)";
@@ -52,6 +54,28 @@ pub struct UniswapV3SwapEnforcement {
     pub max_total_amount_in: U256,
     /// Minimum output amount per 1e18 input units (anti-MEV / anti-bad-routing).
     pub min_output_per_input: U256,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UniswapV4SwapEnforcement {
+    /// PoolKey.currency0 (lower address of the pair, or address(0) for native ETH).
+    pub currency0: Address,
+    /// PoolKey.currency1 (higher address of the pair).
+    pub currency1: Address,
+    /// PoolKey.fee
+    pub fee: u32,
+    /// PoolKey.tickSpacing (int24, signed)
+    pub tick_spacing: i32,
+    /// PoolKey.hooks — address(0) when no hook is in use.
+    pub hooks: Address,
+    /// Direction of the swap. true = currency0 → currency1.
+    pub zero_for_one: bool,
+    pub max_single_amount_in: U256,
+    pub max_total_amount_in: U256,
+    pub min_output_per_input: U256,
+    /// Universal Router 2.0 address — vault submits the V4 swap via UR's
+    /// V4_SWAP_EXACT_IN_SINGLE command path.
+    pub universal_router: Address,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,6 +171,7 @@ pub struct MorphoRepayEnforcement {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EnvelopeEnforcement {
     UniswapV3Swap(UniswapV3SwapEnforcement),
+    UniswapV4Swap(UniswapV4SwapEnforcement),
     AerodromeSwap(AerodromeSwapEnforcement),
     AaveSupply(AaveSupplyEnforcement),
     AaveWithdraw(AaveWithdrawEnforcement),
@@ -164,6 +189,7 @@ impl EnvelopeEnforcement {
     pub fn struct_hash(&self) -> Result<B256, EnvelopeError> {
         Ok(match self {
             Self::UniswapV3Swap(e) => e.struct_hash(),
+            Self::UniswapV4Swap(e) => e.struct_hash(),
             Self::AerodromeSwap(e) => e.struct_hash(),
             Self::AaveSupply(e) => e.struct_hash(),
             Self::AaveWithdraw(e) => e.struct_hash(),
@@ -180,6 +206,7 @@ impl EnvelopeEnforcement {
     pub fn protocol_id(&self) -> &'static str {
         match self {
             Self::UniswapV3Swap(_) => "uniswap_v3",
+            Self::UniswapV4Swap(_) => "uniswap_v4",
             Self::AerodromeSwap(_) => "aerodrome",
             Self::AaveSupply(_)
             | Self::AaveWithdraw(_)
@@ -195,7 +222,7 @@ impl EnvelopeEnforcement {
     /// Action identifier (open/close/long/swap/etc).
     pub fn action(&self) -> &'static str {
         match self {
-            Self::UniswapV3Swap(_) | Self::AerodromeSwap(_) => "swap",
+            Self::UniswapV3Swap(_) | Self::UniswapV4Swap(_) | Self::AerodromeSwap(_) => "swap",
             Self::AaveSupply(_) | Self::MorphoSupply(_) => "supply",
             Self::AaveWithdraw(_) | Self::MorphoWithdraw(_) => "withdraw",
             Self::AaveBorrow(_) | Self::MorphoBorrow(_) => "borrow",
@@ -207,6 +234,7 @@ impl EnvelopeEnforcement {
     pub fn validate(&self) -> Result<(), EnvelopeError> {
         let (single, total) = match self {
             Self::UniswapV3Swap(e) => (e.max_single_amount_in, e.max_total_amount_in),
+            Self::UniswapV4Swap(e) => (e.max_single_amount_in, e.max_total_amount_in),
             Self::AerodromeSwap(e) => (e.max_single_amount_in, e.max_total_amount_in),
             Self::AaveSupply(e) => (e.max_single_amount, e.max_total_amount),
             Self::AaveWithdraw(e) => (e.max_single_amount, e.max_total_amount),
@@ -261,6 +289,29 @@ impl UniswapV3SwapEnforcement {
             self.router,
             self.token_in,
             self.token_out,
+        )))
+    }
+}
+
+impl UniswapV4SwapEnforcement {
+    pub fn struct_hash(&self) -> B256 {
+        let tick = if self.tick_spacing >= 0 {
+            U256::from(self.tick_spacing as u64)
+        } else {
+            U256::ZERO.wrapping_sub(U256::from(self.tick_spacing.unsigned_abs() as u64))
+        };
+        keccak256(SolValue::abi_encode(&(
+            keccak256(UNISWAP_V4_SWAP_TYPE.as_bytes()),
+            self.currency0,
+            self.currency1,
+            U256::from(self.fee),
+            tick,
+            self.hooks,
+            U256::from(self.zero_for_one as u8),
+            self.max_single_amount_in,
+            self.max_total_amount_in,
+            self.min_output_per_input,
+            self.universal_router,
         )))
     }
 }

@@ -110,6 +110,19 @@ sol! {
             address tokenOut;
         }
 
+        struct UniswapV4SwapEnforcement {
+            address currency0;
+            address currency1;
+            uint256 fee;
+            int256 tickSpacing;
+            address hooks;
+            bool zeroForOne;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address universalRouter;
+        }
+
         struct AerodromeSwapEnforcement {
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
@@ -184,6 +197,7 @@ sol! {
         }
 
         function executeUniswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeUniswapV4SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV4SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAerodromeSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, AerodromeSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, AaveSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;

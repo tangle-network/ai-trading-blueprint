@@ -99,6 +99,21 @@ contract EnvelopeValidatorTest is Setup {
         });
     }
 
+    function _uniV4() internal pure returns (TradeValidator.UniswapV4SwapEnforcement memory) {
+        return TradeValidator.UniswapV4SwapEnforcement({
+            currency0: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
+            currency1: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0),
+            zeroForOne: true,
+            maxSingleAmountIn: 1e18,
+            maxTotalAmountIn: 10e18,
+            minOutputPerInput: 2_900e6,
+            universalRouter: address(0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af)
+        });
+    }
+
     function _aero() internal pure returns (TradeValidator.AerodromeSwapEnforcement memory) {
         return TradeValidator.AerodromeSwapEnforcement({
             maxSingleAmountIn: 1e18,
@@ -209,6 +224,16 @@ contract EnvelopeValidatorTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
         (bool ok, uint256 valid) =
             tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        assertTrue(ok);
+        assertEq(valid, 2);
+    }
+
+    function test_uniswapV4Swap_happyPath() public {
+        TradeValidator.UniswapV4SwapEnforcement memory enf = _uniV4();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV4Swap(enf));
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        (bool ok, uint256 valid) =
+            tv.validateUniswapV4SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2);
     }

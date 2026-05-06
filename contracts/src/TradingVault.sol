@@ -1394,6 +1394,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     bytes4 private constant SELECTOR_AERODROME_EXACT_INPUT_SINGLE = bytes4(
         keccak256("exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))")
     );
+    /// @dev Universal Router 2.0 `execute(bytes,bytes[],uint256)` selector.
+    bytes4 private constant SELECTOR_UR_EXECUTE = bytes4(keccak256("execute(bytes,bytes[],uint256)"));
+    /// @dev V4_SWAP command id within Universal Router commands buffer.
+    uint8 private constant UR_COMMAND_V4_SWAP = 0x10;
+    /// @dev V4Router action id for SWAP_EXACT_IN_SINGLE within the V4 actions buffer.
+    uint8 private constant V4_ACTION_SWAP_EXACT_IN_SINGLE = 0x06;
     bytes4 private constant SELECTOR_AAVE_SUPPLY = bytes4(keccak256("supply(address,uint256,address,uint16)"));
     bytes4 private constant SELECTOR_AAVE_WITHDRAW = bytes4(keccak256("withdraw(address,uint256,address)"));
     bytes4 private constant SELECTOR_AAVE_BORROW =
@@ -1417,6 +1423,24 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
+    }
+
+    /// @dev V4 PoolKey decoded inline from V4Router actions buffer.
+    struct V4PoolKey {
+        address currency0;
+        address currency1;
+        uint24 fee;
+        int24 tickSpacing;
+        address hooks;
+    }
+
+    /// @dev V4Router exact-input-single params from the actions buffer.
+    struct V4ExactInputSingleParams {
+        V4PoolKey poolKey;
+        bool zeroForOne;
+        uint128 amountIn;
+        uint128 amountOutMinimum;
+        bytes hookData;
     }
 
     struct AerodromeSwapParams {
@@ -1511,6 +1535,28 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _decodeExactInputSingle(bytes calldata data) internal pure returns (ExactInputSingleParams memory p) {
         _expectSelector(data, SELECTOR_UNI_V3_EXACT_INPUT_SINGLE);
         p = abi.decode(data[4:], (ExactInputSingleParams));
+    }
+
+    /// @dev Decode a Universal Router 2.0 `execute(bytes,bytes[],uint256)` calldata
+    ///      whose first command MUST be V4_SWAP, and whose first V4 action MUST
+    ///      be SWAP_EXACT_IN_SINGLE. Reverts on any other shape so the envelope
+    ///      can't be reused for a multi-step UR command sequence.
+    function _decodeUniversalRouterV4SingleSwap(bytes calldata data)
+        internal
+        pure
+        returns (V4ExactInputSingleParams memory p, uint256 deadline)
+    {
+        _expectSelector(data, SELECTOR_UR_EXECUTE);
+        (bytes memory commands, bytes[] memory inputs, uint256 ddl) =
+            abi.decode(data[4:], (bytes, bytes[], uint256));
+        deadline = ddl;
+        if (commands.length != 1 || inputs.length != 1) revert EnvelopeCheckFailed();
+        if (uint8(commands[0]) != UR_COMMAND_V4_SWAP) revert EnvelopeCheckFailed();
+        // V4_SWAP input is (bytes actions, bytes[] params)
+        (bytes memory actions, bytes[] memory v4Params) = abi.decode(inputs[0], (bytes, bytes[]));
+        if (actions.length != 1 || v4Params.length != 1) revert EnvelopeCheckFailed();
+        if (uint8(actions[0]) != V4_ACTION_SWAP_EXACT_IN_SINGLE) revert EnvelopeCheckFailed();
+        p = abi.decode(v4Params[0], (V4ExactInputSingleParams));
     }
 
     function _decodeAerodromeSwap(bytes calldata data) internal pure returns (AerodromeSwapParams memory p) {
@@ -1628,6 +1674,40 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareEnvelopeTrade(params);
         ApprovalCall[] memory approvals = new ApprovalCall[](1);
         approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    function executeUniswapV4SwapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.UniswapV4SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (V4ExactInputSingleParams memory s, uint256 urDeadline) =
+            _decodeUniversalRouterV4SingleSwap(params.data);
+        address tokenIn = s.zeroForOne ? s.poolKey.currency0 : s.poolKey.currency1;
+        address tokenOut = s.zeroForOne ? s.poolKey.currency1 : s.poolKey.currency0;
+        if (
+            params.target != enf.universalRouter || s.poolKey.currency0 != enf.currency0
+                || s.poolKey.currency1 != enf.currency1 || uint256(s.poolKey.fee) != enf.fee
+                || int256(s.poolKey.tickSpacing) != enf.tickSpacing || s.poolKey.hooks != enf.hooks
+                || s.zeroForOne != enf.zeroForOne || params.outputToken != tokenOut
+                || urDeadline < block.timestamp || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        uint256 reqMinOut = (uint256(s.amountIn) * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
+            revert EnvelopeRateTooLow(uint256(s.amountOutMinimum), reqMinOut);
+        }
+        (bool ok,) = tradeValidator.validateUniswapV4SwapEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), uint256(s.amountIn), enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: tokenIn, spender: params.target, amount: uint256(s.amountIn)});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
     }

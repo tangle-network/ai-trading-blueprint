@@ -13,7 +13,7 @@ use crate::envelope::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
     AerodromeSwapEnforcement, EnvelopeEnforcement, EnvelopeError, MorphoBorrowEnforcement,
     MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement, SignedEnvelope,
-    UniswapV3SwapEnforcement,
+    UniswapV3SwapEnforcement, UniswapV4SwapEnforcement,
 };
 
 /// Convert a SignedEnvelope into the Solidity `Envelope` struct expected on-chain.
@@ -125,6 +125,24 @@ impl UniswapV3SwapEnforcement {
             router: self.router,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
+        }
+    }
+}
+
+impl UniswapV4SwapEnforcement {
+    pub fn to_sol(&self) -> ITradingVault::UniswapV4SwapEnforcement {
+        let tick = alloy::primitives::I256::try_from(self.tick_spacing as i64).unwrap();
+        ITradingVault::UniswapV4SwapEnforcement {
+            currency0: self.currency0,
+            currency1: self.currency1,
+            fee: U256::from(self.fee),
+            tickSpacing: tick,
+            hooks: self.hooks,
+            zeroForOne: self.zero_for_one,
+            maxSingleAmountIn: self.max_single_amount_in,
+            maxTotalAmountIn: self.max_total_amount_in,
+            minOutputPerInput: self.min_output_per_input,
+            universalRouter: self.universal_router,
         }
     }
 }
@@ -261,6 +279,15 @@ pub fn encode_swap_or_supply(
     let enforcement = signed.require_enforcement()?;
     let data = match enforcement {
         EnvelopeEnforcement::UniswapV3Swap(e) => ITradingVault::executeUniswapV3SwapEnvelopeCall {
+            params,
+            env,
+            enf: e.to_sol(),
+            approvalSigners: signers,
+            signatures: sigs,
+            scores,
+        }
+        .abi_encode(),
+        EnvelopeEnforcement::UniswapV4Swap(e) => ITradingVault::executeUniswapV4SwapEnvelopeCall {
             params,
             env,
             enf: e.to_sol(),

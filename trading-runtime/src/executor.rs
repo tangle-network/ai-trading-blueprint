@@ -666,7 +666,7 @@ pub fn get_adapter(
 ///
 /// Treats the decimal value as a raw integer (truncates fractional part).
 /// Logs a warning if non-zero fractional digits are dropped.
-fn decimal_to_u256(d: &rust_decimal::Decimal) -> Result<U256, TradingError> {
+pub fn decimal_to_u256(d: &rust_decimal::Decimal) -> Result<U256, TradingError> {
     let truncated = d.trunc();
     if *d != truncated {
         tracing::warn!(

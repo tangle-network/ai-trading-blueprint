@@ -341,6 +341,9 @@ contract TradeValidator is EIP712, Ownable2Step {
     bytes32 public constant UNISWAP_V3_SWAP_TYPEHASH = keccak256(
         "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
     );
+    bytes32 public constant UNISWAP_V4_SWAP_TYPEHASH = keccak256(
+        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)"
+    );
     bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
         "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
     );
@@ -395,6 +398,19 @@ contract TradeValidator is EIP712, Ownable2Step {
         address router;
         address tokenIn;
         address tokenOut;
+    }
+
+    struct UniswapV4SwapEnforcement {
+        address currency0;
+        address currency1;
+        uint256 fee;
+        int256 tickSpacing;
+        address hooks;
+        bool zeroForOne;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 minOutputPerInput;
+        address universalRouter;
     }
 
     struct AerodromeSwapEnforcement {
@@ -603,6 +619,24 @@ contract TradeValidator is EIP712, Ownable2Step {
         );
     }
 
+    function _hashUniswapV4Swap(UniswapV4SwapEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                UNISWAP_V4_SWAP_TYPEHASH,
+                e.currency0,
+                e.currency1,
+                e.fee,
+                e.tickSpacing,
+                e.hooks,
+                e.zeroForOne,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.minOutputPerInput,
+                e.universalRouter
+            )
+        );
+    }
+
     function _hashAerodromeSwap(AerodromeSwapEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
             abi.encode(
@@ -703,6 +737,18 @@ contract TradeValidator is EIP712, Ownable2Step {
     ) external view returns (bool approved, uint256 validCount) {
         return _validateEnvelopeWithEnforcementHash(
             env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores
+        );
+    }
+
+    function validateUniswapV4SwapEnvelope(
+        Envelope calldata env,
+        UniswapV4SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashUniswapV4Swap(enf), approvalSigners, signatures, scores
         );
     }
 
@@ -812,6 +858,10 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     function hashUniswapV3Swap(UniswapV3SwapEnforcement calldata e) external pure returns (bytes32) {
         return _hashUniswapV3Swap(e);
+    }
+
+    function hashUniswapV4Swap(UniswapV4SwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashUniswapV4Swap(e);
     }
 
     function hashAerodromeSwap(AerodromeSwapEnforcement calldata e) external pure returns (bytes32) {
