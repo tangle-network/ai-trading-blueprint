@@ -2171,7 +2171,7 @@ async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope(
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/hyperliquid/envelope")
+                .uri("/envelope")
                 .header("authorization", "Bearer bot-token-envelope")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&signed).unwrap()))
@@ -2368,7 +2368,7 @@ async fn put_signed_envelope(
     app.oneshot(
         Request::builder()
             .method("PUT")
-            .uri("/hyperliquid/envelope")
+            .uri("/envelope")
             .header("authorization", format!("Bearer {auth_token}"))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(signed).unwrap()))

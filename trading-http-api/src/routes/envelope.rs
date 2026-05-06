@@ -43,10 +43,6 @@ pub fn get_signed_envelope(bot_id: &str) -> Option<SignedEnvelope> {
         .and_then(|data| serde_json::from_str(&data).ok())
 }
 
-pub fn set_signed_envelope_internal(bot_id: &str, env: &SignedEnvelope) -> Result<(), String> {
-    set_signed_envelope(bot_id, env)
-}
-
 fn set_signed_envelope(bot_id: &str, env: &SignedEnvelope) -> Result<(), String> {
     std::fs::create_dir_all(envelope_dir())
         .map_err(|e| format!("Failed to create envelope directory: {e}"))?;

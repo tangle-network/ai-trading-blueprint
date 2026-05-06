@@ -2645,7 +2645,7 @@ async fn execute_multi_bot(
     // Envelope loading and verification applies to both paper and live modes:
     // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
     if bot.validation_trust == ValidationTrust::Envelope {
-        let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+        let envelope = super::envelope::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
             (
                 StatusCode::FORBIDDEN,
                 "Envelope trust mode requires a signed per-bot envelope approval".to_string(),

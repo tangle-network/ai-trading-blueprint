@@ -11,10 +11,8 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use trading_runtime::envelope::{EnvelopeBinding, SignedEnvelope};
 use trading_runtime::hyperliquid::{
     AccountInfo, CancelOrderRequest, PlaceOrderRequest, SetLeverageRequest,
 };
@@ -53,10 +51,6 @@ pub(crate) fn get_hl_client(
         .get()
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "HL client race".into()))
 }
-
-// ── Trading envelope (delegates to routes::envelope shared module) ──────────
-
-pub(crate) use super::envelope::{clear_signed_envelope, get_signed_envelope};
 
 fn reject_live_direct_hyperliquid(bot: &BotContext) -> Result<(), (StatusCode, String)> {
     if bot.paper_trade {
@@ -180,9 +174,6 @@ async fn get_prices(
 // ── Router ──────────────────────────────────────────────────────────────────
 
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
-    // Note: `/envelope` is mounted by `routes::envelope::multi_bot_router` and
-    // applies to all protocols. `/hyperliquid/envelope` is kept as a backward-
-    // compatible alias that proxies to the same handlers.
     Router::new()
         .route("/hyperliquid/order", post(place_order))
         .route("/hyperliquid/bracket", post(place_bracket))
@@ -190,44 +181,4 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route("/hyperliquid/leverage", post(set_leverage))
         .route("/hyperliquid/account", get(get_account))
         .route("/hyperliquid/prices", get(get_prices))
-        .route(
-            "/hyperliquid/envelope",
-            get(legacy_get_envelope).put(legacy_put_envelope),
-        )
-}
-
-// Backward-compat aliases for /hyperliquid/envelope.
-async fn legacy_get_envelope(
-    Extension(bot): Extension<BotContext>,
-) -> Json<Option<SignedEnvelope>> {
-    Json(super::envelope::get_signed_envelope(&bot.bot_id))
-}
-
-async fn legacy_put_envelope(
-    State(state): State<Arc<MultiBotTradingState>>,
-    Extension(bot): Extension<BotContext>,
-    Json(env): Json<SignedEnvelope>,
-) -> Result<Json<SignedEnvelope>, (StatusCode, String)> {
-    let binding = EnvelopeBinding {
-        bot_id: &bot.bot_id,
-        vault_address: &bot.vault_address,
-        chain_id: bot.chain_id,
-        protocol: &env.protocol,
-    };
-    env.verify(&binding, &state.trusted_envelope_signers())
-        .map_err(<(StatusCode, String)>::from)?;
-    if let Some(current) = super::envelope::get_signed_envelope(&bot.bot_id) {
-        if env.nonce <= current.nonce {
-            return Err((
-                StatusCode::CONFLICT,
-                format!(
-                    "Envelope nonce {} must be greater than current nonce {}",
-                    env.nonce, current.nonce
-                ),
-            ));
-        }
-    }
-    super::envelope::set_signed_envelope_internal(&bot.bot_id, &env)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(Json(env))
 }
