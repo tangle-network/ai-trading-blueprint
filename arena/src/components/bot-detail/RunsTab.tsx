@@ -621,12 +621,8 @@ export function RunsTab({
       return parseRunsResponse(await response.json());
     },
     staleTime: 5_000,
-    refetchInterval: (query) => {
-      const payload = query.state.data as BotRunsResponse | undefined;
-      return payload?.runs.some((run) => run.status === "running")
-        ? 5_000
-        : false;
-    },
+    refetchOnMount: "always",
+    refetchInterval: 5_000,
   });
 
   const runs = runsQuery.data?.runs ?? [];

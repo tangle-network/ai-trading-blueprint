@@ -354,7 +354,7 @@ export function useBotTrades(
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
     },
     staleTime: 15_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -379,7 +379,7 @@ export function useBotRecentValidations(
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     retry: 1,
     retryDelay: 3_000,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
@@ -401,7 +401,7 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
     },
     staleTime: 10_000,
     gcTime: 60_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -423,7 +423,7 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
       return normalizeMetrics(data);
     },
     staleTime: 15_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -442,7 +442,7 @@ export function useBotMetricsSummary(botId: string, options: BotApiQueryOptions 
       return fetchOperatorBotApi<ApiBotMetricsSummary>(apiUrl, auth, path);
     },
     staleTime: 15_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
