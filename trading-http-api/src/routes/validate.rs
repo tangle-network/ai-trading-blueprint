@@ -22,7 +22,7 @@ use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::polymarket_clob;
 use trading_runtime::supported_assets::{
-    TradeAssetRole, is_supported_trade_asset, normalize_strategy_type,
+    TradeAssetRole, is_supported_trade_asset_for_config, normalize_strategy_type,
 };
 use trading_runtime::token_metadata::{address_chain_mismatch, chain_display_name};
 use trading_runtime::types::ValidationResult;
@@ -618,10 +618,12 @@ async fn validate(
     validate_chain_tokens(protocol_chain_id, &token_in, &token_out)?;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: None,
+        strategy_config: None,
         chain_id: protocol_chain_id,
         protocol: &request.target_protocol,
         token_in: &token_in,
         token_out: &token_out,
+        metadata: Some(&request.metadata),
         vault_address: Some(&state.vault_address),
         rpc_url: state.rpc_url.as_deref(),
         require_vault_valuation: false,
@@ -702,10 +704,12 @@ async fn validate(
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: None,
+        strategy_config: None,
         chain_id: protocol_chain_id,
         protocol: &request.target_protocol,
         token_in: &token_in,
         token_out: &token_out,
+        metadata: Some(&request.metadata),
         vault_address: Some(&state.vault_address),
         rpc_url: state.rpc_url.as_deref(),
         require_vault_valuation: !state.paper_trade
@@ -1086,10 +1090,12 @@ async fn validate_multi_bot(
     validate_chain_tokens(Some(protocol_chain_id), &token_in, &token_out)?;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: strategy_type_from_config(&bot.strategy_config),
+        strategy_config: Some(&bot.strategy_config),
         chain_id: Some(protocol_chain_id),
         protocol: &req.target_protocol,
         token_in: &token_in,
         token_out: &token_out,
+        metadata: Some(&req.metadata),
         vault_address: Some(&bot.vault_address),
         rpc_url: Some(&bot.rpc_url),
         require_vault_valuation: false,
@@ -1170,10 +1176,12 @@ async fn validate_multi_bot(
     require_successful_simulation(execution_context.as_ref(), require_simulation)?;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: strategy_type_from_config(&bot.strategy_config),
+        strategy_config: Some(&bot.strategy_config),
         chain_id: Some(protocol_chain_id),
         protocol: &req.target_protocol,
         token_in: &token_in,
         token_out: &token_out,
+        metadata: Some(&req.metadata),
         vault_address: Some(&bot.vault_address),
         rpc_url: Some(&bot.rpc_url),
         require_vault_valuation: !bot.paper_trade
@@ -1331,10 +1339,12 @@ fn validate_chain_tokens(
 
 pub(crate) struct SupportedTradeAssetValidation<'a> {
     pub strategy_type: Option<&'a str>,
+    pub strategy_config: Option<&'a serde_json::Value>,
     pub chain_id: Option<u64>,
     pub protocol: &'a str,
     pub token_in: &'a str,
     pub token_out: &'a str,
+    pub metadata: Option<&'a serde_json::Value>,
     pub vault_address: Option<&'a str>,
     pub rpc_url: Option<&'a str>,
     pub require_vault_valuation: bool,
@@ -1345,10 +1355,12 @@ pub(crate) async fn validate_supported_trade_assets(
 ) -> Result<(), (StatusCode, String)> {
     let SupportedTradeAssetValidation {
         strategy_type,
+        strategy_config,
         chain_id,
         protocol,
         token_in,
         token_out,
+        metadata,
         vault_address,
         rpc_url,
         require_vault_valuation,
@@ -1370,6 +1382,7 @@ pub(crate) async fn validate_supported_trade_assets(
         protocol,
         token_in,
         TradeAssetRole::Input,
+        strategy_config,
     )?;
     let output_asset = require_supported_asset(
         strategy_type,
@@ -1377,6 +1390,16 @@ pub(crate) async fn validate_supported_trade_assets(
         protocol,
         token_out,
         TradeAssetRole::Output,
+        strategy_config,
+    )?;
+    validate_explicit_route_assets(
+        strategy_type,
+        chain_id,
+        protocol,
+        token_in,
+        token_out,
+        metadata,
+        strategy_config,
     )?;
 
     if !require_vault_valuation {
@@ -1391,18 +1414,111 @@ pub(crate) async fn validate_supported_trade_assets(
     Ok(())
 }
 
+fn validate_explicit_route_assets(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    token_in: &str,
+    token_out: &str,
+    metadata: Option<&serde_json::Value>,
+    strategy_config: Option<&serde_json::Value>,
+) -> Result<(), (StatusCode, String)> {
+    if protocol != "uniswap_v3" {
+        return Ok(());
+    }
+    let Some(route) = metadata
+        .and_then(|metadata| {
+            metadata
+                .get("route_tokens")
+                .or_else(|| metadata.get("route"))
+        })
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(());
+    };
+    if route.len() < 2 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Uniswap route_tokens must include at least token_in and token_out".to_string(),
+        ));
+    }
+    let route_tokens = route
+        .iter()
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Uniswap route_tokens must be token address strings".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if route_tokens
+        .first()
+        .is_none_or(|token| !token.eq_ignore_ascii_case(token_in))
+        || route_tokens
+            .last()
+            .is_none_or(|token| !token.eq_ignore_ascii_case(token_out))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Uniswap route_tokens must start with token_in and end with token_out".to_string(),
+        ));
+    }
+
+    for token in route_tokens {
+        let as_input = is_supported_trade_asset_for_config(
+            strategy_type,
+            chain_id,
+            protocol,
+            token,
+            TradeAssetRole::Input,
+            strategy_config,
+        )
+        .is_some();
+        let as_output = is_supported_trade_asset_for_config(
+            strategy_type,
+            chain_id,
+            protocol,
+            token,
+            TradeAssetRole::Output,
+            strategy_config,
+        )
+        .is_some();
+        if !as_input && !as_output {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Route token {token} is not in the configured DEX asset universe on chain {chain_id}"
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn require_supported_asset(
     strategy_type: &str,
     chain_id: u64,
     protocol: &str,
     token: &str,
     role: TradeAssetRole,
+    strategy_config: Option<&serde_json::Value>,
 ) -> Result<trading_runtime::supported_assets::SupportedAsset, (StatusCode, String)> {
-    is_supported_trade_asset(strategy_type, chain_id, protocol, token, role).ok_or_else(|| {
+    is_supported_trade_asset_for_config(
+        strategy_type,
+        chain_id,
+        protocol,
+        token,
+        role,
+        strategy_config,
+    )
+    .ok_or_else(|| {
         let strategy = normalize_strategy_type(strategy_type).to_ascii_uppercase();
         (
             StatusCode::BAD_REQUEST,
-            format!("Token {token} is not supported for {strategy} bots on chain {chain_id}"),
+            format!("Token {token} is not in the configured {strategy} asset universe on chain {chain_id}"),
         )
     })
 }
@@ -1522,10 +1638,12 @@ mod tests {
     async fn supported_asset_check_allows_weth_usdc_dex() {
         validate_supported_trade_assets(SupportedTradeAssetValidation {
             strategy_type: Some("dex"),
+            strategy_config: None,
             chain_id: Some(31339),
             protocol: "uniswap_v3",
             token_in: MAINNET_WETH_ADDRESS,
             token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            metadata: None,
             vault_address: None,
             rpc_url: None,
             require_vault_valuation: false,
@@ -1538,10 +1656,12 @@ mod tests {
     async fn supported_asset_check_rejects_unknown_dex_token() {
         let err = validate_supported_trade_assets(SupportedTradeAssetValidation {
             strategy_type: Some("dex"),
+            strategy_config: None,
             chain_id: Some(31339),
             protocol: "uniswap_v3",
             token_in: MAINNET_WETH_ADDRESS,
             token_out: "0x000000000000000000000000000000000000dEaD",
+            metadata: None,
             vault_address: None,
             rpc_url: None,
             require_vault_valuation: false,
@@ -1550,7 +1670,10 @@ mod tests {
         .expect_err("unknown token should fail");
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert!(err.1.contains("not supported for DEX bots on chain 31339"));
+        assert!(
+            err.1
+                .contains("not in the configured DEX asset universe on chain 31339")
+        );
     }
 
     #[test]

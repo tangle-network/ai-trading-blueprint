@@ -11,7 +11,7 @@ use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
 use trading_runtime::supported_assets::{
-    ValuationAdapterKind, default_protocol_for_strategy, supported_assets_for,
+    ValuationAdapterKind, default_protocol_for_strategy, supported_assets_for_config,
 };
 
 /// Keyed lock set for provision dedup — prevents TOCTOU race between
@@ -240,11 +240,18 @@ fn apply_strategy_defaults(
             .entry("available_protocols".to_string())
             .or_insert_with(|| Value::Array(vec![Value::String(default_protocol.to_string())]));
 
-        let supported_assets =
-            supported_assets_for(&request.strategy_type, protocol_chain_id, default_protocol);
+        let supported_assets = supported_assets_for_config(
+            &request.strategy_type,
+            protocol_chain_id,
+            default_protocol,
+            Some(&Value::Object(strategy_config.clone())),
+        );
         if !supported_assets.is_empty() {
             strategy_config
                 .entry("supported_assets".to_string())
+                .and_modify(|value| {
+                    *value = serde_json::to_value(&supported_assets).unwrap_or(Value::Null);
+                })
                 .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
         }
     }
@@ -289,12 +296,13 @@ fn vault_supported_asset_configs(
     strategy_type: &str,
     protocol_chain_id: u64,
     deposit_asset: Address,
+    strategy_config: &Value,
 ) -> Result<Vec<crate::on_chain::VaultSupportedAssetConfig>, String> {
     let Some(protocol) = default_protocol_for_strategy(strategy_type) else {
         return Ok(Vec::new());
     };
 
-    supported_assets_for(strategy_type, protocol_chain_id, protocol)
+    supported_assets_for_config(strategy_type, protocol_chain_id, protocol, Some(strategy_config))
         .into_iter()
         .map(|asset| {
             let token: Address = asset.address.parse().map_err(|e| {
@@ -564,6 +572,7 @@ pub async fn provision_core(
             &request.strategy_type,
             protocol_chain_id,
             request.asset_token,
+            &Value::Object(strategy_config_obj.clone()),
         )
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
         if !supported_asset_configs.is_empty() {

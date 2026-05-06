@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::aave_v3_registry::market_for_chain;
 use crate::token_metadata::token_metadata_for_chain;
@@ -49,6 +50,21 @@ pub fn supported_assets_for(
     }
 }
 
+pub fn supported_assets_for_config(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    strategy_config: Option<&Value>,
+) -> Vec<SupportedAsset> {
+    if let Some(configured) = strategy_config
+        .and_then(|config| configured_assets_from_value(config, strategy_type, chain_id, protocol))
+    {
+        return configured;
+    }
+
+    supported_assets_for(strategy_type, chain_id, protocol)
+}
+
 pub fn is_supported_trade_asset(
     strategy_type: &str,
     chain_id: u64,
@@ -56,10 +72,21 @@ pub fn is_supported_trade_asset(
     token: &str,
     role: TradeAssetRole,
 ) -> Option<SupportedAsset> {
+    is_supported_trade_asset_for_config(strategy_type, chain_id, protocol, token, role, None)
+}
+
+pub fn is_supported_trade_asset_for_config(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    token: &str,
+    role: TradeAssetRole,
+    strategy_config: Option<&Value>,
+) -> Option<SupportedAsset> {
     let key = normalize_token(token);
     let resolved_address = token_metadata_for_chain(Some(chain_id), token)
         .map(|metadata| normalize_token(metadata.address));
-    supported_assets_for(strategy_type, chain_id, protocol)
+    supported_assets_for_config(strategy_type, chain_id, protocol, strategy_config)
         .into_iter()
         .find(|asset| {
             ((normalize_token(&asset.address) == key || normalize_token(&asset.symbol) == key)
@@ -68,6 +95,126 @@ pub fn is_supported_trade_asset(
                     .is_some_and(|address| normalize_token(&asset.address) == address))
                 && asset.roles.contains(&role)
         })
+}
+
+fn configured_assets_from_value(
+    config: &Value,
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+) -> Option<Vec<SupportedAsset>> {
+    let asset_universe = config.get("asset_universe");
+    let configured = asset_universe
+        .and_then(|universe| universe.get("allowed_assets"))
+        .or_else(|| asset_universe.and_then(|universe| universe.get("assets")))
+        .or_else(|| config.get("supported_assets"))?;
+
+    let assets = configured
+        .as_array()?
+        .iter()
+        .filter_map(|value| parse_supported_asset(value, strategy_type, chain_id, protocol))
+        .collect::<Vec<_>>();
+
+    Some(assets)
+}
+
+fn parse_supported_asset(
+    value: &Value,
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+) -> Option<SupportedAsset> {
+    let address = value.get("address")?.as_str()?.trim();
+    if !address.starts_with("0x") {
+        return None;
+    }
+
+    let symbol = value
+        .get("symbol")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|symbol| !symbol.is_empty())
+        .unwrap_or("UNKNOWN");
+
+    let asset_strategy = value
+        .get("strategy_type")
+        .and_then(Value::as_str)
+        .unwrap_or(strategy_type);
+    if normalize_strategy_type(asset_strategy) != normalize_strategy_type(strategy_type) {
+        return None;
+    }
+
+    let asset_protocol = value
+        .get("protocol")
+        .and_then(Value::as_str)
+        .unwrap_or(protocol);
+    if normalize_protocol(asset_protocol) != normalize_protocol(protocol) {
+        return None;
+    }
+
+    let asset_chain_id = value
+        .get("chain_id")
+        .and_then(Value::as_u64)
+        .unwrap_or(chain_id);
+    if registry_chain_id(asset_chain_id) != registry_chain_id(chain_id) {
+        return None;
+    }
+
+    let roles = value
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|role| role.as_str().and_then(parse_trade_asset_role))
+                .collect::<Vec<_>>()
+        })
+        .filter(|roles| !roles.is_empty())
+        .unwrap_or_else(|| vec![TradeAssetRole::Input, TradeAssetRole::Output]);
+
+    let decimals = value
+        .get("decimals")
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .or_else(|| token_metadata_for_chain(Some(chain_id), address).map(|token| token.decimals))
+        .unwrap_or(18);
+
+    let valuation_adapter = value
+        .get("valuation_adapter")
+        .and_then(Value::as_str)
+        .and_then(parse_valuation_adapter_kind)
+        .unwrap_or(ValuationAdapterKind::ChainlinkUsd);
+
+    Some(SupportedAsset {
+        strategy_type: normalize_strategy_type(strategy_type),
+        protocol: normalize_protocol(protocol),
+        chain_id: registry_chain_id(chain_id),
+        symbol: symbol.to_string(),
+        address: address.to_string(),
+        decimals,
+        roles,
+        valuation_adapter,
+    })
+}
+
+fn parse_trade_asset_role(value: &str) -> Option<TradeAssetRole> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "input" => Some(TradeAssetRole::Input),
+        "output" => Some(TradeAssetRole::Output),
+        "collateral" => Some(TradeAssetRole::Collateral),
+        "wrapper" => Some(TradeAssetRole::Wrapper),
+        "debt" => Some(TradeAssetRole::Debt),
+        _ => None,
+    }
+}
+
+fn parse_valuation_adapter_kind(value: &str) -> Option<ValuationAdapterKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(ValuationAdapterKind::None),
+        "chainlink_usd" | "chainlink" => Some(ValuationAdapterKind::ChainlinkUsd),
+        "wrapped_asset" | "wrapped" => Some(ValuationAdapterKind::WrappedAsset),
+        _ => None,
+    }
 }
 
 pub fn default_protocol_for_strategy(strategy_type: &str) -> Option<&'static str> {
@@ -197,6 +344,48 @@ mod tests {
         );
 
         assert!(asset.is_none());
+    }
+
+    #[test]
+    fn configured_dex_assets_override_default_pair() {
+        let config = serde_json::json!({
+            "asset_universe": {
+                "base_asset": "USDC",
+                "allowed_assets": [{
+                    "strategy_type": "dex",
+                    "protocol": "uniswap_v3",
+                    "chain_id": 1,
+                    "symbol": "DAI",
+                    "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                    "decimals": 18,
+                    "roles": ["input", "output"],
+                    "valuation_adapter": "chainlink_usd"
+                }]
+            }
+        });
+
+        assert!(
+            is_supported_trade_asset_for_config(
+                "dex",
+                1,
+                "uniswap_v3",
+                "DAI",
+                TradeAssetRole::Input,
+                Some(&config)
+            )
+            .is_some()
+        );
+        assert!(
+            is_supported_trade_asset_for_config(
+                "dex",
+                1,
+                "uniswap_v3",
+                "WETH",
+                TradeAssetRole::Input,
+                Some(&config)
+            )
+            .is_none()
+        );
     }
 
     #[test]

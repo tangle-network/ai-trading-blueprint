@@ -20,7 +20,7 @@ use crate::simulator::{
     SimulationRequest, TransactionSimulator,
     risk_analyzer::{TradeContext, analyze_simulation},
 };
-use crate::supported_assets::{TradeAssetRole, is_supported_trade_asset};
+use crate::supported_assets::{SupportedAsset, TradeAssetRole, is_supported_trade_asset};
 use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
@@ -135,6 +135,20 @@ impl TradeExecutor {
         intent: &TradeIntent,
         validation: &ValidationResult,
     ) -> Result<TransactionOutcome, TradingError> {
+        self.execute_validated_trade_with_supported_assets(intent, validation, None)
+            .await
+    }
+
+    /// Execute a validated trade with a caller-provided asset universe.
+    ///
+    /// Multi-bot HTTP execution uses this to enforce each bot's configured
+    /// assets instead of falling back to the legacy global WETH/USDC list.
+    pub async fn execute_validated_trade_with_supported_assets(
+        &self,
+        intent: &TradeIntent,
+        validation: &ValidationResult,
+        supported_assets: Option<&[SupportedAsset]>,
+    ) -> Result<TransactionOutcome, TradingError> {
         // 1. Get the right adapter
         let adapter = get_adapter(&intent.target_protocol, Some(self.vault_client.chain_id))?;
 
@@ -157,7 +171,7 @@ impl TradeExecutor {
                     message: format!("Invalid token_out address: {e}"),
                 })?;
 
-        validate_supported_execution_tokens(intent)?;
+        validate_supported_execution_tokens(intent, supported_assets)?;
 
         // Convert Decimal amounts to U256 (treating as raw token units)
         let amount = decimal_to_u256(&intent.amount_in)?;
@@ -337,7 +351,10 @@ impl TradeExecutor {
     }
 }
 
-fn validate_supported_execution_tokens(intent: &TradeIntent) -> Result<(), TradingError> {
+fn validate_supported_execution_tokens(
+    intent: &TradeIntent,
+    supported_assets: Option<&[SupportedAsset]>,
+) -> Result<(), TradingError> {
     let Some(strategy_type) = strategy_type_for_protocol(&intent.target_protocol) else {
         return Ok(());
     };
@@ -345,15 +362,7 @@ fn validate_supported_execution_tokens(intent: &TradeIntent) -> Result<(), Tradi
         (&intent.token_in, TradeAssetRole::Input),
         (&intent.token_out, TradeAssetRole::Output),
     ] {
-        if is_supported_trade_asset(
-            strategy_type,
-            intent.chain_id,
-            &intent.target_protocol,
-            token,
-            role,
-        )
-        .is_none()
-        {
+        if !execution_token_is_supported(intent, strategy_type, token, role, supported_assets) {
             return Err(TradingError::AdapterError {
                 protocol: intent.target_protocol.clone(),
                 message: format!(
@@ -365,6 +374,35 @@ fn validate_supported_execution_tokens(intent: &TradeIntent) -> Result<(), Tradi
         }
     }
     Ok(())
+}
+
+fn execution_token_is_supported(
+    intent: &TradeIntent,
+    strategy_type: &str,
+    token: &str,
+    role: TradeAssetRole,
+    supported_assets: Option<&[SupportedAsset]>,
+) -> bool {
+    if let Some(assets) = supported_assets {
+        let key = token.trim().to_ascii_lowercase();
+        return assets.iter().any(|asset| {
+            asset.strategy_type == strategy_type
+                && asset.protocol == intent.target_protocol
+                && asset.chain_id == intent.chain_id
+                && asset.roles.contains(&role)
+                && (asset.address.trim().eq_ignore_ascii_case(token)
+                    || asset.symbol.trim().to_ascii_lowercase() == key)
+        });
+    }
+
+    is_supported_trade_asset(
+        strategy_type,
+        intent.chain_id,
+        &intent.target_protocol,
+        token,
+        role,
+    )
+    .is_some()
 }
 
 fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {

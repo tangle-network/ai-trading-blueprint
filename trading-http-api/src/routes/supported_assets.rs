@@ -4,7 +4,9 @@ use axum::http::StatusCode;
 use axum::{Json, Router, routing::get};
 use serde::Deserialize;
 use std::sync::Arc;
-use trading_runtime::supported_assets::{default_protocol_for_strategy, supported_assets_for};
+use trading_runtime::supported_assets::{
+    default_protocol_for_strategy, supported_assets_for, supported_assets_for_config,
+};
 
 #[derive(Debug, Deserialize)]
 struct SupportedAssetsQuery {
@@ -95,6 +97,6 @@ async fn supported_assets_multi_bot(
         "strategy_type": strategy_type,
         "chain_id": chain_id,
         "protocol": protocol,
-        "assets": supported_assets_for(strategy_type, chain_id, protocol),
+        "assets": supported_assets_for_config(strategy_type, chain_id, protocol, Some(&bot.strategy_config)),
     })))
 }

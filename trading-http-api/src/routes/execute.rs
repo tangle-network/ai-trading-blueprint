@@ -32,6 +32,7 @@ use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
 use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
+use trading_runtime::supported_assets::supported_assets_for_config;
 use trading_runtime::token_metadata::{
     address_chain_mismatch, chain_display_name, known_token_decimals,
 };
@@ -1765,11 +1766,26 @@ async fn execute_real_trade(
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
+    strategy_config: Option<&serde_json::Value>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let validation = build_validation_result(&req.validation);
+    let configured_assets = strategy_type_from_config_value(strategy_config)
+        .map(|strategy_type| {
+            supported_assets_for_config(
+                strategy_type,
+                intent.chain_id,
+                &intent.target_protocol,
+                strategy_config,
+            )
+        })
+        .filter(|assets| !assets.is_empty());
 
     let outcome = executor
-        .execute_validated_trade(intent, &validation)
+        .execute_validated_trade_with_supported_assets(
+            intent,
+            &validation,
+            configured_assets.as_deref(),
+        )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -1835,6 +1851,10 @@ async fn execute_real_trade(
         paper_trade: false,
         clob_order_id: None,
     }))
+}
+
+fn strategy_type_from_config_value(strategy_config: Option<&serde_json::Value>) -> Option<&str> {
+    strategy_config.and_then(strategy_type_from_config)
 }
 
 // ── CLOB execution (Polymarket off-chain order book) ─────────────────────────
@@ -2168,10 +2188,12 @@ async fn execute(
     normalized_request.intent = normalized_intent;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: None,
+        strategy_config: None,
         chain_id: protocol_chain_id,
         protocol: &normalized_request.intent.target_protocol,
         token_in: &normalized_request.intent.token_in,
         token_out: &normalized_request.intent.token_out,
+        metadata: Some(&normalized_request.intent.metadata),
         vault_address: Some(&state.vault_address),
         rpc_url: state.rpc_url.as_deref(),
         require_vault_valuation: !state.paper_trade
@@ -2341,6 +2363,7 @@ async fn execute(
         &normalized_request,
         stored_validation,
         &valuation,
+        None,
     )
     .await?;
 
@@ -2384,10 +2407,12 @@ async fn execute_multi_bot(
     normalized_req.intent = normalized_intent;
     validate_supported_trade_assets(SupportedTradeAssetValidation {
         strategy_type: strategy_type_from_config(&bot.strategy_config),
+        strategy_config: Some(&bot.strategy_config),
         chain_id: Some(protocol_chain_id),
         protocol: &normalized_req.intent.target_protocol,
         token_in: &normalized_req.intent.token_in,
         token_out: &normalized_req.intent.token_out,
+        metadata: Some(&normalized_req.intent.metadata),
         vault_address: Some(&bot.vault_address),
         rpc_url: Some(&bot.rpc_url),
         require_vault_valuation: !bot.paper_trade
@@ -2679,6 +2704,7 @@ async fn execute_multi_bot(
         &normalized_req,
         stored_validation,
         &valuation,
+        Some(&bot.strategy_config),
     )
     .await?;
     if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
