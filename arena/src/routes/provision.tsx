@@ -2872,7 +2872,10 @@ export default function ProvisionPage() {
   );
 
   useEffect(() => {
-    if (latestDeployment?.phase === 'awaiting_secrets' && step === 'deploy') {
+    if (
+      (latestDeployment?.phase === 'awaiting_secrets' || latestDeployment?.phase === 'active') &&
+      step === 'deploy'
+    ) {
       setStep('secrets');
     }
   }, [latestDeployment?.phase, step]);

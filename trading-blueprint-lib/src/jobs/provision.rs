@@ -40,6 +40,10 @@ impl Drop for InflightGuard {
     }
 }
 
+fn should_dedup_provision_identity(service_id: u64, call_id: u64) -> bool {
+    service_id > 0 || call_id > 0
+}
+
 fn parse_strategy_config_object(
     strategy_config_json: &str,
 ) -> Result<Option<Map<String, Value>>, String> {
@@ -398,7 +402,7 @@ pub async fn provision_core(
     // Race-safety: PROVISION_INFLIGHT prevents TOCTOU between the
     // find_bot_by_call check and the later insert. If another concurrent
     // provision for the same key is already running, we block it here.
-    if call_id > 0 {
+    if should_dedup_provision_identity(service_id, call_id) {
         if let Ok(Some(existing)) = crate::state::find_bot_by_call(service_id, call_id) {
             tracing::info!(
                 bot_id = %existing.id,
@@ -434,7 +438,7 @@ pub async fn provision_core(
     }
 
     // Drop guard: auto-clears PROVISION_INFLIGHT on any exit (success, error, panic).
-    let _inflight_guard = if call_id > 0 {
+    let _inflight_guard = if should_dedup_provision_identity(service_id, call_id) {
         Some(InflightGuard(service_id, call_id))
     } else {
         None

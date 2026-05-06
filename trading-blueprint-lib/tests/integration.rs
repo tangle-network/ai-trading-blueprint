@@ -174,6 +174,45 @@ async fn test_provision_creates_records() {
 }
 
 #[tokio::test]
+async fn test_provision_dedups_real_service_zero_call_id() {
+    let _dir = common::init_test_env();
+
+    let first_sandbox = mock_sandbox("sb-zero-call-first");
+    let first_sandbox_id = first_sandbox.id.clone();
+    let first = provision_core(
+        make_provision_request("zero-call-first", "dex"),
+        Some(first_sandbox),
+        0,
+        1,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let second = provision_core(
+        make_provision_request("zero-call-second", "dex"),
+        Some(mock_sandbox("sb-zero-call-second")),
+        0,
+        1,
+        "0xTESTCALLER".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(first.sandbox_id, first_sandbox_id);
+    assert_eq!(
+        second.sandbox_id, first_sandbox_id,
+        "service-scoped call_id=0 should resolve to the existing bot instead of creating a duplicate"
+    );
+    assert!(
+        find_bot_by_sandbox("sb-zero-call-second").is_err(),
+        "duplicate service/call identity must not create a second bot record"
+    );
+}
+
+#[tokio::test]
 async fn test_provision_rejects_invalid_runtime_backend() {
     let _dir = common::init_test_env();
     let call_id = 91_000_001u64;

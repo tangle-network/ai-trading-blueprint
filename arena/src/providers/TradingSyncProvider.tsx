@@ -38,6 +38,10 @@ import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 const REFRESH_INTERVAL_MS = 15_000;
 
+function isUniqueCallId(callId: number | null | undefined): callId is number {
+  return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
+}
+
 type VaultEntry = {
   serviceId: number;
   vaultAddress: Address;
@@ -596,7 +600,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         const vault = bot.vault_address?.toLowerCase() ?? '';
         return (
           (!vault || vault === zeroAddress || isExplicitVaultPlaceholder(vault))
-          && bot.call_id != null
+          && isUniqueCallId(bot.call_id)
           && bot.service_id > 0
         );
       });
@@ -645,8 +649,8 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
           (provision) =>
             (provision.sandboxId && operatorBot.sandbox_id && provision.sandboxId === operatorBot.sandbox_id)
             || (
-              provision.callId != null
-              && operatorBot.call_id != null
+              isUniqueCallId(provision.callId)
+              && isUniqueCallId(operatorBot.call_id)
               && provision.callId === operatorBot.call_id
               && provision.serviceId != null
               && operatorBot.service_id > 0

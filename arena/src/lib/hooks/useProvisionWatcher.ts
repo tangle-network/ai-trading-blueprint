@@ -54,12 +54,25 @@ function decodeProvisionOutput(output: `0x${string}`) {
   };
 }
 
-function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
-  if (provision.callId == null) return false;
+function isUniqueCallId(callId: number | undefined): callId is number {
+  return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
+}
+
+function isCurrentZeroCallProvision(provision: TrackedProvision): boolean {
+  return provision.callId === 0
+    && Boolean(provision.txHash)
+    && (provision.phase === 'job_submitted' || provision.phase === 'job_processing');
+}
+
+export function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
+  const hasPollableCallId = isUniqueCallId(provision.callId) || isCurrentZeroCallProvision(provision);
+  if (!hasPollableCallId) return false;
 
   if (provision.phase === 'job_submitted' || provision.phase === 'job_processing') {
     return true;
   }
+
+  if (!isUniqueCallId(provision.callId)) return false;
 
   if ((provision.phase === 'awaiting_secrets' || provision.phase === 'active') && !provision.botId) {
     return true;
@@ -429,6 +442,7 @@ export function useProvisionWatcher() {
       (p: TrackedProvision) =>
         ['active', 'awaiting_secrets'].includes(p.phase) &&
         p.callId != null &&
+        p.callId > 0 &&
         (!p.vaultAddress || p.vaultAddress === zeroAddress || p.vaultAddress === '0x0000000000000000000000000000000000000020'),
     );
     if (needsRepair.length === 0) return;
