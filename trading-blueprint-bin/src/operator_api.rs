@@ -148,6 +148,7 @@ pub struct BotDetailResponse {
     pub wind_down_started_at: Option<u64>,
     pub validator_service_ids: Vec<u64>,
     pub validator_endpoints: Vec<String>,
+    pub validation_trust: trading_runtime::ValidationTrust,
     pub call_id: u64,
     pub service_id: u64,
 }
@@ -196,6 +197,7 @@ impl BotDetailResponse {
             wind_down_started_at: b.wind_down_started_at,
             validator_service_ids: b.validator_service_ids.clone(),
             validator_endpoints: trading_blueprint_lib::discovery::endpoints_from_env(),
+            validation_trust: b.validation_trust,
             call_id: b.call_id,
             service_id: b.service_id,
         }

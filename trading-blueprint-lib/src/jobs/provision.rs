@@ -752,6 +752,14 @@ pub async fn provision_core(
         request.max_lifetime_days
     };
 
+    let risk_params: serde_json::Value = serde_json::from_str(&request.risk_params_json)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Invalid risk_params_json (using empty): {e}");
+            serde_json::Value::Object(Default::default())
+        });
+    let validation_trust =
+        validation_trust_from_risk_params(&request.strategy_type, paper_trade, &risk_params);
+
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
         name: request.name.clone(),
@@ -760,10 +768,7 @@ pub async fn provision_core(
         share_token: share_token.clone(),
         strategy_type: request.strategy_type.clone(),
         strategy_config: serde_json::Value::Object(parsed_strategy_config.unwrap_or_default()),
-        risk_params: serde_json::from_str(&request.risk_params_json).unwrap_or_else(|e| {
-            tracing::warn!("Invalid risk_params_json (using empty): {e}");
-            serde_json::Value::Object(Default::default())
-        }),
+        risk_params,
         chain_id,
         rpc_url,
         trading_api_url,
@@ -782,7 +787,7 @@ pub async fn provision_core(
         service_id,
         harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
             .unwrap_or_default(),
-        validation_trust: trading_runtime::ValidationTrust::default(),
+        validation_trust,
     };
 
     // 8. Store bot record
@@ -859,4 +864,27 @@ pub async fn provision(
     Ok(TangleResult(
         provision_core(request, None, call_id, service_id, caller_str, None).await?,
     ))
+}
+
+fn validation_trust_from_risk_params(
+    strategy_type: &str,
+    paper_trade: bool,
+    risk_params: &serde_json::Value,
+) -> trading_runtime::ValidationTrust {
+    if paper_trade || strategy_type != "dex" {
+        return trading_runtime::ValidationTrust::default();
+    }
+
+    let enabled = risk_params
+        .get("uniswap_envelope")
+        .or_else(|| risk_params.get("envelope"))
+        .and_then(|value| value.get("enabled").or(Some(value)))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    if enabled {
+        trading_runtime::ValidationTrust::Envelope
+    } else {
+        trading_runtime::ValidationTrust::default()
+    }
 }

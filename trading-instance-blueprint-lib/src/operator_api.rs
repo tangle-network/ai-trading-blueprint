@@ -72,6 +72,7 @@ pub struct BotDetailResponse {
     pub archived: bool,
     pub control_available: bool,
     pub wind_down_started_at: Option<u64>,
+    pub validation_trust: trading_blueprint_lib::state::ValidationTrust,
     pub call_id: u64,
     pub service_id: u64,
 }
@@ -104,6 +105,7 @@ impl BotDetailResponse {
             archived: runtime.archived,
             control_available: runtime.control_available,
             wind_down_started_at: b.wind_down_started_at,
+            validation_trust: b.validation_trust,
             call_id: b.call_id,
             service_id: b.service_id,
         }
