@@ -1,6 +1,9 @@
 import { Button, Card, CardContent, Input } from '@tangle-network/blueprint-ui/components';
+import { Plus, X } from 'lucide-react';
 import type { Address } from 'viem';
+import type { DexAssetSelection } from '~/lib/assetUniverse';
 import { strategyPacks, type StrategyPackDef } from '~/lib/blueprints';
+import { truncateAddress } from '~/lib/format';
 import type { ServiceInfo } from '~/routes/provision/types';
 
 const CLOB_COLLATERAL_STRATEGY_IDS = new Set(['volatility', 'mm', 'multi']);
@@ -31,6 +34,14 @@ interface ConfigureStepProps {
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
   strategyExecutionNotice?: string | null;
+  assetOptions?: DexAssetSelection[];
+  baseAssetAddress?: Address;
+  setBaseAssetAddress?: (v: Address) => void;
+  selectedAssetAddresses?: Address[];
+  addAssetToUniverse?: (value: string) => boolean;
+  removeAssetFromUniverse?: (address: Address) => void;
+  manualAssetInput?: string;
+  setManualAssetInput?: (v: string) => void;
   collateralCapPct: string;
   setCollateralCapPct: (v: string) => void;
   canNext: boolean;
@@ -51,12 +62,46 @@ export function ConfigureStep({
   selectedOperators,
   setShowAdvanced,
   strategyExecutionNotice,
+  assetOptions = [],
+  baseAssetAddress,
+  setBaseAssetAddress = () => {},
+  selectedAssetAddresses = [],
+  addAssetToUniverse = () => false,
+  removeAssetFromUniverse = () => {},
+  manualAssetInput = '',
+  setManualAssetInput = () => {},
   collateralCapPct,
   setCollateralCapPct,
   canNext,
   goNext,
 }: ConfigureStepProps) {
   const supportsClobCollateral = strategySupportsClobCollateral(strategyType, selectedPack);
+  const isDexStrategy = strategyType === 'dex';
+  const effectiveBaseAssetAddress =
+    baseAssetAddress ?? selectedAssetAddresses[0] ?? assetOptions[0]?.address;
+  const selectedAssets = selectedAssetAddresses
+    .map((address) => {
+      const option = assetOptions.find(
+        (asset) => asset.address.toLowerCase() === address.toLowerCase(),
+      );
+      return option ?? {
+        address,
+        symbol: truncateAddress(address),
+        name: 'Custom asset',
+        decimals: 18,
+        known: false,
+      };
+    });
+  const baseAssetChoices = [...assetOptions];
+  for (const asset of selectedAssets) {
+    if (
+      !baseAssetChoices.some(
+        (choice) => choice.address.toLowerCase() === asset.address.toLowerCase(),
+      )
+    ) {
+      baseAssetChoices.push(asset);
+    }
+  }
   return (
     <>
       <Card>
@@ -72,6 +117,100 @@ export function ConfigureStep({
           />
         </CardContent>
       </Card>
+
+      {isDexStrategy && (
+        <Card>
+          <CardContent className="pt-5 pb-5 space-y-4">
+            <div>
+              <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                Asset Universe
+              </span>
+              <p className="text-xs text-arena-elements-textTertiary mt-1">
+                The bot can swap and hold only these selected Uniswap assets. Live valuation uses Chainlink.
+              </p>
+            </div>
+
+            <label className="block">
+              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block mb-1.5">
+                Base Asset
+              </span>
+              <select
+                value={effectiveBaseAssetAddress ?? ''}
+                onChange={(event) => setBaseAssetAddress(event.target.value as Address)}
+                className="w-full rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-3 py-2 text-sm text-arena-elements-textPrimary"
+              >
+                {baseAssetChoices.map((asset) => (
+                  <option key={asset.address} value={asset.address}>
+                    {asset.symbol} - {asset.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-arena-elements-textTertiary mt-1.5 block">
+                The base asset is included automatically.
+              </span>
+            </label>
+
+            <div className="space-y-2">
+              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block">
+                Allowed Assets
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {selectedAssets.map((asset) => {
+                  const isBase =
+                    effectiveBaseAssetAddress != null &&
+                    asset.address.toLowerCase() === effectiveBaseAssetAddress.toLowerCase();
+                  return (
+                    <span
+                      key={asset.address}
+                      className="inline-flex items-center gap-2 rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-2.5 py-1.5 text-sm"
+                    >
+                      <span className="font-medium text-arena-elements-textPrimary">
+                        {asset.symbol}
+                      </span>
+                      <span className="text-xs text-arena-elements-textTertiary">
+                        {asset.known ? 'Chainlink ready' : 'Chainlink feed required'}
+                      </span>
+                      {!isBase && (
+                        <button
+                          type="button"
+                          onClick={() => removeAssetFromUniverse(asset.address)}
+                          className="text-arena-elements-textTertiary hover:text-arena-elements-textPrimary"
+                          aria-label={`Remove ${asset.symbol}`}
+                          title={`Remove ${asset.symbol}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input
+                  placeholder="Type WETH, DAI, WBTC, or a token address"
+                  value={manualAssetInput}
+                  onChange={(event) => setManualAssetInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      addAssetToUniverse(manualAssetInput);
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => addAssetToUniverse(manualAssetInput)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="pt-5 pb-5 space-y-4">

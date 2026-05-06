@@ -77,6 +77,12 @@ import {
 import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
 import {
+  buildDexAssetUniverse,
+  dexAssetSelectionsForChain,
+  resolveDexAssetInput,
+  type DexAssetUniverse,
+} from '~/lib/assetUniverse';
+import {
   isStaleStateError,
   readOperatorError,
   type OperatorErrorBody,
@@ -108,6 +114,7 @@ interface StrategyConfigOptions {
   researchCron?: string;
   conversationEnabled?: boolean;
   researchEnabled?: boolean;
+  assetUniverse?: DexAssetUniverse;
 }
 
 interface ProvisionStrategyConfigOptions extends StrategyConfigOptions {
@@ -490,6 +497,7 @@ export function buildStrategyConfigForProvision({
   researchCron,
   conversationEnabled = true,
   researchEnabled = true,
+  assetUniverse,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -508,6 +516,7 @@ export function buildStrategyConfigForProvision({
   }
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
+  if (assetUniverse) config.asset_universe = assetUniverse;
   if (conversationCron || researchCron || !conversationEnabled || !researchEnabled) {
     config.workflow_schedules = {
       ...(conversationCron ? { conversation_cron: conversationCron } : {}),
@@ -1174,6 +1183,13 @@ export default function ProvisionPage() {
   const [customResearchCron, setCustomResearchCron] = useState('');
   const [conversationEnabled, setConversationEnabled] = useState(true);
   const [researchEnabled, setResearchEnabled] = useState(true);
+  const [baseAssetAddress, setBaseAssetAddress] = useState<Address>(
+    BASE_SEPOLIA_USDC_ADDRESS as Address,
+  );
+  const [selectedAssetAddresses, setSelectedAssetAddresses] = useState<Address[]>([
+    BASE_SEPOLIA_USDC_ADDRESS as Address,
+  ]);
+  const [manualAssetInput, setManualAssetInput] = useState('');
   const [collateralCapPct, setCollateralCapPct] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>(
@@ -1280,6 +1296,88 @@ export default function ProvisionPage() {
     strategyType,
     selectedExecutionTarget,
     provisionPaperTrade,
+  );
+  const assetUniverseChainId =
+    selectedExecutionTarget?.protocolChainId ??
+    selectedExecutionTarget?.chainId ??
+    targetChain.id;
+  const assetOptions = useMemo(
+    () => dexAssetSelectionsForChain(assetUniverseChainId),
+    [assetUniverseChainId],
+  );
+  useEffect(() => {
+    if (strategyType !== 'dex') return;
+    const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;
+    const defaultBase =
+      targetAsset ??
+      assetOptions.find((asset) => asset.symbol === 'USDC')?.address ??
+      assetOptions[0]?.address;
+    if (!defaultBase) return;
+    setBaseAssetAddress(defaultBase);
+    setSelectedAssetAddresses((current) => {
+      const available = new Set(assetOptions.map((asset) => asset.address.toLowerCase()));
+      const kept = current.filter((address) => available.has(address.toLowerCase()));
+      const next = new Map<string, Address>();
+      next.set(defaultBase.toLowerCase(), defaultBase);
+      for (const address of kept) next.set(address.toLowerCase(), address);
+      const weth = assetOptions.find((asset) => asset.symbol === 'WETH')?.address;
+      if (weth) next.set(weth.toLowerCase(), weth);
+      return [...next.values()];
+    });
+  }, [assetOptions, selectedExecutionTarget?.assetToken, strategyType]);
+  const addAssetToUniverse = useCallback(
+    (value: string) => {
+      const resolved = resolveDexAssetInput(value, assetUniverseChainId);
+      if (!resolved) {
+        toast.error('Use a known asset name or a full token address');
+        return false;
+      }
+      setSelectedAssetAddresses((current) => {
+        if (
+          current.some(
+            (address) => address.toLowerCase() === resolved.address.toLowerCase(),
+          )
+        ) {
+          return current;
+        }
+        return [...current, resolved.address];
+      });
+      setManualAssetInput('');
+      return true;
+    },
+    [assetUniverseChainId],
+  );
+  const removeAssetFromUniverse = useCallback(
+    (address: Address) => {
+      if (address.toLowerCase() === baseAssetAddress.toLowerCase()) return;
+      setSelectedAssetAddresses((current) =>
+        current.filter((asset) => asset.toLowerCase() !== address.toLowerCase()),
+      );
+    },
+    [baseAssetAddress],
+  );
+  useEffect(() => {
+    setSelectedAssetAddresses((current) => {
+      if (
+        current.some(
+          (address) => address.toLowerCase() === baseAssetAddress.toLowerCase(),
+        )
+      ) {
+        return current;
+      }
+      return [baseAssetAddress, ...current];
+    });
+  }, [baseAssetAddress]);
+  const dexAssetUniverse = useMemo(
+    () =>
+      strategyType === 'dex'
+        ? buildDexAssetUniverse({
+            chainId: assetUniverseChainId,
+            baseAsset: baseAssetAddress,
+            selectedAssets: selectedAssetAddresses,
+          })
+        : undefined,
+    [assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, strategyType],
   );
   const hasEnabledExecutionTarget =
     selectedPack.executionMode !== 'single-chain' ||
@@ -1678,6 +1776,7 @@ export default function ProvisionPage() {
             researchCron: effectiveResearchCron,
             conversationEnabled,
             researchEnabled,
+            assetUniverse: dexAssetUniverse,
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
@@ -2142,6 +2241,7 @@ export default function ProvisionPage() {
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
+      assetUniverse: dexAssetUniverse,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
@@ -2213,7 +2313,9 @@ export default function ProvisionPage() {
       riskParams: '{}',
       vaultAddress: executionConfig?.provisionVaultAddress ?? zeroAddress,
       assetAddress:
-        executionConfig?.assetAddress ??
+        strategyType === 'dex'
+          ? baseAssetAddress
+          : executionConfig?.assetAddress ??
         ((import.meta.env.VITE_USDC_ADDRESS ??
           '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       depositors: vaultSigners.length > 0 ? vaultSigners : [],
@@ -2368,13 +2470,17 @@ export default function ProvisionPage() {
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
+      assetUniverse: dexAssetUniverse,
       effectiveCron,
       validatorServiceIds: instanceValidatorIds,
       vaultSigners: instanceVaultSigners,
       collateralBps,
       targetChainId: targetChain.id,
-      assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
-        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+      assetAddress:
+        strategyType === 'dex'
+          ? baseAssetAddress
+          : ((import.meta.env.VITE_USDC_ADDRESS ??
+              '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       blueprintDefaults: bp.defaults,
     });
 
@@ -3111,6 +3217,14 @@ export default function ProvisionPage() {
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
             strategyExecutionNotice={strategyExecutionNotice}
+            assetOptions={assetOptions}
+            baseAssetAddress={baseAssetAddress}
+            setBaseAssetAddress={setBaseAssetAddress}
+            selectedAssetAddresses={selectedAssetAddresses}
+            addAssetToUniverse={addAssetToUniverse}
+            removeAssetFromUniverse={removeAssetFromUniverse}
+            manualAssetInput={manualAssetInput}
+            setManualAssetInput={setManualAssetInput}
             collateralCapPct={collateralCapPct}
             setCollateralCapPct={setCollateralCapPct}
             canNext={canNext ?? false}

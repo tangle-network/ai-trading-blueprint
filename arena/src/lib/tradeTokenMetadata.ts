@@ -1,7 +1,7 @@
 import { formatUnits } from 'viem';
 import { truncateAddress } from '~/lib/format';
 
-interface TokenMetadata {
+export interface TokenMetadata {
   symbol: string;
   name: string;
   decimals: number;
@@ -171,6 +171,11 @@ function iconTextForLabel(label: string): string {
 
 export function getTradeTokenMetadata(token: string, chainId?: number): TokenMetadata | null {
   return lookupKnownToken(token, chainId);
+}
+
+export function knownTradeTokensForChain(chainId?: number): TokenMetadata[] {
+  if (chainId == null) return [...KNOWN_TOKENS];
+  return KNOWN_TOKENS.filter((metadata) => metadata.chainIds.includes(chainId));
 }
 
 export function getTradeTokenDisplaySymbol(token: string, chainId?: number): string {
