@@ -59,6 +59,8 @@ data/
 scripts/data/
 arena/scripts/data/
 /keystore/
+/.deploy-keystore/
+/.requester-keystore/
 
 # Playwright MCP
 .playwright-mcp
