@@ -55,8 +55,15 @@ function tokenDefaults(config = loadConfig()) {
 }
 
 function supportedAssetDefaults(config = loadConfig()) {
+  const universeAssets =
+    config.strategy_config
+    && config.strategy_config.asset_universe
+    && Array.isArray(config.strategy_config.asset_universe.allowed_assets)
+      ? config.strategy_config.asset_universe.allowed_assets
+      : null;
   const assets =
-    (config.strategy_config && Array.isArray(config.strategy_config.supported_assets)
+    universeAssets
+    || (config.strategy_config && Array.isArray(config.strategy_config.supported_assets)
       && config.strategy_config.supported_assets)
     || [];
   return assets.reduce((acc, asset) => {
@@ -83,6 +90,11 @@ function knownTokenSymbol(token) {
   if (!token || typeof token !== 'string') return null;
   const normalized = token.trim().toLowerCase();
   const defaults = tokenDefaults();
+  for (const [symbol, address] of Object.entries(defaults)) {
+    if (normalized === symbol || normalized === String(address).toLowerCase()) {
+      return symbol.toUpperCase();
+    }
+  }
   if (defaults.weth && normalized === defaults.weth.toLowerCase()) return 'WETH';
   if (defaults.usdc && normalized === defaults.usdc.toLowerCase()) return 'USDC';
   if (normalized === 'weth' || normalized === 'eth') return 'WETH';

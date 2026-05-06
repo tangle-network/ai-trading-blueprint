@@ -223,10 +223,11 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
 }
 
 fn supported_assets_prompt_line(strategy_config: &serde_json::Value) -> String {
-    let Some(assets) = strategy_config
-        .get("supported_assets")
-        .and_then(serde_json::Value::as_array)
-    else {
+    let assets_value = strategy_config
+        .get("asset_universe")
+        .and_then(|universe| universe.get("allowed_assets"))
+        .or_else(|| strategy_config.get("supported_assets"));
+    let Some(assets) = assets_value.and_then(serde_json::Value::as_array) else {
         return "Use only assets returned by GET /supported-assets for this bot.".to_string();
     };
 
