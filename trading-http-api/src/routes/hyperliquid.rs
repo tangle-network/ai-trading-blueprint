@@ -229,6 +229,17 @@ async fn update_envelope_handler(
     };
     env.verify(&binding, &state.trusted_envelope_signers())
         .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
+    if let Some(current) = get_signed_envelope(&bot.bot_id) {
+        if env.nonce <= current.nonce {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "Envelope nonce {} must be greater than current nonce {}",
+                    env.nonce, current.nonce
+                ),
+            ));
+        }
+    }
     set_signed_envelope(&bot.bot_id, &env).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     tracing::info!(
         bot_id = %bot.bot_id,

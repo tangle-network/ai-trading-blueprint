@@ -2218,6 +2218,380 @@ async fn test_live_self_operated_execute_rejects_by_default() {
     assert_eq!(response.status(), 403);
 }
 
+// ── Paper-mode envelope constraint tests ─────────────────────────────────────
+
+fn paper_bot_with_envelope_trust(bot_id: &str) -> BotContext {
+    let mut bot = live_bot_with_trust(bot_id, trading_runtime::ValidationTrust::Envelope);
+    bot.paper_trade = true;
+    bot
+}
+
+/// Like `hyperliquid_execute_body` but with the paper-mode bypass in
+/// `validator_responses` so that `ensure_paper_validation_consistency` passes,
+/// and with a zero execution_hash because paper trades skip payload binding.
+fn paper_hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "intent": {
+            "strategy_id": strategy_id,
+            "action": "open_long",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "0",
+            "target_protocol": "hyperliquid",
+            "metadata": {
+                "asset": "ETH",
+                "leverage": 2,
+                "stop_loss_pct": 3.0
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 100,
+            "validator_responses": [
+                {
+                    "validator": "paper-mode",
+                    "score": 100,
+                    "reasoning": "Paper trade mode — validation bypassed",
+                    "signature": format!("0x{}", "00".repeat(65))
+                }
+            ]
+        }
+    });
+    // Compute the real intent_hash (needed for hash binding), but zero out
+    // execution_hash because paper trades use bind_execution_payload=false
+    // and the server therefore expects 0x000...000 for execution_hash.
+    attach_validation_hashes(&mut body, Some(31337));
+    body["validation"]["execution_hash"] =
+        serde_json::json!(format!("0x{}", "00".repeat(32)));
+    body
+}
+
+/// Recompute validation hashes for a body after its metadata has been modified.
+/// Required when `paper_hyperliquid_execute_body` is used and then fields mutated.
+fn reattach_paper_validation_hashes(body: &mut serde_json::Value) {
+    attach_validation_hashes(body, Some(31337));
+    body["validation"]["execution_hash"] =
+        serde_json::json!(format!("0x{}", "00".repeat(32)));
+}
+
+async fn put_signed_envelope(
+    app: axum::Router,
+    auth_token: &str,
+    signed: &SignedTradingEnvelope,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("PUT")
+            .uri("/hyperliquid/envelope")
+            .header("authorization", format!("Bearer {auth_token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(signed).unwrap()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+async fn execute_with_body(
+    app: axum::Router,
+    auth_token: &str,
+    body: serde_json::Value,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("authorization", format!("Bearer {auth_token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_when_no_envelope_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-env-missing-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-env-missing-token", bot);
+    let app = build_multi_bot_router(state);
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = execute_with_body(app, "paper-env-missing-token", body).await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_disallowed_asset() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-env-asset-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-env-asset-token", bot.clone());
+
+    // Build envelope that only allows BTC (not ETH)
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.envelope.allowed_assets = vec!["BTC".to_string()];
+    signed.signatures.clear();
+    signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    // Store the envelope
+    let put_response =
+        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "paper-env-asset-token", &signed).await;
+    assert_eq!(put_response.status(), 200, "PUT envelope should succeed");
+
+    // Execute with ETH (not in whitelist)
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    let response =
+        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-env-asset-token", body).await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("whitelist")
+            || String::from_utf8_lossy(&bytes).contains("envelope"),
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_excessive_leverage() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-lev-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-lev-token", bot.clone());
+
+    // Build envelope with max_leverage = 2
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.envelope.max_leverage = 2;
+    signed.signatures.clear();
+    signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    let put_response =
+        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "paper-lev-token", &signed).await;
+    assert_eq!(put_response.status(), 200);
+
+    // Execute with leverage=5 (exceeds max_leverage=2)
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["leverage"] = serde_json::json!(5);
+    reattach_paper_validation_hashes(&mut body);
+    let response =
+        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-lev-token", body).await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_missing_stop_loss() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-sl-missing-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-sl-missing-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.signatures.clear();
+    signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-missing-token",
+        &signed,
+    )
+    .await;
+
+    // Request with no stop_loss metadata
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"].as_object_mut().unwrap().remove("stop_loss_pct");
+    reattach_paper_validation_hashes(&mut body);
+    let response =
+        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-sl-missing-token", body).await;
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_stop_loss_out_of_bounds() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-sl-oob-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-sl-oob-token", bot.clone());
+
+    // Default envelope has max_stop_loss_distance: 0.05 (5%)
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.signatures.clear();
+    signed
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-oob-token",
+        &signed,
+    )
+    .await;
+
+    // stop_loss_pct: 20% → distance 0.20 exceeds max 0.05
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["stop_loss_pct"] = serde_json::json!(20.0);
+    reattach_paper_validation_hashes(&mut body);
+    let response =
+        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-sl-oob-token", body).await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+// ── Nonce monotonicity tests ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_envelope_nonce_upgrade_accepted() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-up-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-up-token", bot.clone());
+
+    let mut signed1 = signed_envelope_for_bot(&bot);
+    signed1.nonce = 1;
+    signed1.signatures.clear();
+    signed1
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    let r1 =
+        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-up-token", &signed1).await;
+    assert_eq!(r1.status(), 200, "first PUT should succeed");
+
+    let mut signed2 = signed_envelope_for_bot(&bot);
+    signed2.nonce = 2;
+    signed2.signatures.clear();
+    signed2
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    let r2 =
+        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-up-token", &signed2).await;
+    assert_eq!(r2.status(), 200, "nonce upgrade should succeed");
+}
+
+#[tokio::test]
+async fn test_envelope_nonce_downgrade_rejected() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-down-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-down-token", bot.clone());
+
+    let mut signed5 = signed_envelope_for_bot(&bot);
+    signed5.nonce = 5;
+    signed5.signatures.clear();
+    signed5
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-down-token",
+        &signed5,
+    )
+    .await;
+
+    let mut signed3 = signed_envelope_for_bot(&bot);
+    signed3.nonce = 3;
+    signed3.signatures.clear();
+    signed3
+        .sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+
+    let r_down =
+        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-down-token", &signed3).await;
+    let status = r_down.status();
+    let bytes = r_down.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        status,
+        409,
+        "nonce downgrade should be rejected: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn test_envelope_same_nonce_rejected() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-same-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-same-token", bot.clone());
+
+    let make_envelope = |nonce: u64| {
+        let mut s = signed_envelope_for_bot(&bot);
+        s.nonce = nonce;
+        s.signatures.clear();
+        s.sign_with_private_key(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            31337,
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        )
+        .unwrap();
+        s
+    };
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-same-token",
+        &make_envelope(4),
+    )
+    .await;
+
+    let r_same = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-same-token",
+        &make_envelope(4),
+    )
+    .await;
+    assert_eq!(r_same.status(), 409, "same nonce should be rejected");
+}
+
 #[tokio::test]
 async fn test_multi_bot_health_no_auth() {
     let state = multi_bot_state();
