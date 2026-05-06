@@ -215,3 +215,287 @@ impl ClobPolicy {
         ))))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_perps() -> PerpsPolicy {
+        PerpsPolicy {
+            allowed_assets: vec!["ETH".into(), "BTC".into()],
+            max_leverage: 5,
+            max_stop_loss_distance: Decimal::new(5, 2),
+            min_stop_loss_distance: Decimal::new(1, 2),
+            require_stop_loss: false,
+        }
+    }
+
+    fn valid_policy() -> TradingPolicy {
+        TradingPolicy {
+            max_trade_size_usd: Decimal::from(1000),
+            max_total_exposure_usd: Decimal::from(3000),
+            max_drawdown_pct: Decimal::from(10),
+            can_open_positions: true,
+            perps: Some(valid_perps()),
+            vault: None,
+            clob: None,
+        }
+    }
+
+    // ── validate() ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_accepts_valid_policy() {
+        valid_policy().validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_zero_trade_size() {
+        let mut p = valid_policy();
+        p.max_trade_size_usd = Decimal::ZERO;
+        assert_eq!(p.validate().unwrap_err(), EnvelopeError::InvalidTradeSize);
+    }
+
+    #[test]
+    fn validate_rejects_negative_trade_size() {
+        let mut p = valid_policy();
+        p.max_trade_size_usd = Decimal::from(-1);
+        assert_eq!(p.validate().unwrap_err(), EnvelopeError::InvalidTradeSize);
+    }
+
+    #[test]
+    fn validate_rejects_zero_total_exposure() {
+        let mut p = valid_policy();
+        p.max_total_exposure_usd = Decimal::ZERO;
+        assert_eq!(
+            p.validate().unwrap_err(),
+            EnvelopeError::InvalidTotalExposure
+        );
+    }
+
+    #[test]
+    fn validate_rejects_drawdown_over_100() {
+        let mut p = valid_policy();
+        p.max_drawdown_pct = Decimal::from(150);
+        assert!(matches!(
+            p.validate().unwrap_err(),
+            EnvelopeError::InvalidDrawdownPct { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_zero_drawdown() {
+        let mut p = valid_policy();
+        p.max_drawdown_pct = Decimal::ZERO;
+        assert!(matches!(
+            p.validate().unwrap_err(),
+            EnvelopeError::InvalidDrawdownPct { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_drawdown_at_100() {
+        let mut p = valid_policy();
+        p.max_drawdown_pct = Decimal::from(100);
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_perps_rejects_zero_leverage() {
+        let mut p = valid_perps();
+        p.max_leverage = 0;
+        assert_eq!(p.validate().unwrap_err(), EnvelopeError::InvalidLeverage);
+    }
+
+    #[test]
+    fn validate_perps_rejects_inverted_stop_loss_range() {
+        let mut p = valid_perps();
+        p.min_stop_loss_distance = Decimal::new(10, 2);
+        p.max_stop_loss_distance = Decimal::new(5, 2);
+        assert_eq!(
+            p.validate().unwrap_err(),
+            EnvelopeError::InvalidStopLossRange
+        );
+    }
+
+    #[test]
+    fn validate_perps_rejects_equal_stop_loss_bounds() {
+        let mut p = valid_perps();
+        p.min_stop_loss_distance = Decimal::new(5, 2);
+        p.max_stop_loss_distance = Decimal::new(5, 2);
+        assert_eq!(
+            p.validate().unwrap_err(),
+            EnvelopeError::InvalidStopLossRange
+        );
+    }
+
+    // ── decimal scaling helpers ──────────────────────────────────────────────
+
+    #[test]
+    fn decimal_to_cents_scales_correctly() {
+        assert_eq!(decimal_to_cents(Decimal::from(1)).unwrap(), 100);
+        assert_eq!(decimal_to_cents(Decimal::new(150, 2)).unwrap(), 150);
+        assert_eq!(decimal_to_cents(Decimal::ZERO).unwrap(), 0);
+    }
+
+    #[test]
+    fn decimal_to_cents_rejects_overflow() {
+        // u64::MAX cents in dollars = ~1.84e17, push past it
+        let huge = Decimal::from(i64::MAX);
+        let result = decimal_to_cents(huge * Decimal::from(1000));
+        assert!(matches!(
+            result,
+            Err(EnvelopeError::HashEncodingFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn decimal_pct_to_bps_scales_correctly() {
+        assert_eq!(decimal_pct_to_bps(Decimal::from(10)).unwrap(), 1000);
+        assert_eq!(decimal_pct_to_bps(Decimal::from(100)).unwrap(), 10_000);
+    }
+
+    #[test]
+    fn decimal_fraction_to_bps_scales_correctly() {
+        assert_eq!(decimal_fraction_to_bps(Decimal::new(5, 2)).unwrap(), 500);
+        assert_eq!(decimal_fraction_to_bps(Decimal::ONE).unwrap(), 10_000);
+        assert_eq!(decimal_fraction_to_bps(Decimal::ZERO).unwrap(), 0);
+    }
+
+    // ── hash_sorted_strings ──────────────────────────────────────────────────
+
+    #[test]
+    fn hash_sorted_strings_is_order_independent() {
+        let a = vec!["ETH".to_string(), "BTC".to_string(), "SOL".to_string()];
+        let b = vec!["SOL".to_string(), "ETH".to_string(), "BTC".to_string()];
+        assert_eq!(hash_sorted_strings(&a), hash_sorted_strings(&b));
+    }
+
+    #[test]
+    fn hash_sorted_strings_dedups_repeats() {
+        let a = vec!["ETH".to_string(), "BTC".to_string()];
+        let b = vec![
+            "ETH".to_string(),
+            "BTC".to_string(),
+            "ETH".to_string(),
+            "BTC".to_string(),
+        ];
+        assert_eq!(hash_sorted_strings(&a), hash_sorted_strings(&b));
+    }
+
+    #[test]
+    fn hash_sorted_strings_distinct_inputs_produce_distinct_hashes() {
+        let a = vec!["ETH".to_string()];
+        let b = vec!["BTC".to_string()];
+        assert_ne!(hash_sorted_strings(&a), hash_sorted_strings(&b));
+    }
+
+    #[test]
+    fn hash_sorted_strings_empty_is_stable() {
+        let a: Vec<String> = vec![];
+        let b: Vec<String> = vec![];
+        assert_eq!(hash_sorted_strings(&a), hash_sorted_strings(&b));
+    }
+
+    // ── struct_hash determinism + cross-protocol distinctness ───────────────
+
+    #[test]
+    fn struct_hash_is_deterministic() {
+        let p = valid_policy();
+        assert_eq!(p.struct_hash().unwrap(), p.struct_hash().unwrap());
+    }
+
+    #[test]
+    fn struct_hash_differs_when_perps_field_changes() {
+        let p1 = valid_policy();
+        let mut p2 = valid_policy();
+        p2.perps.as_mut().unwrap().max_leverage = 10;
+        assert_ne!(p1.struct_hash().unwrap(), p2.struct_hash().unwrap());
+    }
+
+    #[test]
+    fn struct_hash_differs_when_universal_field_changes() {
+        let p1 = valid_policy();
+        let mut p2 = valid_policy();
+        p2.can_open_positions = false;
+        assert_ne!(p1.struct_hash().unwrap(), p2.struct_hash().unwrap());
+    }
+
+    #[test]
+    fn perps_only_vs_vault_only_struct_hashes_distinct() {
+        let mut perps_only = valid_policy();
+        let mut vault_only = valid_policy();
+        perps_only.vault = None;
+        perps_only.clob = None;
+        vault_only.perps = None;
+        vault_only.vault = Some(VaultPolicy {
+            allowed_protocols: vec!["uniswap_v3".into()],
+            allowed_tokens_in: vec![],
+            allowed_tokens_out: vec![],
+            max_slippage_bps: 50,
+        });
+        assert_ne!(
+            perps_only.struct_hash().unwrap(),
+            vault_only.struct_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn vault_only_vs_clob_only_struct_hashes_distinct() {
+        let mut vault_only = valid_policy();
+        vault_only.perps = None;
+        vault_only.vault = Some(VaultPolicy {
+            allowed_protocols: vec![],
+            allowed_tokens_in: vec![],
+            allowed_tokens_out: vec![],
+            max_slippage_bps: 50,
+        });
+        let mut clob_only = valid_policy();
+        clob_only.perps = None;
+        clob_only.clob = Some(ClobPolicy {
+            allowed_market_ids: vec![],
+            max_position_size_usd: Decimal::from(100),
+        });
+        assert_ne!(
+            vault_only.struct_hash().unwrap(),
+            clob_only.struct_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn perps_struct_hash_field_sensitivity() {
+        let p1 = valid_perps();
+        let h1 = p1.struct_hash().unwrap();
+
+        let mut p2 = p1.clone();
+        p2.allowed_assets = vec!["ETH".into()];
+        assert_ne!(h1, p2.struct_hash().unwrap());
+
+        let mut p3 = p1.clone();
+        p3.max_leverage = 100;
+        assert_ne!(h1, p3.struct_hash().unwrap());
+
+        let mut p4 = p1.clone();
+        p4.require_stop_loss = true;
+        assert_ne!(h1, p4.struct_hash().unwrap());
+    }
+
+    #[test]
+    fn vault_struct_hash_field_sensitivity() {
+        let p1 = VaultPolicy {
+            allowed_protocols: vec!["uniswap_v3".into()],
+            allowed_tokens_in: vec!["0xabc".into()],
+            allowed_tokens_out: vec!["0xdef".into()],
+            max_slippage_bps: 50,
+        };
+        let h1 = p1.struct_hash().unwrap();
+
+        let mut p2 = p1.clone();
+        p2.allowed_protocols.push("aave_v3".into());
+        assert_ne!(h1, p2.struct_hash().unwrap());
+
+        let mut p3 = p1.clone();
+        p3.max_slippage_bps = 100;
+        assert_ne!(h1, p3.struct_hash().unwrap());
+    }
+}

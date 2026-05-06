@@ -675,4 +675,359 @@ mod tests {
         p2.max_trade_size_usd = Decimal::from(999);
         assert_ne!(p1.struct_hash().unwrap(), p2.struct_hash().unwrap());
     }
+
+    // ── digest sensitivity & order independence ──────────────────────────────
+
+    #[test]
+    fn digest_changes_when_bot_id_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.bot_id = "x".into();
+        b.bot_id = "y".into();
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_chain_id_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.chain_id = 31337;
+        b.chain_id = 1;
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_protocol_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.protocol = "hyperliquid".into();
+        b.protocol = "uniswap_v3".into();
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_nonce_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.nonce = 1;
+        b.nonce = 2;
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_expires_at_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.expires_at = 1_000_000_000;
+        b.expires_at = 2_000_000_000;
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_min_signatures_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.min_signatures = 1;
+        b.min_signatures = 2;
+        a.approval_signers = vec![signer_address(KEY1), signer_address(KEY2)];
+        b.approval_signers = vec![signer_address(KEY1), signer_address(KEY2)];
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_changes_when_verifying_contract_changes() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.verifying_contract = CONTRACT.into();
+        b.verifying_contract = "0x0000000000000000000000000000000000000099".into();
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn digest_is_invariant_to_signer_order() {
+        let a1 = signer_address(KEY1);
+        let a2 = signer_address(KEY2);
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.min_signatures = 2;
+        b.min_signatures = 2;
+        a.approval_signers = vec![a1.clone(), a2.clone()];
+        b.approval_signers = vec![a2, a1];
+        assert_eq!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn protocol_match_is_case_insensitive() {
+        let mut e = signed_test_envelope();
+        e.protocol = "HyperLiquid".into();
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        // Verify will fail because the digest was signed with the original
+        // string; just check the binding step does not reject case differences.
+        // We can do that by inspecting the public validate path indirectly:
+        // re-sign with the upper-case protocol and re-verify.
+        e.signatures.clear();
+        e.sign_with_private_key(KEY1, CONTRACT).unwrap();
+        e.verify(&binding, &trusted).unwrap();
+    }
+
+    // ── version + structural constraint guards ──────────────────────────────
+
+    #[test]
+    fn wrong_version_rejected() {
+        let mut e = signed_test_envelope();
+        e.version = 1;
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        assert!(matches!(
+            e.verify(&binding, &trusted).unwrap_err(),
+            EnvelopeError::VersionMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn empty_approval_set_rejected() {
+        let mut e = signed_test_envelope();
+        e.approval_signers.clear();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        assert_eq!(
+            e.verify(&binding, &[signer_address(KEY1)]).unwrap_err(),
+            EnvelopeError::EmptySignerSet
+        );
+    }
+
+    #[test]
+    fn zero_min_signatures_rejected() {
+        let mut e = signed_test_envelope();
+        e.min_signatures = 0;
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        assert_eq!(
+            e.verify(&binding, &trusted).unwrap_err(),
+            EnvelopeError::ZeroMinSignatures
+        );
+    }
+
+    #[test]
+    fn min_signatures_above_signer_count_rejected() {
+        let mut e = signed_test_envelope();
+        e.min_signatures = 5; // only 1 approval_signer in default setup
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        assert!(matches!(
+            e.verify(&binding, &trusted).unwrap_err(),
+            EnvelopeError::MinSignaturesExceedsSigners { min: 5, count: 1 }
+        ));
+    }
+
+    #[test]
+    fn no_trusted_signers_rejected() {
+        let e = signed_test_envelope();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let empty: Vec<String> = vec![];
+        assert_eq!(
+            e.verify(&binding, &empty).unwrap_err(),
+            EnvelopeError::NoTrustedSigners
+        );
+    }
+
+    // ── adversarial signature handling ──────────────────────────────────────
+
+    #[test]
+    fn untrusted_signer_rejected_even_when_in_approval_set() {
+        // KEY2 is in approval_signers but not in trusted set
+        let a1 = signer_address(KEY1);
+        let a2 = signer_address(KEY2);
+        let mut e = SignedEnvelope {
+            version: 2,
+            bot_id: "untrusted-test".into(),
+            vault_address: VAULT.into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            policy: test_policy(),
+            approval_signers: vec![a1.clone(), a2.clone()],
+            min_signatures: 1,
+            issued_at: Utc::now().timestamp() as u64,
+            expires_at: Utc::now().timestamp() as u64 + 3600,
+            nonce: 1,
+            verifying_contract: CONTRACT.into(),
+            signatures: vec![],
+        };
+        e.sign_with_private_key(KEY2, CONTRACT).unwrap(); // signed by KEY2
+
+        let binding = EnvelopeBinding {
+            bot_id: "untrusted-test",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        // operator only trusts KEY1
+        let err = e.verify(&binding, &[a1]).unwrap_err();
+        assert!(matches!(err, EnvelopeError::SignerNotTrusted { .. }));
+    }
+
+    #[test]
+    fn signer_outside_approval_set_rejected() {
+        // Sign with KEY2 but only KEY1 is in approval_signers
+        let a1 = signer_address(KEY1);
+        let a2 = signer_address(KEY2);
+        let mut e = SignedEnvelope {
+            version: 2,
+            bot_id: "outside-test".into(),
+            vault_address: VAULT.into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            policy: test_policy(),
+            approval_signers: vec![a1.clone()],
+            min_signatures: 1,
+            issued_at: Utc::now().timestamp() as u64,
+            expires_at: Utc::now().timestamp() as u64 + 3600,
+            nonce: 1,
+            verifying_contract: CONTRACT.into(),
+            signatures: vec![],
+        };
+        e.sign_with_private_key(KEY2, CONTRACT).unwrap();
+
+        let binding = EnvelopeBinding {
+            bot_id: "outside-test",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = e.verify(&binding, &[a1, a2]).unwrap_err();
+        assert!(matches!(err, EnvelopeError::SignerNotInApprovalSet { .. }));
+    }
+
+    #[test]
+    fn forged_signer_address_rejected() {
+        // Signature is real (KEY1) but the `signer` field claims a different address.
+        let a1 = signer_address(KEY1);
+        let a2 = signer_address(KEY2);
+        let mut e = SignedEnvelope {
+            version: 2,
+            bot_id: "forge-test".into(),
+            vault_address: VAULT.into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            policy: test_policy(),
+            approval_signers: vec![a1.clone(), a2.clone()],
+            min_signatures: 1,
+            issued_at: Utc::now().timestamp() as u64,
+            expires_at: Utc::now().timestamp() as u64 + 3600,
+            nonce: 1,
+            verifying_contract: CONTRACT.into(),
+            signatures: vec![],
+        };
+        e.sign_with_private_key(KEY1, CONTRACT).unwrap();
+        // tamper with claimed signer
+        e.signatures[0].signer = a2.clone();
+
+        let binding = EnvelopeBinding {
+            bot_id: "forge-test",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = e.verify(&binding, &[a1, a2]).unwrap_err();
+        assert!(matches!(err, EnvelopeError::SignerMismatch { .. }));
+    }
+
+    #[test]
+    fn signature_does_not_verify_under_different_verifying_contract() {
+        // Sign with one verifying_contract, then mutate it. Recovery
+        // will yield a different address than the claimed signer.
+        let a1 = signer_address(KEY1);
+        let mut e = signed_test_envelope();
+        e.verifying_contract = "0x0000000000000000000000000000000000000099".into();
+        // signature in `e` was produced under CONTRACT, not the new contract
+
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = e.verify(&binding, &[a1]).unwrap_err();
+        assert!(matches!(err, EnvelopeError::SignerMismatch { .. }));
+    }
+
+    #[test]
+    fn invalid_address_in_approval_signers_returns_400_class_error() {
+        let mut e = signed_test_envelope();
+        e.approval_signers.push("not-an-address".into());
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        // verify() touches policy validation first; the bad address is hit
+        // when struct_hash() is called inside digest(). Either path yields
+        // an InvalidAddress.
+        let err = e.verify(&binding, &[signer_address(KEY1)]).unwrap_err();
+        assert!(matches!(err, EnvelopeError::InvalidAddress { .. }));
+    }
+
+    #[test]
+    fn issued_at_changes_digest() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.issued_at = 1;
+        b.issued_at = 2;
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn vault_address_changes_digest() {
+        let mut a = signed_test_envelope();
+        let mut b = signed_test_envelope();
+        a.vault_address = "0x0000000000000000000000000000000000000001".into();
+        b.vault_address = "0x0000000000000000000000000000000000000002".into();
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn round_trip_via_serde_preserves_verification() {
+        let e = signed_test_envelope();
+        let json = serde_json::to_string(&e).unwrap();
+        let restored: SignedEnvelope = serde_json::from_str(&json).unwrap();
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        restored.verify(&binding, &trusted).unwrap();
+    }
 }

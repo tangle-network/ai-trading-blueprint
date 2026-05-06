@@ -134,3 +134,167 @@ impl From<EnvelopeError> for (axum::http::StatusCode, String) {
         (status, e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    fn status_for(e: EnvelopeError) -> StatusCode {
+        let (status, _): (StatusCode, String) = e.into();
+        status
+    }
+
+    #[test]
+    fn binding_violations_map_to_403() {
+        for e in [
+            EnvelopeError::BotIdMismatch,
+            EnvelopeError::VaultMismatch,
+            EnvelopeError::ChainIdMismatch,
+            EnvelopeError::ProtocolMismatch {
+                envelope: "hyperliquid".into(),
+                execution: "uniswap_v3".into(),
+            },
+            EnvelopeError::Expired { expires_at: 1 },
+            EnvelopeError::VersionMismatch {
+                expected: 2,
+                got: 1,
+            },
+        ] {
+            assert_eq!(status_for(e), StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[test]
+    fn signer_violations_map_to_403() {
+        for e in [
+            EnvelopeError::NoTrustedSigners,
+            EnvelopeError::EmptySignerSet,
+            EnvelopeError::ZeroMinSignatures,
+            EnvelopeError::MinSignaturesExceedsSigners { min: 3, count: 2 },
+            EnvelopeError::SignerNotInApprovalSet { addr: "0x1".into() },
+            EnvelopeError::SignerNotTrusted { addr: "0x1".into() },
+            EnvelopeError::SignerMismatch {
+                claimed: "0x1".into(),
+                recovered: "0x2".into(),
+            },
+            EnvelopeError::InsufficientSignatures {
+                got: 1,
+                required: 2,
+            },
+        ] {
+            assert_eq!(status_for(e), StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[test]
+    fn trade_blocks_map_to_403() {
+        for e in [
+            EnvelopeError::CloseOnlyMode,
+            EnvelopeError::AssetNotAllowed {
+                asset: "DOGE".into(),
+            },
+            EnvelopeError::PositionSizeExceeded {
+                size: "1500".into(),
+                max: "1000".into(),
+            },
+            EnvelopeError::LeverageExceeded {
+                leverage: 10,
+                max: 5,
+            },
+            EnvelopeError::TotalExposureExceeded {
+                new_total: "5000".into(),
+                max: "3000".into(),
+            },
+            EnvelopeError::StopLossTooTight {
+                distance: "0.001".into(),
+                min: "0.01".into(),
+            },
+            EnvelopeError::StopLossTooWide {
+                distance: "0.5".into(),
+                max: "0.05".into(),
+            },
+            EnvelopeError::StopLossRequired,
+            EnvelopeError::ProtocolNotAllowed {
+                protocol: "aave_v3".into(),
+            },
+            EnvelopeError::TokenInNotAllowed {
+                token: "0x1".into(),
+            },
+            EnvelopeError::TokenOutNotAllowed {
+                token: "0x2".into(),
+            },
+            EnvelopeError::SlippageExceeded { bps: 100, max: 50 },
+            EnvelopeError::MarketNotAllowed {
+                market_id: "0x1".into(),
+            },
+            EnvelopeError::MissingPerpsPolicy,
+            EnvelopeError::MissingVaultPolicy,
+            EnvelopeError::MissingClobPolicy,
+        ] {
+            assert_eq!(status_for(e), StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[test]
+    fn policy_validation_failures_map_to_403() {
+        for e in [
+            EnvelopeError::InvalidDrawdownPct { got: "150".into() },
+            EnvelopeError::InvalidTradeSize,
+            EnvelopeError::InvalidTotalExposure,
+            EnvelopeError::InvalidStopLossRange,
+            EnvelopeError::InvalidLeverage,
+        ] {
+            assert_eq!(status_for(e), StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[test]
+    fn parse_failures_map_to_400() {
+        for e in [
+            EnvelopeError::InvalidAddress {
+                addr: "garbage".into(),
+                reason: "bad hex".into(),
+            },
+            EnvelopeError::InvalidSignatureHex {
+                reason: "non-hex char".into(),
+            },
+            EnvelopeError::InvalidSignatureLength { got: 32 },
+            EnvelopeError::SignatureRecoveryFailed {
+                reason: "malformed".into(),
+            },
+            EnvelopeError::HashEncodingFailed {
+                reason: "overflow".into(),
+            },
+        ] {
+            assert_eq!(status_for(e), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[test]
+    fn error_messages_include_actionable_context() {
+        let e = EnvelopeError::LeverageExceeded {
+            leverage: 10,
+            max: 5,
+        };
+        let (_, msg): (StatusCode, String) = e.into();
+        assert!(msg.contains("10"), "{msg}");
+        assert!(msg.contains("5"), "{msg}");
+
+        let e = EnvelopeError::ProtocolMismatch {
+            envelope: "hyperliquid".into(),
+            execution: "uniswap_v3".into(),
+        };
+        let (_, msg): (StatusCode, String) = e.into();
+        assert!(msg.contains("hyperliquid"), "{msg}");
+        assert!(msg.contains("uniswap_v3"), "{msg}");
+
+        let e = EnvelopeError::TotalExposureExceeded {
+            new_total: "5000".into(),
+            max: "3000".into(),
+        };
+        let (_, msg): (StatusCode, String) = e.into();
+        assert!(msg.contains("5000"), "{msg}");
+        assert!(msg.contains("3000"), "{msg}");
+    }
+}

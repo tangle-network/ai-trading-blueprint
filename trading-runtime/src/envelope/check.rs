@@ -532,4 +532,196 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, EnvelopeError::MarketNotAllowed { .. }));
     }
+
+    #[test]
+    fn clob_missing_policy() {
+        let p = base_policy(); // no clob set
+        let err = check_clob(
+            &p,
+            &ClobContext {
+                market_id: "0x9999",
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, EnvelopeError::MissingClobPolicy);
+    }
+
+    // ── vault token_in / token_out ────────────────────────────────────────────
+
+    #[test]
+    fn vault_token_in_not_allowed() {
+        let mut p = base_policy();
+        p.vault = Some(VaultPolicy {
+            allowed_protocols: vec![],
+            allowed_tokens_in: vec!["0xabc".into()],
+            allowed_tokens_out: vec![],
+            max_slippage_bps: 100,
+        });
+        let err = check_vault(
+            &p,
+            &VaultContext {
+                protocol: "uniswap_v3",
+                token_in: "0xnope",
+                token_out: "0x2",
+                slippage_bps: 10,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, EnvelopeError::TokenInNotAllowed { .. }));
+    }
+
+    #[test]
+    fn vault_token_out_not_allowed() {
+        let mut p = base_policy();
+        p.vault = Some(VaultPolicy {
+            allowed_protocols: vec![],
+            allowed_tokens_in: vec![],
+            allowed_tokens_out: vec!["0xdef".into()],
+            max_slippage_bps: 100,
+        });
+        let err = check_vault(
+            &p,
+            &VaultContext {
+                protocol: "uniswap_v3",
+                token_in: "0x1",
+                token_out: "0xnope",
+                slippage_bps: 10,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, EnvelopeError::TokenOutNotAllowed { .. }));
+    }
+
+    #[test]
+    fn vault_token_matching_is_case_insensitive() {
+        let mut p = base_policy();
+        p.vault = Some(VaultPolicy {
+            allowed_protocols: vec!["UniSwap_V3".into()],
+            allowed_tokens_in: vec!["0xABC".into()],
+            allowed_tokens_out: vec!["0xDEF".into()],
+            max_slippage_bps: 100,
+        });
+        check_vault(
+            &p,
+            &VaultContext {
+                protocol: "uniswap_v3",
+                token_in: "0xabc",
+                token_out: "0xdef",
+                slippage_bps: 10,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn vault_missing_policy() {
+        let p = base_policy(); // no vault set
+        let err = check_vault(
+            &p,
+            &VaultContext {
+                protocol: "uniswap_v3",
+                token_in: "0x1",
+                token_out: "0x2",
+                slippage_bps: 10,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, EnvelopeError::MissingVaultPolicy);
+    }
+
+    #[test]
+    fn vault_slippage_at_exact_max_passes() {
+        let mut p = base_policy();
+        p.vault = Some(VaultPolicy {
+            allowed_protocols: vec![],
+            allowed_tokens_in: vec![],
+            allowed_tokens_out: vec![],
+            max_slippage_bps: 50,
+        });
+        check_vault(
+            &p,
+            &VaultContext {
+                protocol: "uniswap_v3",
+                token_in: "0x1",
+                token_out: "0x2",
+                slippage_bps: 50,
+            },
+        )
+        .unwrap();
+    }
+
+    // ── perps stop-loss boundaries ───────────────────────────────────────────
+
+    #[test]
+    fn perps_stop_loss_at_exact_min_passes() {
+        let p = base_policy();
+        check_perps(
+            &p,
+            &PerpsContext {
+                asset: "ETH",
+                leverage: 1,
+                stop_loss_distance: Some(Decimal::new(1, 2)), // = min
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn perps_stop_loss_at_exact_max_passes() {
+        let p = base_policy();
+        check_perps(
+            &p,
+            &PerpsContext {
+                asset: "ETH",
+                leverage: 1,
+                stop_loss_distance: Some(Decimal::new(5, 2)), // = max
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn perps_leverage_at_exact_max_passes() {
+        let p = base_policy();
+        check_perps(
+            &p,
+            &PerpsContext {
+                asset: "ETH",
+                leverage: 5,
+                stop_loss_distance: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn perps_empty_asset_list_allows_any_asset() {
+        let mut p = base_policy();
+        p.perps.as_mut().unwrap().allowed_assets = vec![];
+        check_perps(
+            &p,
+            &PerpsContext {
+                asset: "DOGE",
+                leverage: 1,
+                stop_loss_distance: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn universal_close_is_allowed_under_close_only_mode() {
+        // is_open=false short-circuits; close-only policy must permit closes.
+        let mut p = base_policy();
+        p.can_open_positions = false;
+        check_universal(
+            &p,
+            &UniversalContext {
+                trade_size_usd: Decimal::from(100),
+                current_total_exposure_usd: Decimal::from(2999),
+                is_open: false,
+            },
+        )
+        .unwrap();
+    }
 }

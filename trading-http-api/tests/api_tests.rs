@@ -2541,6 +2541,136 @@ async fn test_envelope_nonce_downgrade_rejected() {
 }
 
 #[tokio::test]
+async fn test_paper_envelope_execute_rejects_open_in_close_only_mode() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-co-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-co-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.can_open_positions = false; // close-only
+    resign_envelope(&mut signed);
+
+    let put = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        &signed,
+    )
+    .await;
+    assert_eq!(put.status(), 200);
+
+    // open_long is an opening action; close-only mode must reject it.
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("close-only") || msg.contains("close"), "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_corrupt_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-corrupt-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("corrupt-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    // truncate signature to invalid length — should map to BAD_REQUEST (400)
+    signed.signatures[0].signature = format!("0x{}", "aa".repeat(32));
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "corrupt-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_non_hex_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hex-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("hex-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.signatures[0].signature = "totally-not-hex".into();
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "hex-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_expired_envelope_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-expired-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("expired-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.expires_at = 1_000; // long past
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "expired-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(
+        msg.contains("expired") || msg.contains("expires_at"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_wrong_version_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-version-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("version-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.version = 1; // v1 is not supported
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "version-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("version"), "{msg}");
+}
+
+#[tokio::test]
 async fn test_envelope_same_nonce_rejected() {
     ensure_state_dir();
     let bot_id = format!("bot-nonce-same-{}", uuid::Uuid::new_v4());
