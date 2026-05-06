@@ -5,6 +5,7 @@ pub mod calldata_decoder;
 pub mod chain;
 #[allow(clippy::too_many_arguments)]
 pub mod contracts;
+pub mod envelope;
 pub mod error;
 pub mod execution_hash;
 pub mod executor;
@@ -27,6 +28,11 @@ pub mod url_validation;
 pub mod validator_client;
 pub mod vault_client;
 
+pub use envelope::{
+    ClobContext, ClobPolicy, EnvelopeBinding, EnvelopeError, EnvelopeSignature, PerpsContext,
+    PerpsPolicy, SignedEnvelope, TradingPolicy, UniversalContext, VaultContext, VaultPolicy,
+    check_clob, check_perps, check_universal, check_vault,
+};
 pub use error::TradingError;
 pub use intent::TradeIntentBuilder;
 pub use types::*;
