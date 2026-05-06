@@ -54,6 +54,26 @@ PR gate before merging UI changes:
 - Suggested command:
   - `npx jscpd --min-lines 8 --min-tokens 80 --format ts,tsx --ignore "**/node_modules/**,**/.next/**,**/dist/**,**/build/**" /home/drew/code/blueprint-ui/src /home/drew/code/ai-agent-sandbox-blueprint/packages/agent-ui/src /home/drew/code/ai-agent-sandbox-blueprint/ui/src /home/drew/code/ai-trading-blueprints/arena/src`
 
+### Remote/Tailscale browser contract
+
+- Do not rely on browser `localhost`/`127.0.0.1` fallbacks for production-style
+  UI flows.
+- Keep RPC and API endpoints explicit in env for browser consumers.
+- When proxying RPC in dev (`arena/vite.config.ts`), verify remote browser access
+  from non-localhost hosts (Tailscale/LAN) before marking done.
+- Treat loopback URLs in tests as local-test scaffolding only, not deploy
+  guidance.
+
+### UI quality gates (required for UX-affecting PRs)
+
+- Async status/notice paths must be visible to the user (not only logged in
+  state).
+- Destructive actions require explicit confirmation or undo behavior.
+- Form labels must be programmatically bound (`htmlFor` + `id`).
+- Use semantic theme tokens for status text; avoid hardcoded low-contrast accent
+  classes in light mode.
+- Respect `prefers-reduced-motion` for non-essential UI transforms/transitions.
+
 ## Running E2E Tests
 
 ### Prerequisites
