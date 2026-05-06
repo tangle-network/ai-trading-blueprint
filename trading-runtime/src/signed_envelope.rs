@@ -396,4 +396,357 @@ mod tests {
                 .contains("bot_id")
         );
     }
+
+    // ── multi-sig ───────────────────────────────────────────────────────────
+
+    fn two_signer_test_envelope() -> SignedTradingEnvelope {
+        let key1 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let key2 = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        let contract = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+        let mut signed = SignedTradingEnvelope {
+            version: 1,
+            bot_id: "bot-multisig".into(),
+            vault_address: "0x0000000000000000000000000000000000000001".into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            envelope: TradingEnvelope {
+                expires_at: chrono::Utc::now().timestamp() + 3600,
+                ..Default::default()
+            },
+            approval_signers: vec![],
+            min_signatures: 2,
+            issued_at: chrono::Utc::now().timestamp(),
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            nonce: 1,
+            signatures: vec![],
+        };
+        let addr1 = signed.sign_with_private_key(key1, 31337, contract).unwrap();
+        let addr2 = signed.sign_with_private_key(key2, 31337, contract).unwrap();
+        signed.approval_signers = vec![addr1, addr2];
+        signed.signatures.clear();
+        signed.sign_with_private_key(key1, 31337, contract).unwrap();
+        signed.sign_with_private_key(key2, 31337, contract).unwrap();
+        signed
+    }
+
+    #[test]
+    fn multisig_two_of_two_passes() {
+        let signed = two_signer_test_envelope();
+        let trusted = signed.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "bot-multisig",
+            vault_address: "0x0000000000000000000000000000000000000001",
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let verified = signed.verify(&binding, &trusted).unwrap();
+        assert_eq!(verified.len(), 2);
+    }
+
+    #[test]
+    fn multisig_one_of_two_required_fails() {
+        let mut signed = two_signer_test_envelope();
+        signed.signatures.pop();
+        let trusted = signed.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "bot-multisig",
+            vault_address: "0x0000000000000000000000000000000000000001",
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = signed.verify(&binding, &trusted).unwrap_err();
+        assert!(err.to_string().contains("requires 2"), "{err}");
+    }
+
+    #[test]
+    fn multisig_same_key_twice_does_not_satisfy_quorum() {
+        let key1 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let key2 = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        let contract = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+        let mut signed = SignedTradingEnvelope {
+            version: 1,
+            bot_id: "bot-dedup".into(),
+            vault_address: "0x0000000000000000000000000000000000000001".into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            envelope: TradingEnvelope {
+                expires_at: chrono::Utc::now().timestamp() + 3600,
+                ..Default::default()
+            },
+            approval_signers: vec![],
+            min_signatures: 2,
+            issued_at: chrono::Utc::now().timestamp(),
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            nonce: 1,
+            signatures: vec![],
+        };
+        let addr1 = signed.sign_with_private_key(key1, 31337, contract).unwrap();
+        let addr2 = signed.sign_with_private_key(key2, 31337, contract).unwrap();
+        signed.approval_signers = vec![addr1.clone(), addr2];
+        let sig0 = signed.signatures[0].clone();
+        signed.signatures.push(sig0);
+        let trusted = signed.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "bot-dedup",
+            vault_address: "0x0000000000000000000000000000000000000001",
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        signed.signatures.clear();
+        signed.sign_with_private_key(key1, 31337, contract).unwrap();
+        let sig1 = signed.signatures[0].clone();
+        signed.signatures.push(sig1);
+        let err = signed.verify(&binding, &trusted).unwrap_err();
+        assert!(
+            err.to_string().contains("requires 2")
+                || err.to_string().contains("not in the approval"),
+            "{err}"
+        );
+    }
+
+    // ── constraint validation edge cases ────────────────────────────────────
+
+    fn base_envelope_for_constraints() -> SignedTradingEnvelope {
+        SignedTradingEnvelope {
+            version: 1,
+            bot_id: "bot-constraints".into(),
+            vault_address: "0x0000000000000000000000000000000000000001".into(),
+            chain_id: 31337,
+            protocol: "hyperliquid".into(),
+            envelope: TradingEnvelope {
+                expires_at: chrono::Utc::now().timestamp() + 3600,
+                ..Default::default()
+            },
+            approval_signers: vec!["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".into()],
+            min_signatures: 1,
+            issued_at: chrono::Utc::now().timestamp(),
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            nonce: 1,
+            signatures: vec![],
+        }
+    }
+
+    #[test]
+    fn validate_constraints_rejects_missing_expiry() {
+        let mut e = base_envelope_for_constraints();
+        e.expires_at = 0;
+        e.envelope.expires_at = 0;
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("expired") || err.to_string().contains("expires_at"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_constraints_rejects_zero_min_signatures() {
+        let mut e = base_envelope_for_constraints();
+        e.min_signatures = 0;
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("min_signatures") || err.to_string().contains("valid"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_constraints_rejects_empty_signer_set() {
+        let mut e = base_envelope_for_constraints();
+        e.approval_signers = vec![];
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("signer") || err.to_string().contains("valid"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_constraints_rejects_min_signatures_exceeds_signer_set() {
+        let mut e = base_envelope_for_constraints();
+        e.min_signatures = 3;
+        e.approval_signers = vec!["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".into()];
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("min_signatures") || err.to_string().contains("exceeds"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_constraints_rejects_zero_max_drawdown() {
+        let mut e = base_envelope_for_constraints();
+        e.envelope.max_drawdown_pct = 0.0;
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid")
+                || err.to_string().contains("max_drawdown")
+                || err.to_string().contains("limits"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_constraints_rejects_drawdown_over_one() {
+        let mut e = base_envelope_for_constraints();
+        e.envelope.max_drawdown_pct = 1.5;
+        let err = e
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-constraints",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid") || err.to_string().contains("limits"),
+            "{err}"
+        );
+    }
+
+    // ── binding validation ───────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_wrong_chain_id() {
+        let signed = signed_test_envelope();
+        let trusted = signed.approval_signers.clone();
+        let err = signed
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-envelope",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 999,
+                    protocol: "hyperliquid",
+                },
+                &trusted,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("chain_id"), "{err}");
+    }
+
+    #[test]
+    fn rejects_wrong_vault_address() {
+        let signed = signed_test_envelope();
+        let trusted = signed.approval_signers.clone();
+        let err = signed
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-envelope",
+                    vault_address: "0x0000000000000000000000000000000000000002",
+                    chain_id: 31337,
+                    protocol: "hyperliquid",
+                },
+                &trusted,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("vault_address"), "{err}");
+    }
+
+    #[test]
+    fn rejects_wrong_protocol() {
+        let signed = signed_test_envelope();
+        let trusted = signed.approval_signers.clone();
+        let err = signed
+            .verify(
+                &EnvelopeBinding {
+                    bot_id: "bot-envelope",
+                    vault_address: "0x0000000000000000000000000000000000000001",
+                    chain_id: 31337,
+                    protocol: "polymarket",
+                },
+                &trusted,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("protocol"), "{err}");
+    }
+
+    // ── signature format edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn rejects_non_hex_signature() {
+        let mut signed = signed_test_envelope();
+        signed.signatures[0].signature = "not-hex-at-all!!".into();
+        let trusted = signed.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "bot-envelope",
+            vault_address: "0x0000000000000000000000000000000000000001",
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = signed.verify(&binding, &trusted).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid") || err.to_string().contains("hex"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_signature() {
+        let mut signed = signed_test_envelope();
+        signed.signatures[0].signature = "0x".to_string() + &"aa".repeat(32);
+        let trusted = signed.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "bot-envelope",
+            vault_address: "0x0000000000000000000000000000000000000001",
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = signed.verify(&binding, &trusted).unwrap_err();
+        assert!(
+            err.to_string().contains("65 bytes") || err.to_string().contains("invalid"),
+            "{err}"
+        );
+    }
 }
