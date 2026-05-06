@@ -326,4 +326,527 @@ contract TradeValidator is EIP712, Ownable2Step {
     function getDomainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ENVELOPE VERIFICATION (TradingEnvelope v2 domain — disjoint from above)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice EIP-712 typehash for the universal envelope wrapper. The off-chain
+    ///         Rust `SignedEnvelope::digest()` produces the same hash. `enforcementHash`
+    ///         is the keccak of the matching per-protocol enforcement struct.
+    bytes32 public constant ENVELOPE_TYPEHASH = keccak256(
+        "Envelope(uint64 version,bytes32 botIdHash,address vault,uint64 chainId,bytes32 protocolHash,bytes32 policyHash,bytes32 enforcementHash,uint64 issuedAt,uint64 expiresAt,uint64 nonce,bytes32 signersHash,uint64 minSignatures)"
+    );
+
+    bytes32 public constant UNISWAP_V3_SWAP_TYPEHASH = keccak256(
+        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+    );
+    bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
+        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
+    );
+    bytes32 public constant AAVE_SUPPLY_TYPEHASH = keccak256(
+        "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+    );
+    bytes32 public constant AAVE_WITHDRAW_TYPEHASH = keccak256(
+        "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+    );
+    bytes32 public constant AAVE_BORROW_TYPEHASH = keccak256(
+        "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+    );
+    bytes32 public constant AAVE_REPAY_TYPEHASH = keccak256(
+        "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+    );
+    bytes32 public constant MORPHO_SUPPLY_TYPEHASH = keccak256(
+        "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+    );
+    bytes32 public constant MORPHO_WITHDRAW_TYPEHASH = keccak256(
+        "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+    );
+    bytes32 public constant MORPHO_BORROW_TYPEHASH = keccak256(
+        "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+    );
+    bytes32 public constant MORPHO_REPAY_TYPEHASH = keccak256(
+        "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+    );
+
+    error InvalidEnvelope();
+    error EnvelopeEnforcementMismatch();
+
+    struct Envelope {
+        uint64 version;
+        bytes32 botIdHash;
+        address vault;
+        uint64 chainId;
+        bytes32 protocolHash;
+        bytes32 policyHash;
+        bytes32 enforcementHash;
+        uint64 issuedAt;
+        uint64 expiresAt;
+        uint64 nonce;
+        bytes32 signersHash;
+        uint64 minSignatures;
+    }
+
+    struct UniswapV3SwapEnforcement {
+        uint256 feeTier;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 minOutputPerInput;
+        address router;
+        address tokenIn;
+        address tokenOut;
+    }
+
+    struct AerodromeSwapEnforcement {
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 minOutputPerInput;
+        address router;
+        int256 tickSpacing;
+        address tokenIn;
+        address tokenOut;
+    }
+
+    struct AaveSupplyEnforcement {
+        address asset;
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        address pool;
+    }
+
+    struct AaveWithdrawEnforcement {
+        address asset;
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        uint256 minHealthFactor;
+        address pool;
+    }
+
+    struct AaveBorrowEnforcement {
+        address asset;
+        uint256 interestRateMode;
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        uint256 minHealthFactor;
+        address pool;
+    }
+
+    struct AaveRepayEnforcement {
+        address asset;
+        address debtToken;
+        uint256 interestRateMode;
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        address pool;
+    }
+
+    struct MorphoSupplyEnforcement {
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        bytes32 marketId;
+        address morpho;
+    }
+
+    struct MorphoWithdrawEnforcement {
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        bytes32 marketId;
+        uint256 minCollateralRatio;
+        address morpho;
+    }
+
+    struct MorphoBorrowEnforcement {
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        bytes32 marketId;
+        uint256 minCollateralRatio;
+        address morpho;
+    }
+
+    struct MorphoRepayEnforcement {
+        uint256 maxSingleAmount;
+        uint256 maxTotalAmount;
+        bytes32 marketId;
+        address morpho;
+    }
+
+    /// @dev EIP-712 domain separator for envelopes — distinct from this contract's
+    ///      EIP712 inheritance ("TradeValidator" v1) used by `_hashTypedDataV4`. The
+    ///      envelope domain is ("TradingEnvelope", "2") so off-chain Rust v2
+    ///      digests match on-chain digests. We compute it inline rather than caching
+    ///      to remain fork-safe.
+    function _envelopeDomainSeparator() internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("TradingEnvelope")),
+                keccak256(bytes("2")),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    function _envelopeDigest(Envelope calldata env) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes2(0x1901), _envelopeDomainSeparator(), _hashEnvelope(env)));
+    }
+
+    function _hashEnvelope(Envelope calldata env) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                ENVELOPE_TYPEHASH,
+                uint256(env.version),
+                env.botIdHash,
+                env.vault,
+                uint256(env.chainId),
+                env.protocolHash,
+                env.policyHash,
+                env.enforcementHash,
+                uint256(env.issuedAt),
+                uint256(env.expiresAt),
+                uint256(env.nonce),
+                env.signersHash,
+                uint256(env.minSignatures)
+            )
+        );
+    }
+
+    /// @dev Off-chain Rust sorts addresses ascending then concatenates raw bytes;
+    ///      this MUST match exactly. Reverts on zero address (defense-in-depth).
+    function _hashApprovalSigners(address[] calldata signers) internal pure returns (bytes32) {
+        // Validate non-zero. Sorting requirement is validated against caller-supplied
+        // sorted order; if signers aren't sorted ascending, hash won't match envelope.signersHash.
+        for (uint256 i = 0; i < signers.length; ++i) {
+            if (signers[i] == address(0)) revert ZeroAddress();
+            if (i > 0 && uint160(signers[i]) <= uint160(signers[i - 1])) revert InvalidEnvelope();
+        }
+        bytes memory packed;
+        for (uint256 i = 0; i < signers.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(signers[i]));
+        }
+        return keccak256(packed);
+    }
+
+    function _addressInCalldata(address[] calldata values, address needle) internal pure returns (bool) {
+        for (uint256 i = 0; i < values.length; ++i) {
+            if (values[i] == needle) return true;
+        }
+        return false;
+    }
+
+    /// @dev Universal sig + score + dedup verifier shared by every per-protocol validate*Envelope.
+    function _validateEnvelopeWithEnforcementHash(
+        Envelope calldata env,
+        bytes32 expectedEnforcementHash,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) internal view returns (bool approved, uint256 validCount) {
+        if (env.enforcementHash != expectedEnforcementHash) revert EnvelopeEnforcementMismatch();
+        if (
+            env.version != 2 || env.vault == address(0) || env.chainId == 0 || env.expiresAt < block.timestamp
+                || env.minSignatures == 0 || approvalSigners.length < env.minSignatures
+                || signatures.length != scores.length || signatures.length == 0
+        ) revert InvalidEnvelope();
+        if (_hashApprovalSigners(approvalSigners) != env.signersHash) revert InvalidEnvelope();
+
+        VaultConfig storage config = _vaultConfigs[env.vault];
+        if (config.requiredSignatures == 0) revert VaultNotConfigured(env.vault);
+
+        bytes32 digest = _envelopeDigest(env);
+        address[] memory seen = new address[](signatures.length);
+        uint256 seenCount = 0;
+        uint256 scoreSum = 0;
+
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address signer = ECDSA.recover(digest, signatures[i]);
+            if (!config.signers.contains(signer)) continue;
+            if (!_addressInCalldata(approvalSigners, signer)) continue;
+            bool duplicate = false;
+            for (uint256 j = 0; j < seenCount; j++) {
+                if (seen[j] == signer) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            seen[seenCount] = signer;
+            seenCount++;
+            validCount++;
+            scoreSum += scores[i];
+        }
+
+        uint256 required =
+            config.requiredSignatures > env.minSignatures ? config.requiredSignatures : env.minSignatures;
+        approved = validCount >= required;
+        if (approved && validCount > 0) {
+            uint256 avgScore = scoreSum / validCount;
+            uint256 threshold = minScoreThreshold[env.vault];
+            if (threshold > 0 && avgScore < threshold) approved = false;
+        }
+    }
+
+    // ── Per-protocol enforcement hashes ──
+
+    function _hashUniswapV3Swap(UniswapV3SwapEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                UNISWAP_V3_SWAP_TYPEHASH,
+                e.feeTier,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.minOutputPerInput,
+                e.router,
+                e.tokenIn,
+                e.tokenOut
+            )
+        );
+    }
+
+    function _hashAerodromeSwap(AerodromeSwapEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                AERODROME_SWAP_TYPEHASH,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.minOutputPerInput,
+                e.router,
+                e.tickSpacing,
+                e.tokenIn,
+                e.tokenOut
+            )
+        );
+    }
+
+    function _hashAaveSupply(AaveSupplyEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.pool));
+    }
+
+    function _hashAaveWithdraw(AaveWithdrawEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(AAVE_WITHDRAW_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.minHealthFactor, e.pool)
+        );
+    }
+
+    function _hashAaveBorrow(AaveBorrowEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                AAVE_BORROW_TYPEHASH,
+                e.asset,
+                e.interestRateMode,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.minHealthFactor,
+                e.pool
+            )
+        );
+    }
+
+    function _hashAaveRepay(AaveRepayEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                AAVE_REPAY_TYPEHASH,
+                e.asset,
+                e.debtToken,
+                e.interestRateMode,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.pool
+            )
+        );
+    }
+
+    function _hashMorphoSupply(MorphoSupplyEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(MORPHO_SUPPLY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho)
+        );
+    }
+
+    function _hashMorphoWithdraw(MorphoWithdrawEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                MORPHO_WITHDRAW_TYPEHASH,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.marketId,
+                e.minCollateralRatio,
+                e.morpho
+            )
+        );
+    }
+
+    function _hashMorphoBorrow(MorphoBorrowEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                MORPHO_BORROW_TYPEHASH,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.marketId,
+                e.minCollateralRatio,
+                e.morpho
+            )
+        );
+    }
+
+    function _hashMorphoRepay(MorphoRepayEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho));
+    }
+
+    // ── Public validate*Envelope (one per protocol-action) ──
+
+    function validateUniswapV3SwapEnvelope(
+        Envelope calldata env,
+        UniswapV3SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool approved, uint256 validCount) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores
+        );
+    }
+
+    function validateAerodromeSwapEnvelope(
+        Envelope calldata env,
+        AerodromeSwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashAerodromeSwap(enf), approvalSigners, signatures, scores
+        );
+    }
+
+    function validateAaveSupplyEnvelope(
+        Envelope calldata env,
+        AaveSupplyEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashAaveSupply(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateAaveWithdrawEnvelope(
+        Envelope calldata env,
+        AaveWithdrawEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashAaveWithdraw(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateAaveBorrowEnvelope(
+        Envelope calldata env,
+        AaveBorrowEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashAaveBorrow(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateAaveRepayEnvelope(
+        Envelope calldata env,
+        AaveRepayEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashAaveRepay(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateMorphoSupplyEnvelope(
+        Envelope calldata env,
+        MorphoSupplyEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashMorphoSupply(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateMorphoWithdrawEnvelope(
+        Envelope calldata env,
+        MorphoWithdrawEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashMorphoWithdraw(enf), approvalSigners, signatures, scores
+        );
+    }
+
+    function validateMorphoBorrowEnvelope(
+        Envelope calldata env,
+        MorphoBorrowEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashMorphoBorrow(enf), approvalSigners, signatures, scores);
+    }
+
+    function validateMorphoRepayEnvelope(
+        Envelope calldata env,
+        MorphoRepayEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashMorphoRepay(enf), approvalSigners, signatures, scores);
+    }
+
+    // ── Public computation helpers (for off-chain tooling and TradingVault) ──
+
+    function envelopeDigest(Envelope calldata env) external view returns (bytes32) {
+        return _envelopeDigest(env);
+    }
+
+    function hashEnvelope(Envelope calldata env) external pure returns (bytes32) {
+        return _hashEnvelope(env);
+    }
+
+    function hashUniswapV3Swap(UniswapV3SwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashUniswapV3Swap(e);
+    }
+
+    function hashAerodromeSwap(AerodromeSwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashAerodromeSwap(e);
+    }
+
+    function hashAaveSupply(AaveSupplyEnforcement calldata e) external pure returns (bytes32) {
+        return _hashAaveSupply(e);
+    }
+
+    function hashAaveWithdraw(AaveWithdrawEnforcement calldata e) external pure returns (bytes32) {
+        return _hashAaveWithdraw(e);
+    }
+
+    function hashAaveBorrow(AaveBorrowEnforcement calldata e) external pure returns (bytes32) {
+        return _hashAaveBorrow(e);
+    }
+
+    function hashAaveRepay(AaveRepayEnforcement calldata e) external pure returns (bytes32) {
+        return _hashAaveRepay(e);
+    }
+
+    function hashMorphoSupply(MorphoSupplyEnforcement calldata e) external pure returns (bytes32) {
+        return _hashMorphoSupply(e);
+    }
+
+    function hashMorphoWithdraw(MorphoWithdrawEnforcement calldata e) external pure returns (bytes32) {
+        return _hashMorphoWithdraw(e);
+    }
+
+    function hashMorphoBorrow(MorphoBorrowEnforcement calldata e) external pure returns (bytes32) {
+        return _hashMorphoBorrow(e);
+    }
+
+    function hashMorphoRepay(MorphoRepayEnforcement calldata e) external pure returns (bytes32) {
+        return _hashMorphoRepay(e);
+    }
 }

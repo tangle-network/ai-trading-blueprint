@@ -1364,4 +1364,494 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Accept native ETH
     receive() external payable {}
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ENVELOPE EXECUTION (per-protocol, signed-envelope-authorized)
+    //
+    // Each executeXxxEnvelope decodes the protocol's calldata, binds it to
+    // the enforcement struct, asks TradeValidator to verify the envelope
+    // signatures, tracks consumed amount per envelope hash, then dispatches to
+    // the existing _executeTrade / _executeDebtReduction / _executeHealthFactor.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    error EnvelopeCheckFailed();
+    error EnvelopeExpired();
+    error EnvelopeNotYetActive();
+    error EnvelopeWrongVault();
+    error EnvelopeWrongChain();
+    error EnvelopeAmountExceeded(uint256 requested, uint256 limit);
+    error EnvelopeTotalExceeded(uint256 requested, uint256 remaining);
+    error EnvelopeRateTooLow(uint256 actualMinOutput, uint256 requiredMinOutput);
+    error EnvelopeWrongSelector();
+
+    event EnvelopeConsumed(bytes32 indexed envelopeHash, uint256 amount, uint256 totalConsumed);
+
+    /// @notice Consumed input-amount per envelope hash. Universal across all protocols.
+    mapping(bytes32 envelopeHash => uint256 consumed) public envelopeConsumedAmount;
+
+    /// @dev Selectors for protocol entry-point calldata decoding.
+    bytes4 private constant SELECTOR_UNI_V3_EXACT_INPUT_SINGLE = 0x414bf389; // exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))
+    bytes4 private constant SELECTOR_AERODROME_EXACT_INPUT_SINGLE = bytes4(
+        keccak256("exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))")
+    );
+    bytes4 private constant SELECTOR_AAVE_SUPPLY = bytes4(keccak256("supply(address,uint256,address,uint16)"));
+    bytes4 private constant SELECTOR_AAVE_WITHDRAW = bytes4(keccak256("withdraw(address,uint256,address)"));
+    bytes4 private constant SELECTOR_AAVE_BORROW =
+        bytes4(keccak256("borrow(address,uint256,uint256,uint16,address)"));
+    bytes4 private constant SELECTOR_AAVE_REPAY = bytes4(keccak256("repay(address,uint256,uint256,address)"));
+    bytes4 private constant SELECTOR_MORPHO_SUPPLY =
+        bytes4(keccak256("supply((address,address,address,address,uint256),uint256,uint256,address,bytes)"));
+    bytes4 private constant SELECTOR_MORPHO_WITHDRAW =
+        bytes4(keccak256("withdraw((address,address,address,address,uint256),uint256,uint256,address,address)"));
+    bytes4 private constant SELECTOR_MORPHO_BORROW =
+        bytes4(keccak256("borrow((address,address,address,address,uint256),uint256,uint256,address,address)"));
+    bytes4 private constant SELECTOR_MORPHO_REPAY =
+        bytes4(keccak256("repay((address,address,address,address,uint256),uint256,uint256,address,bytes)"));
+
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    struct AerodromeSwapParams {
+        address tokenIn;
+        address tokenOut;
+        int24 tickSpacing;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    struct MorphoMarketParams {
+        address loanToken;
+        address collateralToken;
+        address oracle;
+        address irm;
+        uint256 lltv;
+    }
+
+    // ── Shared envelope helpers ──
+
+    function _checkEnvelopeBasics(TradeValidator.Envelope calldata env) internal view {
+        if (env.vault != address(this)) revert EnvelopeWrongVault();
+        if (env.chainId != block.chainid) revert EnvelopeWrongChain();
+        if (block.timestamp < env.issuedAt) revert EnvelopeNotYetActive();
+        if (block.timestamp > env.expiresAt) revert EnvelopeExpired();
+    }
+
+    function _consumeEnvelope(bytes32 envelopeHash, uint256 amount, uint256 maxSingle, uint256 maxTotal) internal {
+        if (amount > maxSingle) revert EnvelopeAmountExceeded(amount, maxSingle);
+        uint256 consumed = envelopeConsumedAmount[envelopeHash];
+        uint256 remaining = maxTotal > consumed ? maxTotal - consumed : 0;
+        if (amount > remaining) revert EnvelopeTotalExceeded(amount, remaining);
+        envelopeConsumedAmount[envelopeHash] = consumed + amount;
+        emit EnvelopeConsumed(envelopeHash, amount, consumed + amount);
+    }
+
+    function _applyApprovalsMemory(ApprovalCall[] memory approvals, address target) internal {
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall memory a = approvals[i];
+            if (a.token == address(0) || a.spender == address(0)) revert ZeroAddress();
+            if (a.spender != target) revert ApprovalSpenderMismatch(a.spender, target);
+            IERC20(a.token).forceApprove(a.spender, a.amount);
+            emit SpenderApprovalUpdated(a.token, a.spender, a.amount);
+        }
+    }
+
+    /// @dev Envelope-mode prepare for trade-shape executions: skip _checkValidators
+    ///      since envelope sigs already verified in validateXxxEnvelope.
+    function _prepareEnvelopeTrade(ExecuteParams calldata params) internal {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (params.target == address(0)) revert ZeroAddress();
+        if (params.minOutput == 0) revert ZeroAmount();
+        _requireValuableOutputToken(params.outputToken);
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+        _checkPolicy(params.outputToken, params.minOutput, params.target);
+    }
+
+    function _prepareEnvelopeDebtReduction(DebtReductionParams calldata params) internal {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (params.target == address(0) || params.inputToken == address(0) || params.debtToken == address(0)) {
+            revert ZeroAddress();
+        }
+        if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+        _checkPolicy(params.inputToken, params.maxInput, params.target);
+    }
+
+    function _prepareEnvelopeHealthFactor(HealthFactorParams calldata params) internal {
+        if (windDownActive) revert WindDownBlocksExecute();
+        if (
+            params.target == address(0) || params.outputToken == address(0) || params.pool == address(0)
+                || params.account == address(0)
+        ) revert ZeroAddress();
+        if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
+        _requireValuableOutputToken(params.outputToken);
+        if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
+        executedIntents[params.intentHash] = true;
+        _checkPolicy(params.outputToken, params.minOutput, params.target);
+    }
+
+    function _expectSelector(bytes calldata data, bytes4 expected) internal pure {
+        if (data.length < 4 || bytes4(data[:4]) != expected) revert EnvelopeWrongSelector();
+    }
+
+    // ── Calldata decoders ──
+
+    function _decodeExactInputSingle(bytes calldata data) internal pure returns (ExactInputSingleParams memory p) {
+        _expectSelector(data, SELECTOR_UNI_V3_EXACT_INPUT_SINGLE);
+        p = abi.decode(data[4:], (ExactInputSingleParams));
+    }
+
+    function _decodeAerodromeSwap(bytes calldata data) internal pure returns (AerodromeSwapParams memory p) {
+        _expectSelector(data, SELECTOR_AERODROME_EXACT_INPUT_SINGLE);
+        p = abi.decode(data[4:], (AerodromeSwapParams));
+    }
+
+    function _decodeAaveSupply(bytes calldata data)
+        internal
+        pure
+        returns (address asset, uint256 amount, address onBehalfOf, uint16 referralCode)
+    {
+        _expectSelector(data, SELECTOR_AAVE_SUPPLY);
+        (asset, amount, onBehalfOf, referralCode) = abi.decode(data[4:], (address, uint256, address, uint16));
+    }
+
+    function _decodeAaveWithdraw(bytes calldata data)
+        internal
+        pure
+        returns (address asset, uint256 amount, address to)
+    {
+        _expectSelector(data, SELECTOR_AAVE_WITHDRAW);
+        (asset, amount, to) = abi.decode(data[4:], (address, uint256, address));
+    }
+
+    function _decodeAaveBorrow(bytes calldata data)
+        internal
+        pure
+        returns (address asset, uint256 amount, uint256 rateMode, uint16 refCode, address onBehalfOf)
+    {
+        _expectSelector(data, SELECTOR_AAVE_BORROW);
+        (asset, amount, rateMode, refCode, onBehalfOf) =
+            abi.decode(data[4:], (address, uint256, uint256, uint16, address));
+    }
+
+    function _decodeAaveRepay(bytes calldata data)
+        internal
+        pure
+        returns (address asset, uint256 amount, uint256 rateMode, address onBehalfOf)
+    {
+        _expectSelector(data, SELECTOR_AAVE_REPAY);
+        (asset, amount, rateMode, onBehalfOf) = abi.decode(data[4:], (address, uint256, uint256, address));
+    }
+
+    function _decodeMorphoSupply(bytes calldata data)
+        internal
+        pure
+        returns (MorphoMarketParams memory mp, uint256 assets, uint256 shares, address onBehalf, bytes memory extra)
+    {
+        _expectSelector(data, SELECTOR_MORPHO_SUPPLY);
+        (mp, assets, shares, onBehalf, extra) =
+            abi.decode(data[4:], (MorphoMarketParams, uint256, uint256, address, bytes));
+    }
+
+    function _decodeMorphoWithdraw(bytes calldata data)
+        internal
+        pure
+        returns (MorphoMarketParams memory mp, uint256 assets, uint256 shares, address onBehalf, address receiver)
+    {
+        _expectSelector(data, SELECTOR_MORPHO_WITHDRAW);
+        (mp, assets, shares, onBehalf, receiver) =
+            abi.decode(data[4:], (MorphoMarketParams, uint256, uint256, address, address));
+    }
+
+    function _decodeMorphoBorrow(bytes calldata data)
+        internal
+        pure
+        returns (MorphoMarketParams memory mp, uint256 assets, uint256 shares, address onBehalf, address receiver)
+    {
+        _expectSelector(data, SELECTOR_MORPHO_BORROW);
+        (mp, assets, shares, onBehalf, receiver) =
+            abi.decode(data[4:], (MorphoMarketParams, uint256, uint256, address, address));
+    }
+
+    function _decodeMorphoRepay(bytes calldata data)
+        internal
+        pure
+        returns (MorphoMarketParams memory mp, uint256 assets, uint256 shares, address onBehalf, bytes memory extra)
+    {
+        _expectSelector(data, SELECTOR_MORPHO_REPAY);
+        (mp, assets, shares, onBehalf, extra) =
+            abi.decode(data[4:], (MorphoMarketParams, uint256, uint256, address, bytes));
+    }
+
+    function _morphoMarketIdOf(MorphoMarketParams memory mp) internal pure returns (bytes32) {
+        // Morpho uses keccak256(abi.encode(market)) in their marketId derivation.
+        return keccak256(abi.encode(mp.loanToken, mp.collateralToken, mp.oracle, mp.irm, mp.lltv));
+    }
+
+    // ── DEX swaps (output-token-gain shape) ──
+
+    function executeUniswapV3SwapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.UniswapV3SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        ExactInputSingleParams memory s = _decodeExactInputSingle(params.data);
+        if (
+            params.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
+                || uint256(s.fee) != enf.feeTier || s.recipient != address(this) || params.outputToken != enf.tokenOut
+                || s.deadline < block.timestamp || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
+            revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
+        }
+        (bool ok,) = tradeValidator.validateUniswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        bytes32 envHash = tradeValidator.hashEnvelope(env);
+        _consumeEnvelope(envHash, s.amountIn, enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    function executeAerodromeSwapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.AerodromeSwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        AerodromeSwapParams memory s = _decodeAerodromeSwap(params.data);
+        if (
+            params.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
+                || int256(s.tickSpacing) != enf.tickSpacing || s.recipient != address(this)
+                || params.outputToken != enf.tokenOut || s.deadline < block.timestamp
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
+            revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
+        }
+        (bool ok,) = tradeValidator.validateAerodromeSwapEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        bytes32 envHash = tradeValidator.hashEnvelope(env);
+        _consumeEnvelope(envHash, s.amountIn, enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    // ── Aave V3 ──
+
+    function executeAaveSupplyEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.AaveSupplyEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (address asset, uint256 amount, address onBehalfOf,) = _decodeAaveSupply(params.data);
+        if (params.target != enf.pool || asset != enf.asset || onBehalfOf != address(this)) {
+            revert EnvelopeCheckFailed();
+        }
+        if (params.deadline < block.timestamp) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateAaveSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    function executeAaveWithdrawEnvelope(
+        HealthFactorParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.AaveWithdrawEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (address asset, uint256 amount, address to) = _decodeAaveWithdraw(params.data);
+        if (
+            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
+                || to != address(this) || params.minHealthFactor < enf.minHealthFactor
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateAaveWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeHealthFactor(params);
+        _executeHealthFactor(params);
+    }
+
+    function executeAaveBorrowEnvelope(
+        HealthFactorParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.AaveBorrowEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (address asset, uint256 amount, uint256 rateMode,, address onBehalfOf) = _decodeAaveBorrow(params.data);
+        if (
+            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
+                || rateMode != enf.interestRateMode || onBehalfOf != address(this)
+                || params.minHealthFactor < enf.minHealthFactor || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateAaveBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeHealthFactor(params);
+        _executeHealthFactor(params);
+    }
+
+    function executeAaveRepayEnvelope(
+        DebtReductionParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.AaveRepayEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (address asset, uint256 amount, uint256 rateMode, address onBehalfOf) = _decodeAaveRepay(params.data);
+        if (
+            params.target != enf.pool || params.inputToken != enf.asset || params.debtToken != enf.debtToken
+                || asset != enf.asset || rateMode != enf.interestRateMode || onBehalfOf != address(this)
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateAaveRepayEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeDebtReduction(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeDebtReduction(params);
+    }
+
+    // ── Morpho ──
+
+    function executeMorphoSupplyEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.MorphoSupplyEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (MorphoMarketParams memory mp, uint256 assets,, address onBehalf,) = _decodeMorphoSupply(params.data);
+        if (
+            params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId || onBehalf != address(this)
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateMorphoSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: mp.loanToken, spender: params.target, amount: assets});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    function executeMorphoWithdrawEnvelope(
+        HealthFactorParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.MorphoWithdrawEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (MorphoMarketParams memory mp, uint256 assets,, address onBehalf, address receiver) =
+            _decodeMorphoWithdraw(params.data);
+        if (
+            params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
+                || onBehalf != address(this) || receiver != address(this)
+                || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateMorphoWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeHealthFactor(params);
+        _executeHealthFactor(params);
+    }
+
+    function executeMorphoBorrowEnvelope(
+        HealthFactorParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.MorphoBorrowEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (MorphoMarketParams memory mp, uint256 assets,, address onBehalf, address receiver) =
+            _decodeMorphoBorrow(params.data);
+        if (
+            params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
+                || onBehalf != address(this) || receiver != address(this)
+                || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateMorphoBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeHealthFactor(params);
+        _executeHealthFactor(params);
+    }
+
+    function executeMorphoRepayEnvelope(
+        DebtReductionParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.MorphoRepayEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (MorphoMarketParams memory mp, uint256 assets,, address onBehalf,) = _decodeMorphoRepay(params.data);
+        if (
+            params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
+                || params.inputToken != mp.loanToken || onBehalf != address(this)
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        (bool ok,) = tradeValidator.validateMorphoRepayEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
+        _prepareEnvelopeDebtReduction(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: mp.loanToken, spender: params.target, amount: assets});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeDebtReduction(params);
+    }
 }
