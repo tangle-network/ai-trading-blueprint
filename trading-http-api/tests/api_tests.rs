@@ -2262,8 +2262,7 @@ fn paper_hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
     // execution_hash because paper trades use bind_execution_payload=false
     // and the server therefore expects 0x000...000 for execution_hash.
     attach_validation_hashes(&mut body, Some(31337));
-    body["validation"]["execution_hash"] =
-        serde_json::json!(format!("0x{}", "00".repeat(32)));
+    body["validation"]["execution_hash"] = serde_json::json!(format!("0x{}", "00".repeat(32)));
     body
 }
 
@@ -2271,8 +2270,7 @@ fn paper_hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
 /// Required when `paper_hyperliquid_execute_body` is used and then fields mutated.
 fn reattach_paper_validation_hashes(body: &mut serde_json::Value) {
     attach_validation_hashes(body, Some(31337));
-    body["validation"]["execution_hash"] =
-        serde_json::json!(format!("0x{}", "00".repeat(32)));
+    body["validation"]["execution_hash"] = serde_json::json!(format!("0x{}", "00".repeat(32)));
 }
 
 async fn put_signed_envelope(
@@ -2346,14 +2344,22 @@ async fn test_paper_envelope_execute_rejects_disallowed_asset() {
         .unwrap();
 
     // Store the envelope
-    let put_response =
-        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "paper-env-asset-token", &signed).await;
+    let put_response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-env-asset-token",
+        &signed,
+    )
+    .await;
     assert_eq!(put_response.status(), 200, "PUT envelope should succeed");
 
     // Execute with ETH (not in whitelist)
     let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
-    let response =
-        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-env-asset-token", body).await;
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-env-asset-token",
+        body,
+    )
+    .await;
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
@@ -2384,16 +2390,24 @@ async fn test_paper_envelope_execute_rejects_excessive_leverage() {
         )
         .unwrap();
 
-    let put_response =
-        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "paper-lev-token", &signed).await;
+    let put_response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-lev-token",
+        &signed,
+    )
+    .await;
     assert_eq!(put_response.status(), 200);
 
     // Execute with leverage=5 (exceeds max_leverage=2)
     let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
     body["intent"]["metadata"]["leverage"] = serde_json::json!(5);
     reattach_paper_validation_hashes(&mut body);
-    let response =
-        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-lev-token", body).await;
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-lev-token",
+        body,
+    )
+    .await;
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
@@ -2425,10 +2439,17 @@ async fn test_paper_envelope_execute_rejects_missing_stop_loss() {
 
     // Request with no stop_loss metadata
     let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
-    body["intent"]["metadata"].as_object_mut().unwrap().remove("stop_loss_pct");
+    body["intent"]["metadata"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stop_loss_pct");
     reattach_paper_validation_hashes(&mut body);
-    let response =
-        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-sl-missing-token", body).await;
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-missing-token",
+        body,
+    )
+    .await;
     assert_eq!(response.status(), 400);
 }
 
@@ -2461,8 +2482,12 @@ async fn test_paper_envelope_execute_rejects_stop_loss_out_of_bounds() {
     let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
     body["intent"]["metadata"]["stop_loss_pct"] = serde_json::json!(20.0);
     reattach_paper_validation_hashes(&mut body);
-    let response =
-        execute_with_body(build_multi_bot_router(Arc::clone(&state)), "paper-sl-oob-token", body).await;
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-oob-token",
+        body,
+    )
+    .await;
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
@@ -2488,8 +2513,12 @@ async fn test_envelope_nonce_upgrade_accepted() {
         )
         .unwrap();
 
-    let r1 =
-        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-up-token", &signed1).await;
+    let r1 = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-up-token",
+        &signed1,
+    )
+    .await;
     assert_eq!(r1.status(), 200, "first PUT should succeed");
 
     let mut signed2 = signed_envelope_for_bot(&bot);
@@ -2503,8 +2532,12 @@ async fn test_envelope_nonce_upgrade_accepted() {
         )
         .unwrap();
 
-    let r2 =
-        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-up-token", &signed2).await;
+    let r2 = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-up-token",
+        &signed2,
+    )
+    .await;
     assert_eq!(r2.status(), 200, "nonce upgrade should succeed");
 }
 
@@ -2544,8 +2577,12 @@ async fn test_envelope_nonce_downgrade_rejected() {
         )
         .unwrap();
 
-    let r_down =
-        put_signed_envelope(build_multi_bot_router(Arc::clone(&state)), "nonce-down-token", &signed3).await;
+    let r_down = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-down-token",
+        &signed3,
+    )
+    .await;
     let status = r_down.status();
     let bytes = r_down.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(

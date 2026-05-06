@@ -1225,13 +1225,12 @@ fn check_envelope_trade_constraints(
         .get("leverage")
         .and_then(|v| v.as_u64())
         .unwrap_or(1) as u32;
-    let stop_loss_distance =
-        extract_stop_loss_distance(&intent.metadata).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "Envelope mode requires stop_loss_distance or stop_loss_pct metadata".to_string(),
-            )
-        })?;
+    let stop_loss_distance = extract_stop_loss_distance(&intent.metadata).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Envelope mode requires stop_loss_distance or stop_loss_pct metadata".to_string(),
+        )
+    })?;
     let sl_check = envelope.check_stop_loss(stop_loss_distance);
     if !sl_check.allowed {
         return Err((
@@ -2489,13 +2488,12 @@ async fn execute_multi_bot(
                 "Envelope trust mode is only implemented for Hyperliquid; other protocols require PerTrade validation".into(),
             ));
         }
-        let envelope =
-            super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
-                (
-                    StatusCode::FORBIDDEN,
-                    "Envelope trust mode requires a signed per-bot envelope approval".to_string(),
-                )
-            })?;
+        let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                "Envelope trust mode requires a signed per-bot envelope approval".to_string(),
+            )
+        })?;
         let binding = EnvelopeBinding {
             bot_id: &bot.bot_id,
             vault_address: &bot.vault_address,
