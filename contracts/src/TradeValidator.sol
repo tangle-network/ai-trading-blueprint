@@ -112,6 +112,9 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 len = config.signers.length();
         for (uint256 i = len; i > 0; i--) {
             address old = config.signers.at(i - 1);
+            // slither-disable-next-line unused-return
+            // OZ EnumerableSet.remove returns bool; safe to ignore here because
+            // `old` was just retrieved via `at()` so membership is guaranteed.
             config.signers.remove(old);
             emit SignerRemoved(vault, old);
         }
