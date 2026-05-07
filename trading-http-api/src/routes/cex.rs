@@ -269,7 +269,12 @@ mod tests {
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };
         let state = std::sync::Arc::new(MultiBotTradingState::default());
-        let err = resolve_venue(&state, "binance", &bot).expect_err("should 412");
+        // `Arc<dyn DirectApiVenue>` is not `Debug`, so we hand-match instead
+        // of `expect_err` (which would require Debug on the Ok variant).
+        let err = match resolve_venue(&state, "binance", &bot) {
+            Ok(_) => panic!("missing creds must 412"),
+            Err(e) => e,
+        };
         assert_eq!(err.0, StatusCode::PRECONDITION_FAILED, "{}", err.1);
         assert!(
             err.1.contains("missing-key-bot"),
