@@ -259,14 +259,28 @@ async function recommendSlippageBps({
   return apiCall('GET', `/learning/slippage?${params.toString()}`);
 }
 
-// POST /learning/strategy-outcome  { variant_id, reward }
+// POST /learning/strategy-outcome  { variant_id, reward, iteration_id? }
 // `variant_id` matches the strategy's `id` field on `StrategyDefinition`.
 // `reward` is realized P&L over the iteration window in USD (positive = profit).
-async function recordStrategyOutcome({ variant_id, variantId, reward }) {
-  return apiCall('POST', '/learning/strategy-outcome', {
+// `iteration_id` (optional) is the agent's per-phase counter from `phase.json`;
+// when present, the route deduplicates by (bot_id, variant_id, iteration_id)
+// so a retried POST after a network glitch doesn't double-count the arm pull.
+async function recordStrategyOutcome({
+  variant_id,
+  variantId,
+  reward,
+  iteration_id,
+  iterationId,
+}) {
+  const body = {
     variant_id: variant_id || variantId,
     reward: Number(reward),
-  });
+  };
+  const itId = iteration_id || iterationId;
+  if (itId !== undefined && itId !== null && String(itId).length > 0) {
+    body.iteration_id = String(itId);
+  }
+  return apiCall('POST', '/learning/strategy-outcome', body);
 }
 
 // GET /learning/bandit-status — arms + best-arm summary. Informational.

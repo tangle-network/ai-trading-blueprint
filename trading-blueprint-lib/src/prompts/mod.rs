@@ -73,7 +73,7 @@ pub fn build_pack_loop_prompt(
                         Include `amount_format:'base_units'` and never compute `min_amount_out` from CoinGecko alone; use the executable route quote.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
                         {execute_snippet}\n\
-                     {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
+                     {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>, iteration_id: <iteration from phase.json>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
                      {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
                     name = pack.name,
@@ -108,7 +108,7 @@ pub fn build_pack_loop_prompt(
                     For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
                     {execute_snippet}\n\
                     Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
-                 {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
+                 {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>, iteration_id: <iteration from phase.json>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
                  {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                  Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
                 name = pack.name,
@@ -402,7 +402,7 @@ pub fn build_fast_tick_prompt(strategy_type: &str, validation_trust: ValidationT
          2. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
          3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
          {envelope_check}4. If actionable setup exists → choose `token_in` from an available spot balance, ask the slippage learner first via `api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}})`, then call `api.quoteUniswapSwap({{token_in, token_out, amount_in, slippage_bps: <recommended_max_bps>}})` (trust the learner over a static value), {execute_pattern} Otherwise → SKIP.\n\n\
-         Record the candle and log your decision. If running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id, reward}})`. Report: price, action, reason (one line)."
+         Record the candle and log your decision. If running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id, reward, iteration_id: <iteration from phase.json>}})`. Report: price, action, reason (one line)."
     )
 }
 

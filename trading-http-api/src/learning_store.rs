@@ -291,9 +291,28 @@ pub fn record_failure(
 }
 
 /// Record a strategy outcome against the bandit's arm for `variant_id`.
-pub fn record_strategy_outcome(bot_id: &str, variant_id: &str, reward: f64) {
+///
+/// `iteration_id`, when supplied, deduplicates against the per-bot
+/// `(variant_id, iteration_id)` journal: a retried record_strategy_outcome
+/// call with the same tuple is absorbed silently. Without `iteration_id`
+/// (i.e. legacy callers) the function records every call — preserving the
+/// always-record semantics existing post-trade hooks rely on.
+pub fn record_strategy_outcome(
+    bot_id: &str,
+    variant_id: &str,
+    reward: f64,
+    iteration_id: Option<&str>,
+) {
     let mut bandit_mean: Option<f64> = None;
+    let mut deduplicated = false;
     if let Err(error) = update(bot_id, |state| {
+        if let Some(iter_id) = iteration_id {
+            if state.has_recorded_iteration(variant_id, iter_id) {
+                deduplicated = true;
+                return;
+            }
+            state.note_iteration(variant_id, iter_id);
+        }
         state.bandit.record_outcome(variant_id, reward);
         bandit_mean = state
             .bandit
@@ -305,11 +324,13 @@ pub fn record_strategy_outcome(bot_id: &str, variant_id: &str, reward: f64) {
         tracing::warn!(bot_id, %error, "failed to persist strategy outcome");
         return;
     }
-    crate::routes::prometheus::record_bandit_pull(
-        bot_id,
-        variant_id,
-        bandit_mean.unwrap_or(reward),
-    );
+    if !deduplicated {
+        crate::routes::prometheus::record_bandit_pull(
+            bot_id,
+            variant_id,
+            bandit_mean.unwrap_or(reward),
+        );
+    }
 }
 
 /// Recommend a `max_slippage_bps` cap for a token-pair, falling back to
