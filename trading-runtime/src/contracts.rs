@@ -336,6 +336,118 @@ sol! {
         function getServiceEscrow(uint64 serviceId) external view returns (ServiceEscrow memory);
     }
 
+    /// Uniswap V3 QuoterV2 — `quoteExactInputSingle` returns projected output for
+    /// a single-hop exact-input swap. `view`-only, callable via `eth_call`.
+    /// Canonical address `0x61fFE014bA17989E743c5F6cB21bF9697530B21e` on most
+    /// EVM chains where Uniswap V3 is deployed.
+    #[sol(rpc)]
+    interface IUniswapV3QuoterV2 {
+        struct QuoteExactInputSingleParams {
+            address tokenIn;
+            address tokenOut;
+            uint256 amountIn;
+            uint24 fee;
+            uint160 sqrtPriceLimitX96;
+        }
+        function quoteExactInputSingle(QuoteExactInputSingleParams calldata params)
+            external
+            returns (
+                uint256 amountOut,
+                uint160 sqrtPriceX96After,
+                uint32 initializedTicksCrossed,
+                uint256 gasEstimate
+            );
+    }
+
+    /// Uniswap V4 V4Quoter — `quoteExactInputSingle` over a (PoolKey, SwapParams)
+    /// shape. Returns the quoted output amount and gas estimate.
+    #[sol(rpc)]
+    interface IUniswapV4Quoter {
+        struct PoolKey {
+            address currency0;
+            address currency1;
+            uint24 fee;
+            int24 tickSpacing;
+            address hooks;
+        }
+        struct QuoteExactSingleParams {
+            PoolKey poolKey;
+            bool zeroForOne;
+            uint128 exactAmount;
+            bytes hookData;
+        }
+        function quoteExactInputSingle(QuoteExactSingleParams calldata params)
+            external
+            returns (uint256 amountOut, uint256 gasEstimate);
+    }
+
+    /// Aerodrome Slipstream MixedRouteQuoterV1 — Uni-V3-style quoter that uses
+    /// signed `int24 tickSpacing` instead of `uint24 fee`.
+    #[sol(rpc)]
+    interface IAerodromeSlipstreamQuoter {
+        struct QuoteExactInputSingleParams {
+            address tokenIn;
+            address tokenOut;
+            uint256 amountIn;
+            int24 tickSpacing;
+            uint160 sqrtPriceLimitX96;
+        }
+        function quoteExactInputSingle(QuoteExactInputSingleParams calldata params)
+            external
+            returns (
+                uint256 amountOut,
+                uint160 sqrtPriceX96After,
+                uint32 initializedTicksCrossed,
+                uint256 gasEstimate
+            );
+    }
+
+    /// Aave V3 PoolDataProvider — surfaces per-reserve APY and configuration
+    /// data used by the agent to size supply/borrow envelopes.
+    #[sol(rpc)]
+    interface IAaveV3DataProvider {
+        function getReserveData(address asset)
+            external
+            view
+            returns (
+                uint256 unbacked,
+                uint256 accruedToTreasuryScaled,
+                uint256 totalAToken,
+                uint256 totalStableDebt,
+                uint256 totalVariableDebt,
+                uint256 liquidityRate,
+                uint256 variableBorrowRate,
+                uint256 stableBorrowRate,
+                uint256 averageStableBorrowRate,
+                uint256 liquidityIndex,
+                uint256 variableBorrowIndex,
+                uint40 lastUpdateTimestamp
+            );
+    }
+
+    /// Morpho Blue — minimal read interface for market state and config.
+    /// `marketId = keccak256(abi.encode(MarketParams))`.
+    #[sol(rpc)]
+    interface IMorpho {
+        struct MarketState {
+            uint128 totalSupplyAssets;
+            uint128 totalSupplyShares;
+            uint128 totalBorrowAssets;
+            uint128 totalBorrowShares;
+            uint128 lastUpdate;
+            uint128 fee;
+        }
+        struct MarketParams {
+            address loanToken;
+            address collateralToken;
+            address oracle;
+            address irm;
+            uint256 lltv;
+        }
+        function market(bytes32 id) external view returns (MarketState memory);
+        function idToMarketParams(bytes32 id) external view returns (MarketParams memory);
+    }
+
     #[sol(rpc)]
     interface IStrategyRegistry {
         struct StrategyInfo {
