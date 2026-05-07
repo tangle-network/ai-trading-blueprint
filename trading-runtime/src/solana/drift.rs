@@ -35,8 +35,8 @@
 use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::pubkey::Pubkey;
 use solana_sdk::pubkey;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_sdk::transaction::VersionedTransaction;
 

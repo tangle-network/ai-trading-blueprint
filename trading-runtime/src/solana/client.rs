@@ -80,9 +80,7 @@ impl SolanaClient {
     pub async fn submit(&self, tx: VersionedTransaction) -> Result<Signature, SolanaError> {
         let cfg = RpcSendTransactionConfig {
             skip_preflight: false,
-            preflight_commitment: Some(
-                solana_sdk::commitment_config::CommitmentLevel::Confirmed,
-            ),
+            preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Confirmed),
             ..RpcSendTransactionConfig::default()
         };
         self.inner

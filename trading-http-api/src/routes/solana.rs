@@ -232,15 +232,16 @@ async fn jupiter_swap(
     reject_when_paper_trade(&bot)?;
 
     let trade_size_usd = parse_decimal("trade_size_usd", &req.trade_size_usd)?;
-    let current_exposure =
-        parse_decimal("current_total_exposure_usd", &req.current_total_exposure_usd)?;
+    let current_exposure = parse_decimal(
+        "current_total_exposure_usd",
+        &req.current_total_exposure_usd,
+    )?;
 
     let _ = state; // gated by per-bot envelope store, not multi-bot state.
-    let envelope = super::envelope::get_signed_envelope(&bot.bot_id)
-        .ok_or((
-            StatusCode::FORBIDDEN,
-            "No signed envelope on file for this bot — cannot gate Solana swap".to_string(),
-        ))?;
+    let envelope = super::envelope::get_signed_envelope(&bot.bot_id).ok_or((
+        StatusCode::FORBIDDEN,
+        "No signed envelope on file for this bot — cannot gate Solana swap".to_string(),
+    ))?;
 
     // Universal gating runs first.
     check_universal(
@@ -298,17 +299,18 @@ async fn drift_order(
     reject_when_paper_trade(&bot)?;
 
     let trade_size_usd = parse_decimal("trade_size_usd", &req.trade_size_usd)?;
-    let current_exposure =
-        parse_decimal("current_total_exposure_usd", &req.current_total_exposure_usd)?;
+    let current_exposure = parse_decimal(
+        "current_total_exposure_usd",
+        &req.current_total_exposure_usd,
+    )?;
     let drift_state = parse_pubkey("drift_state", &req.drift_state)?;
     let drift_user_pda = parse_pubkey("drift_user_pda", &req.drift_user_pda)?;
 
     let _ = state; // gated by per-bot envelope store, not multi-bot state.
-    let envelope = super::envelope::get_signed_envelope(&bot.bot_id)
-        .ok_or((
-            StatusCode::FORBIDDEN,
-            "No signed envelope on file for this bot — cannot gate Drift order".to_string(),
-        ))?;
+    let envelope = super::envelope::get_signed_envelope(&bot.bot_id).ok_or((
+        StatusCode::FORBIDDEN,
+        "No signed envelope on file for this bot — cannot gate Drift order".to_string(),
+    ))?;
 
     check_universal(
         &envelope.policy,

@@ -21,11 +21,7 @@ pub enum SolanaError {
 
     /// The signer's token balance is insufficient for the requested swap.
     #[error("Insufficient balance: have {have}, need {need} (mint {mint})")]
-    InsufficientBalance {
-        mint: String,
-        have: u64,
-        need: u64,
-    },
+    InsufficientBalance { mint: String, have: u64, need: u64 },
 
     /// The transaction's recent blockhash expired before submission.
     #[error("Recent blockhash expired before submission")]

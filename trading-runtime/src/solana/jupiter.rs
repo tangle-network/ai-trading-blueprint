@@ -50,7 +50,10 @@ impl JupiterVenue {
 
     /// Build a Jupiter venue against an explicit HTTP base. Tests use this
     /// to point at a `wiremock::MockServer`.
-    pub fn with_endpoint(rpc: SolanaClient, api_base: impl Into<String>) -> Result<Self, SolanaError> {
+    pub fn with_endpoint(
+        rpc: SolanaClient,
+        api_base: impl Into<String>,
+    ) -> Result<Self, SolanaError> {
         let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .build()
@@ -98,7 +101,10 @@ struct JupiterSwapRequest {
     #[serde(rename = "wrapAndUnwrapSol", skip_serializing_if = "Option::is_none")]
     wrap_and_unwrap_sol: Option<bool>,
     /// Auto-allocate compute-unit-price from priority fee market.
-    #[serde(rename = "computeUnitPriceMicroLamports", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "computeUnitPriceMicroLamports",
+        skip_serializing_if = "Option::is_none"
+    )]
     compute_unit_price_micro_lamports: Option<u64>,
 }
 
@@ -142,9 +148,8 @@ impl SolanaVenue for JupiterVenue {
 
         // Capture the raw value first so we can pass it back into /swap unchanged.
         let raw: serde_json::Value = resp.json().await.map_err(SolanaError::from)?;
-        let parsed: JupiterQuoteResponse = serde_json::from_value(raw.clone()).map_err(|e| {
-            SolanaError::RpcFailed(format!("jupiter quote: malformed JSON: {e}"))
-        })?;
+        let parsed: JupiterQuoteResponse = serde_json::from_value(raw.clone())
+            .map_err(|e| SolanaError::RpcFailed(format!("jupiter quote: malformed JSON: {e}")))?;
 
         let in_amount = parsed
             .in_amount

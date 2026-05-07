@@ -34,9 +34,8 @@ pub fn keypair_from_secret(raw: &str) -> Result<Keypair, SolanaError> {
 
     // 1. JSON byte array.
     if trimmed.starts_with('[') {
-        let bytes: Vec<u8> = serde_json::from_str(trimmed).map_err(|e| {
-            SolanaError::KeypairUnavailable(format!("invalid JSON keypair: {e}"))
-        })?;
+        let bytes: Vec<u8> = serde_json::from_str(trimmed)
+            .map_err(|e| SolanaError::KeypairUnavailable(format!("invalid JSON keypair: {e}")))?;
         return keypair_from_bytes(&bytes);
     }
 
