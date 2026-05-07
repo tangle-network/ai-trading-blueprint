@@ -126,6 +126,31 @@ contract EnvelopeValidatorTest is Setup {
         });
     }
 
+    function _pancakeV3() internal pure returns (TradeValidator.PancakeswapV3SwapEnforcement memory) {
+        return TradeValidator.PancakeswapV3SwapEnforcement({
+            feeTier: 500,
+            maxSingleAmountIn: 1e18,
+            maxTotalAmountIn: 10e18,
+            minOutputPerInput: 2_900e6,
+            router: address(0x13f4EA83D0bd40E75C8222255bc855a974568Dd4),
+            tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
+            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+        });
+    }
+
+    function _curve() internal pure returns (TradeValidator.CurveStableSwapEnforcement memory) {
+        return TradeValidator.CurveStableSwapEnforcement({
+            i: int128(0),
+            j: int128(1),
+            maxSingleAmountIn: 1000e6,
+            maxTotalAmountIn: 10000e6,
+            minOutputPerInput: 0.99e18,
+            pool: address(0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7),
+            tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
+            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+        });
+    }
+
     function _aaveSupply() internal pure returns (TradeValidator.AaveSupplyEnforcement memory) {
         return TradeValidator.AaveSupplyEnforcement({
             asset: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
@@ -243,6 +268,26 @@ contract EnvelopeValidatorTest is Setup {
         TradeValidator.Envelope memory env = _baseEnvelope(tv.hashAerodromeSwap(enf));
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
         (bool ok, uint256 valid) = tv.validateAerodromeSwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        assertTrue(ok);
+        assertEq(valid, 2);
+    }
+
+    function test_pancakeswapV3Swap_happyPath() public {
+        TradeValidator.PancakeswapV3SwapEnforcement memory enf = _pancakeV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashPancakeswapV3Swap(enf));
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        (bool ok, uint256 valid) =
+            tv.validatePancakeswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        assertTrue(ok);
+        assertEq(valid, 2);
+    }
+
+    function test_curveStableSwap_happyPath() public {
+        TradeValidator.CurveStableSwapEnforcement memory enf = _curve();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashCurveStableSwap(enf));
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        (bool ok, uint256 valid) =
+            tv.validateCurveStableSwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2);
     }
@@ -395,6 +440,78 @@ contract EnvelopeValidatorTest is Setup {
         bytes32 c = tv.hashAaveSupply(_aaveSupply());
         bytes32 d = tv.hashMorphoSupply(_morphoSupply());
         assertTrue(a != b && b != c && c != d && a != c && a != d && b != d);
+    }
+
+    /// @notice Critical regression guard — PancakeSwap V3 reuses Uniswap V3's
+    ///         field shape, so the only distinguishing factor between the two
+    ///         enforcement hashes is the typehash. If we ever collapsed them
+    ///         to a single typehash the on-chain dispatcher couldn't tell them
+    ///         apart and an envelope minted for one DEX could be replayed on
+    ///         the other.
+    function test_pancakeswapV3AndUniswapV3HashesAreDistinctForSameFields() public view {
+        TradeValidator.UniswapV3SwapEnforcement memory u = _uniV3();
+        TradeValidator.PancakeswapV3SwapEnforcement memory p = TradeValidator.PancakeswapV3SwapEnforcement({
+            feeTier: u.feeTier,
+            maxSingleAmountIn: u.maxSingleAmountIn,
+            maxTotalAmountIn: u.maxTotalAmountIn,
+            minOutputPerInput: u.minOutputPerInput,
+            router: u.router,
+            tokenIn: u.tokenIn,
+            tokenOut: u.tokenOut
+        });
+        bytes32 uniHash = tv.hashUniswapV3Swap(u);
+        bytes32 pancakeHash = tv.hashPancakeswapV3Swap(p);
+        assertTrue(uniHash != pancakeHash, "Pancake and Uniswap V3 must produce distinct enforcement hashes");
+    }
+
+    function test_curveStableSwap_indexSwapChangesHash() public view {
+        // (i=0, j=1) and (i=1, j=0) must produce distinct enforcement hashes so
+        // the on-chain executor cannot reuse one envelope for the opposite-direction
+        // swap.
+        TradeValidator.CurveStableSwapEnforcement memory a = _curve();
+        TradeValidator.CurveStableSwapEnforcement memory b = TradeValidator.CurveStableSwapEnforcement({
+            i: a.j,
+            j: a.i,
+            maxSingleAmountIn: a.maxSingleAmountIn,
+            maxTotalAmountIn: a.maxTotalAmountIn,
+            minOutputPerInput: a.minOutputPerInput,
+            pool: a.pool,
+            tokenIn: a.tokenIn,
+            tokenOut: a.tokenOut
+        });
+        assertTrue(tv.hashCurveStableSwap(a) != tv.hashCurveStableSwap(b));
+    }
+
+    function test_curveStableSwap_negativeIndexHashesDifferentlyFromPositive() public view {
+        TradeValidator.CurveStableSwapEnforcement memory pos = _curve();
+        TradeValidator.CurveStableSwapEnforcement memory neg = TradeValidator.CurveStableSwapEnforcement({
+            i: -int128(1),
+            j: pos.j,
+            maxSingleAmountIn: pos.maxSingleAmountIn,
+            maxTotalAmountIn: pos.maxTotalAmountIn,
+            minOutputPerInput: pos.minOutputPerInput,
+            pool: pos.pool,
+            tokenIn: pos.tokenIn,
+            tokenOut: pos.tokenOut
+        });
+        assertTrue(tv.hashCurveStableSwap(pos) != tv.hashCurveStableSwap(neg));
+    }
+
+    function test_distinctEnforcementHashesAcrossAllSwapProtocols() public view {
+        // All five swap protocols must produce distinct hashes — defense in depth
+        // beyond just the Pancake-vs-Uniswap comparison above.
+        bytes32 u3 = tv.hashUniswapV3Swap(_uniV3());
+        bytes32 u4 = tv.hashUniswapV4Swap(_uniV4());
+        bytes32 ae = tv.hashAerodromeSwap(_aero());
+        bytes32 pa = tv.hashPancakeswapV3Swap(_pancakeV3());
+        bytes32 cu = tv.hashCurveStableSwap(_curve());
+        // pairwise check
+        bytes32[5] memory hashes = [u3, u4, ae, pa, cu];
+        for (uint256 i = 0; i < hashes.length; ++i) {
+            for (uint256 j = i + 1; j < hashes.length; ++j) {
+                assertTrue(hashes[i] != hashes[j], "swap hashes must be pairwise distinct");
+            }
+        }
     }
 
     // ── hardening — signer-set + scoring boundary cases ──
