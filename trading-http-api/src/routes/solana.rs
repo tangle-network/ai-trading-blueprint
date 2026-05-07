@@ -450,7 +450,7 @@ async fn jupiter_swap(
                     m.recent_blockhash = fresh_blockhash;
                 }
             }
-            VersionedTransaction::try_new(new_msg, &[kp]).map_err(|e| {
+            VersionedTransaction::try_new(new_msg, &[&kp]).map_err(|e| {
                 trading_runtime::solana::error::SolanaError::RpcFailed(format!(
                     "re-sign jupiter swap tx after blockhash refresh: {e}"
                 ))
