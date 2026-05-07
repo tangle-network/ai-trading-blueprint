@@ -21,14 +21,13 @@ use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::envelope::{PerpsPolicy, SignedEnvelope, TradingPolicy};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
 };
 use trading_runtime::executor::get_adapter;
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
-use trading_runtime::signed_envelope::SignedTradingEnvelope;
-use trading_runtime::trading_envelope::TradingEnvelope;
 
 /// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
 const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1999,50 +1998,53 @@ fn live_bot_with_trust(
     }
 }
 
-fn signed_envelope_for_bot(bot: &BotContext) -> SignedTradingEnvelope {
-    let mut signed = SignedTradingEnvelope {
-        version: 1,
+const TEST_ENVELOPE_KEY: &str =
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const TEST_ENVELOPE_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const TEST_ENVELOPE_SIGNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+
+fn signed_envelope_for_bot(bot: &BotContext) -> SignedEnvelope {
+    use rust_decimal::Decimal;
+    let mut signed = SignedEnvelope {
+        version: 2,
         bot_id: bot.bot_id.clone(),
         vault_address: bot.vault_address.clone(),
         chain_id: bot.chain_id,
         protocol: "hyperliquid".to_string(),
-        envelope: TradingEnvelope {
-            allowed_assets: vec!["ETH".to_string()],
-            max_position_usd: 1000.0,
-            max_total_exposure_usd: 3000.0,
-            max_leverage: 5,
-            max_drawdown_pct: 0.10,
-            max_stop_loss_distance: 0.05,
-            min_stop_loss_distance: 0.01,
+        policy: TradingPolicy {
+            max_trade_size_usd: Decimal::from(1000),
+            max_total_exposure_usd: Decimal::from(3000),
+            max_drawdown_pct: Decimal::from(10),
             can_open_positions: true,
-            expires_at: chrono::Utc::now().timestamp() + 3600,
-            approved_by: "operator".to_string(),
-            approved_at: chrono::Utc::now().timestamp(),
+            perps: Some(PerpsPolicy {
+                allowed_assets: vec!["ETH".to_string()],
+                max_leverage: 5,
+                max_stop_loss_distance: Decimal::new(5, 2),
+                min_stop_loss_distance: Decimal::new(1, 2),
+                require_stop_loss: false,
+            }),
+            vault: None,
+            clob: None,
         },
-        approval_signers: vec![],
+        approval_signers: vec![TEST_ENVELOPE_SIGNER.to_string()],
         min_signatures: 1,
-        issued_at: chrono::Utc::now().timestamp(),
-        expires_at: chrono::Utc::now().timestamp() + 3600,
+        issued_at: chrono::Utc::now().timestamp() as u64,
+        expires_at: chrono::Utc::now().timestamp() as u64 + 3600,
         nonce: 1,
+        verifying_contract: TEST_ENVELOPE_CONTRACT.to_string(),
         signatures: vec![],
     };
-    let signer = signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
+    signed
+        .sign_with_private_key(TEST_ENVELOPE_KEY, TEST_ENVELOPE_CONTRACT)
         .unwrap();
-    signed.approval_signers = vec![signer];
+    signed
+}
+
+fn resign_envelope(signed: &mut SignedEnvelope) {
     signed.signatures.clear();
     signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
+        .sign_with_private_key(TEST_ENVELOPE_KEY, TEST_ENVELOPE_CONTRACT)
         .unwrap();
-    signed
 }
 
 fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
@@ -2084,7 +2086,7 @@ async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope(
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/hyperliquid/envelope")
+                .uri("/envelope")
                 .header("authorization", "Bearer bot-token-envelope")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&signed).unwrap()))
@@ -2276,7 +2278,7 @@ fn reattach_paper_validation_hashes(body: &mut serde_json::Value) {
 async fn put_signed_envelope(
     app: axum::Router,
     auth_token: &str,
-    signed: &SignedTradingEnvelope,
+    signed: &SignedEnvelope,
 ) -> axum::response::Response {
     app.oneshot(
         Request::builder()
@@ -2333,15 +2335,8 @@ async fn test_paper_envelope_execute_rejects_disallowed_asset() {
 
     // Build envelope that only allows BTC (not ETH)
     let mut signed = signed_envelope_for_bot(&bot);
-    signed.envelope.allowed_assets = vec!["BTC".to_string()];
-    signed.signatures.clear();
-    signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    signed.policy.perps.as_mut().unwrap().allowed_assets = vec!["BTC".to_string()];
+    resign_envelope(&mut signed);
 
     // Store the envelope
     let put_response = put_signed_envelope(
@@ -2380,15 +2375,8 @@ async fn test_paper_envelope_execute_rejects_excessive_leverage() {
 
     // Build envelope with max_leverage = 2
     let mut signed = signed_envelope_for_bot(&bot);
-    signed.envelope.max_leverage = 2;
-    signed.signatures.clear();
-    signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    signed.policy.perps.as_mut().unwrap().max_leverage = 2;
+    resign_envelope(&mut signed);
 
     let put_response = put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2421,14 +2409,8 @@ async fn test_paper_envelope_execute_rejects_missing_stop_loss() {
     let state = multi_bot_state_for_bot("paper-sl-missing-token", bot.clone());
 
     let mut signed = signed_envelope_for_bot(&bot);
-    signed.signatures.clear();
-    signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    signed.policy.perps.as_mut().unwrap().require_stop_loss = true;
+    resign_envelope(&mut signed);
 
     put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2450,7 +2432,8 @@ async fn test_paper_envelope_execute_rejects_missing_stop_loss() {
         body,
     )
     .await;
-    assert_eq!(response.status(), 400);
+    // require_stop_loss=true rejects missing SL with 403 (FORBIDDEN, StopLossRequired)
+    assert_eq!(response.status(), 403);
 }
 
 #[tokio::test]
@@ -2461,15 +2444,7 @@ async fn test_paper_envelope_execute_rejects_stop_loss_out_of_bounds() {
     let state = multi_bot_state_for_bot("paper-sl-oob-token", bot.clone());
 
     // Default envelope has max_stop_loss_distance: 0.05 (5%)
-    let mut signed = signed_envelope_for_bot(&bot);
-    signed.signatures.clear();
-    signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    let signed = signed_envelope_for_bot(&bot);
 
     put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2504,14 +2479,7 @@ async fn test_envelope_nonce_upgrade_accepted() {
 
     let mut signed1 = signed_envelope_for_bot(&bot);
     signed1.nonce = 1;
-    signed1.signatures.clear();
-    signed1
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    resign_envelope(&mut signed1);
 
     let r1 = put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2523,14 +2491,7 @@ async fn test_envelope_nonce_upgrade_accepted() {
 
     let mut signed2 = signed_envelope_for_bot(&bot);
     signed2.nonce = 2;
-    signed2.signatures.clear();
-    signed2
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    resign_envelope(&mut signed2);
 
     let r2 = put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2550,14 +2511,7 @@ async fn test_envelope_nonce_downgrade_rejected() {
 
     let mut signed5 = signed_envelope_for_bot(&bot);
     signed5.nonce = 5;
-    signed5.signatures.clear();
-    signed5
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    resign_envelope(&mut signed5);
 
     put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2568,14 +2522,7 @@ async fn test_envelope_nonce_downgrade_rejected() {
 
     let mut signed3 = signed_envelope_for_bot(&bot);
     signed3.nonce = 3;
-    signed3.signatures.clear();
-    signed3
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+    resign_envelope(&mut signed3);
 
     let r_down = put_signed_envelope(
         build_multi_bot_router(Arc::clone(&state)),
@@ -2594,6 +2541,136 @@ async fn test_envelope_nonce_downgrade_rejected() {
 }
 
 #[tokio::test]
+async fn test_paper_envelope_execute_rejects_open_in_close_only_mode() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-co-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-co-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.can_open_positions = false; // close-only
+    resign_envelope(&mut signed);
+
+    let put = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        &signed,
+    )
+    .await;
+    assert_eq!(put.status(), 200);
+
+    // open_long is an opening action; close-only mode must reject it.
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("close-only") || msg.contains("close"), "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_corrupt_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-corrupt-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("corrupt-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    // truncate signature to invalid length — should map to BAD_REQUEST (400)
+    signed.signatures[0].signature = format!("0x{}", "aa".repeat(32));
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "corrupt-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_non_hex_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hex-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("hex-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.signatures[0].signature = "totally-not-hex".into();
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "hex-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_expired_envelope_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-expired-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("expired-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.expires_at = 1_000; // long past
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "expired-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(
+        msg.contains("expired") || msg.contains("expires_at"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_wrong_version_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-version-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("version-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.version = 1; // v1 is not supported
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "version-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("version"), "{msg}");
+}
+
+#[tokio::test]
 async fn test_envelope_same_nonce_rejected() {
     ensure_state_dir();
     let bot_id = format!("bot-nonce-same-{}", uuid::Uuid::new_v4());
@@ -2603,13 +2680,7 @@ async fn test_envelope_same_nonce_rejected() {
     let make_envelope = |nonce: u64| {
         let mut s = signed_envelope_for_bot(&bot);
         s.nonce = nonce;
-        s.signatures.clear();
-        s.sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
-        .unwrap();
+        resign_envelope(&mut s);
         s
     };
 

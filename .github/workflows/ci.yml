@@ -26,6 +26,8 @@ jobs:
           submodules: recursive
 
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
 
       - name: Install Soldeer deps
         run: forge soldeer install

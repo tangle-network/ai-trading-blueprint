@@ -1,5 +1,6 @@
 {
   "metadata_uri": "ipfs://QmTradingBlueprint",
+  "metadata_file": "metadata/blueprint-metadata.json",
   "manager": "0x0000000000000000000000000000000000000000",
   "master_manager_revision": 0,
   "jobs": [
@@ -49,7 +50,7 @@
     "description": "Autonomous AI trading bots on Tangle Network",
     "author": "Tangle",
     "category": "Trading",
-    "code_repository": "https://github.com/tangle-network/ai-trading-blueprints",
+    "code_repository": "https://github.com/tangle-network/ai-trading-blueprint",
     "website": "https://tangle.network",
     "license": "MIT"
   }
