@@ -93,9 +93,7 @@ pub async fn run_baseline_backtest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backtest::types::{
-        BacktestResult, Direction, ExitReason, SimulatedTrade,
-    };
+    use crate::backtest::types::{BacktestResult, Direction, ExitReason, SimulatedTrade};
     use crate::leaderboard::{EquityPoint, LeaderboardStats};
     use rust_decimal::Decimal;
 

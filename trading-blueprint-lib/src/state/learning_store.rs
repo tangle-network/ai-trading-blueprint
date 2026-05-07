@@ -1,126 +1,38 @@
 //! Per-bot persistence of strategy-bandit + slippage-learner state.
 //!
-//! Each bot stores a single JSON file under `state_dir/learning/{bot_id}.json`
-//! that round-trips both [`StrategyBandit`] and [`SlippageLearner`]. The store
-//! follows the same on-disk layout pattern as
-//! `trading-http-api::routes::envelope` — a flat directory of JSON blobs keyed
-//! by sanitized bot id, written eagerly and read on demand.
+//! Re-exports the canonical implementation from
+//! `trading_http_api::learning_store`. The canonical store lives in the HTTP
+//! crate so post-trade hooks (`routes::execute`) and `/learning/*` endpoints
+//! can mutate the on-disk state without crossing the dependency cycle into
+//! `trading-blueprint-lib`. Lifecycle code in this crate (e.g. wind-down)
+//! reaches the same state through this re-export.
 
-use std::path::PathBuf;
-use std::sync::Mutex;
-
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-
-use trading_runtime::learning::{SlippageLearner, StrategyBandit};
-
-/// Combined learning state for a single bot.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct BotLearningState {
-    #[serde(default)]
-    pub bandit: StrategyBandit,
-    #[serde(default)]
-    pub slippage: SlippageLearner,
-}
-
-/// Coarse process-wide write lock — guards file writes against concurrent
-/// callers in the same process. We accept the conservative single-mutex
-/// approach because writes are infrequent (post-trade hooks, daily reflection).
-static WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-fn learning_dir() -> PathBuf {
-    sandbox_runtime::store::state_dir().join("learning")
-}
-
-fn sanitize_bot_id(bot_id: &str) -> String {
-    bot_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn learning_path(bot_id: &str) -> PathBuf {
-    learning_dir().join(format!("{}.json", sanitize_bot_id(bot_id)))
-}
-
-/// Load the learning state for `bot_id`. Returns the default empty state if
-/// no file exists yet. A corrupt file is logged and treated as missing so a
-/// single bad write can't permanently brick the agent's learner.
-pub fn load(bot_id: &str) -> BotLearningState {
-    match std::fs::read_to_string(learning_path(bot_id)) {
-        Ok(data) => match serde_json::from_str(&data) {
-            Ok(state) => state,
-            Err(e) => {
-                tracing::error!(
-                    bot_id,
-                    "Corrupt learning state file — using empty state: {e}"
-                );
-                BotLearningState::default()
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => BotLearningState::default(),
-        Err(e) => {
-            tracing::error!(bot_id, "Failed to read learning state: {e}");
-            BotLearningState::default()
-        }
-    }
-}
-
-/// Persist `state` for `bot_id`. Write errors are surfaced to the caller so
-/// hooks can downgrade them to warnings without losing visibility.
-pub fn save(bot_id: &str, state: &BotLearningState) -> Result<(), String> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|_| "learning store mutex poisoned".to_string())?;
-
-    std::fs::create_dir_all(learning_dir()).map_err(|e| format!("create learning dir: {e}"))?;
-    let json = serde_json::to_string_pretty(state)
-        .map_err(|e| format!("serialize learning state: {e}"))?;
-    std::fs::write(learning_path(bot_id), json).map_err(|e| format!("write learning state: {e}"))
-}
-
-/// Read-modify-write helper. The closure receives the current state and may
-/// mutate it; the result is persisted on success.
-pub fn update<F>(bot_id: &str, mutate: F) -> Result<BotLearningState, String>
-where
-    F: FnOnce(&mut BotLearningState),
-{
-    let mut state = load(bot_id);
-    mutate(&mut state);
-    save(bot_id, &state)?;
-    Ok(state)
-}
-
-/// Remove the learning state for `bot_id` (used when a bot is deprovisioned).
-pub fn clear(bot_id: &str) -> Result<(), String> {
-    let path = learning_path(bot_id);
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("remove learning state: {e}")),
-    }
-}
+pub use trading_http_api::learning_store::{
+    BotLearningState, clear, load, observed_slippage_bps, recommend_max_slippage_bps,
+    record_failure, record_fill, record_strategy_outcome, save, update,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::primitives::Address;
-    use std::sync::Once;
+    use once_cell::sync::Lazy;
+
+    /// One-time install of an in-process learning-dir override that bypasses
+    /// `BLUEPRINT_STATE_DIR` entirely. Sibling tests in this crate
+    /// (`operator_chat`, `state::tests::test_state_queries`) mutate the env
+    /// var and drop their tempdirs, which races with our writes when run
+    /// concurrently. Routing through `learning_store::set_test_dir` removes
+    /// us from that critical section.
+    static SHARED_DIR_INSTALLED: Lazy<()> = Lazy::new(|| {
+        let tmp = tempfile::TempDir::new().expect("create shared temp learning dir");
+        let path = tmp.path().to_path_buf();
+        std::mem::forget(tmp);
+        trading_http_api::learning_store::set_test_dir(path);
+    });
 
     fn ensure_state_dir() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let tmp = tempfile::TempDir::new().unwrap();
-            // SAFETY: called once before any other threads read this env var
-            unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-            std::mem::forget(tmp);
-        });
+        Lazy::force(&SHARED_DIR_INSTALLED);
     }
 
     fn addr(byte: u8) -> Address {
