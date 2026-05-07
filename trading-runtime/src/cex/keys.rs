@@ -173,11 +173,11 @@ impl CexKeyProvider for SecretsBackedKeyProvider {
     fn coinbase_key(&self, bot_id: &str) -> Option<CoinbaseConfig> {
         let file = self.read_bot_file(bot_id)?;
         let c = file.coinbase?;
-        Some(CoinbaseConfig {
-            api_key_name: c.api_key_name,
-            api_private_key_pem: c.api_private_key_pem,
-            base_url: c.base_url,
-        })
+        Some(CoinbaseConfig::new(
+            c.api_key_name,
+            c.api_private_key_pem,
+            c.base_url,
+        ))
     }
 
     fn solana_keypair(&self, bot_id: &str) -> Option<Keypair> {

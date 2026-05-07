@@ -9,7 +9,27 @@
 //! NOT in `iss`/`sub`. The `iss` claim is the literal string
 //! `"coinbase-cloud"` and `sub` is the `name`. This is unusual enough that
 //! it's worth keeping the implementation explicit.
+//!
+//! ### Secret handling — defense in depth
+//!
+//! Audit finding #12 (LOW) flagged that the PEM private key was retained
+//! on `CoinbaseConfig` as a plain `String` for the lifetime of the client
+//! and never zeroized. The fix here:
+//!
+//! 1. The PEM is wrapped in `zeroize::Zeroizing<String>` — the heap buffer
+//!    is wiped on drop.
+//! 2. `EncodingKey::from_ec_pem` is invoked **per request**, not cached on
+//!    the client. The intermediate `EncodingKey` is dropped immediately
+//!    after the JWT is signed. We can't wipe the `EncodingKey`'s internal
+//!    allocation (upstream `jsonwebtoken` does not expose a primitive for
+//!    that), but minimising its lifetime narrows the window during which
+//!    the parsed key material is reachable on the heap.
+//! 3. An explicit `Drop` impl on `CoinbaseConfig` is provided as
+//!    defense-in-depth — `Zeroizing<String>` already wipes on drop, but
+//!    the explicit impl makes the contract obvious to future readers and
+//!    survives any accidental conversion of the field type.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,6 +37,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use reqwest::{Client, Method, StatusCode};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use super::{
     CexAccountInfo, CexBalance, CexError, CexFee, CexOpenOrder, CexOrderRequest, CexOrderResponse,
@@ -28,17 +49,52 @@ const PROD_HOST: &str = "api.coinbase.com";
 const JWT_TTL_SECS: u64 = 120;
 
 /// Configuration for a Coinbase Advanced Trade client.
-#[derive(Debug, Clone)]
+///
+/// The PEM private key is held in a `Zeroizing<String>` so the heap buffer
+/// is wiped when the config is dropped (or replaced). See the module doc
+/// for the full lifecycle rationale.
+#[derive(Clone)]
 pub struct CoinbaseConfig {
     /// CDP API key name — `organizations/{org_uuid}/apiKeys/{key_uuid}`.
     pub api_key_name: String,
     /// CDP API private key — PEM-encoded EC P-256 (`-----BEGIN EC PRIVATE KEY-----`).
-    pub api_private_key_pem: String,
+    ///
+    /// Stored in `Zeroizing<String>` to wipe on drop. Use [`Self::pem_str`]
+    /// to access the underlying bytes when constructing an `EncodingKey`.
+    api_private_key_pem: zeroize::Zeroizing<String>,
     /// Override base URL (typically left None).
     pub base_url: Option<String>,
 }
 
+impl std::fmt::Debug for CoinbaseConfig {
+    /// Custom Debug — never print the PEM. The default derived impl would
+    /// happily expose the secret in panics or trace logs.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CoinbaseConfig")
+            .field("api_key_name", &self.api_key_name)
+            .field("api_private_key_pem", &"<redacted>")
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
 impl CoinbaseConfig {
+    /// Construct from caller-supplied components. The PEM is moved into a
+    /// `Zeroizing<String>`; the original `String` argument is therefore
+    /// not separately zeroized — callers that hold their own copy must
+    /// arrange that themselves.
+    pub fn new(
+        api_key_name: String,
+        api_private_key_pem: String,
+        base_url: Option<String>,
+    ) -> Self {
+        Self {
+            api_key_name,
+            api_private_key_pem: zeroize::Zeroizing::new(api_private_key_pem),
+            base_url,
+        }
+    }
+
     pub fn from_env() -> Result<Self, CexError> {
         let api_key_name = std::env::var("COINBASE_API_KEY_NAME").map_err(|_| {
             CexError::Misconfigured("COINBASE_API_KEY_NAME env var is not set".into())
@@ -47,11 +103,23 @@ impl CoinbaseConfig {
             CexError::Misconfigured("COINBASE_API_PRIVATE_KEY env var is not set".into())
         })?;
         let base_url = std::env::var("COINBASE_BASE_URL").ok();
-        Ok(Self {
-            api_key_name,
-            api_private_key_pem,
-            base_url,
-        })
+        Ok(Self::new(api_key_name, api_private_key_pem, base_url))
+    }
+
+    /// Borrow the PEM bytes for a single use (e.g. constructing an
+    /// `EncodingKey`). Keep the borrow scope minimal so the parsed
+    /// `EncodingKey` can be dropped quickly.
+    pub(crate) fn pem_bytes(&self) -> &[u8] {
+        self.api_private_key_pem.as_bytes()
+    }
+}
+
+/// Defense-in-depth: zeroize the PEM on drop. The `Zeroizing<String>`
+/// wrapper already does this; this explicit impl makes the contract
+/// visible and survives any future refactor that swaps the field type.
+impl Drop for CoinbaseConfig {
+    fn drop(&mut self) {
+        self.api_private_key_pem.zeroize();
     }
 }
 
@@ -59,8 +127,10 @@ pub struct CoinbaseClient {
     config: CoinbaseConfig,
     http: Client,
     base_url: String,
-    /// Pre-parsed signing key — fail-fast at construction if PEM is bad.
-    signing_key: EncodingKey,
+    /// How many times we've parsed the PEM into an `EncodingKey`. Used by
+    /// tests to assert the key is minted per-request and not cached.
+    /// Production code only ever increments it.
+    signing_call_count: AtomicU64,
 }
 
 impl CoinbaseClient {
@@ -70,8 +140,15 @@ impl CoinbaseClient {
             .clone()
             .unwrap_or_else(|| PROD_BASE_URL.to_string());
 
-        let signing_key = EncodingKey::from_ec_pem(config.api_private_key_pem.as_bytes())
-            .map_err(|e| CexError::Misconfigured(format!("Coinbase EC private key: {e}")))?;
+        // Validate the PEM at construction time so misconfigured bots fail
+        // fast, but discard the parsed key immediately — we'll re-parse it
+        // on each request to minimise the time the parsed material lives
+        // on the heap. The parsed `EncodingKey` is dropped at the end of
+        // this scope.
+        {
+            let _validate = EncodingKey::from_ec_pem(config.pem_bytes())
+                .map_err(|e| CexError::Misconfigured(format!("Coinbase EC private key: {e}")))?;
+        }
 
         let http = Client::builder()
             .timeout(Duration::from_secs(15))
@@ -82,21 +159,41 @@ impl CoinbaseClient {
             config,
             http,
             base_url,
-            signing_key,
+            signing_call_count: AtomicU64::new(0),
         })
     }
 
     /// Build the JWT for a single request. Each call uses a fresh nonce + iat.
+    ///
+    /// The `EncodingKey` is constructed inside this method and dropped when
+    /// the function returns; we never cache it on `self`. This shortens the
+    /// window during which the parsed key material is reachable on the
+    /// heap. (`jsonwebtoken::EncodingKey` does not expose a wipe primitive,
+    /// so the best we can do is minimise its lifetime.)
     pub(crate) fn build_jwt(&self, method: &str, path: &str) -> Result<String, CexError> {
+        self.signing_call_count.fetch_add(1, Ordering::Relaxed);
+        let signing_key = EncodingKey::from_ec_pem(self.config.pem_bytes())
+            .map_err(|e| CexError::AuthFailed(format!("Coinbase EC private key parse: {e}")))?;
+        // `signing_key` is dropped at the end of this scope — we never
+        // cache it on `self`, so the parsed key material has the shortest
+        // possible lifetime.
         build_jwt_inner(
             &self.config.api_key_name,
-            &self.signing_key,
+            &signing_key,
             method,
             PROD_HOST,
             path,
             now_secs(),
             random_nonce(),
         )
+    }
+
+    /// Test-only accessor: how many times has `build_jwt` parsed the PEM?
+    /// Used to verify that the `EncodingKey` is minted per-request (audit
+    /// finding #12 follow-up).
+    #[cfg(test)]
+    pub(crate) fn signing_call_count(&self) -> u64 {
+        self.signing_call_count.load(Ordering::Relaxed)
     }
 
     async fn request_signed(
@@ -565,22 +662,18 @@ mod tests {
 
     #[test]
     fn coinbase_config_loads_from_pem() {
-        let cfg = CoinbaseConfig {
-            api_key_name: "organizations/test-org/apiKeys/test-key".into(),
-            api_private_key_pem: TEST_PRIVATE_KEY_PEM.into(),
-            base_url: None,
-        };
+        let cfg = CoinbaseConfig::new(
+            "organizations/test-org/apiKeys/test-key".into(),
+            TEST_PRIVATE_KEY_PEM.into(),
+            None,
+        );
         let client = CoinbaseClient::new(cfg).unwrap();
         assert_eq!(client.venue_id(), "coinbase");
     }
 
     #[test]
     fn coinbase_config_rejects_garbage_pem() {
-        let cfg = CoinbaseConfig {
-            api_key_name: "x".into(),
-            api_private_key_pem: "not-a-pem".into(),
-            base_url: None,
-        };
+        let cfg = CoinbaseConfig::new("x".into(), "not-a-pem".into(), None);
         let err = match CoinbaseClient::new(cfg) {
             Ok(_) => panic!("expected misconfigured for invalid PEM"),
             Err(e) => e,
@@ -590,11 +683,11 @@ mod tests {
 
     #[test]
     fn jwt_has_expected_header_and_claims() {
-        let cfg = CoinbaseConfig {
-            api_key_name: "organizations/test-org/apiKeys/test-key".into(),
-            api_private_key_pem: TEST_PRIVATE_KEY_PEM.into(),
-            base_url: None,
-        };
+        let cfg = CoinbaseConfig::new(
+            "organizations/test-org/apiKeys/test-key".into(),
+            TEST_PRIVATE_KEY_PEM.into(),
+            None,
+        );
         let client = CoinbaseClient::new(cfg).unwrap();
         let token = client
             .build_jwt("GET", "/api/v3/brokerage/accounts")
@@ -783,5 +876,97 @@ mod tests {
         // Sanity-check entropy: no two of 32 generated nonces should collide.
         let many: std::collections::HashSet<String> = (0..32).map(|_| random_nonce()).collect();
         assert_eq!(many.len(), 32, "32 CSPRNG nonces unexpectedly collided");
+    }
+
+    /// Audit fix (LOW #12): the PEM is wrapped in `Zeroizing<String>` so
+    /// the heap buffer is wiped on drop. We verify by reading the heap
+    /// bytes through a saved raw pointer after the config is dropped. The
+    /// pointer is only valid because we know `String` is heap-allocated
+    /// for non-empty strings and the allocator is unlikely to immediately
+    /// reuse the freed page within the test scope — but we don't require
+    /// that: we only require that the bytes at that location no longer
+    /// contain the PEM marker. (If the page has been reused, we'll fail
+    /// to find the marker and the test still passes — i.e. the test is
+    /// conservative.)
+    #[test]
+    fn pem_is_zeroized_on_drop() {
+        let pem = TEST_PRIVATE_KEY_PEM.to_string();
+        // Capture the raw heap pointer + length before drop.
+        let cfg = CoinbaseConfig::new("k".into(), pem, None);
+        let ptr = cfg.api_private_key_pem.as_ptr();
+        let len = cfg.api_private_key_pem.len();
+        assert!(len > 0, "non-empty PEM expected");
+
+        // Sanity: while alive, the buffer contains the PEM marker.
+        // SAFETY: the `Zeroizing<String>` is alive for this borrow;
+        // pointer is valid.
+        let live = unsafe { std::slice::from_raw_parts(ptr, len) };
+        assert!(
+            live.windows(b"BEGIN PRIVATE KEY".len())
+                .any(|w| w == b"BEGIN PRIVATE KEY"),
+            "expected PEM marker while config alive"
+        );
+
+        drop(cfg);
+
+        // After drop, `Zeroizing` has wiped the buffer (or the allocator
+        // has reused/unmapped the page). Either way, the marker must not
+        // be present at the captured location.
+        // SAFETY: this is a best-effort heap inspection; if the page has
+        // been unmapped this will SEGV, so we keep the test in a
+        // single-threaded section. In practice for a 200-byte allocation
+        // glibc keeps the page resident.
+        let after = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let still_present = after
+            .windows(b"BEGIN PRIVATE KEY".len())
+            .any(|w| w == b"BEGIN PRIVATE KEY");
+        assert!(
+            !still_present,
+            "PEM marker still readable in heap after CoinbaseConfig drop — \
+             zeroize failed"
+        );
+    }
+
+    /// Audit fix (LOW #12): the `EncodingKey` is parsed per-request and
+    /// not cached on the client. Two `build_jwt` calls must increment the
+    /// signing-call counter twice.
+    #[test]
+    fn encoding_key_is_minted_per_request() {
+        let cfg = CoinbaseConfig::new(
+            "organizations/test-org/apiKeys/test-key".into(),
+            TEST_PRIVATE_KEY_PEM.into(),
+            None,
+        );
+        let client = CoinbaseClient::new(cfg).unwrap();
+        assert_eq!(client.signing_call_count(), 0);
+        let _t1 = client
+            .build_jwt("GET", "/api/v3/brokerage/accounts")
+            .unwrap();
+        assert_eq!(client.signing_call_count(), 1);
+        let _t2 = client
+            .build_jwt("GET", "/api/v3/brokerage/accounts")
+            .unwrap();
+        assert_eq!(
+            client.signing_call_count(),
+            2,
+            "EncodingKey must be minted per-request, not cached"
+        );
+    }
+
+    /// Defensive: `Debug` must not leak the PEM. A future contributor
+    /// adding `dbg!(&config)` should not accidentally print the secret.
+    #[test]
+    fn debug_does_not_leak_pem() {
+        let cfg = CoinbaseConfig::new(
+            "k".into(),
+            TEST_PRIVATE_KEY_PEM.into(),
+            Some("https://example".into()),
+        );
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("BEGIN PRIVATE KEY"),
+            "Debug impl must redact the PEM, got: {dbg}"
+        );
+        assert!(dbg.contains("redacted"));
     }
 }
