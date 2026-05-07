@@ -21,8 +21,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use trading_runtime::cex::binance::{BinanceClient, BinanceConfig};
-use trading_runtime::cex::coinbase::{CoinbaseClient, CoinbaseConfig};
+use trading_runtime::cex::binance::BinanceClient;
+use trading_runtime::cex::coinbase::CoinbaseClient;
 use trading_runtime::cex::{
     CexAccountInfo, CexOpenOrder, CexOrderRequest, CexOrderResponse, CexTicker, DirectApiVenue,
 };
@@ -40,6 +40,7 @@ fn client_cache() -> &'static Mutex<ClientCache> {
 }
 
 fn resolve_venue(
+    state: &MultiBotTradingState,
     venue: &str,
     bot: &BotContext,
 ) -> Result<Arc<dyn DirectApiVenue>, (StatusCode, String)> {
@@ -62,15 +63,35 @@ fn resolve_venue(
         }
     }
 
+    // Audit fix: keys are resolved per-`bot.bot_id` via the configured
+    // `CexKeyProvider` rather than from this process's env block. A bot
+    // that has not configured creds for the requested venue receives a
+    // 412 PRECONDITION_FAILED rather than a process-wide 500.
     let client: Arc<dyn DirectApiVenue> = match static_id {
-        "binance" => Arc::new(
-            BinanceClient::new(BinanceConfig::from_env().map_err(<(StatusCode, String)>::from)?)
-                .map_err(<(StatusCode, String)>::from)?,
-        ),
-        "coinbase" => Arc::new(
-            CoinbaseClient::new(CoinbaseConfig::from_env().map_err(<(StatusCode, String)>::from)?)
-                .map_err(<(StatusCode, String)>::from)?,
-        ),
+        "binance" => {
+            let cfg = state.key_provider.binance_key(&bot.bot_id).ok_or_else(|| {
+                (
+                    StatusCode::PRECONDITION_FAILED,
+                    format!(
+                        "no Binance key configured for bot {}; push credentials via the secrets API before trading",
+                        bot.bot_id
+                    ),
+                )
+            })?;
+            Arc::new(BinanceClient::new(cfg).map_err(<(StatusCode, String)>::from)?)
+        }
+        "coinbase" => {
+            let cfg = state.key_provider.coinbase_key(&bot.bot_id).ok_or_else(|| {
+                (
+                    StatusCode::PRECONDITION_FAILED,
+                    format!(
+                        "no Coinbase key configured for bot {}; push credentials via the secrets API before trading",
+                        bot.bot_id
+                    ),
+                )
+            })?;
+            Arc::new(CoinbaseClient::new(cfg).map_err(<(StatusCode, String)>::from)?)
+        }
         _ => unreachable!("guarded above"),
     };
 
@@ -116,13 +137,13 @@ struct TickerQuery {
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async fn place_order(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Path(venue): Path<String>,
     Extension(bot): Extension<BotContext>,
     Json(req): Json<CexOrderRequest>,
 ) -> Result<Json<CexOrderResponse>, (StatusCode, String)> {
     reject_live_direct_cex(&venue, &bot)?;
-    let client = resolve_venue(&venue, &bot)?;
+    let client = resolve_venue(&state, &venue, &bot)?;
     let resp = client
         .place_order(&req)
         .await
@@ -131,13 +152,13 @@ async fn place_order(
 }
 
 async fn cancel_order(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Path(venue): Path<String>,
     Extension(bot): Extension<BotContext>,
     Query(q): Query<CancelOrderQuery>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     reject_live_direct_cex(&venue, &bot)?;
-    let client = resolve_venue(&venue, &bot)?;
+    let client = resolve_venue(&state, &venue, &bot)?;
     client
         .cancel_order(&q.symbol, &q.venue_order_id)
         .await
@@ -146,11 +167,11 @@ async fn cancel_order(
 }
 
 async fn get_account(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Path(venue): Path<String>,
     Extension(bot): Extension<BotContext>,
 ) -> Result<Json<CexAccountInfo>, (StatusCode, String)> {
-    let client = resolve_venue(&venue, &bot)?;
+    let client = resolve_venue(&state, &venue, &bot)?;
     let info = client
         .get_account()
         .await
@@ -159,12 +180,12 @@ async fn get_account(
 }
 
 async fn get_open_orders(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Path(venue): Path<String>,
     Extension(bot): Extension<BotContext>,
     Query(q): Query<OpenOrdersQuery>,
 ) -> Result<Json<Vec<CexOpenOrder>>, (StatusCode, String)> {
-    let client = resolve_venue(&venue, &bot)?;
+    let client = resolve_venue(&state, &venue, &bot)?;
     let orders = client
         .get_open_orders(q.symbol.as_deref())
         .await
@@ -173,12 +194,12 @@ async fn get_open_orders(
 }
 
 async fn get_ticker(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Path(venue): Path<String>,
     Extension(bot): Extension<BotContext>,
     Query(q): Query<TickerQuery>,
 ) -> Result<Json<CexTicker>, (StatusCode, String)> {
-    let client = resolve_venue(&venue, &bot)?;
+    let client = resolve_venue(&state, &venue, &bot)?;
     let ticker = client
         .get_ticker(&q.symbol)
         .await
@@ -214,12 +235,56 @@ mod tests {
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
         };
-        let err = match resolve_venue("kraken", &bot) {
+        let state = std::sync::Arc::new(MultiBotTradingState::default());
+        let err = match resolve_venue(&state, "kraken", &bot) {
             Ok(_) => panic!("unknown venue should 404"),
             Err(e) => e,
         };
         assert_eq!(err.0, StatusCode::NOT_FOUND);
         assert!(err.1.contains("kraken"));
+    }
+
+    /// Audit fix: a bot that has not configured Binance creds receives a
+    /// 412 PRECONDITION_FAILED rather than a process-wide error. The legacy
+    /// `EnvKeyProvider` returns `None` when env vars are unset, which means
+    /// this test simply needs to clear the env vars and use the default state.
+    #[test]
+    fn missing_key_returns_412() {
+        let prev_key = std::env::var("BINANCE_API_KEY").ok();
+        let prev_secret = std::env::var("BINANCE_API_SECRET").ok();
+        unsafe {
+            std::env::remove_var("BINANCE_API_KEY");
+            std::env::remove_var("BINANCE_API_SECRET");
+        }
+
+        let bot = BotContext {
+            bot_id: "missing-key-bot".into(),
+            vault_address: "0x".into(),
+            paper_trade: true,
+            chain_id: 1,
+            rpc_url: "http://localhost".into(),
+            strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let state = std::sync::Arc::new(MultiBotTradingState::default());
+        let err = resolve_venue(&state, "binance", &bot).expect_err("should 412");
+        assert_eq!(err.0, StatusCode::PRECONDITION_FAILED, "{}", err.1);
+        assert!(
+            err.1.contains("missing-key-bot"),
+            "error must name the bot: {}",
+            err.1
+        );
+
+        unsafe {
+            if let Some(v) = prev_key {
+                std::env::set_var("BINANCE_API_KEY", v);
+            }
+            if let Some(v) = prev_secret {
+                std::env::set_var("BINANCE_API_SECRET", v);
+            }
+        }
     }
 
     #[test]

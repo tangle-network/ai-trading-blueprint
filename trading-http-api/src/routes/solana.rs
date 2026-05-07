@@ -71,6 +71,12 @@ fn rpc_client() -> &'static SolanaClient {
     })
 }
 
+/// Legacy single-tenant operator keypair (env-driven, cached).
+///
+/// Used only by `get_operator_balances`, which is an operator-wide endpoint
+/// without a `BotContext` to scope a per-bot key against. Per-bot trading
+/// handlers MUST use [`resolve_keypair_for_bot`] instead so each tenant
+/// signs with its own credentials.
 fn operator_keypair() -> Result<&'static Keypair, (StatusCode, String)> {
     if let Some(kp) = OPERATOR_KEYPAIR.get() {
         return Ok(kp);
@@ -81,6 +87,31 @@ fn operator_keypair() -> Result<&'static Keypair, (StatusCode, String)> {
         StatusCode::SERVICE_UNAVAILABLE,
         "operator keypair race".into(),
     ))
+}
+
+/// Audit fix: resolve the Solana operator keypair *per bot* via the
+/// configured [`trading_runtime::cex::CexKeyProvider`]. The legacy global
+/// `OPERATOR_KEYPAIR` `OnceLock` is preserved as a fallback that the default
+/// `EnvKeyProvider` uses, so single-tenant env-driven deployments keep
+/// working unchanged.
+///
+/// Returns 412 PRECONDITION FAILED when the bot has no configured key.
+fn resolve_keypair_for_bot(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+) -> Result<Keypair, (StatusCode, String)> {
+    state
+        .key_provider
+        .solana_keypair(&bot.bot_id)
+        .ok_or_else(|| {
+            (
+                StatusCode::PRECONDITION_FAILED,
+                format!(
+                    "no Solana operator key configured for bot {}; push credentials via the secrets API before trading",
+                    bot.bot_id
+                ),
+            )
+        })
 }
 
 // ── Wire types ──────────────────────────────────────────────────────────────
@@ -316,14 +347,14 @@ fn drift_compute_budget_ixs() -> [Instruction; 2] {
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async fn jupiter_quote(
-    State(_state): State<Arc<MultiBotTradingState>>,
-    Extension(_bot): Extension<BotContext>,
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
     Json(req): Json<JupiterQuoteHttpRequest>,
 ) -> Result<Json<SolanaQuote>, (StatusCode, String)> {
     let input_mint = parse_pubkey("input_mint", &req.input_mint)?;
     let output_mint = parse_pubkey("output_mint", &req.output_mint)?;
 
-    let kp = operator_keypair()?;
+    let kp = resolve_keypair_for_bot(&state, &bot)?;
     let venue = JupiterVenue::new(rpc_client().clone()).map_err(<(StatusCode, String)>::from)?;
     let quote_req = SolanaQuoteRequest {
         input_mint,
@@ -392,7 +423,7 @@ async fn jupiter_swap(
         .map_err(<(StatusCode, String)>::from)?;
     }
 
-    let kp = operator_keypair()?;
+    let kp = resolve_keypair_for_bot(&state, &bot)?;
     let venue = JupiterVenue::new(rpc_client().clone()).map_err(<(StatusCode, String)>::from)?;
     let unsigned = venue
         .build_swap_tx(&req.quote, kp.pubkey())
@@ -488,7 +519,7 @@ async fn drift_order(
         .map_err(<(StatusCode, String)>::from)?;
     }
 
-    let kp = operator_keypair()?;
+    let kp = resolve_keypair_for_bot(&state, &bot)?;
     let params = DriftOrderParams::new_perp_order(
         req.order.market_index,
         req.order.direction,
@@ -527,7 +558,7 @@ async fn drift_order(
                             "compile drift tx: {e}"
                         ))
                     })?;
-            VersionedTransaction::try_new(VersionedMessage::V0(msg), &[kp]).map_err(|e| {
+            VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&kp]).map_err(|e| {
                 trading_runtime::solana::error::SolanaError::RpcFailed(format!(
                     "sign drift tx: {e}"
                 ))

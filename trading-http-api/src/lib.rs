@@ -162,6 +162,13 @@ pub struct MultiBotTradingState {
     /// Alert sink fed by the renewal cron + envelope watcher + execute path.
     /// Cloneable + cheap; fire-and-log-on-failure semantics.
     pub alert_sink: alerts::AlertSink,
+    /// Per-bot CEX/Solana key resolver. Defaults to
+    /// [`trading_runtime::cex::EnvKeyProvider`] which preserves the legacy
+    /// single-tenant env-var behaviour. Production multi-tenant deployments
+    /// inject [`trading_runtime::cex::SecretsBackedKeyProvider`] (or any
+    /// other [`trading_runtime::cex::CexKeyProvider`] impl) so each bot
+    /// signs with its own credentials.
+    pub key_provider: Arc<dyn trading_runtime::cex::CexKeyProvider>,
     /// Per-bot route-class rate limiter. Defaults to
     /// [`rate_limit::RateLimitConfig::default`] (60/240/120/120 per
     /// minute). Operators can set `TRADING_RATE_LIMIT_ENABLED=false` to
@@ -185,6 +192,7 @@ impl Default for MultiBotTradingState {
             chain_client_chain_id: None,
             alert_sink: alerts::AlertSink::new(None, None),
             rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
+            key_provider: trading_runtime::cex::default_provider(),
         }
     }
 }
