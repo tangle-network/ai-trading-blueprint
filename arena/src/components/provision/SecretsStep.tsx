@@ -9,6 +9,7 @@ import {
   type AiProvider,
 } from '~/lib/config/aiProviders';
 import { getProvisionBotRouteId } from '~/lib/utils/provisionBotRoute';
+import type { ValidationTrust } from '~/lib/types/bot';
 
 interface SecretsStepProps {
   latestDeployment: TrackedProvision;
@@ -29,6 +30,12 @@ interface SecretsStepProps {
   setStep: (s: 'deploy' | 'configure') => void;
   resetTx: () => void;
   defaultProvider: AiProvider;
+  /**
+   * Trust mode the bot is being provisioned with. When `envelope`, the
+   * post-activation "View Bot" link routes operators to the Envelope tab so
+   * they can sign and submit the first envelope.
+   */
+  validationTrust?: ValidationTrust;
 }
 
 export function SecretsStep({
@@ -49,8 +56,16 @@ export function SecretsStep({
   setStep,
   resetTx,
   defaultProvider,
+  validationTrust,
 }: SecretsStepProps) {
   const botRouteId = getProvisionBotRouteId(latestDeployment);
+  const isEnvelopeMode = validationTrust === 'envelope';
+  const botDetailHref = botRouteId
+    ? `/arena/bot/${encodeURIComponent(botRouteId)}${isEnvelopeMode ? '?tab=envelope' : ''}`
+    : null;
+  const viewBotLabel = isEnvelopeMode
+    ? 'Sign Envelope to Enable Trading →'
+    : 'View Bot →';
 
   return (
     <>
@@ -176,12 +191,18 @@ export function SecretsStep({
               Agent Activated Successfully
             </span>
           </div>
-          {botRouteId ? (
+          {isEnvelopeMode && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Envelope mode: this bot won't trade until an envelope is signed
+              and submitted on the Envelope tab.
+            </p>
+          )}
+          {botDetailHref ? (
             <Link
-              to={`/arena/bot/${encodeURIComponent(botRouteId)}`}
+              to={botDetailHref}
               className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
-              View Bot &rarr;
+              {viewBotLabel}
             </Link>
           ) : null}
         </div>

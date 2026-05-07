@@ -897,6 +897,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         max_lifetime_days: 30,
         validator_service_ids: Vec::new(),
         max_collateral_bps: alloy_primitives::U256::ZERO,
+        validation_trust: 0,
     };
 
     // 1. Provision
@@ -920,6 +921,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         call_id,
         service_id,
         caller.clone(),
+        None,
         None,
     )
     .await

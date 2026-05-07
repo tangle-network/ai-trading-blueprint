@@ -53,6 +53,7 @@ fn make_provision_request_with_strategy_config(
         max_lifetime_days: 0,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -78,6 +79,7 @@ fn make_provision_request_with_lifetime(
         max_lifetime_days,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -142,6 +144,7 @@ async fn test_provision_creates_records() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -190,6 +193,7 @@ async fn test_provision_rejects_invalid_runtime_backend() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     {
@@ -237,6 +241,7 @@ async fn test_provision_respects_non_paper_flag_from_strategy_config() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -266,6 +271,7 @@ async fn test_provision_defaults_fork_chain_to_live_mode() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -294,6 +300,7 @@ async fn test_provision_skips_zero_address_asset_token_default() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -325,11 +332,20 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
         "dex",
         r#"{"runtime_backend":"firecracker"}"#,
     );
-    let err =
-        match provision_core(request, None, call_id, 0, "0xTESTCALLER".to_string(), None).await {
-            Ok(_) => panic!("firecracker backend should fail until runtime is wired"),
-            Err(err) => err,
-        };
+    let err = match provision_core(
+        request,
+        None,
+        call_id,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(_) => panic!("firecracker backend should fail until runtime is wired"),
+        Err(err) => err,
+    };
 
     assert!(
         err.contains("runtime_backend=firecracker") || err.contains("FIRECRACKER_HOST_AGENT_URL"),
@@ -653,6 +669,7 @@ async fn test_bot_lifecycle_transitions() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -702,6 +719,7 @@ async fn test_provision_returns_zero_workflow_id() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -857,6 +875,7 @@ async fn test_bot_record_has_new_fields() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -880,6 +899,7 @@ async fn test_provision_uses_requested_lifetime() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -900,6 +920,7 @@ async fn test_provision_defaults_to_30_days() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -922,6 +943,7 @@ async fn test_extend_increases_lifetime() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -1273,6 +1295,7 @@ async fn test_two_phase_provision_e2e() {
         0,
         "0xSUBMITTER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1434,6 +1457,7 @@ async fn test_provision_all_strategy_types() {
             0,
             "0xSTRATCALLER".to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1458,6 +1482,7 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
             0,
             0,
             "0xPACKCALLER".to_string(),
+            None,
             None,
         )
         .await
@@ -1530,9 +1555,17 @@ async fn test_provision_empty_name_still_works() {
 
     let sandbox = mock_sandbox("sb-empty-name-1");
     let request = make_provision_request("", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-name-1").unwrap();
@@ -1551,9 +1584,17 @@ async fn test_provision_empty_strategy_config() {
     request.strategy_config_json = String::new();
     request.risk_params_json = String::new();
 
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-cfg-1").unwrap();
@@ -1640,6 +1681,7 @@ async fn test_concurrent_provision_unique_ids() {
                 700 + i as u64,
                 0,
                 format!("0xCALLER{i}"),
+                None,
                 None,
             )
             .await

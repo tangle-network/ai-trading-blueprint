@@ -34,6 +34,7 @@ import {
 } from '~/lib/envelope/validate';
 import type { SignedEnvelope } from '~/lib/types/envelope';
 import type { Bot } from '~/lib/types/bot';
+import { EnvelopeBuilder } from '~/components/envelope/EnvelopeBuilder';
 
 interface EnvelopeTabProps {
   bot: Bot;
@@ -61,6 +62,7 @@ export function EnvelopeTab({ bot }: EnvelopeTabProps) {
         error={envelopeQuery.error}
       />
       <SignAndSubmitCard
+        bot={bot}
         existing={envelopeQuery.data ?? null}
         onSubmit={(env) => putEnvelope.mutateAsync(env)}
         submitting={putEnvelope.isPending}
@@ -149,12 +151,16 @@ function SignAndSubmitCard({
   onSubmit,
   submitting,
   submitError,
+  bot,
 }: {
   existing: SignedEnvelope | null;
   onSubmit: (env: SignedEnvelope) => Promise<unknown>;
   submitting: boolean;
   submitError: Error | null;
+  bot: Bot;
 }) {
+  type Mode = 'build' | 'paste';
+  const [mode, setMode] = useState<Mode>('build');
   const [draft, setDraft] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [issues, setIssues] = useState<EnvelopeValidationIssue[]>([]);
@@ -178,28 +184,27 @@ function SignAndSubmitCard({
     setIssues(validateEnvelopeForSigning(parsedDraft));
   };
 
-  const onSign = async () => {
-    if (!parsedDraft) return;
-    const validated = validateEnvelopeForSigning(parsedDraft);
+  const signAndSubmit = async (env: SignedEnvelope) => {
+    const validated = validateEnvelopeForSigning(env);
     setIssues(validated);
     if (validated.length > 0) return;
-    if (existing && parsedDraft.nonce <= existing.nonce) {
+    if (existing && env.nonce <= existing.nonce) {
       setIssues([
         {
           field: 'nonce',
-          message: `nonce ${parsedDraft.nonce} must be greater than current ${existing.nonce}`,
+          message: `nonce ${env.nonce} must be greater than current ${existing.nonce}`,
         },
       ]);
       return;
     }
-    const typedData = buildEnvelopeTypedData(parsedDraft);
+    const typedData = buildEnvelopeTypedData(env);
     const signature = await signTypedDataAsync(typedData);
     if (!walletAddress) throw new Error('Wallet not connected');
 
     const signed: SignedEnvelope = {
-      ...parsedDraft,
+      ...env,
       signatures: [
-        ...parsedDraft.signatures,
+        ...env.signatures,
         {
           signer: walletAddress as `0x${string}`,
           signature: signature as `0x${string}`,
@@ -212,41 +217,128 @@ function SignAndSubmitCard({
     setIssues([]);
   };
 
+  const onSignPaste = async () => {
+    if (!parsedDraft) return;
+    await signAndSubmit(parsedDraft);
+  };
+
   return (
     <Card title="Sign and submit envelope">
-      <p className="text-xs text-muted-foreground mb-2">
-        Paste an unsigned envelope JSON from your agent runtime. The structure is validated client-side
-        against the same rules the server enforces. You'll be asked to sign EIP-712 typed data via your wallet.
-      </p>
-      <textarea
-        className="w-full font-mono text-xs bg-muted/30 rounded p-2 min-h-[200px]"
-        placeholder='{"version":2,"bot_id":"...","protocol":"uniswap_v3",...}'
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          setIssues([]);
-        }}
-      />
-      {parseError && <p className="text-xs text-red-500 mt-1">JSON parse: {parseError}</p>}
-      {issues.length > 0 && (
-        <ul className="text-xs text-red-500 mt-2 list-disc pl-4">
-          {issues.map((i, idx) => (
-            <li key={`${i.field}:${idx}`}>
-              <span className="font-mono">{i.field}</span> — {i.message}
-            </li>
-          ))}
-        </ul>
-      )}
-      {submitError && <p className="text-xs text-red-500 mt-1">PUT /envelope: {submitError.message}</p>}
-      <div className="flex gap-2 mt-3">
-        <Button variant="outline" onClick={onValidate} disabled={!parsedDraft}>
-          Validate
-        </Button>
-        <Button onClick={onSign} disabled={!parsedDraft || signing || submitting || !walletAddress}>
-          {signing ? 'Awaiting signature…' : submitting ? 'Submitting…' : 'Sign & submit'}
-        </Button>
+      <div className="flex gap-1 mb-3 border-b border-bp-elements-borderColor">
+        <ModeTabButton active={mode === 'build'} onClick={() => setMode('build')}>
+          Build
+        </ModeTabButton>
+        <ModeTabButton active={mode === 'paste'} onClick={() => setMode('paste')}>
+          Paste JSON
+        </ModeTabButton>
       </div>
+
+      {mode === 'build' && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Construct an envelope from typed inputs. Switching variants resets the binding fields to
+            sensible defaults; addresses are checksummed via viem and amounts can be entered in
+            human-readable units.
+          </p>
+          <EnvelopeBuilder
+            initial={existing ?? undefined}
+            defaultBotId={bot.id}
+            defaultVaultAddress={bot.vaultAddress as `0x${string}` | undefined}
+            onUseEnvelope={(env) => {
+              void signAndSubmit({
+                ...env,
+                // Force a fresh nonce above the existing one when present.
+                nonce: existing && env.nonce <= existing.nonce ? existing.nonce + 1 : env.nonce,
+              });
+            }}
+          />
+          {issues.length > 0 && (
+            <ul className="text-xs text-red-500 mt-2 list-disc pl-4">
+              {issues.map((i, idx) => (
+                <li key={`${i.field}:${idx}`}>
+                  <span className="font-mono">{i.field}</span> — {i.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {submitError && (
+            <p className="text-xs text-red-500">PUT /envelope: {submitError.message}</p>
+          )}
+          {(signing || submitting) && (
+            <p className="text-xs text-bp-elements-textTertiary">
+              {signing ? 'Awaiting signature…' : 'Submitting…'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {mode === 'paste' && (
+        <>
+          <p className="text-xs text-muted-foreground mb-2">
+            Paste an unsigned envelope JSON from your agent runtime. The structure is validated
+            client-side against the same rules the server enforces. You'll be asked to sign EIP-712
+            typed data via your wallet.
+          </p>
+          <textarea
+            className="w-full font-mono text-xs bg-muted/30 rounded p-2 min-h-[200px]"
+            placeholder='{"version":2,"bot_id":"...","protocol":"uniswap_v3",...}'
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setIssues([]);
+            }}
+          />
+          {parseError && <p className="text-xs text-red-500 mt-1">JSON parse: {parseError}</p>}
+          {issues.length > 0 && (
+            <ul className="text-xs text-red-500 mt-2 list-disc pl-4">
+              {issues.map((i, idx) => (
+                <li key={`${i.field}:${idx}`}>
+                  <span className="font-mono">{i.field}</span> — {i.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {submitError && (
+            <p className="text-xs text-red-500 mt-1">PUT /envelope: {submitError.message}</p>
+          )}
+          <div className="flex gap-2 mt-3">
+            <Button variant="outline" onClick={onValidate} disabled={!parsedDraft}>
+              Validate
+            </Button>
+            <Button
+              onClick={onSignPaste}
+              disabled={!parsedDraft || signing || submitting || !walletAddress}
+            >
+              {signing ? 'Awaiting signature…' : submitting ? 'Submitting…' : 'Sign & submit'}
+            </Button>
+          </div>
+        </>
+      )}
     </Card>
+  );
+}
+
+function ModeTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+        active
+          ? 'border-violet-500 text-violet-400'
+          : 'border-transparent text-bp-elements-textTertiary hover:text-bp-elements-textSecondary'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

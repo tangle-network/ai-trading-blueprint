@@ -600,4 +600,133 @@ mod tests {
         d.min_output_per_input = U256::from(1u64);
         assert_ne!(h0, d.struct_hash());
     }
+
+    // ── hardening — pairwise distinctness across all 11 variants ──
+
+    fn one_of_each() -> Vec<EnvelopeEnforcement> {
+        let p = addr("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2");
+        let asset = addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+        let m = addr("0xBBBBBBBBBB9cC5e90e3b3Af64bdAF62C37EEFFFb");
+        let amt_one = U256::from(1u64);
+        let amt_two = U256::from(2u64);
+        let hf = U256::from(1_500_000_000_000_000_000u128);
+        vec![
+            sample_uniswap(),
+            EnvelopeEnforcement::UniswapV4Swap(UniswapV4SwapEnforcement {
+                currency0: asset,
+                currency1: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                fee: 3000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+                zero_for_one: true,
+                max_single_amount_in: amt_one,
+                max_total_amount_in: amt_two,
+                min_output_per_input: amt_one,
+                universal_router: addr("0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"),
+            }),
+            EnvelopeEnforcement::AerodromeSwap(AerodromeSwapEnforcement {
+                router: addr("0xBe6d8F0d05Cc4be24D5167A3eF062215Be6D8f0d"),
+                token_in: asset,
+                token_out: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                tick_spacing: 60,
+                max_single_amount_in: amt_one,
+                max_total_amount_in: amt_two,
+                min_output_per_input: amt_one,
+            }),
+            EnvelopeEnforcement::AaveSupply(AaveSupplyEnforcement {
+                pool: p,
+                asset,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+            }),
+            EnvelopeEnforcement::AaveWithdraw(AaveWithdrawEnforcement {
+                pool: p,
+                asset,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+                min_health_factor: hf,
+            }),
+            EnvelopeEnforcement::AaveBorrow(AaveBorrowEnforcement {
+                pool: p,
+                asset,
+                interest_rate_mode: 2,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+                min_health_factor: hf,
+            }),
+            EnvelopeEnforcement::AaveRepay(AaveRepayEnforcement {
+                pool: p,
+                asset,
+                debt_token: addr("0x72E95b8931767C79bA4EeE721354d6E99a61D004"),
+                interest_rate_mode: 2,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+            }),
+            EnvelopeEnforcement::MorphoSupply(MorphoSupplyEnforcement {
+                morpho: m,
+                market_id: B256::ZERO,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+            }),
+            EnvelopeEnforcement::MorphoWithdraw(MorphoWithdrawEnforcement {
+                morpho: m,
+                market_id: B256::ZERO,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+                min_collateral_ratio: hf,
+            }),
+            EnvelopeEnforcement::MorphoBorrow(MorphoBorrowEnforcement {
+                morpho: m,
+                market_id: B256::ZERO,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+                min_collateral_ratio: hf,
+            }),
+            EnvelopeEnforcement::MorphoRepay(MorphoRepayEnforcement {
+                morpho: m,
+                market_id: B256::ZERO,
+                max_single_amount: amt_one,
+                max_total_amount: amt_two,
+            }),
+        ]
+    }
+
+    #[test]
+    fn all_eleven_variants_have_pairwise_distinct_hashes() {
+        let variants = one_of_each();
+        assert_eq!(variants.len(), 11);
+        let hashes: Vec<_> = variants.iter().map(|v| v.struct_hash().unwrap()).collect();
+        for i in 0..hashes.len() {
+            for j in i + 1..hashes.len() {
+                assert_ne!(
+                    hashes[i], hashes[j],
+                    "variants {i} and {j} produced identical hashes",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_id_and_action_are_consistent_with_kind() {
+        for variant in one_of_each() {
+            // Round-trip the variant through serde to confirm tag is "kind"
+            let json = serde_json::to_string(&variant).unwrap();
+            let restored: EnvelopeEnforcement = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.protocol_id(), variant.protocol_id());
+            assert_eq!(restored.action(), variant.action());
+            assert_eq!(
+                restored.struct_hash().unwrap(),
+                variant.struct_hash().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn validate_passes_for_every_well_formed_variant() {
+        for variant in one_of_each() {
+            variant
+                .validate()
+                .expect("each fixture should pass validation");
+        }
+    }
 }

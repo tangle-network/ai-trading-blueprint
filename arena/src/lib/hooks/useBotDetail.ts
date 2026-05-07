@@ -4,7 +4,7 @@ import {
   getDeploymentKindForOperatorKind,
 } from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
-import type { BotOperatorKind } from '~/lib/types/bot';
+import type { BotOperatorKind, ValidationTrust } from '~/lib/types/bot';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { normalizeOptionalWorkflowId } from '~/lib/utils/workflowId';
 
@@ -37,6 +37,11 @@ export interface BotDetail {
   validator_endpoints: string[];
   call_id: number;
   service_id: number;
+  /**
+   * Optional — present when the operator API exposes the bot's validation trust
+   * mode. Absent for older operator builds; UI treats absent as `per_trade`.
+   */
+  validation_trust?: ValidationTrust;
 }
 
 type RawBotDetail = Omit<BotDetail, 'workflow_id'> & {

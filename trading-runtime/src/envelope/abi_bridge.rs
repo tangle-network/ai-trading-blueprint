@@ -546,6 +546,188 @@ mod tests {
         );
     }
 
+    /// Cross-domain digest equivalence MUST hold for every (protocol, action)
+    /// combination — otherwise wallet sigs over off-chain digest fail on-chain
+    /// for that variant. We test each by swapping in a different enforcement
+    /// and re-computing both digests.
+    #[test]
+    fn cross_domain_digest_equivalence_holds_for_all_eleven_variants() {
+        use crate::envelope::{
+            AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement,
+            AaveWithdrawEnforcement, AerodromeSwapEnforcement, MorphoBorrowEnforcement,
+            MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement,
+            UniswapV4SwapEnforcement,
+        };
+        let p = Address::from_str("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2").unwrap();
+        let asset = Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        let m = Address::from_str("0xBBBBBBBBBB9cC5e90e3b3Af64bdAF62C37EEFFFb").unwrap();
+        let weth = Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let amt_one = U256::from(1u64);
+        let amt_two = U256::from(2u64);
+        let hf = U256::from(1_500_000_000_000_000_000u128);
+
+        let variants: Vec<(&str, EnvelopeEnforcement)> = vec![
+            (
+                "uniswap_v3",
+                EnvelopeEnforcement::UniswapV3Swap(UniswapV3SwapEnforcement {
+                    router: Address::from_str("0xE592427A0AEce92De3Edee1F18E0157C05861564")
+                        .unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    fee_tier: 3000,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    min_output_per_input: amt_one,
+                }),
+            ),
+            (
+                "uniswap_v4",
+                EnvelopeEnforcement::UniswapV4Swap(UniswapV4SwapEnforcement {
+                    currency0: asset,
+                    currency1: weth,
+                    fee: 3000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                    zero_for_one: true,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    min_output_per_input: amt_one,
+                    universal_router: Address::from_str(
+                        "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
+                    )
+                    .unwrap(),
+                }),
+            ),
+            (
+                "aerodrome",
+                EnvelopeEnforcement::AerodromeSwap(AerodromeSwapEnforcement {
+                    router: Address::from_str("0xBe6d8F0d05Cc4be24D5167A3eF062215Be6D8f0d")
+                        .unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    tick_spacing: 60,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    min_output_per_input: amt_one,
+                }),
+            ),
+            (
+                "aave_v3",
+                EnvelopeEnforcement::AaveSupply(AaveSupplyEnforcement {
+                    pool: p,
+                    asset,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                }),
+            ),
+            (
+                "aave_v3",
+                EnvelopeEnforcement::AaveWithdraw(AaveWithdrawEnforcement {
+                    pool: p,
+                    asset,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                    min_health_factor: hf,
+                }),
+            ),
+            (
+                "aave_v3",
+                EnvelopeEnforcement::AaveBorrow(AaveBorrowEnforcement {
+                    pool: p,
+                    asset,
+                    interest_rate_mode: 2,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                    min_health_factor: hf,
+                }),
+            ),
+            (
+                "aave_v3",
+                EnvelopeEnforcement::AaveRepay(AaveRepayEnforcement {
+                    pool: p,
+                    asset,
+                    debt_token: Address::from_str("0x72E95b8931767C79bA4EeE721354d6E99a61D004")
+                        .unwrap(),
+                    interest_rate_mode: 2,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                }),
+            ),
+            (
+                "morpho",
+                EnvelopeEnforcement::MorphoSupply(MorphoSupplyEnforcement {
+                    morpho: m,
+                    market_id: FixedBytes::ZERO,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                }),
+            ),
+            (
+                "morpho",
+                EnvelopeEnforcement::MorphoWithdraw(MorphoWithdrawEnforcement {
+                    morpho: m,
+                    market_id: FixedBytes::ZERO,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                    min_collateral_ratio: hf,
+                }),
+            ),
+            (
+                "morpho",
+                EnvelopeEnforcement::MorphoBorrow(MorphoBorrowEnforcement {
+                    morpho: m,
+                    market_id: FixedBytes::ZERO,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                    min_collateral_ratio: hf,
+                }),
+            ),
+            (
+                "morpho",
+                EnvelopeEnforcement::MorphoRepay(MorphoRepayEnforcement {
+                    morpho: m,
+                    market_id: FixedBytes::ZERO,
+                    max_single_amount: amt_one,
+                    max_total_amount: amt_two,
+                }),
+            ),
+        ];
+
+        for (i, (protocol, enf)) in variants.iter().enumerate() {
+            let signed = SignedEnvelope {
+                version: 2,
+                bot_id: format!("bot-{i}"),
+                vault_address: "0x0000000000000000000000000000000000000077".into(),
+                chain_id: 31337,
+                protocol: (*protocol).into(),
+                policy: TradingPolicy {
+                    max_trade_size_usd: Decimal::from(1000),
+                    max_total_exposure_usd: Decimal::from(3000),
+                    max_drawdown_pct: Decimal::from(10),
+                    can_open_positions: true,
+                    perps: None,
+                    vault: None,
+                    clob: None,
+                },
+                approval_signers: vec!["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".into()],
+                min_signatures: 1,
+                issued_at: 1_700_000_000,
+                expires_at: 1_700_003_600,
+                nonce: 1,
+                verifying_contract: "0x0000000000000000000000000000000000000077".into(),
+                enforcement: Some(enf.clone()),
+                signatures: vec![],
+            };
+            let rust_digest = signed.digest().unwrap();
+            let sol_envelope = to_sol_envelope(&signed).unwrap();
+            let solidity_digest = solidity_compatible_envelope_digest(&sol_envelope);
+            assert_eq!(
+                rust_digest, solidity_digest,
+                "cross-domain digest mismatch for variant {i} ({protocol})",
+            );
+        }
+    }
+
     #[test]
     fn to_sol_envelope_uses_off_chain_hashes() {
         let signed = SignedEnvelope {

@@ -396,4 +396,132 @@ contract EnvelopeValidatorTest is Setup {
         bytes32 d = tv.hashMorphoSupply(_morphoSupply());
         assertTrue(a != b && b != c && c != d && a != c && a != d && b != d);
     }
+
+    // ── hardening — signer-set + scoring boundary cases ──
+
+    function test_revert_untrustedSignerStillValidEnvelope() public {
+        // sign with a key NOT in the vault config; envelope structurally valid,
+        // sig recovers to a non-trusted address → not counted, falls below quorum.
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+
+        (address evil, uint256 evilKey) = makeAddrAndKey("evil");
+        // ensure evil is not in approval set + does not collide with sorted constraint
+        // by NOT appending it to env.approvalSigners — just sign and submit.
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        bytes32 digest = tv.envelopeDigest(env);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(evilKey, digest);
+        sigs[0] = abi.encodePacked(r, s, v);
+        sigs[1] = _signEnvelope(validator1Key, env);
+        scores[0] = 100;
+        scores[1] = 100;
+
+        (bool ok, uint256 valid) =
+            tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        assertFalse(ok);
+        assertEq(valid, 1); // only validator1 counted; evil signer ignored
+        // silence unused
+        evil;
+    }
+
+    function test_scoreThreshold_blocksLowScoreAverage() public {
+        // configure a min-score threshold; submit two valid sigs with avg < threshold.
+        tv.setMinScoreThreshold(testVault, 80);
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        sigs[0] = _signEnvelope(validator1Key, env);
+        sigs[1] = _signEnvelope(validator2Key, env);
+        scores[0] = 50;
+        scores[1] = 60; // avg 55 < 80
+        (bool ok,) = tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        assertFalse(ok);
+    }
+
+    function test_aaveActionsHaveDistinctHashes() public view {
+        // Same pool + asset across all four Aave actions must produce distinct hashes.
+        bytes32 a = tv.hashAaveSupply(_aaveSupply());
+        bytes32 b = tv.hashAaveWithdraw(_aaveWithdraw());
+        bytes32 c = tv.hashAaveBorrow(_aaveBorrow());
+        bytes32 d = tv.hashAaveRepay(_aaveRepay());
+        assertTrue(a != b && a != c && a != d && b != c && b != d && c != d);
+    }
+
+    function test_morphoActionsHaveDistinctHashes() public view {
+        bytes32 a = tv.hashMorphoSupply(_morphoSupply());
+        bytes32 b = tv.hashMorphoWithdraw(_morphoWithdraw());
+        bytes32 c = tv.hashMorphoBorrow(_morphoBorrow());
+        bytes32 d = tv.hashMorphoRepay(_morphoRepay());
+        assertTrue(a != b && a != c && a != d && b != c && b != d && c != d);
+    }
+
+    function test_envelopeDigestIsPureFunction() public view {
+        // Same envelope struct must produce the same digest across calls.
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        assertEq(tv.envelopeDigest(env), tv.envelopeDigest(env));
+        assertEq(tv.hashEnvelope(env), tv.hashEnvelope(env));
+    }
+
+    function test_revert_signaturesScoresLengthMismatch() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](1); // mismatched lengths
+        sigs[0] = _signEnvelope(validator1Key, env);
+        sigs[1] = _signEnvelope(validator2Key, env);
+        scores[0] = 80;
+        vm.expectRevert(TradeValidator.InvalidEnvelope.selector);
+        tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
+    function test_revert_emptySignatures() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        bytes[] memory sigs = new bytes[](0);
+        uint256[] memory scores = new uint256[](0);
+        vm.expectRevert(TradeValidator.InvalidEnvelope.selector);
+        tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
+    function test_revert_minSignaturesExceedsApprovalSigners() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        env.minSignatures = 99; // way more than approvalSigners.length (3)
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        vm.expectRevert(TradeValidator.InvalidEnvelope.selector);
+        tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
+    // ── envelope digest field-sensitivity (defense vs sneaky tampering) ──
+
+    function test_digestChangesPerField() public view {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory base = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        bytes32 baseDigest = tv.envelopeDigest(base);
+
+        TradeValidator.Envelope memory diff;
+
+        diff = base;
+        diff.nonce = base.nonce + 1;
+        assertTrue(tv.envelopeDigest(diff) != baseDigest);
+
+        diff = base;
+        diff.expiresAt = base.expiresAt + 1;
+        assertTrue(tv.envelopeDigest(diff) != baseDigest);
+
+        diff = base;
+        diff.botIdHash = keccak256("other");
+        assertTrue(tv.envelopeDigest(diff) != baseDigest);
+
+        diff = base;
+        diff.policyHash = keccak256("policy-tampered");
+        assertTrue(tv.envelopeDigest(diff) != baseDigest);
+
+        diff = base;
+        diff.enforcementHash = keccak256("enforcement-tampered");
+        assertTrue(tv.envelopeDigest(diff) != baseDigest);
+    }
 }

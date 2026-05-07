@@ -77,9 +77,10 @@ fn main() {
                 .expect("MAX_LIFETIME_DAYS"),
             validator_service_ids: vec![],
             max_collateral_bps: U256::ZERO,
+        validation_trust: 0,
         };
 
-        let output = provision_core(request, None, call_id, service_id, caller, None)
+        let output = provision_core(request, None, call_id, service_id, caller, None, None)
             .await
             .expect("provision_core");
 

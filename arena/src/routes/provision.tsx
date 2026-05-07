@@ -89,7 +89,7 @@ import {
   type ServiceInfo,
   type DiscoveredService,
 } from './provision/types';
-import type { BotLifecycleStatus } from '~/lib/types/bot';
+import type { BotLifecycleStatus, ValidationTrust } from '~/lib/types/bot';
 
 export const FIRECRACKER_RUNTIME_SUPPORTED = false;
 
@@ -123,6 +123,7 @@ interface OperatorProvisionBodyOptions extends ProvisionStrategyConfigOptions {
   effectiveCron: string;
   validatorServiceIds: bigint[];
   vaultAddress?: Address;
+  validationTrust?: ValidationTrust;
 }
 
 interface InstanceServiceConfigOptions extends StrategyConfigOptions {
@@ -140,6 +141,7 @@ interface InstanceServiceConfigOptions extends StrategyConfigOptions {
     memoryMb: bigint;
     maxLifetimeDays: bigint;
   };
+  validationTrust?: ValidationTrust;
 }
 
 type ParsedServiceIds =
@@ -612,6 +614,7 @@ export function buildOperatorProvisionBody({
   selectedExecutionTarget,
   includeExecutionTarget,
   executionConfig,
+  validationTrust,
   ...strategyConfigOptions
 }: OperatorProvisionBodyOptions) {
   const strategyConfig = buildProvisionStrategyConfig({
@@ -632,6 +635,12 @@ export function buildOperatorProvisionBody({
         : '{}',
     trading_loop_cron: effectiveCron,
     validator_service_ids: validatorServiceIds.map((id) => Number(id)),
+    // Only include `validation_trust` when it diverges from the default
+    // (`per_trade`). Older operator builds reject unknown fields, so
+    // omitting the field preserves the old behavior unchanged.
+    ...(validationTrust && validationTrust !== 'per_trade'
+      ? { validation_trust: validationTrust }
+      : {}),
     ...(includeExecutionTarget && executionConfig
       ? {
           chain_id: Number(executionConfig.chainId),
@@ -655,11 +664,12 @@ export function buildInstanceServiceConfig({
   targetChainId,
   assetAddress,
   blueprintDefaults,
+  validationTrust,
   ...strategyConfigOptions
 }: InstanceServiceConfigOptions): `0x${string}` {
   return encodeAbiParameters(
     parseAbiParameters(
-      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256, uint8)',
     ),
     [
       [
@@ -681,9 +691,23 @@ export function buildInstanceServiceConfig({
         blueprintDefaults.maxLifetimeDays,
         isInstance ? validatorServiceIds : [],
         collateralBps,
+        validationTrustToDiscriminant(validationTrust),
       ],
     ],
   );
+}
+
+/** Map the UI's validationTrust string to the on-chain `uint8` discriminant.
+ *  Must match the `validation_trust` field in `TradingProvisionRequest` (lib.rs). */
+function validationTrustToDiscriminant(value: string | undefined): number {
+  switch (value) {
+    case 'envelope':
+      return 1;
+    case 'self_operated':
+      return 2;
+    default:
+      return 0; // PerTrade (default)
+  }
 }
 
 export function resolveExecutionTargetProvisionConfig(
@@ -1180,6 +1204,9 @@ export default function ProvisionPage() {
     'default',
   );
   const [customValidatorIds, setCustomValidatorIds] = useState('');
+  const [validationTrust, setValidationTrust] = useState<ValidationTrust>(
+    'per_trade',
+  );
 
   // Deploy step
   const {
@@ -1681,6 +1708,7 @@ export default function ProvisionPage() {
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
+            validationTrust,
           });
 
           const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
@@ -1746,6 +1774,7 @@ export default function ProvisionPage() {
       researchEnabled,
       validatorMode,
       customValidatorIds,
+      validationTrust,
       customExpertKnowledge,
       customInstructions,
       operatorApiUrl,
@@ -2376,6 +2405,7 @@ export default function ProvisionPage() {
       assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
       blueprintDefaults: bp.defaults,
+      validationTrust,
     });
 
     const quoteTuples = quotes.map((q) => ({
@@ -3173,6 +3203,7 @@ export default function ProvisionPage() {
             setStep={setStep}
             resetTx={resetTx}
             defaultProvider={defaultProvider}
+            validationTrust={validationTrust}
           />
         )}
       </div>
@@ -3236,6 +3267,8 @@ export default function ProvisionPage() {
         setValidatorMode={setValidatorMode}
         customValidatorIds={customValidatorIds}
         setCustomValidatorIds={setCustomValidatorIds}
+        validationTrust={validationTrust}
+        setValidationTrust={setValidationTrust}
         runtimeBackend={runtimeBackend}
         setRuntimeBackend={setRuntimeBackend}
         firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}

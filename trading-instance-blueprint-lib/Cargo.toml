@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 trading-blueprint-lib = { path = "../trading-blueprint-lib" }
 trading-http-api = { path = "../trading-http-api" }
+trading-runtime = { path = "../trading-runtime" }
 sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 axum = "0.8"

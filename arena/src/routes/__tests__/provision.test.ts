@@ -709,6 +709,37 @@ describe('provision runtime backend helpers', () => {
     ).toBeUndefined();
   });
 
+  it('threads validation_trust through the operator provision body when non-default', async () => {
+    const { buildOperatorProvisionBody } = await import('../provision');
+    const baseOptions = {
+      strategyType: 'dex' as const,
+      runtimeBackend: 'docker' as const,
+      isTeeBlueprint: false,
+      name: 'EnvelopeBot',
+      fallbackName: 'fallback',
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [1n],
+      includeExecutionTarget: false,
+    };
+
+    const envelopeBody = buildOperatorProvisionBody({
+      ...baseOptions,
+      validationTrust: 'envelope',
+    });
+    expect(envelopeBody).toMatchObject({
+      validation_trust: 'envelope',
+    });
+
+    const perTradeBody = buildOperatorProvisionBody({
+      ...baseOptions,
+      validationTrust: 'per_trade',
+    });
+    expect(perTradeBody).not.toHaveProperty('validation_trust');
+
+    const omittedBody = buildOperatorProvisionBody(baseOptions);
+    expect(omittedBody).not.toHaveProperty('validation_trust');
+  });
+
   it('validates paper-only and unsupported single-chain strategies', async () => {
     const { validateStrategyExecutionSelection } = await import('../provision');
     const target = {

@@ -383,6 +383,7 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
 ///
 /// Any `env_json` in the on-chain request is **ignored** to prevent secrets
 /// from leaking into on-chain calldata.
+#[allow(clippy::too_many_arguments)]
 pub async fn provision_core(
     request: TradingProvisionRequest,
     mock_sandbox: Option<SandboxRecord>,
@@ -390,6 +391,7 @@ pub async fn provision_core(
     service_id: u64,
     caller: String,
     tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
+    validation_trust: Option<trading_runtime::ValidationTrust>,
 ) -> Result<TradingProvisionOutput, String> {
     // 0. Dedup check — if a bot already exists for this (service_id, call_id),
     // return it instead of creating a duplicate. This handles operator restarts
@@ -782,7 +784,7 @@ pub async fn provision_core(
         service_id,
         harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
             .unwrap_or_default(),
-        validation_trust: trading_runtime::ValidationTrust::default(),
+        validation_trust: validation_trust.unwrap_or_default(),
     };
 
     // 8. Store bot record
@@ -856,7 +858,22 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
+    let validation_trust = match request.validation_trust {
+        0 => None, // default → PerTrade
+        1 => Some(trading_runtime::ValidationTrust::Envelope),
+        2 => Some(trading_runtime::ValidationTrust::SelfOperated),
+        other => return Err(format!("Invalid validation_trust discriminant {other}")),
+    };
     Ok(TangleResult(
-        provision_core(request, None, call_id, service_id, caller_str, None).await?,
+        provision_core(
+            request,
+            None,
+            call_id,
+            service_id,
+            caller_str,
+            None,
+            validation_trust,
+        )
+        .await?,
     ))
 }
