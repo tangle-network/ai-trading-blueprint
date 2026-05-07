@@ -746,7 +746,7 @@ async fn test_provision_returns_zero_workflow_id() {
 #[tokio::test]
 async fn test_loop_prompt_per_strategy() {
     for strategy in &["dex", "yield", "perp", "prediction", "multi"] {
-        let prompt = build_loop_prompt(strategy);
+        let prompt = build_loop_prompt(strategy, trading_runtime::ValidationTrust::default());
         assert!(
             prompt.contains(strategy),
             "Loop prompt for '{strategy}' should mention the strategy type"
@@ -786,6 +786,8 @@ async fn test_system_prompt_includes_api_info() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -1039,6 +1041,8 @@ async fn test_pack_profile_has_rich_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1064,7 +1068,8 @@ async fn test_pack_profile_has_rich_content() {
     assert_eq!(profile["memory"]["enabled"], true);
 
     // Loop prompt references the pack name
-    let loop_prompt = build_pack_loop_prompt(&pack, &config);
+    let loop_prompt =
+        build_pack_loop_prompt(&pack, &config, trading_runtime::ValidationTrust::default());
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
 }
 
@@ -1098,6 +1103,8 @@ async fn test_generic_strategy_gets_profile() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -1113,7 +1120,7 @@ async fn test_generic_strategy_gets_profile() {
     assert_eq!(profile["permission"]["bash"], "allow");
 
     // Generic loop prompt
-    let prompt = build_loop_prompt("exotic");
+    let prompt = build_loop_prompt("exotic", trading_runtime::ValidationTrust::default());
     assert!(prompt.contains("exotic"));
     assert!(prompt.contains("trading loop iteration"));
 }
@@ -1159,6 +1166,8 @@ async fn test_dex_profile_has_uniswap_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1207,6 +1216,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -1251,6 +1262,8 @@ async fn test_build_pack_agent_profile_integration() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
