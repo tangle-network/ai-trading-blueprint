@@ -253,6 +253,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         }
     }
 

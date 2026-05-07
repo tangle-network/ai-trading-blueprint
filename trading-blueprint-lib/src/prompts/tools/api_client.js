@@ -169,6 +169,36 @@ async function execute(intent, validation) {
   });
 }
 
+// Envelope-mode execute: server uses the on-file SignedEnvelope to authorize.
+// Do NOT call api.validate(intent) when running in envelope mode.
+async function executeWithEnvelope(intent) {
+  return apiCall('POST', '/execute', {
+    intent: normalizeIntent(intent),
+  });
+}
+
+// Envelope endpoints — only meaningful for envelope-mode bots.
+async function getEnvelope() {
+  return apiCall('GET', '/envelope');
+}
+
+// Returns:
+// {
+//   is_active, consumed_amount, max_total_amount, consumed_pct,
+//   expires_at, expires_in_seconds, signature_count, min_signatures
+// }
+async function envelopeStatus() {
+  return apiCall('GET', '/envelope/status');
+}
+
+// Operator-side log + webhook trigger that asks the depositor for a fresh envelope.
+// The agent does NOT mint a new envelope — it just signals "I need one".
+async function requestEnvelopeRenewal(reason) {
+  return apiCall('POST', '/envelope/renewal-request', {
+    reason: reason || 'envelope-renewal-needed',
+  });
+}
+
 async function checkCircuitBreaker(maxDrawdownPct) {
   return apiCall('POST', '/circuit-breaker/check', {
     max_drawdown_pct: maxDrawdownPct || 10.0,
@@ -214,6 +244,10 @@ module.exports = {
   normalizeIntent,
   validate,
   execute,
+  executeWithEnvelope,
+  getEnvelope,
+  envelopeStatus,
+  requestEnvelopeRenewal,
   checkCircuitBreaker,
   getPortfolio,
   getPrices,

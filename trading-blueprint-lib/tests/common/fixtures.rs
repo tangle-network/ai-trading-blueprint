@@ -79,6 +79,8 @@ pub fn seed_bot_record(
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
     bots()
         .expect("bots store")

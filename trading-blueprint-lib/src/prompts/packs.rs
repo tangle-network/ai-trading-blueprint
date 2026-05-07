@@ -1330,38 +1330,59 @@ After any circuit breaker triggers, wait at least 1 full iteration (skip trading
 // Profile building
 // ---------------------------------------------------------------------------
 
-fn strategy_iteration_protocol(strategy_type: &str) -> String {
+fn iteration_execute_clause(validation_trust: trading_runtime::ValidationTrust) -> &'static str {
+    match validation_trust {
+        trading_runtime::ValidationTrust::Envelope => {
+            "Envelope authorization mode: do NOT submit the intent to the per-trade validator pipeline. Run `await api.executeWithEnvelope(intent)` — the on-file SignedEnvelope authorizes execution. Before trading, call `api.envelopeStatus()` and SKIP the iteration if `is_active === false`, `consumed_pct > 95`, or `expires_in_seconds < 3600`. On a 403 response containing `EnvelopeAmountExceeded`, `EnvelopeTotalExceeded`, `EnvelopeRateTooLow`, or `EnvelopeExpired`: SKIP and call `api.requestEnvelopeRenewal(<error>)`."
+        }
+        _ => {
+            "Per-trade authorization mode: validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand."
+        }
+    }
+}
+
+fn strategy_iteration_protocol(
+    strategy_type: &str,
+    validation_trust: trading_runtime::ValidationTrust,
+) -> String {
+    let execute_clause = iteration_execute_clause(validation_trust);
     match strategy_type {
-        "dex" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+        "dex" => format!(
+            r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Treat `protocol: "vault"` + `position_type: "spot"` as vault-held custody that can be swapped through the Trading API, not as a locked protocol position. Fetch current WETH/USDC pricing with `api-client.js`, then cross-check with CoinGecko or DexScreener if you need external confirmation. Form a swap thesis only when price, direction, size, and slippage are clear.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Choose `token_in` from an available spot balance, quote the executable route with `api.quoteUniswapSwap({token_in, token_out, amount_in})`, then build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, the quoted `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Log the outcome immediately. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Choose `token_in` from an available spot balance, quote the executable route with `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, then build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, raw base-unit amounts, `amount_format: "base_units"`, the quoted `min_amount_out`, `strategy_id`, `action: "swap"`, and `target_protocol: "uniswap_v3"`. {execute_clause} Log the outcome immediately. Then proceed to reflect.
 - **reflect**: Review fills, recent P&L, and whether the trade matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
-**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
-            .to_string(),
-        "yield" => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#,
+            execute_clause = execute_clause,
+        ),
+        "yield" => format!(
+            r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run `node tools/get-portfolio.js` to inspect current exposure. Run `node tools/aave-reserve-status.js` to inspect live Aave asset availability on the execution RPC, then fetch current price context with `api-client.js`. Compare only executable Aave and allowlisted MetaMorpho vault opportunities and only form a thesis if the expected yield improvement is meaningful after gas and risk.
-- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build an intent with `action: "supply"`, `action: "withdraw"`, `action: "borrow"`, or `action: "repay"` for `aave_v3`, or `action: "supply"`/`action: "withdraw"` for allowlisted `morpho_vault` with `metadata.vault_address`, validate it through the Trading HTTP API, then execute if approved. Use `aave-reserve-status.js` as a hard gate for Aave assets: use the chain-specific asset addresses it returns, set `amount_format: "base_units"`, use raw base-unit amounts such as `"3000000000000000000"` for 3 WETH, do not trade assets marked unavailable or frozen, and for Aave repay include `metadata.debt_token` from the matching variable debt token in that tool output. Required intent shape includes `strategy_id`, `action`, `token_in`, `token_out`, `amount_in`, `min_amount_out`, `amount_format`, and `target_protocol`; use `action`, not `intent_type`. Safe pattern: `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not rebuild validator payloads by hand. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "const api=require('./tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Build an intent with `action: "supply"`, `action: "withdraw"`, `action: "borrow"`, or `action: "repay"` for `aave_v3`, or `action: "supply"`/`action: "withdraw"` for allowlisted `morpho_vault` with `metadata.vault_address`. Use `aave-reserve-status.js` as a hard gate for Aave assets: use the chain-specific asset addresses it returns, set `amount_format: "base_units"`, use raw base-unit amounts such as `"3000000000000000000"` for 3 WETH, do not trade assets marked unavailable or frozen, and for Aave repay include `metadata.debt_token` from the matching variable debt token in that tool output. Required intent shape includes `strategy_id`, `action`, `token_in`, `token_out`, `amount_in`, `min_amount_out`, `amount_format`, and `target_protocol`; use `action`, not `intent_type`. {execute_clause} Then proceed to reflect.
 - **reflect**: Review whether the action improved capital placement, whether risk stayed acceptable, and whether the result matched the thesis. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
-**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
-            .to_string(),
-        _ => r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#,
+            execute_clause = execute_clause,
+        ),
+        _ => format!(
+            r#"Read `/home/agent/state/phase.json` at the start of every iteration. Follow the phase protocol:
 
 - **research**: Run pre-built tools to fetch data: `node tools/scan-markets.js` then `node tools/check-prices.js`. Analyze results. Generate signals. If actionable signals found, proceed to trading within this same iteration.
-- **trading**: Check circuit breaker (`node -e "require('./tools/api-client').checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). Validate trade intents via the Trading HTTP API. Execute approved trades. Log results. Then proceed to reflect.
+- **trading**: Check circuit breaker (`node -e "require('./tools/api-client').checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r)))"`). {execute_clause} Log results. Then proceed to reflect.
 - **reflect**: Calculate P&L from recent trades. Compare signal predictions vs outcomes. Write insights to memory. Run `node tools/update-phase.js research` to return to research.
 
 After each phase transition, run `node tools/update-phase.js <next_phase>` and `node tools/write-metrics.js '{{...}}'`.
 
-**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#
-            .to_string(),
+**Important**: Complete research→trading→reflect in a SINGLE iteration when possible. Don't waste turns on phase transitions."#,
+            execute_clause = execute_clause,
+        ),
     }
 }
 
@@ -1393,27 +1414,43 @@ fn strategy_core_workflow_tools(strategy_type: &str) -> String {
     }
 }
 
-fn strategy_typical_iteration(strategy_type: &str) -> String {
+fn strategy_typical_iteration(
+    strategy_type: &str,
+    validation_trust: trading_runtime::ValidationTrust,
+) -> String {
+    let dex_execute_phrase = match validation_trust {
+        trading_runtime::ValidationTrust::Envelope => {
+            "do NOT submit the intent to the per-trade validator pipeline — run `await api.executeWithEnvelope(intent)` directly. Before trading, call `api.envelopeStatus()` and skip if `is_active === false`, `consumed_pct > 95`, or `expires_in_seconds < 3600`. On 403 with `EnvelopeAmountExceeded`/`EnvelopeTotalExceeded`/`EnvelopeRateTooLow`/`EnvelopeExpired`: skip and call `api.requestEnvelopeRenewal(<error>)`."
+        }
+        _ => {
+            "validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`"
+        }
+    };
+    let yield_execute_phrase = dex_execute_phrase; // identical pattern
     match strategy_type {
-        "dex" => r#"1. Run `get-portfolio.js` — check current positions and recent fills. `protocol: "vault"` with `position_type: "spot"` means vault-held custody available for vault-backed swaps, not a locked protocol position
+        "dex" => format!(
+            r#"1. Run `get-portfolio.js` — check current positions and recent fills. `protocol: "vault"` with `position_type: "spot"` means vault-held custody available for vault-backed swaps, not a locked protocol position
 2. Fetch current WETH/USDC prices via `api-client.js` and compare against CoinGecko or DexScreener if needed
 3. Run the circuit breaker check before any trade
-4. If the setup is actionable, choose `token_in` from an available spot balance, call `api.quoteUniswapSwap({token_in, token_out, amount_in})`, then build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, the quoted raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then validate it and execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+4. If the setup is actionable, choose `token_in` from an available spot balance, call `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, then build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, `strategy_id`, `action: "swap"`, `amount_format: "base_units"`, raw base-unit `amount_in`, the quoted raw base-unit `min_amount_out`, and `target_protocol: "uniswap_v3"` (for example `2000000000` for 2,000 USDC), then {dex_execute_phrase}
 5. Run `log-decision.js` with the thesis or skip reason
 6. Run `write-metrics.js` to update state
 
-Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for DEX swaps — those are prediction-market tools."#
-            .to_string(),
-        "yield" => r#"1. Run `get-portfolio.js` — check current positions and recent changes
+Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for DEX swaps — those are prediction-market tools."#,
+            dex_execute_phrase = dex_execute_phrase,
+        ),
+        "yield" => format!(
+            r#"1. Run `get-portfolio.js` — check current positions and recent changes
 2. Run `aave-reserve-status.js` — treat assets with `available_for_supply: false` as blocked on this fork
 3. Fetch current price context via `api-client.js` and compare only executable Aave vs allowlisted MetaMorpho vault opportunities
 4. Run the circuit breaker check before any trade
-5. If the setup is actionable, build an intent with `action: "supply"`, `action: "withdraw"`, `action: "borrow"`, or `action: "repay"`, chain-specific addresses from `aave-reserve-status.js`, `amount_format: "base_units"`, raw base-unit amounts such as `"3000000000000000000"` for 3 WETH, and `target_protocol: "aave_v3"`, or an intent with `action: "supply"`/`action: "withdraw"`, `target_protocol: "morpho_vault"`, and `metadata.vault_address` from the allowlist. Use `action`, not `intent_type`. Validate it, then execute it if approved using `const validation = await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`
+5. If the setup is actionable, build an intent with `action: "supply"`, `action: "withdraw"`, `action: "borrow"`, or `action: "repay"`, chain-specific addresses from `aave-reserve-status.js`, `amount_format: "base_units"`, raw base-unit amounts such as `"3000000000000000000"` for 3 WETH, and `target_protocol: "aave_v3"`, or an intent with `action: "supply"`/`action: "withdraw"`, `target_protocol: "morpho_vault"`, and `metadata.vault_address` from the allowlist. Use `action`, not `intent_type`. {yield_execute_phrase}
 6. Run `log-decision.js` with the thesis or skip reason
 7. Run `write-metrics.js` to update state
 
-Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for yield actions — those are prediction-market tools."#
-            .to_string(),
+Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for yield actions — those are prediction-market tools."#,
+            yield_execute_phrase = yield_execute_phrase,
+        ),
         _ => r#"1. Run `analyze-opportunities.js` — read the opportunities list
 2. Run `get-portfolio.js` — check current positions
 3. Run `manage-collateral.js --action status` — check CLOB collateral (release funds if needed for CLOB trades)
@@ -1518,9 +1555,9 @@ fn build_profile_instructions(
         format!("\n\n{}", prompt_blocks.join("\n\n"))
     };
 
-    let iteration_protocol = strategy_iteration_protocol(strategy_type);
+    let iteration_protocol = strategy_iteration_protocol(strategy_type, config.validation_trust);
     let core_workflow_tools = strategy_core_workflow_tools(strategy_type);
-    let typical_iteration = strategy_typical_iteration(strategy_type);
+    let typical_iteration = strategy_typical_iteration(strategy_type, config.validation_trust);
     let utility_tools = strategy_utility_tools(strategy_type);
     let qa_section = dex_stochastic_qa_config(config)
         .map(|qa| {
@@ -1854,6 +1891,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         }
     }
 

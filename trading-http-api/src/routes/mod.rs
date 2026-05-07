@@ -10,6 +10,7 @@ pub mod evolution;
 pub mod execute;
 pub mod health;
 pub mod hyperliquid;
+pub mod learning;
 pub mod market_data;
 pub mod metrics;
 pub mod portfolio;

@@ -1934,16 +1934,33 @@ async fn execute_real_envelope_trade(
     let shape = build_envelope_shape(&encoded, intent_hash, deadline)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let outcome = executor
+    let outcome = match executor
         .execute_envelope_trade(signed_envelope, shape)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            // Treat any execution error as a slippage-learner "failure" for this
+            // pair so the recommender widens its cap on persistent fill failures.
+            crate::learning_store::record_failure(bot_id, token_in, token_out);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+    };
 
     let confirmed_output_token = outcome
         .output_token
         .map(|token| format!("{token}"))
         .unwrap_or_else(|| req.intent.token_out.clone());
     let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
+
+    // Slippage-learner hook: observed bps = (min_out - actual_out) / min_out.
+    if let Some(actual) = outcome.output_gained {
+        let min_out_f = u256_to_f64(min_output);
+        let actual_f = u256_to_f64(actual);
+        if let Some(bps) = crate::learning_store::observed_slippage_bps(min_out_f, actual_f) {
+            crate::learning_store::record_fill(bot_id, token_in, token_out, bps);
+        }
+    }
 
     let record = TradeRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1995,6 +2012,14 @@ async fn execute_real_envelope_trade(
     }))
 }
 
+/// Convert an alloy U256 to f64 with saturation. The slippage-learner only
+/// needs ratio precision so a few ULP at the top of u256 don't matter.
+fn u256_to_f64(value: U256) -> f64 {
+    // U256 doesn't impl Into<f64>; go through string for simplicity. The
+    // worst-case path here is post-trade observability, never the hot path.
+    value.to_string().parse::<f64>().unwrap_or(0.0)
+}
+
 async fn execute_real_trade(
     bot_id: &str,
     executor: &TradeExecutor,
@@ -2005,10 +2030,34 @@ async fn execute_real_trade(
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let validation = build_validation_result(&req.validation);
 
-    let outcome = executor
-        .execute_validated_trade(intent, &validation)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Parse token addresses up-front so the post-trade slippage-learner hook
+    // can attribute fills/failures to a stable pair key.
+    let token_in_addr = intent.token_in.parse::<alloy::primitives::Address>().ok();
+    let token_out_addr = intent.token_out.parse::<alloy::primitives::Address>().ok();
+    let min_out_u256 = trading_runtime::executor::decimal_to_u256(&intent.min_amount_out).ok();
+
+    let outcome = match executor.execute_validated_trade(intent, &validation).await {
+        Ok(o) => o,
+        Err(e) => {
+            if let (Some(tin), Some(tout)) = (token_in_addr, token_out_addr) {
+                crate::learning_store::record_failure(bot_id, tin, tout);
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+    };
+
+    if let (Some(tin), Some(tout), Some(min_out), Some(actual)) = (
+        token_in_addr,
+        token_out_addr,
+        min_out_u256,
+        outcome.output_gained,
+    ) {
+        if let Some(bps) =
+            crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
+        {
+            crate::learning_store::record_fill(bot_id, tin, tout, bps);
+        }
+    }
 
     let trade_id = uuid::Uuid::new_v4().to_string();
     let confirmed_output_token = outcome

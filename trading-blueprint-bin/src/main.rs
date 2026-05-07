@@ -380,6 +380,27 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     validation_trust: bot.validation_trust,
                 })
             }),
+            list_envelope_bots: Some(Box::new(|| {
+                trading_blueprint_lib::state::bots()
+                    .ok()
+                    .and_then(|store| store.values().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|bot| {
+                        bot.validation_trust == trading_runtime::ValidationTrust::Envelope
+                    })
+                    .map(|bot| trading_http_api::EnvelopeBotInfo {
+                        bot_id: bot.id,
+                        vault_address: bot.vault_address,
+                        chain_id: bot.chain_id,
+                        rpc_url: bot.rpc_url,
+                        strategy_config: bot.strategy_config,
+                        risk_params: bot.risk_params,
+                        validation_trust: bot.validation_trust,
+                        renewal_webhook_url: bot.renewal_webhook_url,
+                    })
+                    .collect()
+            })),
             clob_client,
             chain_client,
             chain_client_rpc_url: Some(rpc_url_for_chain),

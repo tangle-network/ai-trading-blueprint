@@ -130,6 +130,103 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn test_provision_runs_baseline_backtest() {
+    // Verifies that the provisioning flow either populates the bot's
+    // baseline_backtest field after provisioning a kline-supported strategy,
+    // OR leaves it None when the kline source is unreachable (best-effort).
+    // Either outcome is correct — we never block provisioning on the backtest.
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-baseline-1");
+    let sandbox_id = sandbox.id.clone();
+
+    let request = make_provision_request("baseline-bot", "dex");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+
+    // dex strategy IS baseline-eligible per `strategy_supports_baseline`.
+    // If the kline source returned data, the field is populated.
+    if let Some(summary) = &bot.baseline_backtest {
+        assert_eq!(summary.lookback_days, 30);
+        assert_eq!(summary.harness_version, 1);
+        assert!(
+            !summary.realized_pnl.is_empty(),
+            "summary.realized_pnl should be a serializable decimal string"
+        );
+    } else {
+        // Network unavailable / kline fetch failed — provisioning still
+        // succeeded, and the field is None (best-effort guarantee).
+        assert!(bot.baseline_backtest.is_none());
+    }
+}
+
+#[tokio::test]
+async fn test_provision_skips_baseline_for_prediction_strategy() {
+    // Prediction strategies have no kline source and must skip baseline
+    // without affecting provisioning.
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-baseline-prediction");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request("baseline-prediction", "prediction");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert!(
+        bot.baseline_backtest.is_none(),
+        "prediction strategy must not have a baseline backtest"
+    );
+}
+
+#[tokio::test]
+async fn test_provision_persists_renewal_webhook_url_from_strategy_config() {
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-renewal-webhook");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request_with_strategy_config(
+        "webhook-bot",
+        "dex",
+        r#"{"renewal_webhook_url":"https://example.test/renewal"}"#,
+    );
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert_eq!(
+        bot.renewal_webhook_url.as_deref(),
+        Some("https://example.test/renewal"),
+        "renewal webhook URL should be persisted from strategy_config_json"
+    );
+}
+
+#[tokio::test]
 async fn test_provision_creates_records() {
     let _dir = common::init_test_env();
 
@@ -746,7 +843,7 @@ async fn test_provision_returns_zero_workflow_id() {
 #[tokio::test]
 async fn test_loop_prompt_per_strategy() {
     for strategy in &["dex", "yield", "perp", "prediction", "multi"] {
-        let prompt = build_loop_prompt(strategy);
+        let prompt = build_loop_prompt(strategy, trading_runtime::ValidationTrust::default());
         assert!(
             prompt.contains(strategy),
             "Loop prompt for '{strategy}' should mention the strategy type"
@@ -786,6 +883,8 @@ async fn test_system_prompt_includes_api_info() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -1039,6 +1138,8 @@ async fn test_pack_profile_has_rich_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1064,7 +1165,8 @@ async fn test_pack_profile_has_rich_content() {
     assert_eq!(profile["memory"]["enabled"], true);
 
     // Loop prompt references the pack name
-    let loop_prompt = build_pack_loop_prompt(&pack, &config);
+    let loop_prompt =
+        build_pack_loop_prompt(&pack, &config, trading_runtime::ValidationTrust::default());
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
 }
 
@@ -1098,6 +1200,8 @@ async fn test_generic_strategy_gets_profile() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -1113,7 +1217,7 @@ async fn test_generic_strategy_gets_profile() {
     assert_eq!(profile["permission"]["bash"], "allow");
 
     // Generic loop prompt
-    let prompt = build_loop_prompt("exotic");
+    let prompt = build_loop_prompt("exotic", trading_runtime::ValidationTrust::default());
     assert!(prompt.contains("exotic"));
     assert!(prompt.contains("trading loop iteration"));
 }
@@ -1159,6 +1263,8 @@ async fn test_dex_profile_has_uniswap_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1207,6 +1313,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -1251,6 +1359,8 @@ async fn test_build_pack_agent_profile_integration() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);

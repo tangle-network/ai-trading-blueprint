@@ -304,6 +304,9 @@ sol! {
         function computeDigest(bytes32 intentHash, bytes32 executionHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
         function getVaultSigners(address vault) external view returns (address[] memory);
         function getRequiredSignatures(address vault) external view returns (uint256);
+        // v3 envelope helpers (computed on-chain so off-chain tooling can read the canonical hash)
+        function hashEnvelope(ITradingVault.Envelope calldata env) external pure returns (bytes32);
+        function envelopeDigest(ITradingVault.Envelope calldata env) external view returns (bytes32);
     }
 
     #[sol(rpc)]

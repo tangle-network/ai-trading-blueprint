@@ -28,6 +28,12 @@ hex = "0.4"
 futures-util = "0.3"
 bytes = "1"
 
+[features]
+default = []
+# Exposes test-only hooks (e.g. `learning_store::set_test_dir`) so sibling
+# crates can re-use this crate's stores in their own integration tests.
+test-utils = []
+
 [dev-dependencies]
 trading-validator-lib = { path = "../trading-validator-lib" }
 http-body-util = "0.1"
