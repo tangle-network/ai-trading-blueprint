@@ -17,6 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.91"
 
 jobs:
   cargo-deny:
@@ -36,3 +37,66 @@ jobs:
           log-level: warn
           command: check
           arguments: --config deny.toml
+
+  cargo-audit:
+    name: Cargo Audit (RustSec advisory DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Reads .cargo/audit.toml for the ignore list. Every entry there
+      # is cross-referenced in deny.toml's [advisories].ignore and in
+      # audits/static-analysis-triage.md. `-D warnings` denies on
+      # unmaintained / unsound / yanked; whitelisted IDs cover known
+      # transitive deps (substrate / solana-sdk / ethers-v2).
+      - name: Run cargo audit
+        run: cargo audit -D warnings
+
+  slither:
+    name: Slither (Solidity static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install slither + solc-select
+        run: |
+          python -m pip install --upgrade pip
+          pip install slither-analyzer solc-select
+          solc-select install 0.8.20
+          solc-select use 0.8.20
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install Soldeer deps
+        run: forge soldeer install
+
+      # slither.config.json filters dependencies/, contracts/test/,
+      # contracts/script/ and excludes already-triaged informational
+      # detectors. `--fail-pedantic` treats any new HIGH/MEDIUM as a CI
+      # failure. Inline `slither-disable-next-line` comments document
+      # any FP suppression, with rationale traceable to
+      # audits/static-analysis-triage.md.
+      - name: Run slither on production contracts
+        run: |
+          set -e
+          for f in TradeValidator TradingVault PolicyEngine FeeDistributor StrategyRegistry VaultDeployer VaultFactory VaultShare VaultShareDeployer ChainlinkUsdValuator WrappedAssetValuator; do
+            echo "=== slither contracts/src/$f.sol ==="
+            slither contracts/src/$f.sol --config-file slither.config.json
+          done

@@ -1,0 +1,15 @@
+{
+  "detectors_to_exclude": "naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp",
+  "filter_paths": "dependencies/|contracts/test/|contracts/script/|contracts/lib/",
+  "exclude_informational": false,
+  "exclude_low": false,
+  "exclude_medium": false,
+  "exclude_high": false,
+  "fail_pedantic": true,
+  "solc_remaps": [
+    "@openzeppelin/contracts-upgradeable/=dependencies/tnt-core-0.10.1/dependencies/@openzeppelin-contracts-upgradeable-5.1.0/",
+    "@openzeppelin/contracts/=dependencies/tnt-core-0.10.1/dependencies/@openzeppelin-contracts-5.1.0/",
+    "forge-std/=dependencies/forge-std-1.9.6/src/",
+    "tnt-core/=dependencies/tnt-core-0.10.1/src/"
+  ]
+}
