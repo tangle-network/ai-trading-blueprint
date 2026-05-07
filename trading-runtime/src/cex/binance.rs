@@ -28,6 +28,12 @@ use super::{
 const PROD_BASE_URL: &str = "https://api.binance.com";
 const TESTNET_BASE_URL: &str = "https://testnet.binance.vision";
 const DEFAULT_RECV_WINDOW_MS: u64 = 5_000;
+/// Binance documents 60_000ms as the absolute maximum `recvWindow`. Anything
+/// past that is rejected by the API. We additionally enforce this cap
+/// client-side: a misconfigured operator setting `BINANCE_RECV_WINDOW_MS=60000`
+/// widens the request-replay window 12× over the default, which is a
+/// non-trivial regression for replay protection.
+const MAX_RECV_WINDOW_MS: u64 = 60_000;
 /// Spot weight cap is 6000/min; back off as we approach 90% to leave headroom.
 const WEIGHT_BACKOFF_THRESHOLD: u64 = 5_400;
 
@@ -77,7 +83,24 @@ impl BinanceClient {
             .base_url
             .clone()
             .unwrap_or_else(|| PROD_BASE_URL.to_string());
-        let recv_window_ms = config.recv_window_ms.unwrap_or(DEFAULT_RECV_WINDOW_MS);
+        let configured = config.recv_window_ms.unwrap_or(DEFAULT_RECV_WINDOW_MS);
+        if configured == 0 {
+            return Err(CexError::Misconfigured(
+                "BINANCE_RECV_WINDOW_MS must be > 0".into(),
+            ));
+        }
+        if configured > MAX_RECV_WINDOW_MS {
+            return Err(CexError::Misconfigured(format!(
+                "BINANCE_RECV_WINDOW_MS={configured} exceeds Binance maximum {MAX_RECV_WINDOW_MS}"
+            )));
+        }
+        if configured > DEFAULT_RECV_WINDOW_MS {
+            tracing::warn!(
+                recv_window_ms = configured,
+                "Binance recvWindow is wider than the recommended {DEFAULT_RECV_WINDOW_MS}ms; replay-window grows accordingly"
+            );
+        }
+        let recv_window_ms = configured;
 
         let http = Client::builder()
             .timeout(Duration::from_secs(15))
@@ -618,5 +641,60 @@ mod tests {
         );
         assert_eq!(parse_binance_status(Some("XYZ")), CexOrderStatus::Unknown);
         assert_eq!(parse_binance_status(None), CexOrderStatus::Unknown);
+    }
+
+    /// Audit fix (MEDIUM): clamp `recv_window_ms` to Binance's documented
+    /// max of 60s. Anything past that widens the replay window beyond what
+    /// Binance will accept anyway, and >5s warrants a `tracing::warn`.
+    #[test]
+    fn recv_window_above_max_is_rejected() {
+        let result = BinanceClient::new(BinanceConfig {
+            api_key: "k".into(),
+            api_secret: "s".into(),
+            base_url: Some("http://t".into()),
+            recv_window_ms: Some(MAX_RECV_WINDOW_MS + 1),
+        });
+        match result {
+            Ok(_) => panic!("recv_window > max must be rejected"),
+            Err(err) => assert!(matches!(err, CexError::Misconfigured(_)), "{err:?}"),
+        }
+    }
+
+    #[test]
+    fn recv_window_zero_is_rejected() {
+        let result = BinanceClient::new(BinanceConfig {
+            api_key: "k".into(),
+            api_secret: "s".into(),
+            base_url: Some("http://t".into()),
+            recv_window_ms: Some(0),
+        });
+        match result {
+            Ok(_) => panic!("recv_window=0 must be rejected"),
+            Err(err) => assert!(matches!(err, CexError::Misconfigured(_)), "{err:?}"),
+        }
+    }
+
+    #[test]
+    fn recv_window_at_default_is_accepted_silently() {
+        let client = BinanceClient::new(BinanceConfig {
+            api_key: "k".into(),
+            api_secret: "s".into(),
+            base_url: Some("http://t".into()),
+            recv_window_ms: Some(DEFAULT_RECV_WINDOW_MS),
+        })
+        .expect("default recv_window must be accepted");
+        assert_eq!(client.recv_window_ms, DEFAULT_RECV_WINDOW_MS);
+    }
+
+    #[test]
+    fn recv_window_at_max_is_accepted() {
+        let client = BinanceClient::new(BinanceConfig {
+            api_key: "k".into(),
+            api_secret: "s".into(),
+            base_url: Some("http://t".into()),
+            recv_window_ms: Some(MAX_RECV_WINDOW_MS),
+        })
+        .expect("max recv_window must be accepted (warns)");
+        assert_eq!(client.recv_window_ms, MAX_RECV_WINDOW_MS);
     }
 }
