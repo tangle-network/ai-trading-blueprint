@@ -89,10 +89,7 @@ pub fn spawn_lock_cleanup() {
             interval.tick().await;
             let removed = cleanup_unused_locks();
             if removed > 0 {
-                tracing::debug!(
-                    removed,
-                    "learning_store: pruned idle per-bot locks"
-                );
+                tracing::debug!(removed, "learning_store: pruned idle per-bot locks");
             }
         }
     });

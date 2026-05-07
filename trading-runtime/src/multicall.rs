@@ -23,29 +23,29 @@ pub const CANONICAL_MULTICALL3: Address = address!("cA11bde05977b3631167028862bE
 /// Sourced from the upstream Multicall3 deployment registry. Includes all
 /// major mainnets, L2s, and the popular testnets the dApp ships with.
 pub const SUPPORTED_CHAIN_IDS: &[u64] = &[
-    1,        // Ethereum mainnet
-    10,       // Optimism
-    56,       // BNB Smart Chain
-    100,      // Gnosis
-    137,      // Polygon
-    250,      // Fantom
-    324,      // zkSync Era
-    420,      // Optimism Goerli (legacy)
-    1101,     // Polygon zkEVM
-    1284,     // Moonbeam
-    5000,     // Mantle
-    8453,     // Base
-    42_161,   // Arbitrum One
-    42_220,   // Celo
-    43_114,   // Avalanche C-Chain
-    59_144,   // Linea
-    81_457,   // Blast
-    534_352,  // Scroll
+    1,          // Ethereum mainnet
+    10,         // Optimism
+    56,         // BNB Smart Chain
+    100,        // Gnosis
+    137,        // Polygon
+    250,        // Fantom
+    324,        // zkSync Era
+    420,        // Optimism Goerli (legacy)
+    1101,       // Polygon zkEVM
+    1284,       // Moonbeam
+    5000,       // Mantle
+    8453,       // Base
+    42_161,     // Arbitrum One
+    42_220,     // Celo
+    43_114,     // Avalanche C-Chain
+    59_144,     // Linea
+    81_457,     // Blast
+    534_352,    // Scroll
     11_155_111, // Sepolia
-    84_532,   // Base Sepolia
-    421_614,  // Arbitrum Sepolia
+    84_532,     // Base Sepolia
+    421_614,    // Arbitrum Sepolia
     11_155_420, // Optimism Sepolia
-    31_337,   // Anvil / Foundry default (local dev)
+    31_337,     // Anvil / Foundry default (local dev)
 ];
 
 /// Resolve the Multicall3 address for `chain_id`.
