@@ -241,7 +241,7 @@ struct SlackPayload<'a> {
     blocks: Vec<serde_json::Value>,
 }
 
-fn build_slack_payload(alert: &Alert, summary: &str) -> SlackPayload<'_> {
+fn build_slack_payload<'a>(alert: &Alert, summary: &'a str) -> SlackPayload<'a> {
     let header_text = format!(":rotating_light: {}", alert.kind());
     let mut blocks = vec![
         json!({

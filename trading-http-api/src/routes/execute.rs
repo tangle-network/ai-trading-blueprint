@@ -1885,7 +1885,7 @@ async fn execute_real_envelope_trade(
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let started_at = std::time::Instant::now();
     let metrics_protocol = intent.target_protocol.clone();
-    let metrics_action = intent.action.clone();
+    let metrics_action = action_label(&intent.action);
     let metrics_bot = bot_id.to_string();
 
     let result = execute_real_envelope_trade_inner(
@@ -1903,7 +1903,7 @@ async fn execute_real_envelope_trade(
     record_execute_outcome(
         &metrics_bot,
         &metrics_protocol,
-        &metrics_action,
+        metrics_action,
         started_at,
         &result,
         alert_sink,
@@ -1911,6 +1911,26 @@ async fn execute_real_envelope_trade(
     .await;
 
     result
+}
+
+/// Stable, dashboard-facing label for each `trading_runtime::Action` variant.
+fn action_label(action: &trading_runtime::Action) -> &'static str {
+    use trading_runtime::Action;
+    match action {
+        Action::Swap => "swap",
+        Action::Supply => "supply",
+        Action::Withdraw => "withdraw",
+        Action::Borrow => "borrow",
+        Action::Repay => "repay",
+        Action::OpenLong => "open_long",
+        Action::OpenShort => "open_short",
+        Action::CloseLong => "close_long",
+        Action::CloseShort => "close_short",
+        Action::Buy => "buy",
+        Action::Sell => "sell",
+        Action::Redeem => "redeem",
+        Action::CollateralRelease => "collateral_release",
+    }
 }
 
 /// Determine whether a `(StatusCode, _)` failure represents a chain-side
@@ -2111,6 +2131,36 @@ fn u256_to_f64(value: U256) -> f64 {
 }
 
 async fn execute_real_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = action_label(&intent.action);
+    let metrics_bot = bot_id.to_string();
+
+    let result =
+        execute_real_trade_inner(bot_id, executor, intent, req, stored_validation, valuation).await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+async fn execute_real_trade_inner(
     bot_id: &str,
     executor: &TradeExecutor,
     intent: &TradeIntent,
@@ -2680,11 +2730,19 @@ async fn execute(
         &normalized_request,
         stored_validation,
         &valuation,
+        &noop_alert_sink(),
     )
     .await?;
 
     update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
     Ok(result)
+}
+
+/// Single-bot execute path has no shared alert sink in `TradingApiState`; use
+/// a no-op sink so metrics still record while alerting stays opt-in via the
+/// multi-bot configuration.
+fn noop_alert_sink() -> crate::alerts::AlertSink {
+    crate::alerts::AlertSink::new(None, None)
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -3035,6 +3093,7 @@ async fn execute_multi_bot(
                 stored_validation,
                 &valuation,
                 intent_hash_b256,
+                &state.alert_sink,
             )
             .await?;
             if let Err(error) =
@@ -3053,6 +3112,7 @@ async fn execute_multi_bot(
         &normalized_req,
         stored_validation,
         &valuation,
+        &state.alert_sink,
     )
     .await?;
     if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
