@@ -82,6 +82,7 @@ import {
   resolveDexAssetInput,
   type DexAssetUniverse,
 } from '~/lib/assetUniverse';
+import { isTokenAddress } from '~/lib/tradeTokenMetadata';
 import {
   isStaleStateError,
   readOperatorError,
@@ -345,6 +346,12 @@ const DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
     false,
   ),
 };
+
+const DEFAULT_DEX_BASE_ASSET_ADDRESS = (
+  DEFAULT_BASE_EXECUTION_TARGET.enabled
+    ? DEFAULT_BASE_EXECUTION_TARGET.assetToken
+    : DEFAULT_ETHEREUM_EXECUTION_TARGET.assetToken
+) as Address;
 
 const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum',
@@ -1184,10 +1191,10 @@ export default function ProvisionPage() {
   const [conversationEnabled, setConversationEnabled] = useState(true);
   const [researchEnabled, setResearchEnabled] = useState(true);
   const [baseAssetAddress, setBaseAssetAddress] = useState<Address>(
-    BASE_SEPOLIA_USDC_ADDRESS as Address,
+    DEFAULT_DEX_BASE_ASSET_ADDRESS,
   );
   const [selectedAssetAddresses, setSelectedAssetAddresses] = useState<Address[]>([
-    BASE_SEPOLIA_USDC_ADDRESS as Address,
+    DEFAULT_DEX_BASE_ASSET_ADDRESS,
   ]);
   const [manualAssetInput, setManualAssetInput] = useState('');
   const [collateralCapPct, setCollateralCapPct] = useState('');
@@ -1327,9 +1334,13 @@ export default function ProvisionPage() {
   }, [assetOptions, selectedExecutionTarget?.assetToken, strategyType]);
   const addAssetToUniverse = useCallback(
     (value: string) => {
+      if (!isTokenAddress(value.trim())) {
+        toast.error('Select common assets above or paste a full token address');
+        return false;
+      }
       const resolved = resolveDexAssetInput(value, assetUniverseChainId);
       if (!resolved) {
-        toast.error('Use a known asset name or a full token address');
+        toast.error('Paste a valid full token address');
         return false;
       }
       setSelectedAssetAddresses((current) => {

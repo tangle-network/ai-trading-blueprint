@@ -79,6 +79,9 @@ export function ConfigureStep({
   const isDexStrategy = strategyType === 'dex';
   const effectiveBaseAssetAddress =
     baseAssetAddress ?? selectedAssetAddresses[0] ?? assetOptions[0]?.address;
+  const selectedAssetSet = new Set(
+    selectedAssetAddresses.map((address) => address.toLowerCase()),
+  );
   const selectedAssets = selectedAssetAddresses
     .map((address) => {
       const option = assetOptions.find(
@@ -92,16 +95,7 @@ export function ConfigureStep({
         known: false,
       };
     });
-  const baseAssetChoices = [...assetOptions];
-  for (const asset of selectedAssets) {
-    if (
-      !baseAssetChoices.some(
-        (choice) => choice.address.toLowerCase() === asset.address.toLowerCase(),
-      )
-    ) {
-      baseAssetChoices.push(asset);
-    }
-  }
+  const baseAssetChoices = selectedAssets;
   return (
     <>
       <Card>
@@ -130,30 +124,43 @@ export function ConfigureStep({
               </p>
             </div>
 
-            <label className="block">
-              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block mb-1.5">
-                Base Asset
-              </span>
-              <select
-                value={effectiveBaseAssetAddress ?? ''}
-                onChange={(event) => setBaseAssetAddress(event.target.value as Address)}
-                className="w-full rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-3 py-2 text-sm text-arena-elements-textPrimary"
-              >
-                {baseAssetChoices.map((asset) => (
-                  <option key={asset.address} value={asset.address}>
-                    {asset.symbol} - {asset.name}
-                  </option>
-                ))}
-              </select>
-              <span className="text-xs text-arena-elements-textTertiary mt-1.5 block">
-                The base asset is included automatically.
-              </span>
-            </label>
-
             <div className="space-y-2">
               <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block">
                 Allowed Assets
               </span>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {assetOptions.map((asset) => {
+                  const selected = selectedAssetSet.has(asset.address.toLowerCase());
+                  const isBase =
+                    effectiveBaseAssetAddress != null &&
+                    asset.address.toLowerCase() === effectiveBaseAssetAddress.toLowerCase();
+                  return (
+                    <button
+                      key={asset.address}
+                      type="button"
+                      onClick={() => {
+                        if (selected) {
+                          removeAssetFromUniverse(asset.address);
+                        } else {
+                          addAssetToUniverse(asset.address);
+                        }
+                      }}
+                      className={`text-left rounded-md border px-3 py-2 transition-colors ${
+                        selected
+                          ? 'border-violet-500/50 bg-violet-500/10'
+                          : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 hover:border-arena-elements-borderColorActive/40'
+                      }`}
+                    >
+                      <span className="block text-sm font-medium text-arena-elements-textPrimary">
+                        {asset.symbol}
+                      </span>
+                      <span className="block truncate text-xs text-arena-elements-textTertiary">
+                        {isBase ? 'Base asset' : asset.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex flex-wrap gap-2">
                 {selectedAssets.map((asset) => {
                   const isBase =
@@ -187,7 +194,7 @@ export function ConfigureStep({
               </div>
               <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                 <Input
-                  placeholder="Type WETH, DAI, WBTC, or a token address"
+                  placeholder="Paste full token address"
                   value={manualAssetInput}
                   onChange={(event) => setManualAssetInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -204,10 +211,31 @@ export function ConfigureStep({
                   className="gap-2"
                 >
                   <Plus className="h-4 w-4" />
-                  Add
+                  Add Custom
                 </Button>
               </div>
             </div>
+
+            <label className="block">
+              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block mb-1.5">
+                Base Asset
+              </span>
+              <select
+                value={effectiveBaseAssetAddress ?? ''}
+                onChange={(event) => setBaseAssetAddress(event.target.value as Address)}
+                disabled={baseAssetChoices.length === 0}
+                className="w-full rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-3 py-2 text-sm text-arena-elements-textPrimary disabled:opacity-60"
+              >
+                {baseAssetChoices.map((asset) => (
+                  <option key={asset.address} value={asset.address}>
+                    {asset.symbol} - {asset.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-arena-elements-textTertiary mt-1.5 block">
+                Choose the vault/deposit asset from the selected allowed assets.
+              </span>
+            </label>
           </CardContent>
         </Card>
       )}
