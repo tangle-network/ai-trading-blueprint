@@ -92,6 +92,7 @@ contract EnvelopeValidatorTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
+            maxValue: 0,
             minOutputPerInput: 2_900e6,
             router: address(0xE592427A0AEce92De3Edee1F18E0157C05861564),
             tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
@@ -110,6 +111,7 @@ contract EnvelopeValidatorTest is Setup {
             zeroForOne: true,
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
+            maxValue: 0,
             minOutputPerInput: 2_900e6,
             universalRouter: address(0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af),
             hookDataHash: keccak256("")
@@ -120,6 +122,7 @@ contract EnvelopeValidatorTest is Setup {
         return TradeValidator.AerodromeSwapEnforcement({
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
+            maxValue: 0,
             minOutputPerInput: 2_900e6,
             router: address(0xBe6d8F0d05Cc4be24D5167A3eF062215Be6D8f0d),
             tickSpacing: 60,
@@ -134,6 +137,7 @@ contract EnvelopeValidatorTest is Setup {
             feeTier: 500,
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
+            maxValue: 0,
             minOutputPerInput: 2_900e6,
             router: address(0x13f4EA83D0bd40E75C8222255bc855a974568Dd4),
             tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
@@ -148,6 +152,7 @@ contract EnvelopeValidatorTest is Setup {
             j: int128(1),
             maxSingleAmountIn: 1000e6,
             maxTotalAmountIn: 10000e6,
+            maxValue: 0,
             minOutputPerInput: 0.99e18,
             pool: address(0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7),
             tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
@@ -160,6 +165,7 @@ contract EnvelopeValidatorTest is Setup {
             asset: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
         });
     }
@@ -169,6 +175,7 @@ contract EnvelopeValidatorTest is Setup {
             asset: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             minHealthFactor: 1.5e18,
             pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
         });
@@ -180,6 +187,7 @@ contract EnvelopeValidatorTest is Setup {
             interestRateMode: 2,
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             minHealthFactor: 1.5e18,
             pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
         });
@@ -192,6 +200,7 @@ contract EnvelopeValidatorTest is Setup {
             interestRateMode: 2,
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
         });
     }
@@ -200,6 +209,7 @@ contract EnvelopeValidatorTest is Setup {
         return TradeValidator.MorphoSupplyEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: keccak256("morpho-market-1"),
             morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
         });
@@ -209,6 +219,7 @@ contract EnvelopeValidatorTest is Setup {
         return TradeValidator.MorphoWithdrawEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: keccak256("morpho-market-1"),
             minCollateralRatio: 1.5e18,
             morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
@@ -219,6 +230,7 @@ contract EnvelopeValidatorTest is Setup {
         return TradeValidator.MorphoBorrowEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: keccak256("morpho-market-1"),
             minCollateralRatio: 1.5e18,
             morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
@@ -229,6 +241,7 @@ contract EnvelopeValidatorTest is Setup {
         return TradeValidator.MorphoRepayEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: keccak256("morpho-market-1"),
             morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
         });
@@ -495,6 +508,7 @@ contract EnvelopeValidatorTest is Setup {
             feeTier: u.feeTier,
             maxSingleAmountIn: u.maxSingleAmountIn,
             maxTotalAmountIn: u.maxTotalAmountIn,
+            maxValue: u.maxValue,
             minOutputPerInput: u.minOutputPerInput,
             router: u.router,
             tokenIn: u.tokenIn,
@@ -516,6 +530,7 @@ contract EnvelopeValidatorTest is Setup {
             j: a.i,
             maxSingleAmountIn: a.maxSingleAmountIn,
             maxTotalAmountIn: a.maxTotalAmountIn,
+            maxValue: a.maxValue,
             minOutputPerInput: a.minOutputPerInput,
             pool: a.pool,
             tokenIn: a.tokenIn,
@@ -531,6 +546,7 @@ contract EnvelopeValidatorTest is Setup {
             j: pos.j,
             maxSingleAmountIn: pos.maxSingleAmountIn,
             maxTotalAmountIn: pos.maxTotalAmountIn,
+            maxValue: pos.maxValue,
             minOutputPerInput: pos.minOutputPerInput,
             pool: pos.pool,
             tokenIn: pos.tokenIn,

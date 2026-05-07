@@ -17,7 +17,6 @@ use crate::envelope::{
     UniswapV3SwapEnforcement, UniswapV4SwapEnforcement,
 };
 
-
 /// Truncate a U256 to a uint160 (alloy `Uint<160, 3>`). Used for `sqrtPriceLimitX96`
 /// fields; off-chain we store as U256 for simplicity, on-chain it's uint160.
 fn u256_to_uint160(v: U256) -> alloy::primitives::Uint<160, 3> {
@@ -168,6 +167,7 @@ impl UniswapV3SwapEnforcement {
             feeTier: U256::from(self.fee_tier),
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             router: self.router,
             tokenIn: self.token_in,
@@ -189,6 +189,7 @@ impl UniswapV4SwapEnforcement {
             zeroForOne: self.zero_for_one,
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             universalRouter: self.universal_router,
             hookDataHash: self.hook_data_hash,
@@ -202,6 +203,7 @@ impl AerodromeSwapEnforcement {
         ITradingVault::AerodromeSwapEnforcement {
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             router: self.router,
             tickSpacing: tick,
@@ -218,6 +220,7 @@ impl PancakeswapV3SwapEnforcement {
             feeTier: U256::from(self.fee_tier),
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             router: self.router,
             tokenIn: self.token_in,
@@ -235,6 +238,7 @@ impl CurveStableSwapEnforcement {
             j: self.j,
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             pool: self.pool,
             tokenIn: self.token_in,
@@ -249,6 +253,7 @@ impl AaveSupplyEnforcement {
             asset: self.asset,
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             pool: self.pool,
         }
     }
@@ -260,6 +265,7 @@ impl AaveWithdrawEnforcement {
             asset: self.asset,
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             minHealthFactor: self.min_health_factor,
             pool: self.pool,
         }
@@ -273,6 +279,7 @@ impl AaveBorrowEnforcement {
             interestRateMode: U256::from(self.interest_rate_mode),
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             minHealthFactor: self.min_health_factor,
             pool: self.pool,
         }
@@ -287,6 +294,7 @@ impl AaveRepayEnforcement {
             interestRateMode: U256::from(self.interest_rate_mode),
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             pool: self.pool,
         }
     }
@@ -297,6 +305,7 @@ impl MorphoSupplyEnforcement {
         ITradingVault::MorphoSupplyEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             morpho: self.morpho,
         }
@@ -308,6 +317,7 @@ impl MorphoWithdrawEnforcement {
         ITradingVault::MorphoWithdrawEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             minCollateralRatio: self.min_collateral_ratio,
             morpho: self.morpho,
@@ -320,6 +330,7 @@ impl MorphoBorrowEnforcement {
         ITradingVault::MorphoBorrowEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             minCollateralRatio: self.min_collateral_ratio,
             morpho: self.morpho,
@@ -332,6 +343,7 @@ impl MorphoRepayEnforcement {
         ITradingVault::MorphoRepayEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             morpho: self.morpho,
         }
@@ -616,6 +628,7 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
                     max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(2_900_000_000u128),
                     sqrt_price_limit_x96: U256::ZERO,
                 },
@@ -664,6 +677,7 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                     sqrt_price_limit_x96: U256::ZERO,
                 }),
@@ -679,6 +693,7 @@ mod tests {
                     zero_for_one: true,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                     universal_router: Address::from_str(
                         "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
@@ -697,6 +712,7 @@ mod tests {
                     tick_spacing: 60,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                     sqrt_price_limit_x96: U256::ZERO,
                 }),
@@ -711,6 +727,7 @@ mod tests {
                     fee_tier: 500,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                     sqrt_price_limit_x96: U256::ZERO,
                 }),
@@ -725,6 +742,7 @@ mod tests {
                     j: 1,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                 }),
             ),
@@ -735,6 +753,7 @@ mod tests {
                     asset,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -744,6 +763,7 @@ mod tests {
                     asset,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_health_factor: hf,
                 }),
             ),
@@ -755,6 +775,7 @@ mod tests {
                     interest_rate_mode: 2,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_health_factor: hf,
                 }),
             ),
@@ -768,6 +789,7 @@ mod tests {
                     interest_rate_mode: 2,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -777,6 +799,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -786,6 +809,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_collateral_ratio: hf,
                 }),
             ),
@@ -796,6 +820,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_collateral_ratio: hf,
                 }),
             ),
@@ -806,6 +831,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
         ];
@@ -884,6 +910,7 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1u128),
                     max_total_amount_in: U256::from(2u128),
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(1u128),
                     sqrt_price_limit_x96: U256::ZERO,
                 },

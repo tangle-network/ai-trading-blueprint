@@ -20,34 +20,34 @@ use super::error::EnvelopeError;
 
 // ── EIP-712 type strings (canonical, alphabetical fields per EIP-712 spec) ──
 
-pub(super) const UNISWAP_V3_SWAP_TYPE: &str = "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
+pub(super) const UNISWAP_V3_SWAP_TYPE: &str = "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
-pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)";
+pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)";
 
-pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
+pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
-pub(super) const PANCAKESWAP_V3_SWAP_TYPE: &str = "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
+pub(super) const PANCAKESWAP_V3_SWAP_TYPE: &str = "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
 /// Curve StableSwap is index-based: caller passes int128 i (token-in) and int128 j (token-out)
 /// rather than addresses. We pin the pool, the indices, and the asset addresses (for the agent's
 /// readability) so the on-chain executor can verify all four parameters.
-pub(super) const CURVE_STABLE_SWAP_TYPE: &str = "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)";
+pub(super) const CURVE_STABLE_SWAP_TYPE: &str = "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)";
 
-pub(super) const AAVE_SUPPLY_TYPE: &str = "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)";
+pub(super) const AAVE_SUPPLY_TYPE: &str = "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)";
 
-pub(super) const AAVE_WITHDRAW_TYPE: &str = "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)";
+pub(super) const AAVE_WITHDRAW_TYPE: &str = "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)";
 
-pub(super) const AAVE_BORROW_TYPE: &str = "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)";
+pub(super) const AAVE_BORROW_TYPE: &str = "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)";
 
-pub(super) const AAVE_REPAY_TYPE: &str = "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)";
+pub(super) const AAVE_REPAY_TYPE: &str = "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)";
 
-pub(super) const MORPHO_SUPPLY_TYPE: &str = "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)";
+pub(super) const MORPHO_SUPPLY_TYPE: &str = "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)";
 
-pub(super) const MORPHO_WITHDRAW_TYPE: &str = "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)";
+pub(super) const MORPHO_WITHDRAW_TYPE: &str = "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)";
 
-pub(super) const MORPHO_BORROW_TYPE: &str = "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)";
+pub(super) const MORPHO_BORROW_TYPE: &str = "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)";
 
-pub(super) const MORPHO_REPAY_TYPE: &str = "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)";
+pub(super) const MORPHO_REPAY_TYPE: &str = "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)";
 
 // ── Per-protocol-per-action enforcement types ──
 
@@ -59,6 +59,9 @@ pub struct UniswapV3SwapEnforcement {
     pub fee_tier: u32,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     /// Minimum output amount per 1e18 input units (anti-MEV / anti-bad-routing).
     pub min_output_per_input: U256,
     /// Audit M-2: pin the V3 sqrtPriceLimitX96 (uint160). 0 disables the price-limit
@@ -83,6 +86,9 @@ pub struct UniswapV4SwapEnforcement {
     pub zero_for_one: bool,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_output_per_input: U256,
     /// Universal Router 2.0 address — vault submits the V4 swap via UR's
     /// V4_SWAP_EXACT_IN_SINGLE command path.
@@ -104,6 +110,9 @@ pub struct PancakeswapV3SwapEnforcement {
     pub fee_tier: u32,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_output_per_input: U256,
     /// Audit M-2: pin the V3 sqrtPriceLimitX96 (uint160).
     #[serde(default)]
@@ -126,6 +135,9 @@ pub struct CurveStableSwapEnforcement {
     pub j: i128,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_output_per_input: U256,
 }
 
@@ -151,6 +163,9 @@ pub struct AerodromeSwapEnforcement {
     pub tick_spacing: i32,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_output_per_input: U256,
     /// Audit M-2: pin the Slipstream sqrtPriceLimitX96 (uint160).
     #[serde(default)]
@@ -163,6 +178,9 @@ pub struct AaveSupplyEnforcement {
     pub asset: Address,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,6 +189,9 @@ pub struct AaveWithdrawEnforcement {
     pub asset: Address,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     /// Aave-style health factor (1e18-scaled). Trade reverts if post-withdraw HF < this.
     pub min_health_factor: U256,
 }
@@ -183,6 +204,9 @@ pub struct AaveBorrowEnforcement {
     pub interest_rate_mode: u8,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_health_factor: U256,
 }
 
@@ -195,6 +219,9 @@ pub struct AaveRepayEnforcement {
     pub interest_rate_mode: u8,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -203,6 +230,9 @@ pub struct MorphoSupplyEnforcement {
     pub market_id: B256,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +241,9 @@ pub struct MorphoWithdrawEnforcement {
     pub market_id: B256,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     /// Morpho collateral / borrow ratio (1e18-scaled).
     pub min_collateral_ratio: U256,
 }
@@ -221,6 +254,9 @@ pub struct MorphoBorrowEnforcement {
     pub market_id: B256,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
     pub min_collateral_ratio: U256,
 }
 
@@ -230,6 +266,9 @@ pub struct MorphoRepayEnforcement {
     pub market_id: B256,
     pub max_single_amount: U256,
     pub max_total_amount: U256,
+    /// Audit M-3: bound `params.value` (native ETH) per envelope. 0 disables ETH spend.
+    #[serde(default)]
+    pub max_value: U256,
 }
 
 /// On-chain enforcement binding. Pins an envelope to a specific (protocol, action)
@@ -364,6 +403,7 @@ impl UniswapV3SwapEnforcement {
             U256::from(self.fee_tier),
             self.max_single_amount_in,
             self.max_total_amount_in,
+            self.max_value,
             self.min_output_per_input,
             self.router,
             self.token_in,
@@ -390,6 +430,7 @@ impl UniswapV4SwapEnforcement {
             U256::from(self.zero_for_one as u8),
             self.max_single_amount_in,
             self.max_total_amount_in,
+            self.max_value,
             self.min_output_per_input,
             self.universal_router,
             self.hook_data_hash,
@@ -404,6 +445,7 @@ impl PancakeswapV3SwapEnforcement {
             U256::from(self.fee_tier),
             self.max_single_amount_in,
             self.max_total_amount_in,
+            self.max_value,
             self.min_output_per_input,
             self.router,
             self.token_in,
@@ -431,6 +473,7 @@ impl CurveStableSwapEnforcement {
             j_u,
             self.max_single_amount_in,
             self.max_total_amount_in,
+            self.max_value,
             self.min_output_per_input,
             self.pool,
             self.token_in,
@@ -451,6 +494,7 @@ impl AerodromeSwapEnforcement {
             keccak256(AERODROME_SWAP_TYPE.as_bytes()),
             self.max_single_amount_in,
             self.max_total_amount_in,
+            self.max_value,
             self.min_output_per_input,
             self.router,
             tick,
@@ -468,6 +512,7 @@ impl AaveSupplyEnforcement {
             self.asset,
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.pool,
         )))
     }
@@ -480,6 +525,7 @@ impl AaveWithdrawEnforcement {
             self.asset,
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.min_health_factor,
             self.pool,
         )))
@@ -494,6 +540,7 @@ impl AaveBorrowEnforcement {
             U256::from(self.interest_rate_mode),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.min_health_factor,
             self.pool,
         )))
@@ -509,6 +556,7 @@ impl AaveRepayEnforcement {
             U256::from(self.interest_rate_mode),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.pool,
         )))
     }
@@ -520,6 +568,7 @@ impl MorphoSupplyEnforcement {
             keccak256(MORPHO_SUPPLY_TYPE.as_bytes()),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.market_id,
             self.morpho,
         )))
@@ -532,6 +581,7 @@ impl MorphoWithdrawEnforcement {
             keccak256(MORPHO_WITHDRAW_TYPE.as_bytes()),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.market_id,
             self.min_collateral_ratio,
             self.morpho,
@@ -545,6 +595,7 @@ impl MorphoBorrowEnforcement {
             keccak256(MORPHO_BORROW_TYPE.as_bytes()),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.market_id,
             self.min_collateral_ratio,
             self.morpho,
@@ -558,6 +609,7 @@ impl MorphoRepayEnforcement {
             keccak256(MORPHO_REPAY_TYPE.as_bytes()),
             self.max_single_amount,
             self.max_total_amount,
+            self.max_value,
             self.market_id,
             self.morpho,
         )))
@@ -581,6 +633,7 @@ mod tests {
             fee_tier: 3000,
             max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
             max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(2_900_000_000u128),
             sqrt_price_limit_x96: U256::ZERO,
         })
@@ -602,6 +655,7 @@ mod tests {
             tick_spacing: 60,
             max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
             max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(2_900_000_000u128),
             sqrt_price_limit_x96: U256::ZERO,
         });
@@ -619,6 +673,7 @@ mod tests {
             asset: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             max_single_amount: U256::from(1_000_000_000u128),
             max_total_amount: U256::from(10_000_000_000u128),
+            max_value: U256::ZERO,
         });
         assert_eq!(aave_supply.protocol_id(), "aave_v3");
         assert_eq!(aave_supply.action(), "supply");
@@ -628,6 +683,7 @@ mod tests {
             market_id: B256::ZERO,
             max_single_amount: U256::from(1u64),
             max_total_amount: U256::from(2u64),
+            max_value: U256::ZERO,
             min_collateral_ratio: U256::from(0u64),
         });
         assert_eq!(morpho_borrow.protocol_id(), "morpho");
@@ -675,6 +731,7 @@ mod tests {
             interest_rate_mode: 3,
             max_single_amount: U256::from(1u64),
             max_total_amount: U256::from(2u64),
+            max_value: U256::ZERO,
             min_health_factor: U256::from(1_000_000_000_000_000_000u128),
         });
         let err = e.validate().unwrap_err();
@@ -693,6 +750,7 @@ mod tests {
             tick_spacing: -100,
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
             sqrt_price_limit_x96: U256::ZERO,
         };
@@ -748,6 +806,7 @@ mod tests {
                 zero_for_one: true,
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
+                max_value: U256::ZERO,
                 min_output_per_input: amt_one,
                 universal_router: addr("0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"),
                 hook_data_hash: B256::ZERO,
@@ -759,6 +818,7 @@ mod tests {
                 tick_spacing: 60,
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
+                max_value: U256::ZERO,
                 min_output_per_input: amt_one,
                 sqrt_price_limit_x96: U256::ZERO,
             }),
@@ -769,6 +829,7 @@ mod tests {
                 fee_tier: 500,
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
+                max_value: U256::ZERO,
                 min_output_per_input: amt_one,
                 sqrt_price_limit_x96: U256::ZERO,
             }),
@@ -780,6 +841,7 @@ mod tests {
                 j: 1,
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
+                max_value: U256::ZERO,
                 min_output_per_input: amt_one,
             }),
             EnvelopeEnforcement::AaveSupply(AaveSupplyEnforcement {
@@ -787,12 +849,14 @@ mod tests {
                 asset,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
             }),
             EnvelopeEnforcement::AaveWithdraw(AaveWithdrawEnforcement {
                 pool: p,
                 asset,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
                 min_health_factor: hf,
             }),
             EnvelopeEnforcement::AaveBorrow(AaveBorrowEnforcement {
@@ -801,6 +865,7 @@ mod tests {
                 interest_rate_mode: 2,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
                 min_health_factor: hf,
             }),
             EnvelopeEnforcement::AaveRepay(AaveRepayEnforcement {
@@ -810,18 +875,21 @@ mod tests {
                 interest_rate_mode: 2,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
             }),
             EnvelopeEnforcement::MorphoSupply(MorphoSupplyEnforcement {
                 morpho: m,
                 market_id: B256::ZERO,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
             }),
             EnvelopeEnforcement::MorphoWithdraw(MorphoWithdrawEnforcement {
                 morpho: m,
                 market_id: B256::ZERO,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
                 min_collateral_ratio: hf,
             }),
             EnvelopeEnforcement::MorphoBorrow(MorphoBorrowEnforcement {
@@ -829,6 +897,7 @@ mod tests {
                 market_id: B256::ZERO,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
                 min_collateral_ratio: hf,
             }),
             EnvelopeEnforcement::MorphoRepay(MorphoRepayEnforcement {
@@ -836,6 +905,7 @@ mod tests {
                 market_id: B256::ZERO,
                 max_single_amount: amt_one,
                 max_total_amount: amt_two,
+                max_value: U256::ZERO,
             }),
         ]
     }
@@ -866,6 +936,7 @@ mod tests {
             fee_tier: 3000,
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
             sqrt_price_limit_x96: U256::ZERO,
         };
@@ -876,6 +947,7 @@ mod tests {
             fee_tier: pancake.fee_tier,
             max_single_amount_in: pancake.max_single_amount_in,
             max_total_amount_in: pancake.max_total_amount_in,
+            max_value: pancake.max_value,
             min_output_per_input: pancake.min_output_per_input,
             sqrt_price_limit_x96: pancake.sqrt_price_limit_x96,
         };
@@ -894,6 +966,7 @@ mod tests {
             j: 2,
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
         };
         let pos = CurveStableSwapEnforcement {
@@ -915,6 +988,7 @@ mod tests {
             j: 1,
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
         };
         let b = CurveStableSwapEnforcement {
@@ -934,6 +1008,7 @@ mod tests {
             fee_tier: 500,
             max_single_amount_in: U256::from(10u64),
             max_total_amount_in: U256::from(100u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
             sqrt_price_limit_x96: U256::ZERO,
         });
@@ -945,6 +1020,7 @@ mod tests {
             j: 3,
             max_single_amount_in: U256::from(10u64),
             max_total_amount_in: U256::from(100u64),
+            max_value: U256::ZERO,
             min_output_per_input: U256::from(1u64),
         });
         for v in [p, c] {

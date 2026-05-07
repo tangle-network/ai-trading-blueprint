@@ -583,6 +583,7 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1_000_000u128),
                     max_total_amount_in: max_total_amount,
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(1u128),
                     sqrt_price_limit_x96: U256::ZERO,
                 },

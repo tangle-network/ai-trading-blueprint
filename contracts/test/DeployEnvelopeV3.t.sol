@@ -101,77 +101,77 @@ contract DeployEnvelopeV3Test is Test {
         assertEq(
             tv.UNISWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "UNISWAP_V3_SWAP_TYPEHASH"
         );
         assertEq(
             tv.UNISWAP_V4_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
+                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
             ),
             "UNISWAP_V4_SWAP_TYPEHASH"
         );
         assertEq(
             tv.AERODROME_SWAP_TYPEHASH(),
             keccak256(
-                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "AERODROME_SWAP_TYPEHASH"
         );
         assertEq(
             tv.AAVE_SUPPLY_TYPEHASH(),
             keccak256(
-                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             ),
             "AAVE_SUPPLY_TYPEHASH"
         );
         assertEq(
             tv.AAVE_WITHDRAW_TYPEHASH(),
             keccak256(
-                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             ),
             "AAVE_WITHDRAW_TYPEHASH"
         );
         assertEq(
             tv.AAVE_BORROW_TYPEHASH(),
             keccak256(
-                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             ),
             "AAVE_BORROW_TYPEHASH"
         );
         assertEq(
             tv.AAVE_REPAY_TYPEHASH(),
             keccak256(
-                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             ),
             "AAVE_REPAY_TYPEHASH"
         );
         assertEq(
             tv.MORPHO_SUPPLY_TYPEHASH(),
             keccak256(
-                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             ),
             "MORPHO_SUPPLY_TYPEHASH"
         );
         assertEq(
             tv.MORPHO_WITHDRAW_TYPEHASH(),
             keccak256(
-                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             ),
             "MORPHO_WITHDRAW_TYPEHASH"
         );
         assertEq(
             tv.MORPHO_BORROW_TYPEHASH(),
             keccak256(
-                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             ),
             "MORPHO_BORROW_TYPEHASH"
         );
         assertEq(
             tv.MORPHO_REPAY_TYPEHASH(),
             keccak256(
-                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             ),
             "MORPHO_REPAY_TYPEHASH"
         );

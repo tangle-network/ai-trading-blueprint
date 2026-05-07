@@ -125,91 +125,91 @@ contract EnvelopeInvariantsTest is Setup {
         assertEq(
             tradeValidator.UNISWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "UNISWAP_V3_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.UNISWAP_V4_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
+                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
             ),
             "UNISWAP_V4_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.AERODROME_SWAP_TYPEHASH(),
             keccak256(
-                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "AERODROME_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.PANCAKESWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "PANCAKESWAP_V3_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.CURVE_STABLE_SWAP_TYPEHASH(),
             keccak256(
-                "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
+                "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
             ),
             "CURVE_STABLE_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.AAVE_SUPPLY_TYPEHASH(),
             keccak256(
-                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             ),
             "AAVE_SUPPLY_TYPEHASH"
         );
         assertEq(
             tradeValidator.AAVE_WITHDRAW_TYPEHASH(),
             keccak256(
-                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             ),
             "AAVE_WITHDRAW_TYPEHASH"
         );
         assertEq(
             tradeValidator.AAVE_BORROW_TYPEHASH(),
             keccak256(
-                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             ),
             "AAVE_BORROW_TYPEHASH"
         );
         assertEq(
             tradeValidator.AAVE_REPAY_TYPEHASH(),
             keccak256(
-                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             ),
             "AAVE_REPAY_TYPEHASH"
         );
         assertEq(
             tradeValidator.MORPHO_SUPPLY_TYPEHASH(),
             keccak256(
-                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             ),
             "MORPHO_SUPPLY_TYPEHASH"
         );
         assertEq(
             tradeValidator.MORPHO_WITHDRAW_TYPEHASH(),
             keccak256(
-                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             ),
             "MORPHO_WITHDRAW_TYPEHASH"
         );
         assertEq(
             tradeValidator.MORPHO_BORROW_TYPEHASH(),
             keccak256(
-                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             ),
             "MORPHO_BORROW_TYPEHASH"
         );
         assertEq(
             tradeValidator.MORPHO_REPAY_TYPEHASH(),
             keccak256(
-                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             ),
             "MORPHO_REPAY_TYPEHASH"
         );
@@ -222,6 +222,7 @@ contract EnvelopeInvariantsTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
+            maxValue: 0,
             minOutputPerInput: 2_900e6,
             router: address(0xdeadbeef),
             tokenIn: address(tokenA),
@@ -256,6 +257,7 @@ contract EnvelopeInvariantsTest is Setup {
             interestRateMode: 2,
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             minHealthFactor: 1.5e18,
             pool: FAKE_AAVE_POOL
         });
@@ -320,6 +322,7 @@ contract EnvelopeInvariantsTest is Setup {
             interestRateMode: 2,
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             minHealthFactor: 1.5e18,
             pool: FAKE_AAVE_POOL
         });
@@ -361,6 +364,7 @@ contract EnvelopeInvariantsTest is Setup {
             asset: address(tokenA),
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             minHealthFactor: 1.5e18,
             pool: FAKE_AAVE_POOL
         });
@@ -408,6 +412,7 @@ contract EnvelopeInvariantsTest is Setup {
         TradeValidator.MorphoBorrowEnforcement memory enf = TradeValidator.MorphoBorrowEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: marketId,
             minCollateralRatio: 1.5e18,
             morpho: FAKE_MORPHO
@@ -460,6 +465,7 @@ contract EnvelopeInvariantsTest is Setup {
         TradeValidator.MorphoWithdrawEnforcement memory enf = TradeValidator.MorphoWithdrawEnforcement({
             maxSingleAmount: 1000e6,
             maxTotalAmount: 10000e6,
+            maxValue: 0,
             marketId: marketId,
             minCollateralRatio: 1.5e18,
             morpho: FAKE_MORPHO
@@ -627,6 +633,7 @@ contract EnvelopeAllowanceResetTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(router),
             tokenIn: address(tokenA),
@@ -830,6 +837,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(router),
             tokenIn: address(tokenA),
@@ -880,6 +888,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xdeadbeef),
             tokenIn: address(tokenA),
@@ -890,6 +899,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             feeTier: 3000,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xdeadbeef),
             tokenIn: address(tokenA),
@@ -907,6 +917,7 @@ contract EnvelopePriceLimitPinTest is Setup {
         TradeValidator.AerodromeSwapEnforcement memory ae0 = TradeValidator.AerodromeSwapEnforcement({
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xaabbccdd),
             tickSpacing: 60,
@@ -917,6 +928,7 @@ contract EnvelopePriceLimitPinTest is Setup {
         TradeValidator.AerodromeSwapEnforcement memory ae1 = TradeValidator.AerodromeSwapEnforcement({
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xaabbccdd),
             tickSpacing: 60,
@@ -933,6 +945,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             feeTier: 500,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xeeeeffff),
             tokenIn: address(tokenA),
@@ -943,6 +956,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             feeTier: 500,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             router: address(0xeeeeffff),
             tokenIn: address(tokenA),
@@ -966,6 +980,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             zeroForOne: true,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             universalRouter: address(0xa1a2a3a4),
             hookDataHash: keccak256("")
@@ -979,6 +994,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             zeroForOne: true,
             maxSingleAmountIn: 100 ether,
             maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
             minOutputPerInput: 1e18,
             universalRouter: address(0xa1a2a3a4),
             hookDataHash: keccak256("non-empty-hook-data")
@@ -986,6 +1002,214 @@ contract EnvelopePriceLimitPinTest is Setup {
         assertTrue(
             tradeValidator.hashUniswapV4Swap(a) != tradeValidator.hashUniswapV4Swap(b),
             "M-2 (V4): hookDataHash must alter enforcement hash"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit M-3: bound `params.value` (native ETH) per envelope. Pre-fix: any
+// operator could set arbitrary value and drain native ETH balance through a
+// buggy router. Post-fix: `params.value > enf.maxValue` reverts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract EnvelopeMaxValuePinTest is Setup {
+    bytes32 constant BOT_ID_HASH = keccak256("m3-pin-bot");
+
+    address public vault;
+
+    function setUp() public override {
+        super.setUp();
+        vm.warp(1_700_000_000);
+        (vault,) = _createTestVault();
+    }
+
+    function _sortedThreeValidators() internal view returns (address[] memory addrs) {
+        addrs = new address[](3);
+        addrs[0] = validator1;
+        addrs[1] = validator2;
+        addrs[2] = validator3;
+        for (uint256 i = 0; i < addrs.length; ++i) {
+            for (uint256 j = i + 1; j < addrs.length; ++j) {
+                if (uint160(addrs[j]) < uint160(addrs[i])) {
+                    address t = addrs[i];
+                    addrs[i] = addrs[j];
+                    addrs[j] = t;
+                }
+            }
+        }
+    }
+
+    function _baseEnv(bytes32 enforcementHash) internal view returns (TradeValidator.Envelope memory) {
+        address[] memory sorted = _sortedThreeValidators();
+        bytes memory packed;
+        for (uint256 i = 0; i < sorted.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(sorted[i]));
+        }
+        return TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: vault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("m3-protocol"),
+            policyHash: keccak256("m3-policy"),
+            enforcementHash: enforcementHash,
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+    }
+
+    function _twoEnvSigs(TradeValidator.Envelope memory env)
+        internal
+        view
+        returns (bytes[] memory sigs, uint256[] memory scores)
+    {
+        sigs = new bytes[](2);
+        scores = new uint256[](2);
+        bytes32 digest = tradeValidator.envelopeDigest(env);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest);
+        sigs[0] = abi.encodePacked(r1, s1, v1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest);
+        sigs[1] = abi.encodePacked(r2, s2, v2);
+        scores[0] = 80;
+        scores[1] = 90;
+    }
+
+    /// @notice UniV3 envelope swap with `params.value > enf.maxValue` MUST revert
+    ///         EnvelopeCheckFailed. Default fixture sets maxValue=0 so any non-zero
+    ///         value should trip the check.
+    function test_m3_uniV3_paramsValueExceedsMaxValue_reverts() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.prank(address(vaultFactory));
+        policyEngine.setWhitelist(vault, tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = address(router);
+        vm.prank(address(vaultFactory));
+        policyEngine.setTargetWhitelist(vault, targets, true);
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            maxValue: 0, // <-- M-3: no native ETH allowed
+            minOutputPerInput: 1e18,
+            router: address(router),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        bytes memory data = abi.encodeWithSelector(
+            bytes4(0x414bf389),
+            address(tokenA),
+            address(tokenB),
+            uint24(enf.feeTier),
+            vault,
+            uint256(block.timestamp + 600),
+            amountIn,
+            minOut,
+            uint160(0)
+        );
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: data,
+            value: 1 wei, // <-- exceeds enf.maxValue (0)
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("m3-uni-overspend"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        vm.deal(vault, 10 ether);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        vm.prank(operator);
+        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
+            params, env, enf, _sortedThreeValidators(), sigs, scores
+        );
+    }
+
+    /// @notice Distinct maxValue values produce DIFFERENT enforcement hashes —
+    ///         defense-in-depth: even before the executor pin check, the
+    ///         envelope-vs-enforcement hash mismatch traps the bypass.
+    function test_m3_uniV3_maxValue_changesEnforcementHash() public view {
+        TradeValidator.UniswapV3SwapEnforcement memory a = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
+            minOutputPerInput: 1e18,
+            router: address(0xdeadbeef),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        TradeValidator.UniswapV3SwapEnforcement memory b = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            maxValue: 1 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xdeadbeef),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        assertTrue(
+            tradeValidator.hashUniswapV3Swap(a) != tradeValidator.hashUniswapV3Swap(b),
+            "M-3: distinct maxValue must produce distinct enforcement hashes"
+        );
+    }
+
+    /// @notice Aave/Morpho enforcement hashes also bind maxValue.
+    function test_m3_aaveMorpho_maxValue_changesEnforcementHash() public view {
+        TradeValidator.AaveSupplyEnforcement memory s0 = TradeValidator.AaveSupplyEnforcement({
+            asset: address(tokenA),
+            maxSingleAmount: 1000e6,
+            maxTotalAmount: 10000e6,
+            maxValue: 0,
+            pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
+        });
+        TradeValidator.AaveSupplyEnforcement memory s1 = TradeValidator.AaveSupplyEnforcement({
+            asset: address(tokenA),
+            maxSingleAmount: 1000e6,
+            maxTotalAmount: 10000e6,
+            maxValue: 5 ether,
+            pool: address(0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2)
+        });
+        assertTrue(
+            tradeValidator.hashAaveSupply(s0) != tradeValidator.hashAaveSupply(s1),
+            "M-3 (AaveSupply): maxValue must alter enforcement hash"
+        );
+
+        TradeValidator.MorphoSupplyEnforcement memory m0 = TradeValidator.MorphoSupplyEnforcement({
+            maxSingleAmount: 1000e6,
+            maxTotalAmount: 10000e6,
+            maxValue: 0,
+            marketId: keccak256("market-0"),
+            morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
+        });
+        TradeValidator.MorphoSupplyEnforcement memory m1 = TradeValidator.MorphoSupplyEnforcement({
+            maxSingleAmount: 1000e6,
+            maxTotalAmount: 10000e6,
+            maxValue: 7 ether,
+            marketId: keccak256("market-0"),
+            morpho: address(0xbBBBBbBbBb9CC5e90E3B3AF64BdaF62C37eEFffB)
+        });
+        assertTrue(
+            tradeValidator.hashMorphoSupply(m0) != tradeValidator.hashMorphoSupply(m1),
+            "M-3 (MorphoSupply): maxValue must alter enforcement hash"
         );
     }
 }

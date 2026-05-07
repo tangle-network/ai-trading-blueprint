@@ -339,43 +339,43 @@ contract TradeValidator is EIP712, Ownable2Step {
     );
 
     bytes32 public constant UNISWAP_V3_SWAP_TYPEHASH = keccak256(
-        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant UNISWAP_V4_SWAP_TYPEHASH = keccak256(
-        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
+        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
     );
     bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
-        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant PANCAKESWAP_V3_SWAP_TYPEHASH = keccak256(
-        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant CURVE_STABLE_SWAP_TYPEHASH = keccak256(
-        "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
+        "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
     );
     bytes32 public constant AAVE_SUPPLY_TYPEHASH = keccak256(
-        "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+        "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
     );
     bytes32 public constant AAVE_WITHDRAW_TYPEHASH = keccak256(
-        "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+        "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
     );
     bytes32 public constant AAVE_BORROW_TYPEHASH = keccak256(
-        "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+        "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
     );
     bytes32 public constant AAVE_REPAY_TYPEHASH = keccak256(
-        "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+        "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
     );
     bytes32 public constant MORPHO_SUPPLY_TYPEHASH = keccak256(
-        "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+        "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
     );
     bytes32 public constant MORPHO_WITHDRAW_TYPEHASH = keccak256(
-        "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+        "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
     );
     bytes32 public constant MORPHO_BORROW_TYPEHASH = keccak256(
-        "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+        "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
     );
     bytes32 public constant MORPHO_REPAY_TYPEHASH = keccak256(
-        "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+        "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
     );
 
     error InvalidEnvelope();
@@ -400,6 +400,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 feeTier;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address router;
         address tokenIn;
@@ -418,6 +420,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         bool zeroForOne;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address universalRouter;
         // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
@@ -428,6 +432,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct AerodromeSwapEnforcement {
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address router;
         int256 tickSpacing;
@@ -441,6 +447,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 feeTier;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address router;
         address tokenIn;
@@ -458,6 +466,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         int128 j;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address pool;
         address tokenIn;
@@ -468,6 +478,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         address asset;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         address pool;
     }
 
@@ -475,6 +487,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         address asset;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minHealthFactor;
         address pool;
     }
@@ -484,6 +498,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 interestRateMode;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minHealthFactor;
         address pool;
     }
@@ -494,12 +510,16 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 interestRateMode;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         address pool;
     }
 
     struct MorphoSupplyEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         address morpho;
     }
@@ -507,6 +527,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoWithdrawEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         uint256 minCollateralRatio;
         address morpho;
@@ -515,6 +537,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoBorrowEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         uint256 minCollateralRatio;
         address morpho;
@@ -523,6 +547,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoRepayEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         address morpho;
     }
@@ -664,6 +690,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.feeTier,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.router,
                 e.tokenIn,
@@ -685,6 +712,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.zeroForOne,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.universalRouter,
                 e.hookDataHash
@@ -698,6 +726,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 AERODROME_SWAP_TYPEHASH,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.router,
                 e.tickSpacing,
@@ -715,6 +744,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.feeTier,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.router,
                 e.tokenIn,
@@ -734,6 +764,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.j,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.pool,
                 e.tokenIn,
@@ -743,12 +774,12 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashAaveSupply(AaveSupplyEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.pool));
+        return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.pool));
     }
 
     function _hashAaveWithdraw(AaveWithdrawEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
-            abi.encode(AAVE_WITHDRAW_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.minHealthFactor, e.pool)
+            abi.encode(AAVE_WITHDRAW_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.minHealthFactor, e.pool)
         );
     }
 
@@ -760,6 +791,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.interestRateMode,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.minHealthFactor,
                 e.pool
             )
@@ -775,6 +807,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.interestRateMode,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.pool
             )
         );
@@ -782,7 +815,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     function _hashMorphoSupply(MorphoSupplyEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
-            abi.encode(MORPHO_SUPPLY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho)
+            abi.encode(MORPHO_SUPPLY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho)
         );
     }
 
@@ -792,6 +825,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 MORPHO_WITHDRAW_TYPEHASH,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.marketId,
                 e.minCollateralRatio,
                 e.morpho
@@ -805,6 +839,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 MORPHO_BORROW_TYPEHASH,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.marketId,
                 e.minCollateralRatio,
                 e.morpho
@@ -813,7 +848,7 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashMorphoRepay(MorphoRepayEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho));
+        return keccak256(abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho));
     }
 
     // ── Public validate*Envelope (one per protocol-action) ──

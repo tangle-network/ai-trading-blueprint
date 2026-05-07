@@ -104,6 +104,7 @@ sol! {
             uint256 feeTier;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address router;
             address tokenIn;
@@ -120,6 +121,7 @@ sol! {
             bool zeroForOne;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address universalRouter;
             bytes32 hookDataHash;
@@ -128,6 +130,7 @@ sol! {
         struct AerodromeSwapEnforcement {
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address router;
             int256 tickSpacing;
@@ -140,6 +143,7 @@ sol! {
             uint256 feeTier;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address router;
             address tokenIn;
@@ -152,6 +156,7 @@ sol! {
             int128 j;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address pool;
             address tokenIn;
@@ -162,6 +167,7 @@ sol! {
             address asset;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             address pool;
         }
 
@@ -169,6 +175,7 @@ sol! {
             address asset;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             uint256 minHealthFactor;
             address pool;
         }
@@ -178,6 +185,7 @@ sol! {
             uint256 interestRateMode;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             uint256 minHealthFactor;
             address pool;
         }
@@ -188,12 +196,14 @@ sol! {
             uint256 interestRateMode;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             address pool;
         }
 
         struct MorphoSupplyEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             address morpho;
         }
@@ -201,6 +211,7 @@ sol! {
         struct MorphoWithdrawEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             uint256 minCollateralRatio;
             address morpho;
@@ -209,6 +220,7 @@ sol! {
         struct MorphoBorrowEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             uint256 minCollateralRatio;
             address morpho;
@@ -217,6 +229,7 @@ sol! {
         struct MorphoRepayEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             address morpho;
         }

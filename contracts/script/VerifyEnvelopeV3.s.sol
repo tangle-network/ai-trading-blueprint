@@ -70,77 +70,77 @@ contract VerifyEnvelopeV3 is Script {
             "UNISWAP_V3_SWAP_TYPEHASH",
             tv.UNISWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             )
         );
         _expect(
             "UNISWAP_V4_SWAP_TYPEHASH",
             tv.UNISWAP_V4_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
+                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
             )
         );
         _expect(
             "AERODROME_SWAP_TYPEHASH",
             tv.AERODROME_SWAP_TYPEHASH(),
             keccak256(
-                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             )
         );
         _expect(
             "AAVE_SUPPLY_TYPEHASH",
             tv.AAVE_SUPPLY_TYPEHASH(),
             keccak256(
-                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             )
         );
         _expect(
             "AAVE_WITHDRAW_TYPEHASH",
             tv.AAVE_WITHDRAW_TYPEHASH(),
             keccak256(
-                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             )
         );
         _expect(
             "AAVE_BORROW_TYPEHASH",
             tv.AAVE_BORROW_TYPEHASH(),
             keccak256(
-                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+                "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
             )
         );
         _expect(
             "AAVE_REPAY_TYPEHASH",
             tv.AAVE_REPAY_TYPEHASH(),
             keccak256(
-                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+                "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
             )
         );
         _expect(
             "MORPHO_SUPPLY_TYPEHASH",
             tv.MORPHO_SUPPLY_TYPEHASH(),
             keccak256(
-                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             )
         );
         _expect(
             "MORPHO_WITHDRAW_TYPEHASH",
             tv.MORPHO_WITHDRAW_TYPEHASH(),
             keccak256(
-                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             )
         );
         _expect(
             "MORPHO_BORROW_TYPEHASH",
             tv.MORPHO_BORROW_TYPEHASH(),
             keccak256(
-                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+                "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
             )
         );
         _expect(
             "MORPHO_REPAY_TYPEHASH",
             tv.MORPHO_REPAY_TYPEHASH(),
             keccak256(
-                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+                "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
             )
         );
     }

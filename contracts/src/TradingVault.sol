@@ -1710,6 +1710,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || s.deadline < block.timestamp || params.deadline < block.timestamp
                 // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
                 || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
@@ -1750,6 +1752,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
                 // hook callback bytes through the V4 swap action.
                 || keccak256(s.hookData) != enf.hookDataHash
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (uint256(s.amountIn) * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
@@ -1784,6 +1788,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || params.deadline < block.timestamp
                 // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
                 || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
@@ -1822,6 +1828,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || s.deadline < block.timestamp || params.deadline < block.timestamp
                 // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
                 || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
@@ -1858,6 +1866,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (
             params.target != enf.pool || ci != enf.i || cj != enf.j || params.outputToken != enf.tokenOut
                 || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (dx * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (minDy < reqMinOut || params.minOutput < reqMinOut) {
@@ -1892,6 +1902,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             revert EnvelopeCheckFailed();
         }
         if (params.deadline < block.timestamp) revert EnvelopeCheckFailed();
+        // Audit M-3: bound native-ETH spend per envelope.
+        if (params.value > enf.maxValue) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -1923,6 +1935,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || to != address(this) || params.account != address(this)
                 || params.minHealthFactor < enf.minHealthFactor
                 || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1948,6 +1962,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || rateMode != enf.interestRateMode || onBehalfOf != address(this)
                 || params.account != address(this)
                 || params.minHealthFactor < enf.minHealthFactor || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1970,6 +1986,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             params.target != enf.pool || params.inputToken != enf.asset || params.debtToken != enf.debtToken
                 || asset != enf.asset || rateMode != enf.interestRateMode || onBehalfOf != address(this)
                 || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveRepayEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1998,6 +2016,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (
             params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId || onBehalf != address(this)
                 || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -2030,6 +2050,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || onBehalf != address(this) || receiver != address(this)
                 || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -2056,6 +2078,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || onBehalf != address(this) || receiver != address(this)
                 || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -2078,6 +2102,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
                 || params.inputToken != mp.loanToken || onBehalf != address(this)
                 || params.deadline < block.timestamp
+                // Audit M-3: bound native-ETH spend per envelope.
+                || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoRepayEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
