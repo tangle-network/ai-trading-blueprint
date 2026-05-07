@@ -125,9 +125,48 @@ pub async fn renewal_cron_tick(state: &MultiBotTradingState) -> Vec<(String, Ren
         if !matches!(action, RenewalAction::Healthy | RenewalAction::NoEnvelope) {
             tracing::info!(bot_id = %bot_id, ?action, "envelope renewal action");
         }
+
+        // Record per-action counter for Prometheus dashboarding.
+        crate::routes::prometheus::record_renewal_action(&bot_id, renewal_action_label(&action));
+
+        // Fire alerts for the failure-shaped variants. Fire-and-log; the cron
+        // never blocks on webhook delivery.
+        if let Some(failure_alert) = renewal_failure_alert(&bot_id, &action) {
+            state.alert_sink.fire(failure_alert).await;
+        }
+
         results.push((bot_id, action));
     }
     results
+}
+
+/// Stable, dashboard-facing label for each `RenewalAction` variant. Kept
+/// separately from `Debug` so refactors of the enum don't accidentally rename
+/// metric labels.
+pub fn renewal_action_label(action: &RenewalAction) -> &'static str {
+    match action {
+        RenewalAction::NoEnvelope => "NoEnvelope",
+        RenewalAction::Healthy => "Healthy",
+        RenewalAction::AutoRenewed { .. } => "AutoRenewed",
+        RenewalAction::WebhookFired => "WebhookFired",
+        RenewalAction::MultisigNeedsRenewalNoWebhook => "MultisigNeedsRenewalNoWebhook",
+        RenewalAction::SingleSigOperatorKeyMismatch { .. } => "SingleSigOperatorKeyMismatch",
+        RenewalAction::ChainConsumptionUnavailable { .. } => "ChainConsumptionUnavailable",
+    }
+}
+
+fn renewal_failure_alert(bot_id: &str, action: &RenewalAction) -> Option<crate::alerts::Alert> {
+    match action {
+        RenewalAction::MultisigNeedsRenewalNoWebhook
+        | RenewalAction::SingleSigOperatorKeyMismatch { .. }
+        | RenewalAction::ChainConsumptionUnavailable { .. } => {
+            Some(crate::alerts::Alert::EnvelopeRenewalFailed {
+                bot_id: bot_id.to_string(),
+                action: action.clone(),
+            })
+        }
+        _ => None,
+    }
 }
 
 async fn evaluate_and_act(state: &MultiBotTradingState, bot: EnvelopeBotInfo) -> RenewalAction {
@@ -544,6 +583,7 @@ mod tests {
             chain_client: None,
             chain_client_rpc_url: None,
             chain_client_chain_id: None,
+            alert_sink: crate::alerts::AlertSink::new(None, None),
         })
     }
 

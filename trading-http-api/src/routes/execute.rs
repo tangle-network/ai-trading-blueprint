@@ -1881,6 +1881,96 @@ async fn execute_real_envelope_trade(
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
     intent_hash: B256,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = intent.action.clone();
+    let metrics_bot = bot_id.to_string();
+
+    let result = execute_real_envelope_trade_inner(
+        bot_id,
+        executor,
+        intent,
+        signed_envelope,
+        req,
+        stored_validation,
+        valuation,
+        intent_hash,
+    )
+    .await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        &metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+/// Determine whether a `(StatusCode, _)` failure represents a chain-side
+/// revert (5xx) or a precondition rejection (4xx).
+fn execution_status_for_error(status: StatusCode) -> crate::routes::prometheus::ExecutionStatus {
+    if status.is_client_error() {
+        crate::routes::prometheus::ExecutionStatus::Rejected
+    } else {
+        crate::routes::prometheus::ExecutionStatus::Reverted
+    }
+}
+
+/// Common metrics + alert hook for both real-trade execution paths.
+async fn record_execute_outcome(
+    bot_id: &str,
+    protocol: &str,
+    action: &str,
+    started_at: std::time::Instant,
+    result: &Result<Json<ExecuteResponse>, (StatusCode, String)>,
+    alert_sink: &crate::alerts::AlertSink,
+) {
+    match result {
+        Ok(_) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                crate::routes::prometheus::ExecutionStatus::Success,
+                started_at,
+            );
+        }
+        Err((status, reason)) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                execution_status_for_error(*status),
+                started_at,
+            );
+            alert_sink
+                .fire(crate::alerts::Alert::TradeReverted {
+                    bot_id: bot_id.to_string(),
+                    protocol: protocol.to_string(),
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_real_envelope_trade_inner(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    signed_envelope: &SignedEnvelope,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    intent_hash: B256,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::adapters::ActionParams;
     use trading_runtime::envelope::params_builder::build_envelope_shape;

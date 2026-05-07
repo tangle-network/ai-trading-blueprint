@@ -179,11 +179,24 @@ pub fn record_failure(
 
 /// Record a strategy outcome against the bandit's arm for `variant_id`.
 pub fn record_strategy_outcome(bot_id: &str, variant_id: &str, reward: f64) {
+    let mut bandit_mean: Option<f64> = None;
     if let Err(error) = update(bot_id, |state| {
         state.bandit.record_outcome(variant_id, reward);
+        bandit_mean = state
+            .bandit
+            .arms
+            .iter()
+            .find(|arm| arm.variant_id == variant_id)
+            .map(|arm| arm.mean_reward());
     }) {
         tracing::warn!(bot_id, %error, "failed to persist strategy outcome");
+        return;
     }
+    crate::routes::prometheus::record_bandit_pull(
+        bot_id,
+        variant_id,
+        bandit_mean.unwrap_or(reward),
+    );
 }
 
 /// Recommend a `max_slippage_bps` cap for a token-pair, falling back to
@@ -194,9 +207,16 @@ pub fn recommend_max_slippage_bps(
     token_out: alloy::primitives::Address,
     fallback: u32,
 ) -> u32 {
-    load(bot_id)
+    let recommendation = load(bot_id)
         .slippage
-        .recommend_max_bps(token_in, token_out, fallback)
+        .recommend_max_bps(token_in, token_out, fallback);
+    crate::routes::prometheus::record_slippage_recommendation(
+        bot_id,
+        &format!("{token_in:#x}"),
+        &format!("{token_out:#x}"),
+        recommendation,
+    );
+    recommendation
 }
 
 #[cfg(test)]

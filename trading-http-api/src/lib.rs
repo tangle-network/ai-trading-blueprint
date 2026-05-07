@@ -1,7 +1,9 @@
+pub mod alerts;
 pub mod amounts;
 pub mod auth;
 pub mod candle_store;
 pub mod envelope_renewal;
+pub mod envelope_watcher;
 pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
@@ -156,6 +158,9 @@ pub struct MultiBotTradingState {
     pub chain_client_rpc_url: Option<String>,
     /// Chain ID that the shared chain client is bound to.
     pub chain_client_chain_id: Option<u64>,
+    /// Alert sink fed by the renewal cron + envelope watcher + execute path.
+    /// Cloneable + cheap; fire-and-log-on-failure semantics.
+    pub alert_sink: alerts::AlertSink,
 }
 
 impl MultiBotTradingState {
@@ -547,8 +552,12 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     use axum::routing::get;
     if state.list_envelope_bots.is_some() {
         envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
+        envelope_watcher::spawn_envelope_watcher(Arc::clone(&state));
     }
-    Router::new()
+    // Prometheus exporter is mounted on the *outer* router, ahead of the
+    // auth middleware below, so scrapers can hit it without a bearer token.
+    let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
+    let auth_router = Router::new()
         .route("/health", get(multi_bot_health))
         .route("/ready", get(multi_bot_ready))
         .merge(routes::market_data::multi_bot_router())
@@ -564,6 +573,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::trades::multi_bot_router())
         .merge(routes::backtest::multi_bot_router())
         .merge(routes::candles::multi_bot_router())
+        .merge(routes::cex::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
         .merge(routes::learning::multi_bot_router())
@@ -575,7 +585,9 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
             auth::multi_bot_auth_middleware,
         ))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
-        .with_state(state)
+        .with_state(state);
+
+    Router::new().merge(prom_router).merge(auth_router)
 }
 
 fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {
