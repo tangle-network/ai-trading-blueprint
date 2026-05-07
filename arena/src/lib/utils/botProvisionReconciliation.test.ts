@@ -90,6 +90,15 @@ describe('bot/provision reconciliation', () => {
     ).toBe(true);
   });
 
+  it('does not match by service/call pair when call id is the non-unique zero sentinel', () => {
+    expect(
+      doesProvisionMatchBot(
+        makeProvision({ botId: undefined, sandboxId: undefined, serviceId: 1, callId: 0 }),
+        makeBot({ id: 'old-bot', serviceId: 1, callId: 0, sandboxId: 'old-sandbox' }),
+      ),
+    ).toBe(false);
+  });
+
   it('partitions matched provisions away from unresolved provisioning work', () => {
     const matchedProvision = makeProvision({
       id: 'prov-matched',

@@ -8,6 +8,10 @@ function normalizeAddress(address?: string): string | null {
   return normalized === zeroAddress ? null : normalized;
 }
 
+function isUniqueCallId(callId: number | undefined): callId is number {
+  return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
+}
+
 export function isInstanceProvision(provision: TrackedProvision): boolean {
   return provision.id.startsWith('instance-')
     || provision.blueprintType === 'trading-instance'
@@ -22,8 +26,8 @@ export function doesProvisionMatchBot(provision: TrackedProvision, bot: Bot): bo
   }
 
   if (
-    provision.callId != null
-    && bot.callId != null
+    isUniqueCallId(provision.callId)
+    && isUniqueCallId(bot.callId)
     && provision.serviceId != null
     && bot.serviceId > 0
     && provision.callId === bot.callId
