@@ -332,7 +332,7 @@ export function useBotTrades(
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
     },
     staleTime: 15_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -357,7 +357,7 @@ export function useBotRecentValidations(
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     retry: 1,
     retryDelay: 3_000,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),

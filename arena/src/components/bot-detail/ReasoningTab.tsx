@@ -24,6 +24,29 @@ interface ReasoningTabProps {
   verificationState?: BotVerificationState;
 }
 
+function getErrorMessage(error: unknown): string | null {
+  return error instanceof Error && error.message ? error.message : null;
+}
+
+function ValidationDataUnavailableCard({ error }: { error: unknown }) {
+  const errorMessage = getErrorMessage(error);
+
+  return (
+    <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="i-ph:warning-circle text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+      <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
+        Validation details unavailable
+      </h3>
+      <p className="text-sm">
+        We couldn&apos;t load this bot&apos;s verified validation history from the operator.
+      </p>
+      {errorMessage && (
+        <p className="mt-3 text-xs font-data text-crimson-500">{errorMessage}</p>
+      )}
+    </div>
+  );
+}
+
 // ── Pending Validation Card (live, animated) ────────────────────────────
 
 function PendingValidationCard({ trade, index }: { trade: Trade; index: number }) {
@@ -264,7 +287,7 @@ export function ReasoningTab({
   verificationState,
 }: ReasoningTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
-  const { data: allTrades, isLoading } = useBotTrades(botId, botName, 50, {
+  const { data: allTrades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
     operatorKind,
@@ -313,6 +336,10 @@ export function ReasoningTab({
 
   if (!operatorAuth.isAuthenticated) {
     return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
+  }
+
+  if (isError) {
+    return <ValidationDataUnavailableCard error={error} />;
   }
 
   if (pendingTrades.length === 0 && filteredHistory.length === 0) {

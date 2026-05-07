@@ -107,6 +107,29 @@ function getStatusVariant(status: TradeStatus): 'success' | 'destructive' | 'sec
   return 'outline';
 }
 
+function getErrorMessage(error: unknown): string | null {
+  return error instanceof Error && error.message ? error.message : null;
+}
+
+function TradeDataUnavailableCard({ error }: { error: unknown }) {
+  const errorMessage = getErrorMessage(error);
+
+  return (
+    <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="i-ph:warning-circle text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+      <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
+        Trade history unavailable
+      </h3>
+      <p className="text-sm">
+        We couldn&apos;t load this bot&apos;s verified trade history from the operator.
+      </p>
+      {errorMessage && (
+        <p className="mt-3 text-xs font-data text-crimson-500">{errorMessage}</p>
+      )}
+    </div>
+  );
+}
+
 function getActionLabel(action: Trade['action']): string {
   return action.toUpperCase();
 }
@@ -164,7 +187,7 @@ export function TradeHistoryTab({
   verificationState,
 }: TradeHistoryTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
-  const { data: trades, isLoading } = useBotTrades(botId, botName, 50, {
+  const { data: trades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
     operatorKind,
@@ -197,6 +220,10 @@ export function TradeHistoryTab({
 
   if (!operatorAuth.isAuthenticated) {
     return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
+  }
+
+  if (isError) {
+    return <TradeDataUnavailableCard error={error} />;
   }
 
   if (!trades || trades.length === 0) {
