@@ -29,6 +29,8 @@ hex = "0.4"
 futures-util = "0.3"
 bytes = "1"
 prometheus = "0.13"
+governor = { version = "0.6", default-features = false, features = ["std", "jitter", "quanta"] }
+nonzero_ext = "0.3"
 
 [features]
 default = []

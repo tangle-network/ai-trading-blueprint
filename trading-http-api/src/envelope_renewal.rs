@@ -597,16 +597,8 @@ mod tests {
     fn build_state(operator_key: &str, bots: Vec<EnvelopeBotInfo>) -> Arc<MultiBotTradingState> {
         Arc::new(MultiBotTradingState {
             operator_private_key: operator_key.into(),
-            market_data_base_url: String::new(),
-            validation_deadline_secs: 30,
-            min_validator_score: 0,
-            resolve_bot: Box::new(|_| None),
             list_envelope_bots: Some(Box::new(move || bots.clone())),
-            clob_client: None,
-            chain_client: None,
-            chain_client_rpc_url: None,
-            chain_client_chain_id: None,
-            alert_sink: crate::alerts::AlertSink::new(None, None),
+            ..MultiBotTradingState::default()
         })
     }
 

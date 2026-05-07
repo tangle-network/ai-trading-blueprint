@@ -1957,6 +1957,9 @@ fn multi_bot_state_with_strategy_config_and_bot(
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     })
 }
 
@@ -1982,6 +1985,9 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     })
 }
 
@@ -3710,6 +3716,9 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -4401,6 +4410,9 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     })
 }
 
@@ -5064,6 +5076,9 @@ async fn test_multi_bot_clob_execute() {
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5189,6 +5204,9 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -5276,6 +5294,9 @@ async fn test_multi_bot_clob_execute_not_configured() {
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5369,6 +5390,9 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
     });
 
     let app = build_multi_bot_router(state);

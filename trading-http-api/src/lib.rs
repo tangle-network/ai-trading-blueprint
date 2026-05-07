@@ -7,6 +7,7 @@ pub mod envelope_watcher;
 pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
+pub mod rate_limit;
 pub mod routes;
 pub mod session_auth;
 pub mod trade_store;
@@ -161,6 +162,31 @@ pub struct MultiBotTradingState {
     /// Alert sink fed by the renewal cron + envelope watcher + execute path.
     /// Cloneable + cheap; fire-and-log-on-failure semantics.
     pub alert_sink: alerts::AlertSink,
+    /// Per-bot route-class rate limiter. Defaults to
+    /// [`rate_limit::RateLimitConfig::default`] (60/240/120/120 per
+    /// minute). Operators can set `TRADING_RATE_LIMIT_ENABLED=false` to
+    /// short-circuit the middleware for tests; the limiter itself is
+    /// always present so the field never has to be optional.
+    pub rate_limiter: Arc<rate_limit::PerBotRateLimiter>,
+}
+
+impl Default for MultiBotTradingState {
+    fn default() -> Self {
+        Self {
+            operator_private_key: String::new(),
+            market_data_base_url: String::new(),
+            validation_deadline_secs: 30,
+            min_validator_score: 0,
+            resolve_bot: Box::new(|_| None),
+            list_envelope_bots: None,
+            clob_client: None,
+            chain_client: None,
+            chain_client_rpc_url: None,
+            chain_client_chain_id: None,
+            alert_sink: alerts::AlertSink::new(None, None),
+            rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
+        }
+    }
 }
 
 impl MultiBotTradingState {
@@ -591,6 +617,15 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::solana::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())
         .merge(routes::supported_assets::multi_bot_router())
+        // Rate-limit middleware runs AFTER auth so it can read the
+        // resolved BotContext from request extensions. Axum applies
+        // `.layer` calls outermost-first, so the rate-limit layer is
+        // listed *before* the auth layer here even though it executes
+        // *after* auth in the request flow.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::per_bot_rate_limit,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,
