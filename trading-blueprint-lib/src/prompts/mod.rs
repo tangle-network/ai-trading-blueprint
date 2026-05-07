@@ -68,12 +68,12 @@ pub fn build_pack_loop_prompt(
                      3. Check the circuit breaker before any trade:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                      {preflight}\
-                     {trade_idx}. If the setup is actionable, quote the exact Uniswap route with `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, use the returned `min_amount_out`, then build a `swap` intent for `uniswap_v3`.\n\
+                     {trade_idx}. If the setup is actionable, ask the slippage learner first: `const {{ data: slip }} = await api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}});` then quote the exact Uniswap route with `api.quoteUniswapSwap({{token_in, token_out, amount_in, slippage_bps: slip.recommended_max_bps}})`, use the returned `min_amount_out`, then build a `swap` intent for `uniswap_v3`. The slippage learner ratchets tighter when fills are clean and looser after failures — trust its recommendation over a static value.\n\
                         Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
                         Include `amount_format:'base_units'` and never compute `min_amount_out` from CoinGecko alone; use the executable route quote.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
                         {execute_snippet}\n\
-                     {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
+                     {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
                      {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
                     name = pack.name,
@@ -102,12 +102,13 @@ pub fn build_pack_loop_prompt(
                     `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                  {preflight}\
                  {trade_idx}. If there is a clear yield action, build an intent with `action:'supply'`, `action:'withdraw'`, `action:'borrow'`, or `action:'repay'` for `aave_v3`, or `action:'supply'`/`action:'withdraw'` for allowlisted `morpho_vault`.\n\
+                    For any swap leg involved in rebalancing, first call `api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}})` and pass `recommended_max_bps` into `api.quoteUniswapSwap` as `slippage_bps` — the slippage learner ratchets tighter on clean fills and looser after failures, so trust its recommendation over a static default.\n\
                     For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, use raw base-unit amounts (for example `\"3000000000000000000\"` for 3 WETH), do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
                     Required intent shape: `{{strategy_id, action, token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol}}`; use `action`, not `intent_type`.\n\
                     For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
                     {execute_snippet}\n\
                     Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
-                 {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
+                 {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
                  {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                  Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
                 name = pack.name,
@@ -400,8 +401,8 @@ pub fn build_fast_tick_prompt(strategy_type: &str, validation_trust: ValidationT
          1. Run `node /home/agent/tools/get-portfolio.js`. A spot position with `protocol:\"vault\"` is a vault-held balance available for vault-backed swaps, not a locked protocol position.\n\
          2. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
          3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         {envelope_check}4. If actionable setup exists → choose `token_in` from an available spot balance, call `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, {execute_pattern} Otherwise → SKIP.\n\n\
-         Record the candle and log your decision. Report: price, action, reason (one line)."
+         {envelope_check}4. If actionable setup exists → choose `token_in` from an available spot balance, ask the slippage learner first via `api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}})`, then call `api.quoteUniswapSwap({{token_in, token_out, amount_in, slippage_bps: <recommended_max_bps>}})` (trust the learner over a static value), {execute_pattern} Otherwise → SKIP.\n\n\
+         Record the candle and log your decision. If running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id, reward}})`. Report: price, action, reason (one line)."
     )
 }
 
@@ -426,7 +427,8 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
     format!(
         "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
          ## 1. Review performance\n\
-         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
+         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\
+         Optional: `node -e \"require('/home/agent/tools/api-client').getBanditStatus().then(r=>console.log(JSON.stringify(r,null,2)))\"` to surface the currently best-performing variant and its mean reward — informational signal that may inform (but does not override) your strategy choice.\n\n\
          ## 2. Stay strategy-specific\n\
          {strategy_focus}\n\n\
          ## 3. Identify ONE structural improvement\n\
@@ -1010,5 +1012,117 @@ mod tests {
         let per_trade = build_loop_prompt("dex", ValidationTrust::PerTrade);
         assert!(per_trade.contains("Per-Trade"));
         assert!(!per_trade.contains("executeWithEnvelope"));
+    }
+
+    // ----- Learning-loop wiring (slippage learner + strategy bandit) -----
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_dex_envelope_mode() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::Envelope);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "envelope-mode dex loop must call the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("slippage_bps"),
+            "envelope-mode dex loop must thread slippage_bps into the quote"
+        );
+        assert!(
+            prompt.contains("ratchets tighter"),
+            "envelope-mode dex loop must explain why the learner is preferred over a static bps"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_dex_per_trade_mode() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "per-trade dex loop must call the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("slippage_bps"),
+            "per-trade dex loop must thread slippage_bps into the quote"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_yield_envelope_mode() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::Envelope);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "envelope-mode yield loop must reference the slippage learner for swap legs"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_yield_per_trade_mode() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "per-trade yield loop must reference the slippage learner for swap legs"
+        );
+    }
+
+    #[test]
+    fn test_strategy_outcome_recording_is_referenced_in_dex_loop() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "dex loop must record bandit outcomes after each iteration"
+        );
+        assert!(
+            prompt.contains("variant_id"),
+            "dex loop must mention variant_id semantics for the bandit"
+        );
+    }
+
+    #[test]
+    fn test_strategy_outcome_recording_is_referenced_in_yield_loop() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "yield loop must record bandit outcomes after each iteration"
+        );
+    }
+
+    #[test]
+    fn test_fast_tick_references_slippage_learner_and_bandit() {
+        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "fast tick must consult the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "fast tick must mention recordStrategyOutcome for bandit-tracked variants"
+        );
+    }
+
+    #[test]
+    fn test_research_tick_references_bandit_status_as_informational() {
+        let prompt = build_research_tick_prompt(&test_config());
+        assert!(
+            prompt.contains("getBanditStatus"),
+            "research tick must surface bandit status as an informational signal"
+        );
+        assert!(
+            prompt.contains("informational")
+                || prompt.contains("inform")
+                || prompt.contains("does not override"),
+            "research tick must frame bandit status as informational, not directive"
+        );
     }
 }
