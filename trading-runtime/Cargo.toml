@@ -59,6 +59,13 @@ dotenv = "0.15"
 hex = "0.4"
 proptest = "1"
 rust_decimal = "1"
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 trading-validator-lib = { path = "../trading-validator-lib" }
 wiremock = "0.6"
+
+[features]
+default = []
+# Exposes test-only helpers (e.g. SecretsBackedKeyProvider::write_bot_file)
+# so sibling crates can seed encrypted-secrets fixtures in their own tests.
+test-utils = []

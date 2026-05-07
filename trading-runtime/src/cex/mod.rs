@@ -20,6 +20,12 @@ use serde::{Deserialize, Serialize};
 
 pub mod binance;
 pub mod coinbase;
+pub mod keys;
+
+pub use keys::{
+    BinanceKeyEntry, BotKeysFile, CexKeyProvider, CoinbaseKeyEntry, EnvKeyProvider,
+    SecretsBackedKeyProvider, SolanaKeyEntry, default_provider,
+};
 
 // ── Public types ────────────────────────────────────────────────────────────
 

@@ -16149,6 +16149,7 @@ dependencies = [
  "solana-transaction-status",
  "spl-associated-token-account 8.0.0",
  "spl-token",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
