@@ -680,8 +680,7 @@ mod tests {
             (
                 "curve",
                 EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
-                    pool: Address::from_str("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
-                        .unwrap(),
+                    pool: Address::from_str("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7").unwrap(),
                     token_in: weth,
                     token_out: asset,
                     i: 0,
