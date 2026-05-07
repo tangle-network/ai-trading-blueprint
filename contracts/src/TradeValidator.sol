@@ -613,7 +613,9 @@ contract TradeValidator is EIP712, Ownable2Step {
             if (signers[i] == address(0)) revert ZeroAddress();
             if (i > 0 && uint160(signers[i]) <= uint160(signers[i - 1])) revert InvalidEnvelope();
         }
-        bytes memory packed;
+        // Explicit empty initialization (silences slither uninitialized-local).
+        // Pre-sized buffer avoids quadratic bytes.concat reallocs (gas saving for max-16 signers).
+        bytes memory packed = new bytes(0);
         for (uint256 i = 0; i < signers.length; ++i) {
             packed = bytes.concat(packed, abi.encodePacked(signers[i]));
         }
