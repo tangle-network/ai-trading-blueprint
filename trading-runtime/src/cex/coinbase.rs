@@ -161,20 +161,20 @@ impl DirectApiVenue for CoinbaseClient {
                 Some(body),
             )
             .await?;
-        if let Some(results) = resp.get("results").and_then(|v| v.as_array()) {
-            if let Some(first) = results.first() {
-                let success = first
-                    .get("success")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if !success {
-                    let reason = first
-                        .get("failure_reason")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    return Err(CexError::OrderRejected { reason });
-                }
+        if let Some(results) = resp.get("results").and_then(|v| v.as_array())
+            && let Some(first) = results.first()
+        {
+            let success = first
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !success {
+                let reason = first
+                    .get("failure_reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                return Err(CexError::OrderRejected { reason });
             }
         }
         Ok(())
@@ -331,17 +331,17 @@ fn parse_create_order_response(
     raw: serde_json::Value,
     symbol: &str,
 ) -> Result<CexOrderResponse, CexError> {
-    if let Some(success) = raw.get("success").and_then(|v| v.as_bool()) {
-        if !success {
-            let reason = raw
-                .get("error_response")
-                .and_then(|v| v.get("message"))
-                .and_then(|v| v.as_str())
-                .or_else(|| raw.get("failure_reason").and_then(|v| v.as_str()))
-                .unwrap_or("rejected")
-                .to_string();
-            return Err(CexError::OrderRejected { reason });
-        }
+    if let Some(success) = raw.get("success").and_then(|v| v.as_bool())
+        && !success
+    {
+        let reason = raw
+            .get("error_response")
+            .and_then(|v| v.get("message"))
+            .and_then(|v| v.as_str())
+            .or_else(|| raw.get("failure_reason").and_then(|v| v.as_str()))
+            .unwrap_or("rejected")
+            .to_string();
+        return Err(CexError::OrderRejected { reason });
     }
 
     let venue_order_id = raw
