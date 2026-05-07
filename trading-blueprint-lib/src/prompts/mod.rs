@@ -55,13 +55,14 @@ pub fn build_pack_loop_prompt(
                     "Trading tick ({name}). Run these steps:\n\n\
                      1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
                         If a spot position has `protocol:\"vault\"`, that means the token is held in the trading vault and can be used as `token_in` for vault-backed swaps. It is not locked; do not skip only because the protocol field is `vault`.\n\
-                     2. Fetch current WETH/USDC pricing and market context using the Trading API client:\n\
-                        `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                     2. Fetch the bot's configured asset universe, then price only those assets:\n\
+                        `node -e \"const api=require('/home/agent/tools/api-client'); api.getSupportedAssets().then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                        `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['<configured-symbol-1>','<configured-symbol-2>']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                         Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
                      3. Check the circuit breaker before any trade:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
                      4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, then call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
-                        Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
+                        Use `api.resolveTokenAddress('<configured-symbol>')` or configured token addresses instead of hardcoding addresses, and send raw base units (for example `\"1000000\"` means 1 unit of a 6-decimal token, while `\"1000000000000000000\"` means 1 unit of an 18-decimal token).\n\
                         Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
                         Do not manually rebuild the validation payload or validator signatures.\n\
@@ -311,9 +312,9 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
     format!(
         "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
          1. Run `node /home/agent/tools/get-portfolio.js`. A spot position with `protocol:\"vault\"` is a vault-held balance available for vault-backed swaps, not a locked protocol position.\n\
-         2. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
+         2. Fetch `/supported-assets`, then fetch prices for the configured symbols only.\n\
          3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         4. If actionable setup exists → choose `token_in` from an available spot balance, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
+         4. If actionable setup exists → choose `token_in` from an available spot balance and `token_out` from the configured asset universe, build a swap intent with `api.resolveTokenAddress('<configured-symbol>')` or configured token addresses, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
          Record the candle and log your decision. Report: price, action, reason (one line)."
     )
 }
@@ -665,8 +666,8 @@ mod tests {
             "dex loop prompt must clarify that vault spot balances are tradeable custody"
         );
         assert!(
-            prompt.contains("2000000000"),
-            "dex loop prompt must give a concrete USDC base-unit example"
+            prompt.contains("1000000") && prompt.contains("1000000000000000000"),
+            "dex loop prompt must give concrete base-unit examples"
         );
     }
 

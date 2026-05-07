@@ -1,5 +1,5 @@
 use super::{EventContext, TradingProvider};
-use trading_runtime::token_metadata::{chain_display_name, token_address_for_symbol};
+use trading_runtime::token_metadata::{chain_display_name, tokens_for_chain};
 
 pub struct UniswapV3Provider;
 
@@ -62,6 +62,8 @@ pub(crate) const UNISWAP_EXPERT_PROMPT: &str = r#"## Uniswap V3 Protocol Knowled
 
 Use Uniswap V3 for spot swaps, but always use token addresses for the bot's configured chain.
 Never copy a mainnet token address into a Base or Base Sepolia trade, or vice versa.
+The bot's configured asset universe is authoritative. Only research, quote, route, and trade tokens returned by `/supported-assets` for this bot or listed in `strategy_config.asset_universe`.
+If the user configured a custom token address, treat it as tradeable only after Trading API validation confirms vault valuation support.
 
 Fee tiers: 500 (0.05%), 3000 (0.3%), 10000 (1%)
 
@@ -111,21 +113,28 @@ Response includes: priceUsd, volume (h1, h6, h24), priceChange, liquidity, txns 
 
 pub(crate) fn expert_prompt_for_chain(chain_id: u64) -> String {
     let chain_name = chain_display_name(chain_id);
-    let weth = token_address_for_symbol(chain_id, "WETH").unwrap_or("<unknown>");
-    let usdc = token_address_for_symbol(chain_id, "USDC").unwrap_or("<unknown>");
+    let known_tokens = tokens_for_chain(chain_id)
+        .iter()
+        .map(|token| format!("- {}: {}", token.symbol, token.address))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let known_tokens = if known_tokens.is_empty() {
+        "- No built-in token references for this chain. Use `/supported-assets`.".to_string()
+    } else {
+        known_tokens
+    };
 
     format!(
         "{base}\n\n## Active Chain Reference\n\n\
 Current chain: {chain_name} (Chain ID {chain_id})\n\
-- WETH: {weth}\n\
-- USDC: {usdc}\n\
+Known token references for this chain:\n\
+{known_tokens}\n\
 \n\
-Use these addresses for swap intents on this bot. If you see a different-chain address in notes, memory, or old logs, treat it as stale and do not trade it.",
+These are address references only. The allowed trading universe comes from `/supported-assets` and `strategy_config.asset_universe`; do not trade a token just because it appears in this reference list. If you see a different-chain address in notes, memory, or old logs, treat it as stale and do not trade it.",
         base = UNISWAP_EXPERT_PROMPT,
         chain_name = chain_name,
         chain_id = chain_id,
-        weth = weth,
-        usdc = usdc,
+        known_tokens = known_tokens,
     )
 }
 
