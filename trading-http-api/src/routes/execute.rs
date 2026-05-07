@@ -1871,6 +1871,7 @@ async fn execute_paper_clob_trade(
 /// Execute a trade authorized by a SignedEnvelope on a vault-routed protocol.
 /// Builds the adapter-encoded action and routes through the on-chain
 /// `executeXxxEnvelope` matching the envelope's enforcement variant.
+#[allow(clippy::too_many_arguments)]
 async fn execute_real_envelope_trade(
     bot_id: &str,
     executor: &TradeExecutor,

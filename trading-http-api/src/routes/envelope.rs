@@ -8,7 +8,7 @@
 
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use std::path::PathBuf;
 use std::sync::Arc;
