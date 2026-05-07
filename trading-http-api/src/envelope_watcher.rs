@@ -217,13 +217,19 @@ mod tests {
             .duration_since(last)
             .map(|d| d < ALERT_DEBOUNCE)
             .unwrap_or(false);
-        assert!(recent, "second fire within debounce window should be skipped");
+        assert!(
+            recent,
+            "second fire within debounce window should be skipped"
+        );
         guard.clear();
     }
 
     #[test]
     fn consumed_percentage_handles_zero_denominator() {
         assert_eq!(consumed_percentage(U256::from(100u64), U256::ZERO), 0.0);
-        assert_eq!(consumed_percentage(U256::from(50u64), U256::from(100u64)), 50.0);
+        assert_eq!(
+            consumed_percentage(U256::from(50u64), U256::from(100u64)),
+            50.0
+        );
     }
 }

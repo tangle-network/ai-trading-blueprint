@@ -38,10 +38,7 @@ pub enum Alert {
         action: RenewalAction,
     },
     /// Envelope is past the consumption alert threshold (default 90%).
-    EnvelopeNearlyExhausted {
-        bot_id: String,
-        consumed_pct: f64,
-    },
+    EnvelopeNearlyExhausted { bot_id: String, consumed_pct: f64 },
     /// Envelope expires within the alert window (default 6h).
     EnvelopeNearExpiry {
         bot_id: String,
@@ -54,10 +51,7 @@ pub enum Alert {
         reason: String,
     },
     /// On-disk learning state was unreadable / corrupt.
-    LearningStoreCorruption {
-        bot_id: String,
-        error: String,
-    },
+    LearningStoreCorruption { bot_id: String, error: String },
 }
 
 impl Alert {
@@ -86,21 +80,25 @@ impl Alert {
     /// Single-line summary used as Slack `text` and PagerDuty `summary`.
     pub fn summary(&self) -> String {
         match self {
-            Alert::EnvelopeRenewalFailed { bot_id, action } => format!(
-                "Envelope renewal failed for bot `{bot_id}`: {action:?}"
-            ),
-            Alert::EnvelopeNearlyExhausted { bot_id, consumed_pct } => format!(
-                "Envelope for bot `{bot_id}` is {consumed_pct:.1}% consumed"
-            ),
-            Alert::EnvelopeNearExpiry { bot_id, expires_in_seconds } => format!(
-                "Envelope for bot `{bot_id}` expires in {expires_in_seconds}s"
-            ),
-            Alert::TradeReverted { bot_id, protocol, reason } => format!(
-                "Trade reverted for bot `{bot_id}` on `{protocol}`: {reason}"
-            ),
-            Alert::LearningStoreCorruption { bot_id, error } => format!(
-                "Learning store corruption for bot `{bot_id}`: {error}"
-            ),
+            Alert::EnvelopeRenewalFailed { bot_id, action } => {
+                format!("Envelope renewal failed for bot `{bot_id}`: {action:?}")
+            }
+            Alert::EnvelopeNearlyExhausted {
+                bot_id,
+                consumed_pct,
+            } => format!("Envelope for bot `{bot_id}` is {consumed_pct:.1}% consumed"),
+            Alert::EnvelopeNearExpiry {
+                bot_id,
+                expires_in_seconds,
+            } => format!("Envelope for bot `{bot_id}` expires in {expires_in_seconds}s"),
+            Alert::TradeReverted {
+                bot_id,
+                protocol,
+                reason,
+            } => format!("Trade reverted for bot `{bot_id}` on `{protocol}`: {reason}"),
+            Alert::LearningStoreCorruption { bot_id, error } => {
+                format!("Learning store corruption for bot `{bot_id}`: {error}")
+            }
         }
     }
 }
@@ -120,7 +118,10 @@ impl std::fmt::Debug for AlertSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AlertSink")
             .field("slack_configured", &self.slack_webhook_url.is_some())
-            .field("pagerduty_configured", &self.pagerduty_routing_key.is_some())
+            .field(
+                "pagerduty_configured",
+                &self.pagerduty_routing_key.is_some(),
+            )
             .finish()
     }
 }
@@ -129,10 +130,7 @@ impl AlertSink {
     /// Construct a sink using `slack_webhook_url` and `pagerduty_routing_key`.
     /// The `reqwest::Client` is built with a 5s timeout so a slow webhook
     /// never blocks the calling task for long.
-    pub fn new(
-        slack_webhook_url: Option<String>,
-        pagerduty_routing_key: Option<String>,
-    ) -> Self {
+    pub fn new(slack_webhook_url: Option<String>, pagerduty_routing_key: Option<String>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -266,11 +264,7 @@ fn build_slack_payload<'a>(alert: &Alert, summary: &'a str) -> SlackPayload<'a> 
     }
 }
 
-fn build_pagerduty_payload(
-    routing_key: &str,
-    alert: &Alert,
-    summary: &str,
-) -> serde_json::Value {
+fn build_pagerduty_payload(routing_key: &str, alert: &Alert, summary: &str) -> serde_json::Value {
     let dedup_key = format!("trading-{}-{}", alert.kind(), alert.bot_id());
     json!({
         "routing_key": routing_key,
@@ -322,8 +316,10 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_slice(&received[0].body).expect("slack body parses as json");
         // Documented shape: top-level `text` (plain string) + `blocks` (array).
-        assert!(body.get("text").and_then(|v| v.as_str()).is_some(),
-            "slack payload must have top-level text string");
+        assert!(
+            body.get("text").and_then(|v| v.as_str()).is_some(),
+            "slack payload must have top-level text string"
+        );
         let blocks = body
             .get("blocks")
             .and_then(|v| v.as_array())
@@ -341,8 +337,10 @@ mod tests {
         let body_text = body_block["text"]["text"]
             .as_str()
             .expect("section text is string");
-        assert!(body_text.contains("bot-001"),
-            "section text mentions bot id; got: {body_text}");
+        assert!(
+            body_text.contains("bot-001"),
+            "section text mentions bot id; got: {body_text}"
+        );
     }
 
     #[tokio::test]
@@ -390,8 +388,11 @@ mod tests {
             .send()
             .await
             .expect("post");
-        assert!(response.status().is_success(),
-            "wiremock returned {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "wiremock returned {}",
+            response.status()
+        );
     }
 
     #[tokio::test]

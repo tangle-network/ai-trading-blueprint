@@ -45,12 +45,10 @@ pub struct BinanceConfig {
 
 impl BinanceConfig {
     pub fn from_env() -> Result<Self, CexError> {
-        let api_key = std::env::var("BINANCE_API_KEY").map_err(|_| {
-            CexError::Misconfigured("BINANCE_API_KEY env var is not set".into())
-        })?;
-        let api_secret = std::env::var("BINANCE_API_SECRET").map_err(|_| {
-            CexError::Misconfigured("BINANCE_API_SECRET env var is not set".into())
-        })?;
+        let api_key = std::env::var("BINANCE_API_KEY")
+            .map_err(|_| CexError::Misconfigured("BINANCE_API_KEY env var is not set".into()))?;
+        let api_secret = std::env::var("BINANCE_API_SECRET")
+            .map_err(|_| CexError::Misconfigured("BINANCE_API_SECRET env var is not set".into()))?;
         let base_url = std::env::var("BINANCE_BASE_URL").ok();
         let recv_window_ms = std::env::var("BINANCE_RECV_WINDOW_MS")
             .ok()
@@ -228,7 +226,7 @@ impl DirectApiVenue for BinanceClient {
         let raw = self
             .signed_request(Method::POST, "/api/v3/order", &params)
             .await?;
-        parse_order_response(raw, &req.symbol).map_err(|reason| CexError::Unexpected(reason))
+        parse_order_response(raw, &req.symbol).map_err(CexError::Unexpected)
     }
 
     async fn cancel_order(&self, symbol: &str, venue_order_id: &str) -> Result<(), CexError> {
@@ -276,10 +274,7 @@ impl DirectApiVenue for BinanceClient {
         })
     }
 
-    async fn get_open_orders(
-        &self,
-        symbol: Option<&str>,
-    ) -> Result<Vec<CexOpenOrder>, CexError> {
+    async fn get_open_orders(&self, symbol: Option<&str>) -> Result<Vec<CexOpenOrder>, CexError> {
         let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(s) = symbol {
             super::ensure_nonempty_symbol(s)?;
@@ -343,9 +338,7 @@ impl DirectApiVenue for BinanceClient {
             (Some(b), None) => b,
             (None, Some(a)) => a,
             (None, None) => {
-                return Err(CexError::Unexpected(
-                    "ticker missing bid/ask price".into(),
-                ));
+                return Err(CexError::Unexpected("ticker missing bid/ask price".into()));
             }
         };
         Ok(CexTicker {
@@ -588,7 +581,8 @@ mod tests {
 
     #[test]
     fn translate_response_maps_insufficient_balance() {
-        let body = br#"{"code":-2010,"msg":"Account has insufficient balance for requested action."}"#;
+        let body =
+            br#"{"code":-2010,"msg":"Account has insufficient balance for requested action."}"#;
         let err = translate_response(StatusCode::BAD_REQUEST, &header::HeaderMap::new(), body)
             .expect_err("expected error");
         assert!(matches!(err, CexError::InsufficientBalance(_)), "{err:?}");

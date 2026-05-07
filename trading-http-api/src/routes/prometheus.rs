@@ -259,12 +259,7 @@ pub fn record_envelope_snapshot(
 }
 
 /// Update the current slippage recommendation gauge.
-pub fn record_slippage_recommendation(
-    bot_id: &str,
-    token_in: &str,
-    token_out: &str,
-    bps: u32,
-) {
+pub fn record_slippage_recommendation(bot_id: &str, token_in: &str, token_out: &str, bps: u32) {
     LEARNING_SLIPPAGE_BPS
         .with_label_values(&[bot_id, token_in, token_out])
         .set(bps as f64);
@@ -286,9 +281,7 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new().route("/metrics/prometheus", get(prometheus_handler))
 }
 
-async fn prometheus_handler(
-    State(_state): State<Arc<MultiBotTradingState>>,
-) -> impl IntoResponse {
+async fn prometheus_handler(State(_state): State<Arc<MultiBotTradingState>>) -> impl IntoResponse {
     let metric_families = REGISTRY.gather();
     let encoder = TextEncoder::new();
     let mut buffer = Vec::with_capacity(4096);
@@ -324,8 +317,11 @@ mod tests {
         // Use a name unique to this test so re-running on the global registry
         // does not double-register.
         let name = "trading_test_registry_emits_total";
-        let counter = IntCounterVec::new(Opts::new(name, "test counter for prometheus exporter"), &["label"])
-            .expect("build counter");
+        let counter = IntCounterVec::new(
+            Opts::new(name, "test counter for prometheus exporter"),
+            &["label"],
+        )
+        .expect("build counter");
         REGISTRY
             .register(Box::new(counter.clone()))
             .expect("register test counter");
