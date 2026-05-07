@@ -33,6 +33,10 @@ function numberFromUnknown(value: unknown): number | undefined {
   return undefined;
 }
 
+function isUniqueCallId(callId: number | undefined): callId is number {
+  return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
+}
+
 function botMatchesHints(
   bot: BotLookupRecord,
   opts: {
@@ -44,7 +48,11 @@ function botMatchesHints(
   if (opts.sandboxId && bot.sandbox_id && bot.sandbox_id !== opts.sandboxId) {
     return false;
   }
-  if (opts.callId != null && typeof bot.call_id === 'number' && bot.call_id !== opts.callId) {
+  if (
+    isUniqueCallId(opts.callId)
+    && typeof bot.call_id === 'number'
+    && bot.call_id !== opts.callId
+  ) {
     return false;
   }
   if (
@@ -177,7 +185,7 @@ export async function resolveBotId(
   }
 
   // Strategy 2: lookup by on-chain call_id + service_id (most reliable)
-  if (opts.callId != null) {
+  if (isUniqueCallId(opts.callId)) {
     try {
       const res = await fetch(
         `${operatorApiUrl}/api/provisions/${opts.callId}`,
@@ -213,7 +221,7 @@ export async function resolveBotId(
   }
 
   // Strategy 3: lookup by on-chain call_id + service_id
-  if (opts.callId != null && opts.serviceId != null) {
+  if (isUniqueCallId(opts.callId) && opts.serviceId != null) {
     try {
       const params = new URLSearchParams({
         call_id: String(opts.callId),
