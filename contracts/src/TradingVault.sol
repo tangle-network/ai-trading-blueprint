@@ -1864,9 +1864,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
         (address asset, uint256 amount, address to) = _decodeAaveWithdraw(params.data);
+        // Audit H-1: params.account drives the post-call health-factor read in
+        // _executeHealthFactor; pin it to the vault so an operator cannot satisfy
+        // the check via an unrelated healthy account while the vault itself drifts
+        // below enf.minHealthFactor.
         if (
             params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
-                || to != address(this) || params.minHealthFactor < enf.minHealthFactor
+                || to != address(this) || params.account != address(this)
+                || params.minHealthFactor < enf.minHealthFactor
                 || params.deadline < block.timestamp
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
@@ -1886,9 +1891,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
         (address asset, uint256 amount, uint256 rateMode,, address onBehalfOf) = _decodeAaveBorrow(params.data);
+        // Audit H-1: pin params.account to the vault so the post-borrow health-factor
+        // check can't be vacuously satisfied via a different healthy account.
         if (
             params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
                 || rateMode != enf.interestRateMode || onBehalfOf != address(this)
+                || params.account != address(this)
                 || params.minHealthFactor < enf.minHealthFactor || params.deadline < block.timestamp
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateAaveBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
@@ -1960,9 +1968,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkEnvelopeBasics(env);
         (MorphoMarketParams memory mp, uint256 assets,, address onBehalf, address receiver) =
             _decodeMorphoWithdraw(params.data);
+        // Audit H-1: params.account is the address whose health is queried after the
+        // withdraw — pin to the vault so an operator cannot satisfy the floor via a
+        // different healthy account.
         if (
             params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
                 || onBehalf != address(this) || receiver != address(this)
+                || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
@@ -1983,9 +1995,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkEnvelopeBasics(env);
         (MorphoMarketParams memory mp, uint256 assets,, address onBehalf, address receiver) =
             _decodeMorphoBorrow(params.data);
+        // Audit H-1: pin params.account to the vault so the post-borrow health check
+        // is read against the vault's actual position, not a decoy account.
         if (
             params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
                 || onBehalf != address(this) || receiver != address(this)
+                || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
         ) revert EnvelopeCheckFailed();
         (bool ok,) = tradeValidator.validateMorphoBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
