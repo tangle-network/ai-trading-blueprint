@@ -1213,3 +1213,138 @@ contract EnvelopeMaxValuePinTest is Setup {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit L-4: cap MAX_APPROVAL_SIGNERS = 16.
+// `_validateEnvelopeWithEnforcementHash` runs an O(N²) signer-dedup loop. With
+// N=1000 sigs that's a million iterations of self-griefing gas waste. The cap
+// makes the loop bounded and any oversized submission revert deterministically.
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract EnvelopeMaxApprovalSignersTest is Setup {
+    TradeValidator public tv;
+    address public testVault;
+
+    bytes32 constant BOT_ID_HASH = keccak256("l4-cap-bot");
+
+    function setUp() public override {
+        super.setUp();
+        vm.warp(1_700_000_000);
+        tv = new TradeValidator();
+        testVault = makeAddr("l4TestVault");
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+        tv.configureVault(testVault, signers, 2);
+    }
+
+    function _uniV3() internal pure returns (TradeValidator.UniswapV3SwapEnforcement memory) {
+        return TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 1e18,
+            maxTotalAmountIn: 10e18,
+            maxValue: 0,
+            minOutputPerInput: 2_900e6,
+            router: address(0xE592427A0AEce92De3Edee1F18E0157C05861564),
+            tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
+            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
+            sqrtPriceLimitX96: 0
+        });
+    }
+
+    /// @notice Constant is exposed publicly and equals 16.
+    function test_l4_maxApprovalSigners_constant_is_16() public view {
+        assertEq(tv.MAX_APPROVAL_SIGNERS(), 16, "L-4: MAX_APPROVAL_SIGNERS must be 16");
+    }
+
+    /// @notice signatures.length > MAX_APPROVAL_SIGNERS reverts TooManyApprovalSigners.
+    function test_l4_revert_signaturesAboveCap() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        // 17 signatures (1 over cap) — exact contents don't matter, the length check
+        // fires before any signature is recovered.
+        bytes[] memory sigs = new bytes[](17);
+        uint256[] memory scores = new uint256[](17);
+        for (uint256 i = 0; i < 17; ++i) {
+            sigs[i] = abi.encodePacked(bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), uint8(27));
+            scores[i] = 80;
+        }
+        // Build a minimum valid envelope shape; we only care about the length cap.
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+        // sort
+        for (uint256 i = 0; i < signers.length; ++i) {
+            for (uint256 j = i + 1; j < signers.length; ++j) {
+                if (uint160(signers[j]) < uint160(signers[i])) {
+                    address t = signers[i];
+                    signers[i] = signers[j];
+                    signers[j] = t;
+                }
+            }
+        }
+        bytes memory packed;
+        for (uint256 i = 0; i < signers.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(signers[i]));
+        }
+        TradeValidator.Envelope memory env = TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: testVault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("l4-protocol"),
+            policyHash: keccak256("l4-policy"),
+            enforcementHash: tv.hashUniswapV3Swap(enf),
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+        vm.expectRevert(
+            abi.encodeWithSelector(TradeValidator.TooManyApprovalSigners.selector, uint256(17), uint256(16))
+        );
+        tv.validateUniswapV3SwapEnvelope(env, enf, signers, sigs, scores);
+    }
+
+    /// @notice approvalSigners.length > MAX_APPROVAL_SIGNERS reverts TooManyApprovalSigners.
+    function test_l4_revert_approvalSignersAboveCap() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        // Build 17 distinct sorted addresses to exceed the cap. The signers don't need
+        // to match any vault config — the length check fires before signature recovery.
+        address[] memory many = new address[](17);
+        for (uint256 i = 0; i < 17; ++i) {
+            many[i] = address(uint160(0x1000 + i));
+        }
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        sigs[0] = abi.encodePacked(bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), uint8(27));
+        sigs[1] = abi.encodePacked(bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), uint8(27));
+        scores[0] = 80;
+        scores[1] = 80;
+
+        bytes memory packed;
+        for (uint256 i = 0; i < many.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(many[i]));
+        }
+        TradeValidator.Envelope memory env = TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: testVault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("l4-protocol"),
+            policyHash: keccak256("l4-policy"),
+            enforcementHash: tv.hashUniswapV3Swap(enf),
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+        vm.expectRevert(
+            abi.encodeWithSelector(TradeValidator.TooManyApprovalSigners.selector, uint256(17), uint256(16))
+        );
+        tv.validateUniswapV3SwapEnvelope(env, enf, many, sigs, scores);
+    }
+}

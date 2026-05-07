@@ -27,6 +27,12 @@ contract TradeValidator is EIP712, Ownable2Step {
         "TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)"
     );
 
+    /// @notice Audit L-4: cap on the number of approval signers / signatures the envelope
+    ///         validator will accept in a single call. Prevents an O(N²) signer-dedup loop
+    ///         from being weaponised for self-griefing gas waste. 16 is comfortably above
+    ///         every observed validator-set size.
+    uint256 public constant MAX_APPROVAL_SIGNERS = 16;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -42,6 +48,10 @@ contract TradeValidator is EIP712, Ownable2Step {
     error SignerNotInSet(address signer);
     error InvalidScoreThreshold();
     error NotVaultConfigOwnerOrOwner();
+
+    /// @dev Audit L-4: signer/signature length cap. Reverts when either array exceeds
+    ///      MAX_APPROVAL_SIGNERS so the O(N²) dedup loop stays bounded.
+    error TooManyApprovalSigners(uint256 got, uint256 max);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -631,6 +641,15 @@ contract TradeValidator is EIP712, Ownable2Step {
                 || env.minSignatures == 0 || approvalSigners.length < env.minSignatures
                 || signatures.length != scores.length || signatures.length == 0
         ) revert InvalidEnvelope();
+        // Audit L-4: cap signer/signature counts so the O(N²) dedup loop below stays
+        // bounded. With OPERATOR_ROLE-gated submission this is self-griefing only, but
+        // a tighter bound is cheap defense-in-depth.
+        if (signatures.length > MAX_APPROVAL_SIGNERS) {
+            revert TooManyApprovalSigners(signatures.length, MAX_APPROVAL_SIGNERS);
+        }
+        if (approvalSigners.length > MAX_APPROVAL_SIGNERS) {
+            revert TooManyApprovalSigners(approvalSigners.length, MAX_APPROVAL_SIGNERS);
+        }
         // Audit fix L-1: enforce strict chainId equality with the executing
         // chain. The EIP-712 domain separator already binds the digest, but
         // a `view` call to `validateXxxEnvelope` would silently approve a
