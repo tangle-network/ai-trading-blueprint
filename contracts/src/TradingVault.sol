@@ -1394,6 +1394,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     bytes4 private constant SELECTOR_AERODROME_EXACT_INPUT_SINGLE = bytes4(
         keccak256("exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))")
     );
+    /// @dev PancakeSwap V3 router uses the same `exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))`
+    ///      ABI as Uniswap V3, so we reuse SELECTOR_UNI_V3_EXACT_INPUT_SINGLE for decoding.
+    /// @dev Curve StableSwap pool: `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)`.
+    bytes4 private constant SELECTOR_CURVE_EXCHANGE = bytes4(keccak256("exchange(int128,int128,uint256,uint256)"));
     /// @dev Universal Router 2.0 `execute(bytes,bytes[],uint256)` selector.
     bytes4 private constant SELECTOR_UR_EXECUTE = bytes4(keccak256("execute(bytes,bytes[],uint256)"));
     /// @dev V4_SWAP command id within Universal Router commands buffer.
@@ -1562,6 +1566,19 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _decodeAerodromeSwap(bytes calldata data) internal pure returns (AerodromeSwapParams memory p) {
         _expectSelector(data, SELECTOR_AERODROME_EXACT_INPUT_SINGLE);
         p = abi.decode(data[4:], (AerodromeSwapParams));
+    }
+
+    /// @dev Decode `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)` calldata.
+    ///      Plain 2-coin StableSwap entrypoint; we explicitly do NOT support the `_use_eth`
+    ///      overload nor multi-pool variants (caller must set the operator's enforcement
+    ///      to a matching plain pool). Reverts on any other selector via _expectSelector.
+    function _decodeCurveExchange(bytes calldata data)
+        internal
+        pure
+        returns (int128 i, int128 j, uint256 dx, uint256 minDy)
+    {
+        _expectSelector(data, SELECTOR_CURVE_EXCHANGE);
+        (i, j, dx, minDy) = abi.decode(data[4:], (int128, int128, uint256, uint256));
     }
 
     function _decodeAaveSupply(bytes calldata data)
@@ -1739,6 +1756,74 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareEnvelopeTrade(params);
         ApprovalCall[] memory approvals = new ApprovalCall[](1);
         approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    /// @notice PancakeSwap V3 swap. PancakeSwap V3 calldata is byte-identical to
+    ///         Uniswap V3 (`exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))`),
+    ///         so we reuse `_decodeExactInputSingle`. The router address is what
+    ///         distinguishes a PancakeSwap V3 envelope from a Uniswap V3 envelope.
+    function executePancakeswapV3SwapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.PancakeswapV3SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        ExactInputSingleParams memory s = _decodeExactInputSingle(params.data);
+        if (
+            params.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
+                || uint256(s.fee) != enf.feeTier || s.recipient != address(this) || params.outputToken != enf.tokenOut
+                || s.deadline < block.timestamp || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
+            revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
+        }
+        (bool ok,) = tradeValidator.validatePancakeswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        bytes32 envHash = tradeValidator.hashEnvelope(env);
+        _consumeEnvelope(envHash, s.amountIn, enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
+        _applyApprovalsMemory(approvals, params.target);
+        _executeTrade(params);
+    }
+
+    /// @notice Curve StableSwap exchange. Index-based: caller passes signed int128
+    ///         (i, j) plus uint256 (dx, min_dy). The on-chain check trusts the
+    ///         operator-bound enforcement to specify the correct (i, j, tokenIn,
+    ///         tokenOut) for the pool — we deliberately do not call `coins(uint256)`
+    ///         on-chain to save gas. Distinct envelopes per (pool, i, j) combo.
+    function executeCurveStableSwapEnvelope(
+        ExecuteParams calldata params,
+        TradeValidator.Envelope calldata env,
+        TradeValidator.CurveStableSwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
+        _checkEnvelopeBasics(env);
+        (int128 ci, int128 cj, uint256 dx, uint256 minDy) = _decodeCurveExchange(params.data);
+        if (
+            params.target != enf.pool || ci != enf.i || cj != enf.j || params.outputToken != enf.tokenOut
+                || params.deadline < block.timestamp
+        ) revert EnvelopeCheckFailed();
+        uint256 reqMinOut = (dx * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        if (minDy < reqMinOut || params.minOutput < reqMinOut) {
+            revert EnvelopeRateTooLow(minDy, reqMinOut);
+        }
+        (bool ok,) = tradeValidator.validateCurveStableSwapEnvelope(env, enf, approvalSigners, signatures, scores);
+        if (!ok) revert ValidatorCheckFailed();
+        bytes32 envHash = tradeValidator.hashEnvelope(env);
+        _consumeEnvelope(envHash, dx, enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _prepareEnvelopeTrade(params);
+        ApprovalCall[] memory approvals = new ApprovalCall[](1);
+        approvals[0] = ApprovalCall({token: enf.tokenIn, spender: params.target, amount: dx});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
     }

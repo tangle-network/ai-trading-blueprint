@@ -347,6 +347,12 @@ contract TradeValidator is EIP712, Ownable2Step {
     bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
         "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
     );
+    bytes32 public constant PANCAKESWAP_V3_SWAP_TYPEHASH = keccak256(
+        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+    );
+    bytes32 public constant CURVE_STABLE_SWAP_TYPEHASH = keccak256(
+        "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
+    );
     bytes32 public constant AAVE_SUPPLY_TYPEHASH = keccak256(
         "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
     );
@@ -419,6 +425,31 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 minOutputPerInput;
         address router;
         int256 tickSpacing;
+        address tokenIn;
+        address tokenOut;
+    }
+
+    struct PancakeswapV3SwapEnforcement {
+        uint256 feeTier;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 minOutputPerInput;
+        address router;
+        address tokenIn;
+        address tokenOut;
+    }
+
+    /// @dev Curve StableSwap is index-based: caller passes signed int128 i (token-in)
+    ///      and int128 j (token-out) to `exchange(int128,int128,uint256,uint256)`.
+    ///      We pin the pool, indices, and resolved asset addresses so the on-chain
+    ///      executor can verify all four parameters without an external `coins(i)` call.
+    struct CurveStableSwapEnforcement {
+        int128 i;
+        int128 j;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        uint256 minOutputPerInput;
+        address pool;
         address tokenIn;
         address tokenOut;
     }
@@ -652,6 +683,39 @@ contract TradeValidator is EIP712, Ownable2Step {
         );
     }
 
+    function _hashPancakeswapV3Swap(PancakeswapV3SwapEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                PANCAKESWAP_V3_SWAP_TYPEHASH,
+                e.feeTier,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.minOutputPerInput,
+                e.router,
+                e.tokenIn,
+                e.tokenOut
+            )
+        );
+    }
+
+    function _hashCurveStableSwap(CurveStableSwapEnforcement calldata e) internal pure returns (bytes32) {
+        // Off-chain Rust ABI-encodes int128 as int256 sign-extended to 32 bytes; Solidity does
+        // the same automatically when we abi.encode int128 fields, so the hashes line up.
+        return keccak256(
+            abi.encode(
+                CURVE_STABLE_SWAP_TYPEHASH,
+                e.i,
+                e.j,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.minOutputPerInput,
+                e.pool,
+                e.tokenIn,
+                e.tokenOut
+            )
+        );
+    }
+
     function _hashAaveSupply(AaveSupplyEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.pool));
     }
@@ -764,6 +828,30 @@ contract TradeValidator is EIP712, Ownable2Step {
         );
     }
 
+    function validatePancakeswapV3SwapEnvelope(
+        Envelope calldata env,
+        PancakeswapV3SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashPancakeswapV3Swap(enf), approvalSigners, signatures, scores
+        );
+    }
+
+    function validateCurveStableSwapEnvelope(
+        Envelope calldata env,
+        CurveStableSwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(
+            env, _hashCurveStableSwap(enf), approvalSigners, signatures, scores
+        );
+    }
+
     function validateAaveSupplyEnvelope(
         Envelope calldata env,
         AaveSupplyEnforcement calldata enf,
@@ -866,6 +954,14 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     function hashAerodromeSwap(AerodromeSwapEnforcement calldata e) external pure returns (bytes32) {
         return _hashAerodromeSwap(e);
+    }
+
+    function hashPancakeswapV3Swap(PancakeswapV3SwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashPancakeswapV3Swap(e);
+    }
+
+    function hashCurveStableSwap(CurveStableSwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashCurveStableSwap(e);
     }
 
     function hashAaveSupply(AaveSupplyEnforcement calldata e) external pure returns (bytes32) {

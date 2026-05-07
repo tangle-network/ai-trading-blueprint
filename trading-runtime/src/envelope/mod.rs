@@ -12,8 +12,9 @@ pub use check::{
 };
 pub use enforcement::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
-    AerodromeSwapEnforcement, EnvelopeEnforcement, MorphoBorrowEnforcement, MorphoRepayEnforcement,
-    MorphoSupplyEnforcement, MorphoWithdrawEnforcement, UniswapV3SwapEnforcement,
+    AerodromeSwapEnforcement, CurveStableSwapEnforcement, EnvelopeEnforcement,
+    MorphoBorrowEnforcement, MorphoRepayEnforcement, MorphoSupplyEnforcement,
+    MorphoWithdrawEnforcement, PancakeswapV3SwapEnforcement, UniswapV3SwapEnforcement,
     UniswapV4SwapEnforcement,
 };
 pub use error::EnvelopeError;

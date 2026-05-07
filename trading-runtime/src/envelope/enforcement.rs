@@ -26,6 +26,13 @@ pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address 
 
 pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)";
 
+pub(super) const PANCAKESWAP_V3_SWAP_TYPE: &str = "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)";
+
+/// Curve StableSwap is index-based: caller passes int128 i (token-in) and int128 j (token-out)
+/// rather than addresses. We pin the pool, the indices, and the asset addresses (for the agent's
+/// readability) so the on-chain executor can verify all four parameters.
+pub(super) const CURVE_STABLE_SWAP_TYPE: &str = "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)";
+
 pub(super) const AAVE_SUPPLY_TYPE: &str = "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)";
 
 pub(super) const AAVE_WITHDRAW_TYPE: &str = "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)";
@@ -76,6 +83,34 @@ pub struct UniswapV4SwapEnforcement {
     /// Universal Router 2.0 address — vault submits the V4 swap via UR's
     /// V4_SWAP_EXACT_IN_SINGLE command path.
     pub universal_router: Address,
+}
+
+/// PancakeSwap V3 — Uniswap V3 fork on BSC + several other chains. Identical
+/// `exactInputSingle` calldata layout, distinct router address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PancakeswapV3SwapEnforcement {
+    pub router: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub fee_tier: u32,
+    pub max_single_amount_in: U256,
+    pub max_total_amount_in: U256,
+    pub min_output_per_input: U256,
+}
+
+/// Curve StableSwap — index-based exchange via `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)`.
+/// `i`/`j` are the pool's signed-int token indices; the on-chain executor
+/// verifies them plus the resolved token addresses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CurveStableSwapEnforcement {
+    pub pool: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub i: i128,
+    pub j: i128,
+    pub max_single_amount_in: U256,
+    pub max_total_amount_in: U256,
+    pub min_output_per_input: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,7 +207,9 @@ pub struct MorphoRepayEnforcement {
 pub enum EnvelopeEnforcement {
     UniswapV3Swap(UniswapV3SwapEnforcement),
     UniswapV4Swap(UniswapV4SwapEnforcement),
+    PancakeswapV3Swap(PancakeswapV3SwapEnforcement),
     AerodromeSwap(AerodromeSwapEnforcement),
+    CurveStableSwap(CurveStableSwapEnforcement),
     AaveSupply(AaveSupplyEnforcement),
     AaveWithdraw(AaveWithdrawEnforcement),
     AaveBorrow(AaveBorrowEnforcement),
@@ -190,7 +227,9 @@ impl EnvelopeEnforcement {
         Ok(match self {
             Self::UniswapV3Swap(e) => e.struct_hash(),
             Self::UniswapV4Swap(e) => e.struct_hash(),
+            Self::PancakeswapV3Swap(e) => e.struct_hash(),
             Self::AerodromeSwap(e) => e.struct_hash(),
+            Self::CurveStableSwap(e) => e.struct_hash(),
             Self::AaveSupply(e) => e.struct_hash(),
             Self::AaveWithdraw(e) => e.struct_hash(),
             Self::AaveBorrow(e) => e.struct_hash(),
@@ -207,7 +246,9 @@ impl EnvelopeEnforcement {
         match self {
             Self::UniswapV3Swap(_) => "uniswap_v3",
             Self::UniswapV4Swap(_) => "uniswap_v4",
+            Self::PancakeswapV3Swap(_) => "pancakeswap_v3",
             Self::AerodromeSwap(_) => "aerodrome",
+            Self::CurveStableSwap(_) => "curve",
             Self::AaveSupply(_)
             | Self::AaveWithdraw(_)
             | Self::AaveBorrow(_)
@@ -222,7 +263,11 @@ impl EnvelopeEnforcement {
     /// Action identifier (open/close/long/swap/etc).
     pub fn action(&self) -> &'static str {
         match self {
-            Self::UniswapV3Swap(_) | Self::UniswapV4Swap(_) | Self::AerodromeSwap(_) => "swap",
+            Self::UniswapV3Swap(_)
+            | Self::UniswapV4Swap(_)
+            | Self::PancakeswapV3Swap(_)
+            | Self::AerodromeSwap(_)
+            | Self::CurveStableSwap(_) => "swap",
             Self::AaveSupply(_) | Self::MorphoSupply(_) => "supply",
             Self::AaveWithdraw(_) | Self::MorphoWithdraw(_) => "withdraw",
             Self::AaveBorrow(_) | Self::MorphoBorrow(_) => "borrow",
@@ -235,7 +280,9 @@ impl EnvelopeEnforcement {
         let (single, total) = match self {
             Self::UniswapV3Swap(e) => (e.max_single_amount_in, e.max_total_amount_in),
             Self::UniswapV4Swap(e) => (e.max_single_amount_in, e.max_total_amount_in),
+            Self::PancakeswapV3Swap(e) => (e.max_single_amount_in, e.max_total_amount_in),
             Self::AerodromeSwap(e) => (e.max_single_amount_in, e.max_total_amount_in),
+            Self::CurveStableSwap(e) => (e.max_single_amount_in, e.max_total_amount_in),
             Self::AaveSupply(e) => (e.max_single_amount, e.max_total_amount),
             Self::AaveWithdraw(e) => (e.max_single_amount, e.max_total_amount),
             Self::AaveBorrow(e) => (e.max_single_amount, e.max_total_amount),
@@ -312,6 +359,47 @@ impl UniswapV4SwapEnforcement {
             self.max_total_amount_in,
             self.min_output_per_input,
             self.universal_router,
+        )))
+    }
+}
+
+impl PancakeswapV3SwapEnforcement {
+    pub fn struct_hash(&self) -> B256 {
+        keccak256(SolValue::abi_encode(&(
+            keccak256(PANCAKESWAP_V3_SWAP_TYPE.as_bytes()),
+            U256::from(self.fee_tier),
+            self.max_single_amount_in,
+            self.max_total_amount_in,
+            self.min_output_per_input,
+            self.router,
+            self.token_in,
+            self.token_out,
+        )))
+    }
+}
+
+impl CurveStableSwapEnforcement {
+    pub fn struct_hash(&self) -> B256 {
+        let i_u = if self.i >= 0 {
+            U256::from(self.i as u128)
+        } else {
+            U256::ZERO.wrapping_sub(U256::from((-self.i) as u128))
+        };
+        let j_u = if self.j >= 0 {
+            U256::from(self.j as u128)
+        } else {
+            U256::ZERO.wrapping_sub(U256::from((-self.j) as u128))
+        };
+        keccak256(SolValue::abi_encode(&(
+            keccak256(CURVE_STABLE_SWAP_TYPE.as_bytes()),
+            i_u,
+            j_u,
+            self.max_single_amount_in,
+            self.max_total_amount_in,
+            self.min_output_per_input,
+            self.pool,
+            self.token_in,
+            self.token_out,
         )))
     }
 }
