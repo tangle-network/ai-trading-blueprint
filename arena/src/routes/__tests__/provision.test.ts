@@ -331,6 +331,7 @@ describe('provision runtime backend helpers', () => {
       ...strategyOptions,
       isInstance: true,
       name: 'Bot',
+      includeExecutionTarget: false,
       effectiveCron: '* * * * *',
       validatorServiceIds: [11n],
       vaultSigners: [],
@@ -411,6 +412,7 @@ describe('provision runtime backend helpers', () => {
       ...strategyOptions,
       isInstance: true,
       name: 'Bot',
+      includeExecutionTarget: false,
       effectiveCron: '* * * * *',
       validatorServiceIds: [11n],
       vaultSigners: [],
@@ -526,6 +528,7 @@ describe('provision runtime backend helpers', () => {
 
   it('builds WETH-scoped Uniswap envelope limits for Ethereum live targets', async () => {
     const {
+      buildInstanceServiceConfig,
       buildOperatorProvisionBody,
       resolveExecutionTargetProvisionConfig,
     } = await import('../provision');
@@ -571,6 +574,109 @@ describe('provision runtime backend helpers', () => {
     expect(riskParams.uniswap_envelope.max_total_amount_in_by_token).toEqual({
       [weth]: '2000000000000000000',
     });
+
+    const serviceConfig = buildInstanceServiceConfig({
+      strategyType: 'dex',
+      runtimeBackend: 'docker',
+      isTeeBlueprint: false,
+      paperTrade: false,
+      uniswapEnvelopeEnabled: true,
+      uniswapEnvelopeMaxSingleAmountIn: '0.5',
+      uniswapEnvelopeMaxTotalAmountIn: '2',
+      isInstance: true,
+      name: 'Bot',
+      includeExecutionTarget: true,
+      selectedExecutionTarget: target,
+      executionConfig,
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      vaultSigners: [],
+      collateralBps: 2500n,
+      targetChainId: 31339,
+      assetAddress: weth,
+      blueprintDefaults: {
+        cpuCores: 1n,
+        memoryMb: 512n,
+        maxLifetimeDays: 7n,
+      },
+    });
+    const [decoded] = decodeAbiParameters(
+      parseAbiParameters(
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      ),
+      serviceConfig,
+    );
+    const instanceStrategyConfig = JSON.parse(decoded[2]);
+    const instanceRiskParams = JSON.parse(decoded[3]);
+
+    expect(instanceStrategyConfig).toMatchObject({
+      protocol_chain_id: 1,
+      available_protocols: ['uniswap_v3'],
+    });
+    expect(instanceRiskParams.uniswap_envelope).toMatchObject({
+      enabled: true,
+      allowed_pairs: [{ token_in: weth, token_out: usdc }],
+      max_single_amount_in_by_token: {
+        [weth]: '500000000000000000',
+      },
+      max_total_amount_in_by_token: {
+        [weth]: '2000000000000000000',
+      },
+    });
+  });
+
+  it('keeps Uniswap envelope disabled for paper-trading instances', async () => {
+    const { buildInstanceServiceConfig, resolveExecutionTargetProvisionConfig } =
+      await import('../provision');
+    const weth = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+    const target = {
+      id: 'ethereum' as const,
+      label: 'Ethereum Fork',
+      description: 'Local fork',
+      enabled: true,
+      chainId: 31339,
+      protocolChainId: 1,
+      rpcUrl: 'http://127.0.0.1:42545',
+      vaultFactoryAddress: '0x710e9fbed43da7da297c46e868de78d16e309afb',
+      assetToken: weth,
+      paperTrade: true,
+    };
+    const executionConfig = resolveExecutionTargetProvisionConfig(target);
+
+    const serviceConfig = buildInstanceServiceConfig({
+      strategyType: 'dex',
+      runtimeBackend: 'docker',
+      isTeeBlueprint: false,
+      paperTrade: true,
+      uniswapEnvelopeEnabled: true,
+      uniswapEnvelopeMaxSingleAmountIn: '0.5',
+      uniswapEnvelopeMaxTotalAmountIn: '2',
+      isInstance: true,
+      name: 'Bot',
+      includeExecutionTarget: true,
+      selectedExecutionTarget: target,
+      executionConfig,
+      effectiveCron: '* * * * *',
+      validatorServiceIds: [11n],
+      vaultSigners: [],
+      collateralBps: 2500n,
+      targetChainId: 31339,
+      assetAddress: weth,
+      blueprintDefaults: {
+        cpuCores: 1n,
+        memoryMb: 512n,
+        maxLifetimeDays: 7n,
+      },
+    });
+    const [decoded] = decodeAbiParameters(
+      parseAbiParameters(
+        '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      ),
+      serviceConfig,
+    );
+    const instanceRiskParams = JSON.parse(decoded[3]);
+
+    expect(instanceRiskParams.uniswap_envelope.enabled).toBe(false);
   });
 
   it('resolves a complete execution target into provision-safe values', async () => {

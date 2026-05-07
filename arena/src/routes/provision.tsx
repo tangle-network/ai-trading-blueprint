@@ -132,10 +132,9 @@ interface OperatorProvisionBodyOptions extends ProvisionStrategyConfigOptions {
   vaultAddress?: Address;
 }
 
-interface InstanceServiceConfigOptions extends StrategyConfigOptions {
+interface InstanceServiceConfigOptions extends ProvisionStrategyConfigOptions {
   isInstance: boolean;
   name: string;
-  strategyType: string;
   effectiveCron: string;
   validatorServiceIds: bigint[];
   vaultSigners: Address[];
@@ -780,6 +779,9 @@ export function buildInstanceServiceConfig({
   isInstance,
   name,
   strategyType,
+  selectedExecutionTarget,
+  includeExecutionTarget,
+  executionConfig,
   effectiveCron,
   validatorServiceIds,
   vaultSigners,
@@ -789,10 +791,25 @@ export function buildInstanceServiceConfig({
   blueprintDefaults,
   ...strategyConfigOptions
 }: InstanceServiceConfigOptions): `0x${string}` {
+  const strategyConfig = buildProvisionStrategyConfig({
+    ...strategyConfigOptions,
+    strategyType,
+    selectedExecutionTarget,
+    includeExecutionTarget,
+    executionConfig,
+  });
   const riskParams = buildProvisionRiskParams({
     ...strategyConfigOptions,
     strategyType,
-    assetToken: assetAddress,
+    protocolChainId: includeExecutionTarget
+      ? executionConfig?.protocolChainId
+      : strategyConfigOptions.protocolChainId,
+    assetToken: includeExecutionTarget
+      ? executionConfig?.assetAddress
+      : assetAddress,
+    availableProtocols: includeExecutionTarget
+      ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+      : strategyConfigOptions.availableProtocols,
   });
 
   return encodeAbiParameters(
@@ -803,9 +820,7 @@ export function buildInstanceServiceConfig({
       [
         isInstance ? name || 'Instance Bot' : '',
         isInstance ? strategyType : '',
-        isInstance
-          ? JSON.stringify(buildStrategyConfigForProvision(strategyConfigOptions))
-          : '{}',
+        isInstance ? JSON.stringify(strategyConfig) : '{}',
         isInstance ? JSON.stringify(riskParams) : '{}',
         zeroAddress,
         assetAddress,
@@ -2543,6 +2558,20 @@ export default function ProvisionPage() {
       toast.error(strategyExecution.message);
       return;
     }
+    const requiresExecutionTarget = strategyUsesExecutionTarget(
+      strategyType,
+      selectedExecutionTarget,
+      provisionPaperTrade,
+    );
+    const executionConfig = resolveExecutionTargetProvisionConfig(
+      selectedExecutionTarget,
+    );
+    if (requiresExecutionTarget && !executionConfig) {
+      toast.error(
+        'Execution target is incomplete — select a valid execution target in Advanced Settings',
+      );
+      return;
+    }
     if (quotes.length === 0) {
       toast.error('No quotes available — select operators first');
       return;
@@ -2619,6 +2648,10 @@ export default function ProvisionPage() {
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
+      paperTrade: provisionPaperTrade,
+      selectedExecutionTarget,
+      includeExecutionTarget: requiresExecutionTarget,
+      executionConfig,
       conversationCron: effectiveConversationCron,
       researchCron: effectiveResearchCron,
       conversationEnabled,
@@ -2633,8 +2666,11 @@ export default function ProvisionPage() {
       vaultSigners: instanceVaultSigners,
       collateralBps,
       targetChainId: targetChain.id,
-      assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
-        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+      assetAddress:
+        requiresExecutionTarget && executionConfig?.assetAddress
+          ? executionConfig.assetAddress
+          : ((import.meta.env.VITE_USDC_ADDRESS ??
+              '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       blueprintDefaults: bp.defaults,
     });
 
