@@ -25,10 +25,10 @@
 //! file per bot keyed by `bot_id` — so an operator can swap in any other
 //! KMS-backed provider by implementing the trait.
 
-use std::path::PathBuf;
-use std::sync::Arc;
 #[cfg(any(test, feature = "test-utils"))]
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use solana_sdk::signature::Keypair;
@@ -250,10 +250,7 @@ mod tests {
     #[test]
     fn env_provider_returns_some_when_binance_env_set() {
         with_env_vars(
-            &[
-                ("BINANCE_API_KEY", "k"),
-                ("BINANCE_API_SECRET", "s"),
-            ],
+            &[("BINANCE_API_KEY", "k"), ("BINANCE_API_SECRET", "s")],
             || {
                 let p = EnvKeyProvider;
                 let cfg = p.binance_key("bot-a").expect("env-set creds must resolve");
@@ -301,10 +298,15 @@ mod tests {
         .unwrap();
 
         let provider = SecretsBackedKeyProvider::new(dir.path()).unwrap();
-        let cfg = provider.binance_key(bot_id).expect("must read tenant block");
+        let cfg = provider
+            .binance_key(bot_id)
+            .expect("must read tenant block");
         assert_eq!(cfg.api_key, "tenant-key");
         assert_eq!(cfg.api_secret, "tenant-secret");
-        assert_eq!(cfg.base_url.as_deref(), Some("https://testnet.binance.vision"));
+        assert_eq!(
+            cfg.base_url.as_deref(),
+            Some("https://testnet.binance.vision")
+        );
         assert_eq!(cfg.recv_window_ms, Some(3_000));
 
         // A different bot id has no file → None (412 path at the route layer).

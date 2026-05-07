@@ -554,10 +554,10 @@ async fn drift_order(
             let msg =
                 solana_sdk::message::v0::Message::try_compile(&kp.pubkey(), &ixs, &[], blockhash)
                     .map_err(|e| {
-                        trading_runtime::solana::error::SolanaError::RpcFailed(format!(
-                            "compile drift tx: {e}"
-                        ))
-                    })?;
+                    trading_runtime::solana::error::SolanaError::RpcFailed(format!(
+                        "compile drift tx: {e}"
+                    ))
+                })?;
             VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&kp]).map_err(|e| {
                 trading_runtime::solana::error::SolanaError::RpcFailed(format!(
                     "sign drift tx: {e}"

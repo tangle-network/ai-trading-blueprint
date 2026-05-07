@@ -162,8 +162,8 @@ impl PerBotRateLimiter {
             .entry(key)
             .or_insert_with(|| {
                 let per_minute = self.limit_for(class);
-                let nz = NonZeroU32::new(per_minute.max(1))
-                    .expect("max(1) keeps the value non-zero");
+                let nz =
+                    NonZeroU32::new(per_minute.max(1)).expect("max(1) keeps the value non-zero");
                 let quota = Quota::per_minute(nz);
                 Arc::new(RateLimiter::direct(quota))
             })
@@ -191,7 +191,10 @@ impl Default for PerBotRateLimiter {
 /// unset, is treated as enabled.
 pub fn rate_limit_enabled() -> bool {
     match std::env::var("TRADING_RATE_LIMIT_ENABLED") {
-        Ok(raw) => !matches!(raw.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no"),
+        Ok(raw) => !matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "false" | "0" | "no"
+        ),
         Err(_) => true,
     }
 }
@@ -314,12 +317,9 @@ mod tests {
         let bot = "tenant-a";
 
         for i in 0..240 {
-            lim.check(bot, RouteClass::Learning)
-                .unwrap_or_else(|wait| {
-                    panic!(
-                        "request {i} should pass under 240/min cap; instead asked to wait {wait:?}"
-                    )
-                });
+            lim.check(bot, RouteClass::Learning).unwrap_or_else(|wait| {
+                panic!("request {i} should pass under 240/min cap; instead asked to wait {wait:?}")
+            });
         }
         let err = lim
             .check(bot, RouteClass::Learning)
