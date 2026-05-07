@@ -6,6 +6,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+use super::enforcement::EnvelopeEnforcement;
 use super::error::EnvelopeError;
 use super::policy::TradingPolicy;
 
@@ -19,6 +20,7 @@ const ENVELOPE_TYPEHASH: &str = concat!(
     "uint64 chainId,",
     "bytes32 protocolHash,",
     "bytes32 policyHash,",
+    "bytes32 enforcementHash,",
     "uint64 issuedAt,",
     "uint64 expiresAt,",
     "uint64 nonce,",
@@ -35,6 +37,11 @@ fn default_version() -> u64 {
 pub struct EnvelopeSignature {
     pub signer: String,
     pub signature: String,
+    /// Validator quality score (0-10000). The on-chain validator weighs scores
+    /// per-vault and rejects an envelope when the score-weighted average is
+    /// below the configured threshold. Default 0 when validator scoring is unused.
+    #[serde(default)]
+    pub score: u32,
 }
 
 /// A cryptographically signed trading policy authorizing a bot to trade
@@ -58,6 +65,12 @@ pub struct SignedEnvelope {
     /// EVM address of the contract against which signatures are verified.
     /// This is the single canonical verifying_contract for all signatures.
     pub verifying_contract: String,
+    /// Optional on-chain enforcement binding. Required for vault-routed protocols
+    /// (Uniswap V3, Aave V3, Morpho, Aerodrome). None for direct-API protocols
+    /// (Hyperliquid, Polymarket CLOB) where the off-chain check_* path is the
+    /// entire enforcement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<EnvelopeEnforcement>,
     #[serde(default)]
     pub signatures: Vec<EnvelopeSignature>,
 }
@@ -159,6 +172,10 @@ impl SignedEnvelope {
                     },
                 )?;
         let policy_hash = self.policy.struct_hash()?;
+        let enforcement_hash = match &self.enforcement {
+            Some(e) => e.struct_hash()?,
+            None => B256::ZERO,
+        };
         Ok(keccak256(SolValue::abi_encode(&(
             keccak256(ENVELOPE_TYPEHASH.as_bytes()),
             U256::from(self.version),
@@ -167,6 +184,7 @@ impl SignedEnvelope {
             U256::from(self.chain_id),
             keccak256(self.protocol.to_ascii_lowercase().as_bytes()),
             policy_hash,
+            enforcement_hash,
             U256::from(self.issued_at),
             U256::from(self.expires_at),
             U256::from(self.nonce),
@@ -205,6 +223,7 @@ impl SignedEnvelope {
         self.signatures.push(EnvelopeSignature {
             signer: addr.clone(),
             signature: format!("0x{}", hex::encode(signature.as_bytes())),
+            score: 0,
         });
         Ok(addr)
     }
@@ -258,7 +277,27 @@ impl SignedEnvelope {
             });
         }
         self.policy.validate()?;
+        if let Some(ref enf) = self.enforcement {
+            enf.validate()?;
+            // Enforcement protocol must agree with envelope.protocol so off-chain
+            // routing and on-chain executor dispatch can't disagree.
+            if !self.protocol.trim().eq_ignore_ascii_case(enf.protocol_id()) {
+                return Err(EnvelopeError::EnforcementProtocolMismatch {
+                    enforcement: enf.protocol_id().into(),
+                    envelope: self.protocol.clone(),
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// Returns the enforcement binding required for vault-routed protocols.
+    /// Returns `MissingEnforcement` if the envelope has no binding — which is
+    /// a runtime error for any protocol that submits trades to the vault.
+    pub fn require_enforcement(&self) -> Result<&EnvelopeEnforcement, EnvelopeError> {
+        self.enforcement
+            .as_ref()
+            .ok_or(EnvelopeError::MissingEnforcement)
     }
 }
 
@@ -403,6 +442,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY1, CONTRACT).unwrap();
@@ -518,6 +558,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY1, CONTRACT).unwrap();
@@ -549,6 +590,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY1, CONTRACT).unwrap();
@@ -587,6 +629,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY1, CONTRACT).unwrap();
@@ -881,6 +924,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY2, CONTRACT).unwrap(); // signed by KEY2
@@ -914,6 +958,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY2, CONTRACT).unwrap();
@@ -946,6 +991,7 @@ mod tests {
             expires_at: Utc::now().timestamp() as u64 + 3600,
             nonce: 1,
             verifying_contract: CONTRACT.into(),
+            enforcement: None,
             signatures: vec![],
         };
         e.sign_with_private_key(KEY1, CONTRACT).unwrap();
@@ -1014,6 +1060,90 @@ mod tests {
         a.vault_address = "0x0000000000000000000000000000000000000001".into();
         b.vault_address = "0x0000000000000000000000000000000000000002".into();
         assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    // ── enforcement integration ─────────────────────────────────────────────
+
+    fn sample_enforcement() -> crate::envelope::EnvelopeEnforcement {
+        use crate::envelope::{EnvelopeEnforcement, UniswapV3SwapEnforcement};
+        use std::str::FromStr;
+        EnvelopeEnforcement::UniswapV3Swap(UniswapV3SwapEnforcement {
+            router: alloy::primitives::Address::from_str(
+                "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            )
+            .unwrap(),
+            token_in: alloy::primitives::Address::from_str(
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            )
+            .unwrap(),
+            token_out: alloy::primitives::Address::from_str(
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            )
+            .unwrap(),
+            fee_tier: 3000,
+            max_single_amount_in: alloy::primitives::U256::from(1_000_000u128),
+            max_total_amount_in: alloy::primitives::U256::from(10_000_000u128),
+            min_output_per_input: alloy::primitives::U256::from(2_900_000u128),
+        })
+    }
+
+    #[test]
+    fn enforcement_field_changes_digest() {
+        let mut a = signed_test_envelope();
+        let b = signed_test_envelope();
+        a.protocol = "uniswap_v3".into();
+        a.enforcement = Some(sample_enforcement());
+        // re-sign because mutation changed the digest
+        a.signatures.clear();
+        a.sign_with_private_key(KEY1, CONTRACT).unwrap();
+        assert_ne!(a.digest().unwrap(), b.digest().unwrap());
+    }
+
+    #[test]
+    fn enforcement_protocol_must_match_envelope_protocol() {
+        let mut e = signed_test_envelope();
+        // envelope.protocol is "hyperliquid" by default; but enforcement says "uniswap_v3"
+        e.enforcement = Some(sample_enforcement());
+        e.signatures.clear();
+        e.sign_with_private_key(KEY1, CONTRACT).unwrap();
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "hyperliquid",
+        };
+        let err = e.verify(&binding, &trusted).unwrap_err();
+        assert!(matches!(
+            err,
+            EnvelopeError::EnforcementProtocolMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn enforcement_protocol_aligned_passes() {
+        let mut e = signed_test_envelope();
+        e.protocol = "uniswap_v3".into();
+        e.enforcement = Some(sample_enforcement());
+        e.signatures.clear();
+        e.sign_with_private_key(KEY1, CONTRACT).unwrap();
+        let trusted = e.approval_signers.clone();
+        let binding = EnvelopeBinding {
+            bot_id: "test-bot",
+            vault_address: VAULT,
+            chain_id: 31337,
+            protocol: "uniswap_v3",
+        };
+        e.verify(&binding, &trusted).unwrap();
+    }
+
+    #[test]
+    fn require_enforcement_returns_missing_when_unset() {
+        let e = signed_test_envelope();
+        assert!(matches!(
+            e.require_enforcement().unwrap_err(),
+            EnvelopeError::MissingEnforcement
+        ));
     }
 
     #[test]

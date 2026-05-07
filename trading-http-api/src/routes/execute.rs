@@ -1868,6 +1868,133 @@ async fn execute_paper_clob_trade(
 /// This is the shared core for real trade execution used by both single-bot
 /// and multi-bot handlers. Includes intent hash deduplication (409 Conflict
 /// for replayed intents).
+/// Execute a trade authorized by a SignedEnvelope on a vault-routed protocol.
+/// Builds the adapter-encoded action and routes through the on-chain
+/// `executeXxxEnvelope` matching the envelope's enforcement variant.
+#[allow(clippy::too_many_arguments)]
+async fn execute_real_envelope_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    signed_envelope: &SignedEnvelope,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    intent_hash: B256,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    use trading_runtime::adapters::ActionParams;
+    use trading_runtime::envelope::params_builder::build_envelope_shape;
+    use trading_runtime::executor::{decimal_to_u256, get_adapter};
+
+    let adapter = get_adapter(
+        &intent.target_protocol,
+        Some(executor.chain_client().chain_id),
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let token_in: alloy::primitives::Address =
+        intent
+            .token_in
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("token_in: {e}"))
+            })?;
+    let token_out: alloy::primitives::Address =
+        intent
+            .token_out
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("token_out: {e}"))
+            })?;
+    let vault_address: alloy::primitives::Address =
+        signed_envelope
+            .vault_address
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("vault_address: {e}"))
+            })?;
+    let amount =
+        decimal_to_u256(&intent.amount_in).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let min_output = decimal_to_u256(&intent.min_amount_out)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let params = ActionParams {
+        action: intent.action.clone(),
+        token_in,
+        token_out,
+        amount,
+        min_output,
+        extra: intent.metadata.clone(),
+        vault_address,
+    };
+    let encoded = adapter
+        .encode_action(&params)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
+    let shape = build_envelope_shape(&encoded, intent_hash, deadline)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let outcome = executor
+        .execute_envelope_trade(signed_envelope, shape)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let confirmed_output_token = outcome
+        .output_token
+        .map(|token| format!("{token}"))
+        .unwrap_or_else(|| req.intent.token_out.clone());
+    let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
+
+    let record = TradeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        bot_id: bot_id.to_string(),
+        timestamp: Utc::now(),
+        action: req.intent.action.clone(),
+        token_in: req.intent.token_in.clone(),
+        token_out: confirmed_output_token,
+        amount_in: req.intent.amount_in.clone(),
+        min_amount_out: req.intent.min_amount_out.clone(),
+        target_protocol: req.intent.target_protocol.clone(),
+        tx_hash: outcome.tx_hash.clone(),
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Confirmed),
+        clob_order_id: None,
+        amount_out: confirmed_amount_out
+            .clone()
+            .or_else(|| valuation.amount_out.map(|v| v.to_string())),
+        entry_price_usd: valuation.entry_price_usd.map(|v| v.to_string()),
+        notional_usd: valuation.notional_usd.map(|v| v.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: confirmed_amount_out,
+        slippage_bps: None,
+        execution_reason: Some("Confirmed via envelope-mode execution".into()),
+        prediction_metadata: extract_prediction_metadata(&req.intent),
+        valuation_status: valuation.valuation_status,
+        validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+    };
+    if let Err(e) = trade_store::record_trade(record).await {
+        tracing::error!(error = %e, "envelope-mode trade submitted but persistence failed");
+    }
+
+    Ok(Json(ExecuteResponse {
+        tx_hash: outcome.tx_hash,
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        clob_order_id: None,
+    }))
+}
+
 async fn execute_real_trade(
     bot_id: &str,
     executor: &TradeExecutor,
@@ -2519,7 +2646,7 @@ async fn execute_multi_bot(
     // Envelope loading and verification applies to both paper and live modes:
     // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
     if bot.validation_trust == ValidationTrust::Envelope {
-        let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+        let envelope = super::envelope::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
             (
                 StatusCode::FORBIDDEN,
                 "Envelope trust mode requires a signed per-bot envelope approval".to_string(),
@@ -2756,6 +2883,30 @@ async fn execute_multi_bot(
         })?
     };
 
+    // Envelope-mode dispatch for vault-routed protocols.
+    if let Some(ref env) = signed_envelope {
+        if env.enforcement.is_some() {
+            let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
+            let response = execute_real_envelope_trade(
+                &bot.bot_id,
+                &executor,
+                &intent,
+                env,
+                &normalized_req,
+                stored_validation,
+                &valuation,
+                intent_hash_b256,
+            )
+            .await?;
+            if let Err(error) =
+                capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+            {
+                tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
+            }
+            return Ok(response);
+        }
+    }
+
     let response = execute_real_trade(
         &bot.bot_id,
         &executor,
@@ -2774,6 +2925,21 @@ async fn execute_multi_bot(
     }
 
     Ok(response)
+}
+
+fn parse_intent_hash_bytes(s: &str) -> Result<[u8; 32], (StatusCode, String)> {
+    let raw = s.strip_prefix("0x").unwrap_or(s);
+    let bytes =
+        hex::decode(raw).map_err(|e| (StatusCode::BAD_REQUEST, format!("intent_hash hex: {e}")))?;
+    if bytes.len() != 32 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("intent_hash must be 32 bytes, got {}", bytes.len()),
+        ));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 #[cfg(test)]

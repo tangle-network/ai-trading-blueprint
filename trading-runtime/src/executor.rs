@@ -335,6 +335,81 @@ impl TradeExecutor {
             output_gained,
         })
     }
+
+    /// Execute a vault-routed trade authorized by a SignedEnvelope.
+    ///
+    /// Caller is responsible for building the right `Shape` for the protocol's
+    /// execution path (Trade for swaps + supplies, HealthFactor for borrow/withdraw,
+    /// DebtReduction for repay). The envelope's `enforcement` field selects the
+    /// matching on-chain `executeXxxEnvelope` automatically.
+    pub async fn execute_envelope_trade(
+        &self,
+        signed: &crate::envelope::SignedEnvelope,
+        shape: EnvelopeExecShape,
+    ) -> Result<TransactionOutcome, TradingError> {
+        use crate::envelope::abi_bridge;
+        let envelope_call = match shape {
+            EnvelopeExecShape::Trade(params) => abi_bridge::encode_swap_or_supply(signed, params),
+            EnvelopeExecShape::HealthFactor(params) => {
+                abi_bridge::encode_health_factor(signed, params)
+            }
+            EnvelopeExecShape::DebtReduction(params) => {
+                abi_bridge::encode_debt_reduction(signed, params)
+            }
+        }
+        .map_err(|e| TradingError::ValidatorError(e.to_string()))?;
+
+        let calldata = match envelope_call {
+            abi_bridge::EnvelopeExecCall::Trade(d) => d,
+            abi_bridge::EnvelopeExecCall::HealthFactor(d) => d,
+            abi_bridge::EnvelopeExecCall::DebtReduction(d) => d,
+        };
+
+        let to_addr: Address = self
+            .vault_client
+            .vault_address
+            .parse()
+            .map_err(|e| TradingError::VaultError(format!("Invalid vault address: {e}")))?;
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .to(to_addr)
+            .input(alloy::primitives::Bytes::from(calldata).into())
+            .value(U256::ZERO)
+            .gas_limit(gas_limit_from_env(
+                "TRADING_EXECUTION_GAS_LIMIT",
+                DEFAULT_EXECUTION_GAS_LIMIT,
+            ));
+        let pending = self
+            .chain_client
+            .provider
+            .send_transaction(tx_request)
+            .await
+            .map_err(|e| TradingError::VaultError(format!("Envelope tx send failed: {e}")))?;
+        let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+        let receipt = pending
+            .get_receipt()
+            .await
+            .map_err(|e| TradingError::VaultError(format!("Receipt fetch failed: {e}")))?;
+        let (output_token, output_gained) =
+            parse_trade_executed_event(&receipt).unwrap_or((None, None));
+        Ok(TransactionOutcome {
+            tx_hash,
+            block_number: Some(receipt.block_number.unwrap_or(0)),
+            gas_used: Some(receipt.gas_used.into()),
+            output_token,
+            output_gained,
+        })
+    }
+}
+
+/// Discriminates which `executeXxxEnvelope` shape to call.
+#[derive(Clone)]
+pub enum EnvelopeExecShape {
+    /// Uniswap V3 / Aerodrome swaps + Aave / Morpho supply.
+    Trade(crate::contracts::ITradingVault::ExecuteParams),
+    /// Aave / Morpho withdraw and borrow (require post-trade health factor).
+    HealthFactor(crate::contracts::ITradingVault::HealthFactorParams),
+    /// Aave / Morpho repay (debt-reduction post-condition).
+    DebtReduction(crate::contracts::ITradingVault::DebtReductionParams),
 }
 
 fn validate_supported_execution_tokens(intent: &TradeIntent) -> Result<(), TradingError> {
@@ -591,7 +666,7 @@ pub fn get_adapter(
 ///
 /// Treats the decimal value as a raw integer (truncates fractional part).
 /// Logs a warning if non-zero fractional digits are dropped.
-fn decimal_to_u256(d: &rust_decimal::Decimal) -> Result<U256, TradingError> {
+pub fn decimal_to_u256(d: &rust_decimal::Decimal) -> Result<U256, TradingError> {
     let truncated = d.trunc();
     if *d != truncated {
         tracing::warn!(

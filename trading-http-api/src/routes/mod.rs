@@ -4,6 +4,7 @@ pub mod candles;
 pub mod circuit;
 pub mod clob;
 pub mod collateral;
+pub mod envelope;
 pub mod evolution;
 pub mod execute;
 pub mod health;

@@ -83,6 +83,131 @@ sol! {
             bytes[] calldata signatures,
             uint256[] calldata scores
         ) external;
+        // ── Envelope mode (per-protocol on-chain authorization) ──
+
+        struct Envelope {
+            uint64 version;
+            bytes32 botIdHash;
+            address vault;
+            uint64 chainId;
+            bytes32 protocolHash;
+            bytes32 policyHash;
+            bytes32 enforcementHash;
+            uint64 issuedAt;
+            uint64 expiresAt;
+            uint64 nonce;
+            bytes32 signersHash;
+            uint64 minSignatures;
+        }
+
+        struct UniswapV3SwapEnforcement {
+            uint256 feeTier;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address router;
+            address tokenIn;
+            address tokenOut;
+        }
+
+        struct UniswapV4SwapEnforcement {
+            address currency0;
+            address currency1;
+            uint256 fee;
+            int256 tickSpacing;
+            address hooks;
+            bool zeroForOne;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address universalRouter;
+        }
+
+        struct AerodromeSwapEnforcement {
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address router;
+            int256 tickSpacing;
+            address tokenIn;
+            address tokenOut;
+        }
+
+        struct AaveSupplyEnforcement {
+            address asset;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            address pool;
+        }
+
+        struct AaveWithdrawEnforcement {
+            address asset;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 minHealthFactor;
+            address pool;
+        }
+
+        struct AaveBorrowEnforcement {
+            address asset;
+            uint256 interestRateMode;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 minHealthFactor;
+            address pool;
+        }
+
+        struct AaveRepayEnforcement {
+            address asset;
+            address debtToken;
+            uint256 interestRateMode;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            address pool;
+        }
+
+        struct MorphoSupplyEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            bytes32 marketId;
+            address morpho;
+        }
+
+        struct MorphoWithdrawEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            bytes32 marketId;
+            uint256 minCollateralRatio;
+            address morpho;
+        }
+
+        struct MorphoBorrowEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            bytes32 marketId;
+            uint256 minCollateralRatio;
+            address morpho;
+        }
+
+        struct MorphoRepayEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            bytes32 marketId;
+            address morpho;
+        }
+
+        function executeUniswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeUniswapV4SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV4SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAerodromeSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, AerodromeSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, AaveSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveRepayEnvelope(DebtReductionParams calldata params, Envelope calldata env, AaveRepayEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, MorphoSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, MorphoWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, MorphoBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoRepayEnvelope(DebtReductionParams calldata params, Envelope calldata env, MorphoRepayEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function envelopeConsumedAmount(bytes32 envelopeHash) external view returns (uint256);
         function emergencyWithdraw(address token, address to) external;
         function getBalance(address token) external view returns (uint256);
         function pause() external;
