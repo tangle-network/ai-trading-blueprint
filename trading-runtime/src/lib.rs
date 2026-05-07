@@ -27,6 +27,8 @@ pub mod url_validation;
 pub mod validator_client;
 pub mod vault_client;
 
+pub mod cex;
+
 pub use envelope::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
     AerodromeSwapEnforcement, ClobContext, ClobPolicy, CurveStableSwapEnforcement, EnvelopeBinding,

@@ -42,6 +42,11 @@ borsh = { version = "1", features = ["derive"] }
 base64 = "0.22"
 bincode = "1"
 
+# CEX integrations — Binance Spot (HMAC-SHA256) and Coinbase Advanced Trade (ES256 JWT).
+hmac = "0.12"
+sha2 = "0.10"
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+
 [dev-dependencies]
 alloy = { version = "1", features = ["node-bindings"] }
 axum = "0.8"
