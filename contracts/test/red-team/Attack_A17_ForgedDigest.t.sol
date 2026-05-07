@@ -50,9 +50,9 @@ contract Attack_A17_ForgedDigest is RedTeamBase {
         //   (b) trigger ECDSA's malleability guard — entire call reverts
         //       `ECDSAInvalidSignature`. Either is an acceptable safe outcome;
         //       what's NOT acceptable is silent approval.
-        try tradeValidator.validateUniswapV3SwapEnvelope(
-            env, enf, _sortedThreeValidators(), sigs, scores
-        ) returns (bool approved, uint256 validCount) {
+        try tradeValidator.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores) returns (
+            bool approved, uint256 validCount
+        ) {
             assertFalse(approved, "A17: tampered sig + 1 valid must not reach quorum");
             assertEq(validCount, 1, "A17: tampered sig must not count");
         } catch {
@@ -81,9 +81,9 @@ contract Attack_A17_ForgedDigest is RedTeamBase {
 
         // ECDSA may revert on a high-S value (malleability check). Either way the
         // call MUST NOT silently approve. We accept either revert or below-quorum.
-        try tradeValidator.validateUniswapV3SwapEnvelope(
-            env, enf, _sortedThreeValidators(), sigs, scores
-        ) returns (bool approved, uint256 validCount) {
+        try tradeValidator.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores) returns (
+            bool approved, uint256 validCount
+        ) {
             assertFalse(approved, "A17: tampered s must not approve");
             // validator1 sig is tampered → contributes 0; only validator2 valid → 1.
             assertEq(validCount, 1, "A17: tampered s must not count for validator1");

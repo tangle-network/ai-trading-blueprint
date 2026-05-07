@@ -48,11 +48,7 @@ abstract contract RedTeamBase is Setup {
         return keccak256(packed);
     }
 
-    function _baseEnv(bytes32 enforcementHash, address vault_)
-        internal
-        view
-        returns (TradeValidator.Envelope memory)
-    {
+    function _baseEnv(bytes32 enforcementHash, address vault_) internal view returns (TradeValidator.Envelope memory) {
         return TradeValidator.Envelope({
             version: 2,
             botIdHash: BOT_ID_HASH,
@@ -69,11 +65,7 @@ abstract contract RedTeamBase is Setup {
         });
     }
 
-    function _signEnvelope(uint256 pk, TradeValidator.Envelope memory env)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _signEnvelope(uint256 pk, TradeValidator.Envelope memory env) internal view returns (bytes memory) {
         bytes32 digest = tradeValidator.envelopeDigest(env);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);

@@ -37,9 +37,8 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         bytes[] memory urInputs = new bytes[](1);
         urInputs[0] = ""; // input contents irrelevant; the command-byte check fires first
         uint256 ddl = block.timestamp + 600;
-        bytes memory urCalldata = abi.encodeWithSelector(
-            bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl
-        );
+        bytes memory urCalldata =
+            abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: enf.universalRouter,
@@ -54,9 +53,8 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV4SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Multi-command UR buffer (length != 1) MUST also revert.
@@ -84,9 +82,8 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         urInputs[0] = "";
         urInputs[1] = "";
         uint256 ddl = block.timestamp + 600;
-        bytes memory urCalldata = abi.encodeWithSelector(
-            bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl
-        );
+        bytes memory urCalldata =
+            abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: enf.universalRouter,
             data: urCalldata,
@@ -100,8 +97,7 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV4SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

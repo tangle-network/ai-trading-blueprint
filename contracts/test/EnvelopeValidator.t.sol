@@ -264,8 +264,7 @@ contract EnvelopeValidatorTest is Setup {
         TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
         TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
-        (bool ok, uint256 valid) =
-            tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2);
     }
@@ -274,8 +273,7 @@ contract EnvelopeValidatorTest is Setup {
         TradeValidator.UniswapV4SwapEnforcement memory enf = _uniV4();
         TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV4Swap(enf));
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
-        (bool ok, uint256 valid) =
-            tv.validateUniswapV4SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateUniswapV4SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2);
     }
@@ -303,8 +301,7 @@ contract EnvelopeValidatorTest is Setup {
         TradeValidator.CurveStableSwapEnforcement memory enf = _curve();
         TradeValidator.Envelope memory env = _baseEnvelope(tv.hashCurveStableSwap(enf));
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
-        (bool ok, uint256 valid) =
-            tv.validateCurveStableSwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateCurveStableSwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2);
     }
@@ -467,8 +464,7 @@ contract EnvelopeValidatorTest is Setup {
         scores[0] = 80;
         scores[1] = 80;
         scores[2] = 90;
-        (bool ok, uint256 valid) =
-            tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertTrue(ok);
         assertEq(valid, 2); // dedup prevented triple-counting
     }
@@ -481,8 +477,7 @@ contract EnvelopeValidatorTest is Setup {
         sigs[0] = _signEnvelope(validator1Key, env);
         scores[0] = 80;
         // only 1 valid sig; vault requires 2
-        (bool ok, uint256 valid) =
-            tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertFalse(ok);
         assertEq(valid, 1);
     }
@@ -592,8 +587,7 @@ contract EnvelopeValidatorTest is Setup {
         scores[0] = 100;
         scores[1] = 100;
 
-        (bool ok, uint256 valid) =
-            tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+        (bool ok, uint256 valid) = tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertFalse(ok);
         assertEq(valid, 1); // only validator1 counted; evil signer ignored
         // silence unused

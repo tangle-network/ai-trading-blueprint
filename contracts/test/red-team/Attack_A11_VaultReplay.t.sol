@@ -81,8 +81,7 @@ contract Attack_A11_VaultReplay is RedTeamBase {
         // `env.vault != address(this)`.
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeWrongVault.selector);
-        TradingVault(payable(vaultB)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vaultB))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

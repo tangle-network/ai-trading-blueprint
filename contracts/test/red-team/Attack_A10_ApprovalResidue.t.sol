@@ -55,23 +55,16 @@ contract Attack_A10_ApprovalResidue is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // M-1: residual allowance MUST be 0.
-        assertEq(
-            tokenA.allowance(vault, address(router)),
-            0,
-            "A10: M-1 fix must zero allowance after envelope swap"
-        );
+        assertEq(tokenA.allowance(vault, address(router)), 0, "A10: M-1 fix must zero allowance after envelope swap");
 
         // A follow-up `transferFrom(vault, attacker, X)` from the router itself
         // (no fresh approval) MUST fail.
         vm.prank(address(router));
-        (bool ok,) = address(tokenA).call(
-            abi.encodeWithSelector(0x23b872dd, vault, address(router), uint256(1 ether))
-        );
+        (bool ok,) = address(tokenA).call(abi.encodeWithSelector(0x23b872dd, vault, address(router), uint256(1 ether)));
         assertFalse(ok, "A10: residual-allowance pull MUST fail post-M-1");
     }
 }

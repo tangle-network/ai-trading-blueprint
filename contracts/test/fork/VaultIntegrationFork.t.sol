@@ -31,7 +31,14 @@ contract VaultIntegrationForkTest is Test {
 
         bytes memory callData = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))",
-            USDC, WETH, uint24(500), trader, block.timestamp + 1800, amountIn, 0, uint160(0)
+            USDC,
+            WETH,
+            uint24(500),
+            trader,
+            block.timestamp + 1800,
+            amountIn,
+            0,
+            uint160(0)
         );
         (bool success,) = UNISWAP_ROUTER.call(callData);
         vm.stopPrank();

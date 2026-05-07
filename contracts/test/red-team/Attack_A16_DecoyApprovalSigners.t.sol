@@ -77,9 +77,8 @@ contract Attack_A16_DecoyApprovalSigners is RedTeamBase {
         // suppress unused-var warning for decoy3Pk (only address is in set)
         decoy3Pk;
 
-        (bool approved, uint256 validCount) = tradeValidator.validateUniswapV3SwapEnvelope(
-            env, enf, decoys, sigs, scores
-        );
+        (bool approved, uint256 validCount) =
+            tradeValidator.validateUniswapV3SwapEnvelope(env, enf, decoys, sigs, scores);
         assertFalse(approved, "A16: decoy sigs must NOT approve");
         assertEq(validCount, 0, "A16: decoy sigs must contribute 0 valid signatures");
     }

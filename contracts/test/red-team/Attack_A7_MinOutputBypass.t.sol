@@ -55,11 +55,8 @@ contract Attack_A7_MinOutputBypass is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.EnvelopeRateTooLow.selector, uint256(0), reqMinOut)
-        );
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.EnvelopeRateTooLow.selector, uint256(0), reqMinOut));
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

@@ -86,20 +86,12 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
         // Build minimal valid V4 calldata: 1 command (V4_SWAP=0x10), 1 input, 1
         // action (SWAP_EXACT_IN_SINGLE=0x06), 1 v4 param.
         TradingVault.V4PoolKey memory poolKey = TradingVault.V4PoolKey({
-            currency0: address(tokenA),
-            currency1: address(tokenB),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
+            currency0: address(tokenA), currency1: address(tokenB), fee: 3000, tickSpacing: 60, hooks: address(0)
         });
         uint128 amountIn = 5 ether;
         uint128 amountOutMinimum = 5 ether;
         TradingVault.V4ExactInputSingleParams memory v4 = TradingVault.V4ExactInputSingleParams({
-            poolKey: poolKey,
-            zeroForOne: true,
-            amountIn: amountIn,
-            amountOutMinimum: amountOutMinimum,
-            hookData: ""
+            poolKey: poolKey, zeroForOne: true, amountIn: amountIn, amountOutMinimum: amountOutMinimum, hookData: ""
         });
         bytes[] memory v4Params = new bytes[](1);
         v4Params[0] = abi.encode(v4);
@@ -109,9 +101,8 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
         urInputs[0] = v4SwapInput;
         bytes memory commands = abi.encodePacked(uint8(0x10));
         uint256 ddl = block.timestamp + 600;
-        bytes memory urCalldata = abi.encodeWithSelector(
-            bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl
-        );
+        bytes memory urCalldata =
+            abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: address(ur),
@@ -132,9 +123,8 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV4SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // `ur.attemptedReentry()` storage write rolls back with the reverted tx.
         assertEq(

@@ -108,9 +108,8 @@ contract Attack_A2_ReentrantCurve is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
-        TradingVault(payable(vault)).executeCurveStableSwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeCurveStableSwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // `pool.attemptedReentry()` storage write rolls back with the reverted tx.
         assertEq(

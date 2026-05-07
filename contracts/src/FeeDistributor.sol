@@ -121,7 +121,9 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         vaultFeeInitialized[vault] = true;
         vaultFeeAdmin[vault] = admin;
 
-        emit VaultFeeConfigUpdated(vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps);
+        emit VaultFeeConfigUpdated(
+            vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps
+        );
         emit VaultFeeAdminUpdated(vault, admin);
     }
 
@@ -138,7 +140,9 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (config.validatorFeeShareBps > BPS_DENOMINATOR) revert InvalidBps();
 
         vaultFeeConfig[vault] = config;
-        emit VaultFeeConfigUpdated(vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps);
+        emit VaultFeeConfigUpdated(
+            vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps
+        );
     }
 
     /// @notice Transfer vault fee admin
@@ -266,9 +270,8 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (token == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 protocolFees = accumulatedFees[token] > validatorFees[token]
-            ? accumulatedFees[token] - validatorFees[token]
-            : 0;
+        uint256 protocolFees =
+            accumulatedFees[token] > validatorFees[token] ? accumulatedFees[token] - validatorFees[token] : 0;
         if (protocolFees == 0) revert InsufficientProtocolFees();
         if (amount > protocolFees) amount = protocolFees;
 

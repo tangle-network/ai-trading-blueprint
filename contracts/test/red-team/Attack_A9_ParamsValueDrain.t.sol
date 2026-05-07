@@ -57,9 +57,8 @@ contract Attack_A9_ParamsValueDrain is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // Native balance must be untouched.
         assertEq(address(vault).balance, vaultEthBefore, "A9: vault ETH must not move");

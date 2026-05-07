@@ -55,8 +55,7 @@ contract Attack_A8_SqrtPriceLimitCorruption is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

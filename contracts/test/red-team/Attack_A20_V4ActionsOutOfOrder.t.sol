@@ -29,18 +29,10 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
 
     function _v4ParamBytes() internal view returns (bytes memory) {
         TradingVault.V4PoolKey memory poolKey = TradingVault.V4PoolKey({
-            currency0: address(tokenA),
-            currency1: address(tokenB),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
+            currency0: address(tokenA), currency1: address(tokenB), fee: 3000, tickSpacing: 60, hooks: address(0)
         });
         TradingVault.V4ExactInputSingleParams memory v4 = TradingVault.V4ExactInputSingleParams({
-            poolKey: poolKey,
-            zeroForOne: true,
-            amountIn: 5 ether,
-            amountOutMinimum: 5 ether,
-            hookData: ""
+            poolKey: poolKey, zeroForOne: true, amountIn: 5 ether, amountOutMinimum: 5 ether, hookData: ""
         });
         return abi.encode(v4);
     }
@@ -60,9 +52,8 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         urInputs[0] = v4SwapInput;
         bytes memory commands = abi.encodePacked(uint8(0x10));
         uint256 ddl = block.timestamp + 600;
-        bytes memory urCalldata = abi.encodeWithSelector(
-            bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl
-        );
+        bytes memory urCalldata =
+            abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: enf.universalRouter,
@@ -77,9 +68,8 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV4SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Out-of-order single action (e.g. SETTLE_ALL=0x0c instead of SWAP) MUST revert.
@@ -96,9 +86,8 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         urInputs[0] = v4SwapInput;
         bytes memory commands = abi.encodePacked(uint8(0x10));
         uint256 ddl = block.timestamp + 600;
-        bytes memory urCalldata = abi.encodeWithSelector(
-            bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl
-        );
+        bytes memory urCalldata =
+            abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
             target: enf.universalRouter,
@@ -113,8 +102,7 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV4SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

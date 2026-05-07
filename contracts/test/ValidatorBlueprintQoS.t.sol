@@ -74,9 +74,11 @@ contract ValidatorBlueprintQoSTest is Test {
     }
 
     function test_onRegister_onlyFromTangle() public {
-        vm.expectRevert(abi.encodeWithSelector(
-            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+            )
+        );
         blueprint.onRegister{value: 0}(operator1, abi.encode(serviceId));
     }
 

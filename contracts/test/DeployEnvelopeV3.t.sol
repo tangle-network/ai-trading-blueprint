@@ -23,8 +23,7 @@ contract DeployEnvelopeV3Test is Test {
     VerifyEnvelopeV3 internal verifyScript;
 
     address internal constant TEST_DEPLOYER_ADDRESS = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    uint256 internal constant TEST_DEPLOYER_KEY =
-        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 internal constant TEST_DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal constant TEST_SIGNER_ONE = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address internal constant TEST_SIGNER_TWO = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
 
@@ -184,11 +183,7 @@ contract DeployEnvelopeV3Test is Test {
         TradingVault vault = TradingVault(payable(result.sampleVault));
 
         assertEq(vault.envelopeConsumedAmount(bytes32(0)), 0, "zero hash should be unconsumed");
-        assertEq(
-            vault.envelopeConsumedAmount(keccak256("any-other-envelope")),
-            0,
-            "no envelope consumed yet"
-        );
+        assertEq(vault.envelopeConsumedAmount(keccak256("any-other-envelope")), 0, "no envelope consumed yet");
     }
 
     /// @notice The script's envelope domain separator is wired correctly:

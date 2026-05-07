@@ -297,9 +297,7 @@ contract EnvelopeInvariantsTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeAaveBorrowEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault)).executeAaveBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // Post: still nothing consumed; intent hash still unmarked.
         assertEq(
@@ -353,9 +351,7 @@ contract EnvelopeInvariantsTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeAaveBorrowEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault)).executeAaveBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Aave withdraw envelope with decoy `params.account` MUST revert.
@@ -393,9 +389,8 @@ contract EnvelopeInvariantsTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeAaveWithdrawEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeAaveWithdrawEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Morpho borrow envelope with decoy `params.account` MUST revert.
@@ -420,9 +415,7 @@ contract EnvelopeInvariantsTest is Setup {
         TradeValidator.Envelope memory env = _baseEnvelope(tradeValidator.hashMorphoBorrow(enf), vault);
 
         bytes memory data = abi.encodeWithSelector(
-            bytes4(
-                keccak256("borrow((address,address,address,address,uint256),uint256,uint256,address,address)")
-            ),
+            bytes4(keccak256("borrow((address,address,address,address,uint256),uint256,uint256,address,address)")),
             mp,
             uint256(500e6),
             uint256(0),
@@ -446,9 +439,8 @@ contract EnvelopeInvariantsTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeMorphoBorrowEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeMorphoBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Morpho withdraw envelope with decoy `params.account` MUST revert.
@@ -473,11 +465,7 @@ contract EnvelopeInvariantsTest is Setup {
         TradeValidator.Envelope memory env = _baseEnvelope(tradeValidator.hashMorphoWithdraw(enf), vault);
 
         bytes memory data = abi.encodeWithSelector(
-            bytes4(
-                keccak256(
-                    "withdraw((address,address,address,address,uint256),uint256,uint256,address,address)"
-                )
-            ),
+            bytes4(keccak256("withdraw((address,address,address,address,uint256),uint256,uint256,address,address)")),
             mp,
             uint256(500e6),
             uint256(0),
@@ -501,9 +489,8 @@ contract EnvelopeInvariantsTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeMorphoWithdrawEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeMorphoWithdrawEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }
 
@@ -672,16 +659,11 @@ contract EnvelopeAllowanceResetTest is Setup {
         assertEq(tokenA.allowance(vault, address(router)), 0, "pre-call allowance");
 
         vm.prank(operator);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // Post-call: allowance MUST be 0 — `_resetApprovalsMemory` cleared it.
-        assertEq(
-            tokenA.allowance(vault, address(router)),
-            0,
-            "M-1: residual allowance must be 0 after envelope swap"
-        );
+        assertEq(tokenA.allowance(vault, address(router)), 0, "M-1: residual allowance must be 0 after envelope swap");
     }
 
     /// @notice Legacy `executeWithApprovals` path also clears the approval. Pairs M-1
@@ -702,11 +684,7 @@ contract EnvelopeAllowanceResetTest is Setup {
         policyEngine.setPositionLimit(vault, address(tokenB), 1_000 ether);
 
         TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
-        approvals[0] = TradingVault.ApprovalCall({
-            token: address(tokenA),
-            spender: address(target),
-            amount: 5 ether
-        });
+        approvals[0] = TradingVault.ApprovalCall({token: address(tokenA), spender: address(target), amount: 5 ether});
 
         bytes memory data = abi.encodeWithSelector(M1MockTarget.swap.selector, vault, 5 ether);
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
@@ -724,12 +702,8 @@ contract EnvelopeAllowanceResetTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 80;
-        sigs[0] = _signValidation(
-            validator1Key, params.intentHash, executionHash, vault, scores[0], params.deadline, 0
-        );
-        sigs[1] = _signValidation(
-            validator2Key, params.intentHash, executionHash, vault, scores[1], params.deadline, 0
-        );
+        sigs[0] = _signValidation(validator1Key, params.intentHash, executionHash, vault, scores[0], params.deadline, 0);
+        sigs[1] = _signValidation(validator2Key, params.intentHash, executionHash, vault, scores[1], params.deadline, 0);
 
         tokenA.mint(vault, 100 ether);
 
@@ -738,9 +712,7 @@ contract EnvelopeAllowanceResetTest is Setup {
 
         // Post-call: allowance MUST be 0 — `_resetApprovals` cleared it.
         assertEq(
-            tokenA.allowance(vault, address(target)),
-            0,
-            "M-1: residual allowance must be 0 after executeWithApprovals"
+            tokenA.allowance(vault, address(target)), 0, "M-1: residual allowance must be 0 after executeWithApprovals"
         );
     }
 }
@@ -875,9 +847,8 @@ contract EnvelopePriceLimitPinTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @notice Distinct sqrtPriceLimitX96 values produce DIFFERENT enforcement hashes.
@@ -1135,9 +1106,8 @@ contract EnvelopeMaxValuePinTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @notice Distinct maxValue values produce DIFFERENT enforcement hashes —

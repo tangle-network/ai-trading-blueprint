@@ -59,9 +59,8 @@ contract Attack_A12_ChainReplay is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeWrongChain.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev L-1: the validator's view-only path also rejects wrong-chain.

@@ -53,9 +53,7 @@ contract Attack_A15_DrainedEnvelopeReplay is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            p1, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(p1, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // Second trade: SAME envelope, fresh intentHash and a positive amountIn.
         // Must revert TotalExceeded because all maxTotalAmountIn was consumed.
@@ -81,11 +79,7 @@ contract Attack_A15_DrainedEnvelopeReplay is RedTeamBase {
         });
 
         vm.prank(operator);
-        vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.EnvelopeTotalExceeded.selector, uint256(1), uint256(0))
-        );
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            p2, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.EnvelopeTotalExceeded.selector, uint256(1), uint256(0)));
+        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(p2, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

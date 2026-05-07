@@ -74,8 +74,7 @@ contract FullE2EForkTest is Test {
 
         // VaultFactory takes ownership of PE + TV + FD
         factory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer =
-            new VaultDeployer(address(factory), policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(address(factory), policyEngine, tradeValidator, feeDistributor);
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(factory));
         factory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
@@ -107,16 +106,8 @@ contract FullE2EForkTest is Test {
             "AI Trading Vault Shares",
             "atUSDC",
             bytes32("e2e-salt"),
-            PolicyEngine.PolicyConfig({
-                leverageCap: 50000,
-                maxTradesPerHour: 100,
-                maxSlippageBps: 500
-            }),
-            FeeDistributor.FeeConfig({
-                performanceFeeBps: 2000,
-                managementFeeBps: 200,
-                validatorFeeShareBps: 3000
-            })
+            PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500}),
+            FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
         );
 
         vault = TradingVault(payable(vaultAddr));
@@ -165,14 +156,14 @@ contract FullE2EForkTest is Test {
         // exactInputSingle(tokenIn=USDC, tokenOut=WETH, fee=500, recipient=vault)
         bytes memory swapCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))",
-            USDC,                   // tokenIn
-            WETH,                   // tokenOut
-            uint24(500),            // fee tier (5bps — most liquid USDC/WETH pool)
-            address(vault),         // recipient = vault (funds stay in vault!)
+            USDC, // tokenIn
+            WETH, // tokenOut
+            uint24(500), // fee tier (5bps — most liquid USDC/WETH pool)
+            address(vault), // recipient = vault (funds stay in vault!)
             block.timestamp + 1800, // swap deadline
-            swapAmount,             // amountIn
-            uint256(1),             // amountOutMinimum (non-zero — real prod uses slippage calc)
-            uint160(0)              // sqrtPriceLimitX96 (0 = no limit)
+            swapAmount, // amountIn
+            uint256(1), // amountOutMinimum (non-zero — real prod uses slippage calc)
+            uint160(0) // sqrtPriceLimitX96 (0 = no limit)
         );
 
         // ── Step 2: AI validators sign the intent (EIP-712) ────────────────
@@ -192,11 +183,7 @@ contract FullE2EForkTest is Test {
 
         // ── Step 3: Build the approval (vault approves Uniswap to spend USDC) ──
         TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
-        approvals[0] = TradingVault.ApprovalCall({
-            token: USDC,
-            spender: UNISWAP_ROUTER,
-            amount: swapAmount
-        });
+        approvals[0] = TradingVault.ApprovalCall({token: USDC, spender: UNISWAP_ROUTER, amount: swapAmount});
 
         // ── Step 4: Build execution params ──────────────────────────────────
         TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
@@ -279,7 +266,14 @@ contract FullE2EForkTest is Test {
 
         bytes memory swapCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))",
-            USDC, WETH, uint24(500), address(vault), block.timestamp + 1800, swapAmount, uint256(1), uint160(0)
+            USDC,
+            WETH,
+            uint24(500),
+            address(vault),
+            block.timestamp + 1800,
+            swapAmount,
+            uint256(1),
+            uint160(0)
         );
 
         bytes memory sig1 = _signValidation(validator1Key, intentHash, address(vault), 80, deadline, 0);

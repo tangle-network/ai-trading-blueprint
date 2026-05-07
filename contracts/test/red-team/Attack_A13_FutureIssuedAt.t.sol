@@ -58,9 +58,8 @@ contract Attack_A13_FutureIssuedAt is RedTeamBase {
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.EnvelopeNotYetActive.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     function test_A13_validatorRejectsFutureIssuedAt_InvalidEnvelope() public {

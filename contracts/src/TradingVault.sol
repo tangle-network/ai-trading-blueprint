@@ -1409,9 +1409,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @dev Selectors for protocol entry-point calldata decoding.
     bytes4 private constant SELECTOR_UNI_V3_EXACT_INPUT_SINGLE = 0x414bf389; // exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))
-    bytes4 private constant SELECTOR_AERODROME_EXACT_INPUT_SINGLE = bytes4(
-        keccak256("exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))")
-    );
+    bytes4 private constant SELECTOR_AERODROME_EXACT_INPUT_SINGLE =
+        bytes4(keccak256("exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))"));
     /// @dev PancakeSwap V3 router uses the same `exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))`
     ///      ABI as Uniswap V3, so we reuse SELECTOR_UNI_V3_EXACT_INPUT_SINGLE for decoding.
     /// @dev Curve StableSwap pool: `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)`.
@@ -1424,8 +1423,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     uint8 private constant V4_ACTION_SWAP_EXACT_IN_SINGLE = 0x06;
     bytes4 private constant SELECTOR_AAVE_SUPPLY = bytes4(keccak256("supply(address,uint256,address,uint16)"));
     bytes4 private constant SELECTOR_AAVE_WITHDRAW = bytes4(keccak256("withdraw(address,uint256,address)"));
-    bytes4 private constant SELECTOR_AAVE_BORROW =
-        bytes4(keccak256("borrow(address,uint256,uint256,uint16,address)"));
+    bytes4 private constant SELECTOR_AAVE_BORROW = bytes4(keccak256("borrow(address,uint256,uint256,uint16,address)"));
     bytes4 private constant SELECTOR_AAVE_REPAY = bytes4(keccak256("repay(address,uint256,uint256,address)"));
     bytes4 private constant SELECTOR_MORPHO_SUPPLY =
         bytes4(keccak256("supply((address,address,address,address,uint256),uint256,uint256,address,bytes)"));
@@ -1580,8 +1578,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         returns (V4ExactInputSingleParams memory p, uint256 deadline)
     {
         _expectSelector(data, SELECTOR_UR_EXECUTE);
-        (bytes memory commands, bytes[] memory inputs, uint256 ddl) =
-            abi.decode(data[4:], (bytes, bytes[], uint256));
+        (bytes memory commands, bytes[] memory inputs, uint256 ddl) = abi.decode(data[4:], (bytes, bytes[], uint256));
         deadline = ddl;
         if (commands.length != 1 || inputs.length != 1) revert EnvelopeCheckFailed();
         if (uint8(commands[0]) != UR_COMMAND_V4_SWAP) revert EnvelopeCheckFailed();
@@ -1739,16 +1736,15 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
-        (V4ExactInputSingleParams memory s, uint256 urDeadline) =
-            _decodeUniversalRouterV4SingleSwap(params.data);
+        (V4ExactInputSingleParams memory s, uint256 urDeadline) = _decodeUniversalRouterV4SingleSwap(params.data);
         address tokenIn = s.zeroForOne ? s.poolKey.currency0 : s.poolKey.currency1;
         address tokenOut = s.zeroForOne ? s.poolKey.currency1 : s.poolKey.currency0;
         if (
             params.target != enf.universalRouter || s.poolKey.currency0 != enf.currency0
                 || s.poolKey.currency1 != enf.currency1 || uint256(s.poolKey.fee) != enf.fee
                 || int256(s.poolKey.tickSpacing) != enf.tickSpacing || s.poolKey.hooks != enf.hooks
-                || s.zeroForOne != enf.zeroForOne || params.outputToken != tokenOut
-                || urDeadline < block.timestamp || params.deadline < block.timestamp
+                || s.zeroForOne != enf.zeroForOne || params.outputToken != tokenOut || urDeadline < block.timestamp
+                || params.deadline < block.timestamp
                 // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
                 // hook callback bytes through the V4 swap action.
                 || keccak256(s.hookData) != enf.hookDataHash
@@ -1761,7 +1757,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
         (bool ok,) = tradeValidator.validateUniswapV4SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
-        _consumeEnvelope(tradeValidator.hashEnvelope(env), uint256(s.amountIn), enf.maxSingleAmountIn, enf.maxTotalAmountIn);
+        _consumeEnvelope(
+            tradeValidator.hashEnvelope(env), uint256(s.amountIn), enf.maxSingleAmountIn, enf.maxTotalAmountIn
+        );
         _prepareEnvelopeTrade(params);
         ApprovalCall[] memory approvals = new ApprovalCall[](1);
         approvals[0] = ApprovalCall({token: tokenIn, spender: params.target, amount: uint256(s.amountIn)});
@@ -1931,9 +1929,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // the check via an unrelated healthy account while the vault itself drifts
         // below enf.minHealthFactor.
         if (
-            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
-                || to != address(this) || params.account != address(this)
-                || params.minHealthFactor < enf.minHealthFactor
+            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset || to != address(this)
+                || params.account != address(this) || params.minHealthFactor < enf.minHealthFactor
                 || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
@@ -1959,8 +1956,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // check can't be vacuously satisfied via a different healthy account.
         if (
             params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
-                || rateMode != enf.interestRateMode || onBehalfOf != address(this)
-                || params.account != address(this)
+                || rateMode != enf.interestRateMode || onBehalfOf != address(this) || params.account != address(this)
                 || params.minHealthFactor < enf.minHealthFactor || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
@@ -2047,8 +2043,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // different healthy account.
         if (
             params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
-                || onBehalf != address(this) || receiver != address(this)
-                || params.account != address(this)
+                || onBehalf != address(this) || receiver != address(this) || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
@@ -2075,8 +2070,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // is read against the vault's actual position, not a decoy account.
         if (
             params.target != enf.morpho || params.pool != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
-                || onBehalf != address(this) || receiver != address(this)
-                || params.account != address(this)
+                || onBehalf != address(this) || receiver != address(this) || params.account != address(this)
                 || params.minHealthFactor < enf.minCollateralRatio || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
@@ -2099,9 +2093,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkEnvelopeBasics(env);
         (MorphoMarketParams memory mp, uint256 assets,, address onBehalf,) = _decodeMorphoRepay(params.data);
         if (
-            params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId
-                || params.inputToken != mp.loanToken || onBehalf != address(this)
-                || params.deadline < block.timestamp
+            params.target != enf.morpho || _morphoMarketIdOf(mp) != enf.marketId || params.inputToken != mp.loanToken
+                || onBehalf != address(this) || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();

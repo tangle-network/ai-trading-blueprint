@@ -65,9 +65,8 @@ contract Attack_A14_ScoreSaturation is RedTeamBase {
         sigs[0] = _signEnvelope(validator1Key, env);
         scores[0] = type(uint256).max;
 
-        (bool approved, uint256 validCount) = tradeValidator.validateUniswapV3SwapEnvelope(
-            env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        (bool approved, uint256 validCount) =
+            tradeValidator.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
         assertFalse(approved, "A14: one sig must be below 2-of-3 threshold");
         assertEq(validCount, 1, "A14: validCount==1 with single max-score sig");
     }

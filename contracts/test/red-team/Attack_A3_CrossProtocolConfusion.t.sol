@@ -105,8 +105,7 @@ contract Attack_A3_CrossProtocolConfusion is RedTeamBase {
         // The Pancake executor will compute `hashPancakeswapV3Swap(p)` and compare
         // to env.enforcementHash (= V3 hash). They MUST mismatch.
         vm.expectRevert(TradeValidator.EnvelopeEnforcementMismatch.selector);
-        TradingVault(payable(vault)).executePancakeswapV3SwapEnvelope(
-            params, env, p, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executePancakeswapV3SwapEnvelope(params, env, p, _sortedThreeValidators(), sigs, scores);
     }
 }

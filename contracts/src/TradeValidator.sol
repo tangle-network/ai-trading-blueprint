@@ -320,20 +320,19 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 deadline,
         uint256 actionKind
     ) external view returns (bytes32) {
-        bytes32 structHash =
-            keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, executionHash, vault, score, deadline, actionKind));
+        bytes32 structHash = keccak256(
+            abi.encode(VALIDATION_TYPEHASH, intentHash, executionHash, vault, score, deadline, actionKind)
+        );
         return _hashTypedDataV4(structHash);
     }
 
     /// @notice Backward-compatible digest helper for non-execution tests/tools.
     /// @dev Production vault execution signs a non-zero executionHash.
-    function computeDigest(
-        bytes32 intentHash,
-        address vault,
-        uint256 score,
-        uint256 deadline,
-        uint256 actionKind
-    ) external view returns (bytes32) {
+    function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind)
+        external
+        view
+        returns (bytes32)
+    {
         bytes32 structHash =
             keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, bytes32(0), vault, score, deadline, actionKind));
         return _hashTypedDataV4(structHash);
@@ -644,7 +643,9 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) internal view returns (bool approved, uint256 validCount) {
-        if (env.enforcementHash != expectedEnforcementHash) revert EnvelopeEnforcementMismatch();
+        if (env.enforcementHash != expectedEnforcementHash) {
+            revert EnvelopeEnforcementMismatch();
+        }
         if (
             env.version != 2 || env.vault == address(0) || env.chainId == 0 || env.expiresAt < block.timestamp
                 || env.minSignatures == 0 || approvalSigners.length < env.minSignatures
@@ -699,8 +700,7 @@ contract TradeValidator is EIP712, Ownable2Step {
             scoreSum += scores[i];
         }
 
-        uint256 required =
-            config.requiredSignatures > env.minSignatures ? config.requiredSignatures : env.minSignatures;
+        uint256 required = config.requiredSignatures > env.minSignatures ? config.requiredSignatures : env.minSignatures;
         approved = validCount >= required;
         if (approved && validCount > 0) {
             uint256 avgScore = scoreSum / validCount;
@@ -802,12 +802,23 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashAaveSupply(AaveSupplyEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.pool));
+        return
+            keccak256(
+                abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.pool)
+            );
     }
 
     function _hashAaveWithdraw(AaveWithdrawEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
-            abi.encode(AAVE_WITHDRAW_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.minHealthFactor, e.pool)
+            abi.encode(
+                AAVE_WITHDRAW_TYPEHASH,
+                e.asset,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.maxValue,
+                e.minHealthFactor,
+                e.pool
+            )
         );
     }
 
@@ -876,7 +887,9 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashMorphoRepay(MorphoRepayEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho));
+        return keccak256(
+            abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho)
+        );
     }
 
     // ── Public validate*Envelope (one per protocol-action) ──
@@ -888,9 +901,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool approved, uint256 validCount) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores);
     }
 
     function validateUniswapV4SwapEnvelope(
@@ -900,9 +911,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashUniswapV4Swap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashUniswapV4Swap(enf), approvalSigners, signatures, scores);
     }
 
     function validateAerodromeSwapEnvelope(
@@ -912,9 +921,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashAerodromeSwap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashAerodromeSwap(enf), approvalSigners, signatures, scores);
     }
 
     function validatePancakeswapV3SwapEnvelope(
@@ -936,9 +943,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashCurveStableSwap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashCurveStableSwap(enf), approvalSigners, signatures, scores);
     }
 
     function validateAaveSupplyEnvelope(
@@ -998,9 +1003,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashMorphoWithdraw(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashMorphoWithdraw(enf), approvalSigners, signatures, scores);
     }
 
     function validateMorphoBorrowEnvelope(

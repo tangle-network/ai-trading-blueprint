@@ -121,9 +121,8 @@ contract Attack_A1_ReentrantRouter is RedTeamBase {
         vm.prank(operator);
         // Outer call sees inner revert → target.call returns false → ExecutionFailed.
         vm.expectRevert(TradingVault.ExecutionFailed.selector);
-        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
-            params, env, enf, _sortedThreeValidators(), sigs, scores
-        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // NOTE: `router.attemptedReentry()` is NOT asserted because the storage
         //       write happened inside the reverted top-level tx and is rolled
