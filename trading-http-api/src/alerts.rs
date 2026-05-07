@@ -54,6 +54,35 @@ pub enum Alert {
     LearningStoreCorruption { bot_id: String, error: String },
 }
 
+/// Sanitize a string so it can be safely embedded inside a Slack mrkdwn
+/// code-span (`` `text` ``) without breaking out into surrounding mrkdwn.
+///
+/// Slack treats `` ` ``, `*`, `_`, `~`, `<`, `>` as formatting markers. An
+/// attacker-controlled `bot_id` like `` x`*evil*` `` would close the span
+/// and inject bold text. We replace the backtick with a Unicode `prime`
+/// glyph (visually similar but inert) and strip the other markers so ops
+/// staff can still read the field. Also caps length at 96 chars to keep
+/// summaries scannable. See audit finding #5.
+pub fn sanitize_for_slack(value: &str) -> String {
+    const MAX_LEN: usize = 96;
+    let cleaned: String = value
+        .chars()
+        .map(|c| match c {
+            '`' => '\u{2032}', // PRIME
+            '*' | '_' | '~' | '<' | '>' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    if cleaned.len() > MAX_LEN {
+        let mut truncated: String = cleaned.chars().take(MAX_LEN).collect();
+        truncated.push('…');
+        truncated
+    } else {
+        cleaned
+    }
+}
+
 impl Alert {
     /// Short, human-friendly label used in Slack and as PagerDuty `event_action`
     /// dedup_key prefix. Stable enum-style strings, never user-controlled.
@@ -78,26 +107,45 @@ impl Alert {
     }
 
     /// Single-line summary used as Slack `text` and PagerDuty `summary`.
+    /// Bot-controlled fields are passed through `sanitize_for_slack`.
     pub fn summary(&self) -> String {
         match self {
             Alert::EnvelopeRenewalFailed { bot_id, action } => {
-                format!("Envelope renewal failed for bot `{bot_id}`: {action:?}")
+                format!(
+                    "Envelope renewal failed for bot `{}`: {action:?}",
+                    sanitize_for_slack(bot_id)
+                )
             }
             Alert::EnvelopeNearlyExhausted {
                 bot_id,
                 consumed_pct,
-            } => format!("Envelope for bot `{bot_id}` is {consumed_pct:.1}% consumed"),
+            } => format!(
+                "Envelope for bot `{}` is {consumed_pct:.1}% consumed",
+                sanitize_for_slack(bot_id)
+            ),
             Alert::EnvelopeNearExpiry {
                 bot_id,
                 expires_in_seconds,
-            } => format!("Envelope for bot `{bot_id}` expires in {expires_in_seconds}s"),
+            } => format!(
+                "Envelope for bot `{}` expires in {expires_in_seconds}s",
+                sanitize_for_slack(bot_id)
+            ),
             Alert::TradeReverted {
                 bot_id,
                 protocol,
                 reason,
-            } => format!("Trade reverted for bot `{bot_id}` on `{protocol}`: {reason}"),
+            } => format!(
+                "Trade reverted for bot `{}` on `{}`: {}",
+                sanitize_for_slack(bot_id),
+                sanitize_for_slack(protocol),
+                sanitize_for_slack(reason)
+            ),
             Alert::LearningStoreCorruption { bot_id, error } => {
-                format!("Learning store corruption for bot `{bot_id}`: {error}")
+                format!(
+                    "Learning store corruption for bot `{}`: {}",
+                    sanitize_for_slack(bot_id),
+                    sanitize_for_slack(error)
+                )
             }
         }
     }
@@ -255,7 +303,11 @@ fn build_slack_payload<'a>(alert: &Alert, summary: &'a str) -> SlackPayload<'a> 
         "type": "context",
         "elements": [{
             "type": "mrkdwn",
-            "text": format!("*bot_id:* `{}` · *kind:* `{}`", alert.bot_id(), alert.kind())
+            "text": format!(
+                "*bot_id:* `{}` · *kind:* `{}`",
+                sanitize_for_slack(alert.bot_id()),
+                alert.kind() // static enum-name string; no escaping needed.
+            )
         }]
     }));
     SlackPayload {

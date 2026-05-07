@@ -62,6 +62,10 @@ pub fn spawn_envelope_watcher(state: Arc<MultiBotTradingState>) {
     let debounce = make_debounce_state();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(ENVELOPE_WATCHER_INTERVAL);
+        // SECURITY/correctness: prefer `Delay` over the default `Burst` so a
+        // slow tick (many bots × slow RPC) cannot queue duplicate ticks that
+        // double-fire alerts on the next cycle. See audit finding #7.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the immediate-fire so process startup doesn't generate a burst.
         interval.tick().await;
         loop {

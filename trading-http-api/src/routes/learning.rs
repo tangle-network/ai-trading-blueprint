@@ -96,6 +96,22 @@ pub struct StrategyOutcomeRequest {
     pub reward: f64,
 }
 
+/// Hard cap on `|reward|` accepted by `POST /learning/strategy-outcome`.
+///
+/// `BanditArm::record_outcome` updates a running mean. Without an upper
+/// bound on `reward`, a malicious agent could submit `1e308` once and
+/// pin the arm's mean reward at f64::MAX, dominating every UCB1 / Thompson
+/// arm-selection decision thereafter. 1e6 (`$1M PnL`) is two orders of
+/// magnitude above realistic per-trade outcomes; we reject the request
+/// rather than silently clamp so the agent learns about the violation.
+/// See `audits/http-api-concurrency-audit.md` finding #4.
+pub const MAX_BANDIT_REWARD: f64 = 1.0e6;
+
+/// Maximum length of the variant_id field. Longer than 256 chars almost
+/// certainly indicates an agent error or attempted abuse — the canonical
+/// strategy variants are short identifiers like `momentum-v2`.
+pub const MAX_VARIANT_ID_LEN: usize = 256;
+
 #[derive(Serialize)]
 pub struct StrategyOutcomeResponse {
     pub bot_id: String,
@@ -115,10 +131,22 @@ async fn post_strategy_outcome(
             "variant_id must not be empty".into(),
         ));
     }
+    if req.variant_id.len() > MAX_VARIANT_ID_LEN {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("variant_id must be ≤ {MAX_VARIANT_ID_LEN} chars"),
+        ));
+    }
     if !req.reward.is_finite() {
         return Err((
             StatusCode::BAD_REQUEST,
             "reward must be a finite number".into(),
+        ));
+    }
+    if req.reward.abs() > MAX_BANDIT_REWARD {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("reward magnitude must be ≤ {MAX_BANDIT_REWARD}"),
         ));
     }
 

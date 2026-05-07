@@ -41,7 +41,8 @@ use serde::Serialize;
 use trading_runtime::{EnvelopeBinding, EnvelopeError, SignedEnvelope};
 
 use crate::routes::envelope::{
-    envelope_consumed_amount, get_signed_envelope, max_total_for_enforcement, set_signed_envelope,
+    SetEnvelopeError, envelope_consumed_amount, get_signed_envelope, max_total_for_enforcement,
+    set_signed_envelope,
 };
 use crate::{BotContext, EnvelopeBotInfo, MultiBotTradingState};
 
@@ -350,12 +351,28 @@ async fn handle_single_sig(
         };
     }
 
-    if let Err(e) = set_signed_envelope(&bot.bot_id, &renewed) {
-        tracing::warn!(bot_id = %bot.bot_id, "failed to persist renewed envelope: {e}");
-        return RenewalAction::SingleSigOperatorKeyMismatch {
-            approval_signer,
-            operator_address,
-        };
+    match set_signed_envelope(&bot.bot_id, &renewed) {
+        Ok(()) => {}
+        Err(SetEnvelopeError::NonceConflict { current, attempted }) => {
+            // Race with PUT /envelope: the operator landed a higher-nonce
+            // envelope between our consumption read and the persist step.
+            // Drop our renewal — the operator's choice wins. The next cron
+            // tick will re-evaluate against whatever the operator wrote.
+            tracing::info!(
+                bot_id = %bot.bot_id,
+                current_nonce = current,
+                attempted_nonce = attempted,
+                "envelope renewal lost race to operator PUT — skipping"
+            );
+            return RenewalAction::Healthy;
+        }
+        Err(SetEnvelopeError::Internal(e)) => {
+            tracing::warn!(bot_id = %bot.bot_id, "failed to persist renewed envelope: {e}");
+            return RenewalAction::SingleSigOperatorKeyMismatch {
+                approval_signer,
+                operator_address,
+            };
+        }
     }
 
     tracing::info!(
@@ -465,6 +482,12 @@ pub fn spawn_renewal_cron(state: Arc<MultiBotTradingState>) {
     }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(RENEWAL_CRON_INTERVAL);
+        // SECURITY/correctness: tokio's default `Burst` behaviour fires every
+        // missed tick back-to-back when a slow tick (e.g. RPC stall) finishes,
+        // which can stampede the cron and emit duplicate alerts. `Delay`
+        // realigns the schedule and skips at most the still-running tick.
+        // See audit finding #7.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the immediate-fire tick on startup so booting an operator
         // doesn't generate a renewal storm if envelope state was just imported.
         interval.tick().await;

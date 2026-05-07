@@ -548,7 +548,18 @@ mod tests {
 /// Side effects: when `state.list_envelope_bots` is set, this also spawns the
 /// envelope renewal cron as a background task ticking every
 /// [`envelope_renewal::RENEWAL_CRON_INTERVAL`].
+/// Hard upper bound on request body size for the multi-bot HTTP API.
+///
+/// Axum's default is 2 MiB, applied per-extractor; we tighten to 256 KiB so
+/// a single envelope or learning-outcome POST cannot OOM the process.
+/// Envelopes themselves are < 8 KiB; quote responses < 4 KiB. 256 KiB gives
+/// a >32× safety margin while keeping the surface tight enough that a bad
+/// agent can't queue a 100 MiB JSON parse in tokio's worker pool. See
+/// `audits/http-api-concurrency-audit.md` finding #3.
+const MAX_BODY_BYTES: usize = 256 * 1024;
+
 pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
+    use axum::extract::DefaultBodyLimit;
     use axum::routing::get;
     if state.list_envelope_bots.is_some() {
         envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
@@ -585,6 +596,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
             auth::multi_bot_auth_middleware,
         ))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state);
 
     Router::new().merge(prom_router).merge(auth_router)

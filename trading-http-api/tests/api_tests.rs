@@ -6911,3 +6911,115 @@ async fn test_cex_coinbase_misconfigured_key_returns_503() {
 
     assert_eq!(resp.status(), 503);
 }
+
+// ── Audit: concurrent envelope writes ───────────────────────────────────────
+
+/// Stress test for `audits/http-api-concurrency-audit.md` finding #1/#2.
+///
+/// Spawns 10 tokio tasks, each PUTting an envelope at a distinct nonce.
+/// After the join, the on-disk envelope must
+///   1. Deserialize cleanly (atomic write — no truncated JSON).
+///   2. Carry a nonce equal to the highest one that successfully landed
+///      (monotonicity — no stale write clobbers a higher one).
+/// The router enforces nonce monotonicity, so concurrent PUTs at the same
+/// nonce should produce exactly one 200 + nine 409s; the file content
+/// must match the single accepted envelope.
+#[tokio::test]
+async fn test_concurrent_put_envelope_is_atomic_and_monotonic() {
+    ensure_state_dir();
+    let bot_id = format!("bot-concurrent-put-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("concurrent-put-token", bot.clone());
+    let app = build_multi_bot_router(state);
+
+    // Pre-seed nonce=0 so the first concurrent batch is the contested one.
+    {
+        let mut seed = signed_envelope_for_bot(&bot);
+        seed.nonce = 0;
+        resign_envelope(&mut seed);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/envelope")
+                    .header("authorization", "Bearer concurrent-put-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&seed).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "seed PUT must succeed");
+    }
+
+    // Fire 10 concurrent PUTs. Each task picks a unique nonce in [1..=10]
+    // so we can compute the expected highest-accepted nonce.
+    let mut handles = Vec::new();
+    for nonce in 1u64..=10 {
+        let app = app.clone();
+        let bot = bot.clone();
+        handles.push(tokio::spawn(async move {
+            let mut env = signed_envelope_for_bot(&bot);
+            env.nonce = nonce;
+            resign_envelope(&mut env);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/envelope")
+                        .header("authorization", "Bearer concurrent-put-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&env).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (nonce, resp.status())
+        }));
+    }
+
+    let mut accepted_nonces: Vec<u64> = Vec::new();
+    for h in handles {
+        let (nonce, status) = h.await.unwrap();
+        // 200 (accepted) or 409 (rejected because a higher nonce already
+        // landed). Anything else (5xx, 400, etc.) means the route bricked
+        // under contention — that's the failure this test is hunting.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "unexpected status {status} for nonce={nonce}"
+        );
+        if status == StatusCode::OK {
+            accepted_nonces.push(nonce);
+        }
+    }
+
+    // At least one PUT must have landed (10 was tried last in the natural
+    // ordering — but the actual happy-path count depends on scheduling).
+    assert!(!accepted_nonces.is_empty(), "no PUTs landed");
+
+    // GET the envelope back; it must deserialize cleanly and its nonce must
+    // be the largest one we observed in the accepted set.
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer concurrent-put-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 200);
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    // The atomic-write check: parse must succeed, never see a truncated blob.
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).expect("envelope JSON must round-trip");
+
+    let stored_nonce = value["nonce"].as_u64().expect("nonce field");
+    let max_accepted = *accepted_nonces.iter().max().unwrap();
+    assert_eq!(
+        stored_nonce, max_accepted,
+        "stored nonce must equal max accepted nonce; accepted={accepted_nonces:?}"
+    );
+}

@@ -85,6 +85,11 @@ pub fn load(bot_id: &str) -> BotLearningState {
 
 /// Persist `state` for `bot_id`. Write errors are surfaced to the caller so
 /// hooks can downgrade them to warnings without losing visibility.
+///
+/// Writes are atomic: data is staged to a sibling tempfile and `rename`d
+/// into place. Without this, a crash mid-write would leave a truncated
+/// JSON blob that `load` silently treats as the empty default state — i.e.
+/// a single bad write would erase the bandit's history. See audit #2.
 pub fn save(bot_id: &str, state: &BotLearningState) -> Result<(), String> {
     let _guard = WRITE_LOCK
         .lock()
@@ -93,7 +98,14 @@ pub fn save(bot_id: &str, state: &BotLearningState) -> Result<(), String> {
     std::fs::create_dir_all(learning_dir()).map_err(|e| format!("create learning dir: {e}"))?;
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| format!("serialize learning state: {e}"))?;
-    std::fs::write(learning_path(bot_id), json).map_err(|e| format!("write learning state: {e}"))
+    let target = learning_path(bot_id);
+    let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp, json).map_err(|e| format!("write learning state: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("rename learning state: {e}"));
+    }
+    Ok(())
 }
 
 /// Read-modify-write helper. The closure receives the current state and may
