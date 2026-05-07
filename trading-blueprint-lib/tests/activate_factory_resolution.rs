@@ -71,6 +71,7 @@ fn make_provision_request(
         max_lifetime_days: 0,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 

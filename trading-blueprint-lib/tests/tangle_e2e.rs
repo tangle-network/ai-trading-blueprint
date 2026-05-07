@@ -135,6 +135,7 @@ async fn test_tangle_trading_lifecycle() -> Result<()> {
             max_lifetime_days: 30,
             validator_service_ids: vec![],
             max_collateral_bps: U256::from(0),
+            validation_trust: 0,
         }
         .abi_encode();
 
@@ -532,6 +533,7 @@ async fn test_multi_strategy_provision_via_tangle() -> Result<()> {
                 max_lifetime_days: 30,
                 validator_service_ids: vec![],
                 max_collateral_bps: U256::from(0),
+                validation_trust: 0,
             }
             .abi_encode();
 

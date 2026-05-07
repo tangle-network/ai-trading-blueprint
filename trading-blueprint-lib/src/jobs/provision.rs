@@ -858,7 +858,22 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
+    let validation_trust = match request.validation_trust {
+        0 => None, // default → PerTrade
+        1 => Some(trading_runtime::ValidationTrust::Envelope),
+        2 => Some(trading_runtime::ValidationTrust::SelfOperated),
+        other => return Err(format!("Invalid validation_trust discriminant {other}")),
+    };
     Ok(TangleResult(
-        provision_core(request, None, call_id, service_id, caller_str, None, None).await?,
+        provision_core(
+            request,
+            None,
+            call_id,
+            service_id,
+            caller_str,
+            None,
+            validation_trust,
+        )
+        .await?,
     ))
 }

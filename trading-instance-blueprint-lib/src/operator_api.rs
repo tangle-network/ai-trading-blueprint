@@ -1864,6 +1864,7 @@ async fn provision_bot(
         max_lifetime_days: 30,
         validator_service_ids: body.validator_service_ids.unwrap_or_default(),
         max_collateral_bps: U256::ZERO,
+        validation_trust: 0,
     };
 
     // Auto-detect TEE backend (None for plain instance, Some for TEE instance)

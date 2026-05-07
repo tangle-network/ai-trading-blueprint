@@ -141,6 +141,7 @@ interface InstanceServiceConfigOptions extends StrategyConfigOptions {
     memoryMb: bigint;
     maxLifetimeDays: bigint;
   };
+  validationTrust?: ValidationTrust;
 }
 
 type ParsedServiceIds =
@@ -663,11 +664,12 @@ export function buildInstanceServiceConfig({
   targetChainId,
   assetAddress,
   blueprintDefaults,
+  validationTrust,
   ...strategyConfigOptions
 }: InstanceServiceConfigOptions): `0x${string}` {
   return encodeAbiParameters(
     parseAbiParameters(
-      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256, uint8)',
     ),
     [
       [
@@ -689,9 +691,23 @@ export function buildInstanceServiceConfig({
         blueprintDefaults.maxLifetimeDays,
         isInstance ? validatorServiceIds : [],
         collateralBps,
+        validationTrustToDiscriminant(validationTrust),
       ],
     ],
   );
+}
+
+/** Map the UI's validationTrust string to the on-chain `uint8` discriminant.
+ *  Must match the `validation_trust` field in `TradingProvisionRequest` (lib.rs). */
+function validationTrustToDiscriminant(value: string | undefined): number {
+  switch (value) {
+    case 'envelope':
+      return 1;
+    case 'self_operated':
+      return 2;
+    default:
+      return 0; // PerTrade (default)
+  }
 }
 
 export function resolveExecutionTargetProvisionConfig(
@@ -2389,6 +2405,7 @@ export default function ProvisionPage() {
       assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
       blueprintDefaults: bp.defaults,
+      validationTrust,
     });
 
     const quoteTuples = quotes.map((q) => ({

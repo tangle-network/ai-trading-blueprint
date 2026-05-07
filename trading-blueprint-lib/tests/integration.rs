@@ -53,6 +53,7 @@ fn make_provision_request_with_strategy_config(
         max_lifetime_days: 0,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -78,6 +79,7 @@ fn make_provision_request_with_lifetime(
         max_lifetime_days,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
