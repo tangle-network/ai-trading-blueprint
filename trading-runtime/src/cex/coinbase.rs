@@ -193,8 +193,8 @@ impl DirectApiVenue for CoinbaseClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let available = parse_decimal_from_value_obj(acc.get("available_balance"))
-                    .unwrap_or_default();
+                let available =
+                    parse_decimal_from_value_obj(acc.get("available_balance")).unwrap_or_default();
                 let hold = parse_decimal_from_value_obj(acc.get("hold")).unwrap_or_default();
                 if asset.is_empty() {
                     continue;
@@ -216,10 +216,7 @@ impl DirectApiVenue for CoinbaseClient {
         })
     }
 
-    async fn get_open_orders(
-        &self,
-        symbol: Option<&str>,
-    ) -> Result<Vec<CexOpenOrder>, CexError> {
+    async fn get_open_orders(&self, symbol: Option<&str>) -> Result<Vec<CexOpenOrder>, CexError> {
         let mut path = "/api/v3/brokerage/orders/historical/batch?order_status=OPEN".to_string();
         if let Some(s) = symbol {
             super::ensure_nonempty_symbol(s)?;
@@ -510,9 +507,7 @@ fn parse_coinbase_status(s: Option<&str>) -> CexOrderStatus {
     }
 }
 
-fn extract_size_price(
-    order: &serde_json::Value,
-) -> (Decimal, Decimal, Option<Decimal>) {
+fn extract_size_price(order: &serde_json::Value) -> (Decimal, Decimal, Option<Decimal>) {
     let qty = parse_decimal_str(
         order
             .get("order_configuration")
@@ -603,7 +598,9 @@ mod tests {
             base_url: None,
         };
         let client = CoinbaseClient::new(cfg).unwrap();
-        let token = client.build_jwt("GET", "/api/v3/brokerage/accounts").unwrap();
+        let token = client
+            .build_jwt("GET", "/api/v3/brokerage/accounts")
+            .unwrap();
 
         // Decode header without verification to inspect kid/alg.
         let parts: Vec<&str> = token.split('.').collect();
@@ -613,10 +610,7 @@ mod tests {
             .unwrap();
         let header: serde_json::Value = serde_json::from_slice(&header_json).unwrap();
         assert_eq!(header["alg"], "ES256");
-        assert_eq!(
-            header["kid"],
-            "organizations/test-org/apiKeys/test-key"
-        );
+        assert_eq!(header["kid"], "organizations/test-org/apiKeys/test-key");
 
         // Decode + verify the JWT against the matching public key.
         let key = DecodingKey::from_ec_pem(TEST_PUBLIC_KEY_PEM.as_bytes()).unwrap();
@@ -729,8 +723,7 @@ mod tests {
             "success": false,
             "error_response": { "message": "INSUFFICIENT_FUND" }
         });
-        let err = parse_create_order_response(raw, "BTC-USD")
-            .expect_err("expected rejection");
+        let err = parse_create_order_response(raw, "BTC-USD").expect_err("expected rejection");
         match err {
             CexError::OrderRejected { reason } => assert!(reason.contains("INSUFFICIENT_FUND")),
             other => panic!("expected OrderRejected, got {other:?}"),
@@ -740,16 +733,16 @@ mod tests {
     #[test]
     fn translate_response_unauthorized_is_auth_failed() {
         let body = br#"{"error":"unauthorized","message":"bad signature"}"#;
-        let err = translate_response(StatusCode::UNAUTHORIZED, body)
-            .expect_err("expected auth error");
+        let err =
+            translate_response(StatusCode::UNAUTHORIZED, body).expect_err("expected auth error");
         assert!(matches!(err, CexError::AuthFailed(_)), "{err:?}");
     }
 
     #[test]
     fn translate_response_invalid_product_is_invalid_symbol() {
         let body = br#"{"error":"INVALID_ARGUMENT","message":"Unknown product"}"#;
-        let err = translate_response(StatusCode::BAD_REQUEST, body)
-            .expect_err("expected invalid symbol");
+        let err =
+            translate_response(StatusCode::BAD_REQUEST, body).expect_err("expected invalid symbol");
         assert!(matches!(err, CexError::InvalidSymbol(_)), "{err:?}");
     }
 

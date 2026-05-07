@@ -239,10 +239,7 @@ pub trait DirectApiVenue: Send + Sync {
 
     async fn get_account(&self) -> Result<CexAccountInfo, CexError>;
 
-    async fn get_open_orders(
-        &self,
-        symbol: Option<&str>,
-    ) -> Result<Vec<CexOpenOrder>, CexError>;
+    async fn get_open_orders(&self, symbol: Option<&str>) -> Result<Vec<CexOpenOrder>, CexError>;
 
     async fn get_ticker(&self, symbol: &str) -> Result<CexTicker, CexError>;
 }
@@ -308,7 +305,9 @@ mod tests {
         let cases: Vec<(CexError, StatusCode)> = vec![
             (CexError::AuthFailed("x".into()), StatusCode::UNAUTHORIZED),
             (
-                CexError::RateLimited { retry_after_ms: 100 },
+                CexError::RateLimited {
+                    retry_after_ms: 100,
+                },
                 StatusCode::TOO_MANY_REQUESTS,
             ),
             (

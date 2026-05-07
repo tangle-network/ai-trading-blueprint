@@ -172,7 +172,9 @@ pub fn max_total_for_enforcement(
     match enforcement {
         Some(UniswapV3Swap(e)) => e.max_total_amount_in,
         Some(UniswapV4Swap(e)) => e.max_total_amount_in,
+        Some(PancakeswapV3Swap(e)) => e.max_total_amount_in,
         Some(AerodromeSwap(e)) => e.max_total_amount_in,
+        Some(CurveStableSwap(e)) => e.max_total_amount_in,
         Some(AaveSupply(e)) => e.max_total_amount,
         Some(AaveWithdraw(e)) => e.max_total_amount,
         Some(AaveBorrow(e)) => e.max_total_amount,
