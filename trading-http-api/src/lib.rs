@@ -567,6 +567,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
         .merge(routes::learning::multi_bot_router())
+        .merge(routes::solana::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())
         .merge(routes::supported_assets::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(

@@ -15,6 +15,7 @@ pub mod market_data;
 pub mod metrics;
 pub mod portfolio;
 pub mod session;
+pub mod solana;
 pub mod strategy;
 pub mod supported_assets;
 pub mod trades;
