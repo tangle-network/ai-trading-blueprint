@@ -70,21 +70,21 @@ contract VerifyEnvelopeV3 is Script {
             "UNISWAP_V3_SWAP_TYPEHASH",
             tv.UNISWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             )
         );
         _expect(
             "UNISWAP_V4_SWAP_TYPEHASH",
             tv.UNISWAP_V4_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)"
+                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
             )
         );
         _expect(
             "AERODROME_SWAP_TYPEHASH",
             tv.AERODROME_SWAP_TYPEHASH(),
             keccak256(
-                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
+                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             )
         );
         _expect(

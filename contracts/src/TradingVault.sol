@@ -1708,6 +1708,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             params.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
                 || uint256(s.fee) != enf.feeTier || s.recipient != address(this) || params.outputToken != enf.tokenOut
                 || s.deadline < block.timestamp || params.deadline < block.timestamp
+                // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
+                || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
@@ -1745,6 +1747,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || int256(s.poolKey.tickSpacing) != enf.tickSpacing || s.poolKey.hooks != enf.hooks
                 || s.zeroForOne != enf.zeroForOne || params.outputToken != tokenOut
                 || urDeadline < block.timestamp || params.deadline < block.timestamp
+                // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
+                // hook callback bytes through the V4 swap action.
+                || keccak256(s.hookData) != enf.hookDataHash
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (uint256(s.amountIn) * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
@@ -1777,6 +1782,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 || int256(s.tickSpacing) != enf.tickSpacing || s.recipient != address(this)
                 || params.outputToken != enf.tokenOut || s.deadline < block.timestamp
                 || params.deadline < block.timestamp
+                // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
+                || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
@@ -1813,6 +1820,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             params.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
                 || uint256(s.fee) != enf.feeTier || s.recipient != address(this) || params.outputToken != enf.tokenOut
                 || s.deadline < block.timestamp || params.deadline < block.timestamp
+                // Audit M-2: pin sqrtPriceLimitX96 to the signed enforcement.
+                || s.sqrtPriceLimitX96 != enf.sqrtPriceLimitX96
         ) revert EnvelopeCheckFailed();
         uint256 reqMinOut = (s.amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {

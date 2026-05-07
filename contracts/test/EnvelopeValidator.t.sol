@@ -95,7 +95,8 @@ contract EnvelopeValidatorTest is Setup {
             minOutputPerInput: 2_900e6,
             router: address(0xE592427A0AEce92De3Edee1F18E0157C05861564),
             tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
-            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
+            sqrtPriceLimitX96: 0
         });
     }
 
@@ -110,7 +111,8 @@ contract EnvelopeValidatorTest is Setup {
             maxSingleAmountIn: 1e18,
             maxTotalAmountIn: 10e18,
             minOutputPerInput: 2_900e6,
-            universalRouter: address(0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af)
+            universalRouter: address(0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af),
+            hookDataHash: keccak256("")
         });
     }
 
@@ -122,7 +124,8 @@ contract EnvelopeValidatorTest is Setup {
             router: address(0xBe6d8F0d05Cc4be24D5167A3eF062215Be6D8f0d),
             tickSpacing: 60,
             tokenIn: address(0x4200000000000000000000000000000000000006),
-            tokenOut: address(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)
+            tokenOut: address(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913),
+            sqrtPriceLimitX96: 0
         });
     }
 
@@ -134,7 +137,8 @@ contract EnvelopeValidatorTest is Setup {
             minOutputPerInput: 2_900e6,
             router: address(0x13f4EA83D0bd40E75C8222255bc855a974568Dd4),
             tokenIn: address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2),
-            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+            tokenOut: address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),
+            sqrtPriceLimitX96: 0
         });
     }
 
@@ -367,6 +371,43 @@ contract EnvelopeValidatorTest is Setup {
         tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
+    /// @notice Audit fix L-1 — `_validateEnvelopeWithEnforcementHash` must
+    ///         reject any envelope whose `chainId` differs from
+    ///         `block.chainid`. Replay protection is already provided by
+    ///         the EIP-712 domain separator, but the validator's `view`
+    ///         path otherwise returns `(true, ...)` for a wrong-chain
+    ///         envelope, which a simulator could misread as
+    ///         "ready to execute".
+    function test_revert_chain_id_not_block_chainid() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        env.chainId = uint64(block.chainid + 1);
+        // The signed digest still matches because `_signEnvelope` uses
+        // `tv.envelopeDigest(env)`, which encodes the (now-tampered)
+        // chainId into the message. The structural revert must fire
+        // before the signature loop.
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        vm.expectRevert(TradeValidator.InvalidEnvelope.selector);
+        tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
+    /// @notice Audit fix L-2 — `_validateEnvelopeWithEnforcementHash` must
+    ///         reject envelopes whose `issuedAt > block.timestamp`. Without
+    ///         this check the validator's `view` path approved
+    ///         future-dated envelopes that the executor would later
+    ///         reject — a UX inconsistency a UI could misread.
+    function test_revert_future_issued_at() public {
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
+        TradeValidator.Envelope memory env = _baseEnvelope(tv.hashUniswapV3Swap(enf));
+        env.issuedAt = uint64(block.timestamp + 1000);
+        // Keep `expiresAt` strictly after `issuedAt` so the existing
+        // `expiresAt < block.timestamp` clause does not fire first.
+        env.expiresAt = uint64(block.timestamp + 2000);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
+        vm.expectRevert(TradeValidator.InvalidEnvelope.selector);
+        tv.validateUniswapV3SwapEnvelope(env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
     function test_revert_wrongEnforcementHash() public {
         TradeValidator.UniswapV3SwapEnforcement memory enf = _uniV3();
         TradeValidator.UniswapV3SwapEnforcement memory other = _uniV3();
@@ -457,7 +498,8 @@ contract EnvelopeValidatorTest is Setup {
             minOutputPerInput: u.minOutputPerInput,
             router: u.router,
             tokenIn: u.tokenIn,
-            tokenOut: u.tokenOut
+            tokenOut: u.tokenOut,
+            sqrtPriceLimitX96: u.sqrtPriceLimitX96
         });
         bytes32 uniHash = tv.hashUniswapV3Swap(u);
         bytes32 pancakeHash = tv.hashPancakeswapV3Swap(p);

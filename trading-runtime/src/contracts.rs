@@ -108,6 +108,7 @@ sol! {
             address router;
             address tokenIn;
             address tokenOut;
+            uint160 sqrtPriceLimitX96;
         }
 
         struct UniswapV4SwapEnforcement {
@@ -121,6 +122,7 @@ sol! {
             uint256 maxTotalAmountIn;
             uint256 minOutputPerInput;
             address universalRouter;
+            bytes32 hookDataHash;
         }
 
         struct AerodromeSwapEnforcement {
@@ -131,6 +133,7 @@ sol! {
             int256 tickSpacing;
             address tokenIn;
             address tokenOut;
+            uint160 sqrtPriceLimitX96;
         }
 
         struct PancakeswapV3SwapEnforcement {
@@ -141,6 +144,7 @@ sol! {
             address router;
             address tokenIn;
             address tokenOut;
+            uint160 sqrtPriceLimitX96;
         }
 
         struct CurveStableSwapEnforcement {

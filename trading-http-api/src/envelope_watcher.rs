@@ -492,6 +492,7 @@ mod tests {
                     max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
                     max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
                     min_output_per_input: U256::from(2_900_000_000u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: vec![],

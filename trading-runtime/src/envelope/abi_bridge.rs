@@ -17,6 +17,16 @@ use crate::envelope::{
     UniswapV3SwapEnforcement, UniswapV4SwapEnforcement,
 };
 
+
+/// Truncate a U256 to a uint160 (alloy `Uint<160, 3>`). Used for `sqrtPriceLimitX96`
+/// fields; off-chain we store as U256 for simplicity, on-chain it's uint160.
+fn u256_to_uint160(v: U256) -> alloy::primitives::Uint<160, 3> {
+    let bytes = v.to_le_bytes::<32>();
+    let mut le160 = [0u8; 20];
+    le160.copy_from_slice(&bytes[..20]);
+    alloy::primitives::Uint::<160, 3>::from_le_bytes(le160)
+}
+
 /// Convert a SignedEnvelope into the Solidity `Envelope` struct expected on-chain.
 /// `policyHash` and `enforcementHash` are computed from the off-chain authoritative
 /// types so the on-chain hash equals the digest the validators signed.
@@ -162,6 +172,7 @@ impl UniswapV3SwapEnforcement {
             router: self.router,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
         }
     }
 }
@@ -180,6 +191,7 @@ impl UniswapV4SwapEnforcement {
             maxTotalAmountIn: self.max_total_amount_in,
             minOutputPerInput: self.min_output_per_input,
             universalRouter: self.universal_router,
+            hookDataHash: self.hook_data_hash,
         }
     }
 }
@@ -195,6 +207,7 @@ impl AerodromeSwapEnforcement {
             tickSpacing: tick,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
         }
     }
 }
@@ -209,6 +222,7 @@ impl PancakeswapV3SwapEnforcement {
             router: self.router,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
         }
     }
 }
@@ -603,6 +617,7 @@ mod tests {
                     max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
                     max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
                     min_output_per_input: U256::from(2_900_000_000u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: vec![],
@@ -650,6 +665,7 @@ mod tests {
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
                     min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
                 }),
             ),
             (
@@ -668,6 +684,7 @@ mod tests {
                         "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
                     )
                     .unwrap(),
+                    hook_data_hash: FixedBytes::ZERO,
                 }),
             ),
             (
@@ -681,6 +698,7 @@ mod tests {
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
                     min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
                 }),
             ),
             (
@@ -694,6 +712,7 @@ mod tests {
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
                     min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
                 }),
             ),
             (
@@ -866,6 +885,7 @@ mod tests {
                     max_single_amount_in: U256::from(1u128),
                     max_total_amount_in: U256::from(2u128),
                     min_output_per_input: U256::from(1u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: vec![],

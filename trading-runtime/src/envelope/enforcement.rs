@@ -20,13 +20,13 @@ use super::error::EnvelopeError;
 
 // ── EIP-712 type strings (canonical, alphabetical fields per EIP-712 spec) ──
 
-pub(super) const UNISWAP_V3_SWAP_TYPE: &str = "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)";
+pub(super) const UNISWAP_V3_SWAP_TYPE: &str = "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
-pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)";
+pub(super) const UNISWAP_V4_SWAP_TYPE: &str = "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)";
 
-pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)";
+pub(super) const AERODROME_SWAP_TYPE: &str = "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
-pub(super) const PANCAKESWAP_V3_SWAP_TYPE: &str = "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)";
+pub(super) const PANCAKESWAP_V3_SWAP_TYPE: &str = "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)";
 
 /// Curve StableSwap is index-based: caller passes int128 i (token-in) and int128 j (token-out)
 /// rather than addresses. We pin the pool, the indices, and the asset addresses (for the agent's
@@ -61,6 +61,10 @@ pub struct UniswapV3SwapEnforcement {
     pub max_total_amount_in: U256,
     /// Minimum output amount per 1e18 input units (anti-MEV / anti-bad-routing).
     pub min_output_per_input: U256,
+    /// Audit M-2: pin the V3 sqrtPriceLimitX96 (uint160). 0 disables the price-limit
+    /// check on-chain — set explicitly to avoid griefing via tight limits.
+    #[serde(default)]
+    pub sqrt_price_limit_x96: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +87,11 @@ pub struct UniswapV4SwapEnforcement {
     /// Universal Router 2.0 address — vault submits the V4 swap via UR's
     /// V4_SWAP_EXACT_IN_SINGLE command path.
     pub universal_router: Address,
+    /// Audit M-2: keccak256 of the canonical hookData blob. The on-chain executor
+    /// asserts `keccak256(s.hookData) == hookDataHash`; default keccak256("")
+    /// (empty hook data) for the common no-hook case.
+    #[serde(default)]
+    pub hook_data_hash: B256,
 }
 
 /// PancakeSwap V3 — Uniswap V3 fork on BSC + several other chains. Identical
@@ -96,6 +105,9 @@ pub struct PancakeswapV3SwapEnforcement {
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
     pub min_output_per_input: U256,
+    /// Audit M-2: pin the V3 sqrtPriceLimitX96 (uint160).
+    #[serde(default)]
+    pub sqrt_price_limit_x96: U256,
 }
 
 /// Curve StableSwap — index-based exchange via `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)`.
@@ -140,6 +152,9 @@ pub struct AerodromeSwapEnforcement {
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
     pub min_output_per_input: U256,
+    /// Audit M-2: pin the Slipstream sqrtPriceLimitX96 (uint160).
+    #[serde(default)]
+    pub sqrt_price_limit_x96: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -353,6 +368,7 @@ impl UniswapV3SwapEnforcement {
             self.router,
             self.token_in,
             self.token_out,
+            self.sqrt_price_limit_x96,
         )))
     }
 }
@@ -376,6 +392,7 @@ impl UniswapV4SwapEnforcement {
             self.max_total_amount_in,
             self.min_output_per_input,
             self.universal_router,
+            self.hook_data_hash,
         )))
     }
 }
@@ -391,6 +408,7 @@ impl PancakeswapV3SwapEnforcement {
             self.router,
             self.token_in,
             self.token_out,
+            self.sqrt_price_limit_x96,
         )))
     }
 }
@@ -438,6 +456,7 @@ impl AerodromeSwapEnforcement {
             tick,
             self.token_in,
             self.token_out,
+            self.sqrt_price_limit_x96,
         )))
     }
 }
@@ -563,6 +582,7 @@ mod tests {
             max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
             max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
             min_output_per_input: U256::from(2_900_000_000u128),
+            sqrt_price_limit_x96: U256::ZERO,
         })
     }
 
@@ -583,6 +603,7 @@ mod tests {
             max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
             max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
             min_output_per_input: U256::from(2_900_000_000u128),
+            sqrt_price_limit_x96: U256::ZERO,
         });
         assert_ne!(uni.struct_hash().unwrap(), aero.struct_hash().unwrap());
     }
@@ -673,6 +694,7 @@ mod tests {
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
             min_output_per_input: U256::from(1u64),
+            sqrt_price_limit_x96: U256::ZERO,
         };
         let pos = AerodromeSwapEnforcement {
             tick_spacing: 100,
@@ -728,6 +750,7 @@ mod tests {
                 max_total_amount_in: amt_two,
                 min_output_per_input: amt_one,
                 universal_router: addr("0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"),
+                hook_data_hash: B256::ZERO,
             }),
             EnvelopeEnforcement::AerodromeSwap(AerodromeSwapEnforcement {
                 router: addr("0xBe6d8F0d05Cc4be24D5167A3eF062215Be6D8f0d"),
@@ -737,6 +760,7 @@ mod tests {
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
                 min_output_per_input: amt_one,
+                sqrt_price_limit_x96: U256::ZERO,
             }),
             EnvelopeEnforcement::PancakeswapV3Swap(PancakeswapV3SwapEnforcement {
                 router: addr("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"),
@@ -746,6 +770,7 @@ mod tests {
                 max_single_amount_in: amt_one,
                 max_total_amount_in: amt_two,
                 min_output_per_input: amt_one,
+                sqrt_price_limit_x96: U256::ZERO,
             }),
             EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
                 pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
@@ -842,6 +867,7 @@ mod tests {
             max_single_amount_in: U256::from(1u64),
             max_total_amount_in: U256::from(2u64),
             min_output_per_input: U256::from(1u64),
+            sqrt_price_limit_x96: U256::ZERO,
         };
         let uni = UniswapV3SwapEnforcement {
             router: pancake.router,
@@ -851,6 +877,7 @@ mod tests {
             max_single_amount_in: pancake.max_single_amount_in,
             max_total_amount_in: pancake.max_total_amount_in,
             min_output_per_input: pancake.min_output_per_input,
+            sqrt_price_limit_x96: pancake.sqrt_price_limit_x96,
         };
         assert_ne!(pancake.struct_hash(), uni.struct_hash());
     }
@@ -908,6 +935,7 @@ mod tests {
             max_single_amount_in: U256::from(10u64),
             max_total_amount_in: U256::from(100u64),
             min_output_per_input: U256::from(1u64),
+            sqrt_price_limit_x96: U256::ZERO,
         });
         let c = EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
             pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),

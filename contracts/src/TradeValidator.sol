@@ -339,16 +339,16 @@ contract TradeValidator is EIP712, Ownable2Step {
     );
 
     bytes32 public constant UNISWAP_V3_SWAP_TYPEHASH = keccak256(
-        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant UNISWAP_V4_SWAP_TYPEHASH = keccak256(
-        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)"
+        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
     );
     bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
-        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
+        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant PANCAKESWAP_V3_SWAP_TYPEHASH = keccak256(
-        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant CURVE_STABLE_SWAP_TYPEHASH = keccak256(
         "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
@@ -404,6 +404,9 @@ contract TradeValidator is EIP712, Ownable2Step {
         address router;
         address tokenIn;
         address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 so an operator cannot grief by submitting
+        // a tight price-limit. 0 disables the price-limit (default) on-chain.
+        uint160 sqrtPriceLimitX96;
     }
 
     struct UniswapV4SwapEnforcement {
@@ -417,6 +420,9 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 maxTotalAmountIn;
         uint256 minOutputPerInput;
         address universalRouter;
+        // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
+        // hook callback bytes through the V4 swap action.
+        bytes32 hookDataHash;
     }
 
     struct AerodromeSwapEnforcement {
@@ -427,6 +433,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         int256 tickSpacing;
         address tokenIn;
         address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 (Aerodrome Slipstream uses the same V3-style limit).
+        uint160 sqrtPriceLimitX96;
     }
 
     struct PancakeswapV3SwapEnforcement {
@@ -437,6 +445,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         address router;
         address tokenIn;
         address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 (Pancake reuses the V3 calldata layout).
+        uint160 sqrtPriceLimitX96;
     }
 
     /// @dev Curve StableSwap is index-based: caller passes signed int128 i (token-in)
@@ -595,6 +605,18 @@ contract TradeValidator is EIP712, Ownable2Step {
                 || env.minSignatures == 0 || approvalSigners.length < env.minSignatures
                 || signatures.length != scores.length || signatures.length == 0
         ) revert InvalidEnvelope();
+        // Audit fix L-1: enforce strict chainId equality with the executing
+        // chain. The EIP-712 domain separator already binds the digest, but
+        // a `view` call to `validateXxxEnvelope` would silently approve a
+        // wrong-chain envelope on a fork — surprising for off-chain
+        // simulators. Failing fast here matches the executor's
+        // `_checkEnvelopeBasics`.
+        if (env.chainId != block.chainid) revert InvalidEnvelope();
+        // Audit fix L-2: future-dated envelopes must not validate. The
+        // executor's `_checkEnvelopeBasics` already rejects them, but the
+        // validator's `view`-only path otherwise returned `(true, ...)`,
+        // which a UI/simulator could misinterpret as "ready to execute now".
+        if (env.issuedAt > block.timestamp) revert InvalidEnvelope();
         if (_hashApprovalSigners(approvalSigners) != env.signersHash) revert InvalidEnvelope();
 
         VaultConfig storage config = _vaultConfigs[env.vault];
@@ -645,7 +667,8 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.minOutputPerInput,
                 e.router,
                 e.tokenIn,
-                e.tokenOut
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
             )
         );
     }
@@ -663,7 +686,8 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
                 e.minOutputPerInput,
-                e.universalRouter
+                e.universalRouter,
+                e.hookDataHash
             )
         );
     }
@@ -678,7 +702,8 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.router,
                 e.tickSpacing,
                 e.tokenIn,
-                e.tokenOut
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
             )
         );
     }
@@ -693,7 +718,8 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.minOutputPerInput,
                 e.router,
                 e.tokenIn,
-                e.tokenOut
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
             )
         );
     }

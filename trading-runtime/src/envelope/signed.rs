@@ -1068,6 +1068,7 @@ mod tests {
         use crate::envelope::{EnvelopeEnforcement, UniswapV3SwapEnforcement};
         use std::str::FromStr;
         EnvelopeEnforcement::UniswapV3Swap(UniswapV3SwapEnforcement {
+            sqrt_price_limit_x96: U256::ZERO,
             router: alloy::primitives::Address::from_str(
                 "0xE592427A0AEce92De3Edee1F18E0157C05861564",
             )

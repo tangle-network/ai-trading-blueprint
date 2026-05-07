@@ -125,28 +125,28 @@ contract EnvelopeInvariantsTest is Setup {
         assertEq(
             tradeValidator.UNISWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+                "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "UNISWAP_V3_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.UNISWAP_V4_SWAP_TYPEHASH(),
             keccak256(
-                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)"
+                "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
             ),
             "UNISWAP_V4_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.AERODROME_SWAP_TYPEHASH(),
             keccak256(
-                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
+                "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "AERODROME_SWAP_TYPEHASH"
         );
         assertEq(
             tradeValidator.PANCAKESWAP_V3_SWAP_TYPEHASH(),
             keccak256(
-                "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+                "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
             ),
             "PANCAKESWAP_V3_SWAP_TYPEHASH"
         );
@@ -225,7 +225,8 @@ contract EnvelopeInvariantsTest is Setup {
             minOutputPerInput: 2_900e6,
             router: address(0xdeadbeef),
             tokenIn: address(tokenA),
-            tokenOut: address(tokenB)
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
         });
         TradeValidator.Envelope memory env = _baseEnvelope(tradeValidator.hashUniswapV3Swap(enf), vault);
 
@@ -629,7 +630,8 @@ contract EnvelopeAllowanceResetTest is Setup {
             minOutputPerInput: 1e18,
             router: address(router),
             tokenIn: address(tokenA),
-            tokenOut: address(tokenB)
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
         });
         TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
 
@@ -732,6 +734,258 @@ contract EnvelopeAllowanceResetTest is Setup {
             tokenA.allowance(vault, address(target)),
             0,
             "M-1: residual allowance must be 0 after executeWithApprovals"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit M-2: pin sqrtPriceLimitX96 and (V4) hookData hash to the signed enforcement.
+// Pre-fix: an operator could set arbitrary sqrtPriceLimitX96 / hookData and grief
+// the swap. Post-fix: any mismatch reverts EnvelopeCheckFailed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract EnvelopePriceLimitPinTest is Setup {
+    bytes32 constant BOT_ID_HASH = keccak256("m2-pin-bot");
+
+    address public vault;
+
+    function setUp() public override {
+        super.setUp();
+        vm.warp(1_700_000_000);
+        (vault,) = _createTestVault();
+    }
+
+    function _sortedThreeValidators() internal view returns (address[] memory addrs) {
+        addrs = new address[](3);
+        addrs[0] = validator1;
+        addrs[1] = validator2;
+        addrs[2] = validator3;
+        for (uint256 i = 0; i < addrs.length; ++i) {
+            for (uint256 j = i + 1; j < addrs.length; ++j) {
+                if (uint160(addrs[j]) < uint160(addrs[i])) {
+                    address t = addrs[i];
+                    addrs[i] = addrs[j];
+                    addrs[j] = t;
+                }
+            }
+        }
+    }
+
+    function _baseEnv(bytes32 enforcementHash) internal view returns (TradeValidator.Envelope memory) {
+        address[] memory sorted = _sortedThreeValidators();
+        bytes memory packed;
+        for (uint256 i = 0; i < sorted.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(sorted[i]));
+        }
+        return TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: vault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("m2-protocol"),
+            policyHash: keccak256("m2-policy"),
+            enforcementHash: enforcementHash,
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+    }
+
+    function _twoEnvSigs(TradeValidator.Envelope memory env)
+        internal
+        view
+        returns (bytes[] memory sigs, uint256[] memory scores)
+    {
+        sigs = new bytes[](2);
+        scores = new uint256[](2);
+        bytes32 digest = tradeValidator.envelopeDigest(env);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest);
+        sigs[0] = abi.encodePacked(r1, s1, v1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest);
+        sigs[1] = abi.encodePacked(r2, s2, v2);
+        scores[0] = 80;
+        scores[1] = 90;
+    }
+
+    /// @notice UniV3 envelope swap with sqrtPriceLimitX96 mismatch MUST revert
+    ///         EnvelopeCheckFailed (M-2 pin).
+    function test_m2_uniV3_sqrtPriceLimitMismatch_reverts() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.prank(address(vaultFactory));
+        policyEngine.setWhitelist(vault, tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = address(router);
+        vm.prank(address(vaultFactory));
+        policyEngine.setTargetWhitelist(vault, targets, true);
+
+        // Enforcement pins a SPECIFIC sqrtPriceLimitX96 (non-zero this time so
+        // the operator-side mismatch is observable).
+        TradeValidator.UniswapV3SwapEnforcement memory enf = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(router),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: uint160(1234567890)
+        });
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        // Build calldata with WRONG sqrtPriceLimitX96 (operator tampering).
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        bytes memory data = abi.encodeWithSelector(
+            bytes4(0x414bf389),
+            address(tokenA),
+            address(tokenB),
+            uint24(enf.feeTier),
+            vault,
+            uint256(block.timestamp + 600),
+            amountIn,
+            minOut,
+            uint160(9999999999) // <-- mismatched
+        );
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: data,
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("m2-uni-mismatch"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        vm.prank(operator);
+        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
+            params, env, enf, _sortedThreeValidators(), sigs, scores
+        );
+    }
+
+    /// @notice Distinct sqrtPriceLimitX96 values produce DIFFERENT enforcement hashes.
+    ///         Defense-in-depth — even before reaching the executor pin check, the
+    ///         envelope-vs-enforcement hash mismatch guards the typehash boundary.
+    function test_m2_uniV3_sqrtPriceLimit_changesEnforcementHash() public view {
+        TradeValidator.UniswapV3SwapEnforcement memory a = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xdeadbeef),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        TradeValidator.UniswapV3SwapEnforcement memory b = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xdeadbeef),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: uint160(123456)
+        });
+        assertTrue(
+            tradeValidator.hashUniswapV3Swap(a) != tradeValidator.hashUniswapV3Swap(b),
+            "M-2: distinct sqrtPriceLimitX96 must produce distinct enforcement hashes"
+        );
+    }
+
+    /// @notice Aerodrome and Pancake V3 enforcement hashes also depend on sqrtPriceLimitX96.
+    function test_m2_aero_pancake_sqrtPriceLimit_changesEnforcementHash() public view {
+        TradeValidator.AerodromeSwapEnforcement memory ae0 = TradeValidator.AerodromeSwapEnforcement({
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xaabbccdd),
+            tickSpacing: 60,
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        TradeValidator.AerodromeSwapEnforcement memory ae1 = TradeValidator.AerodromeSwapEnforcement({
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xaabbccdd),
+            tickSpacing: 60,
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: uint160(987654)
+        });
+        assertTrue(
+            tradeValidator.hashAerodromeSwap(ae0) != tradeValidator.hashAerodromeSwap(ae1),
+            "M-2 (Aerodrome): sqrtPriceLimitX96 must alter enforcement hash"
+        );
+
+        TradeValidator.PancakeswapV3SwapEnforcement memory pa0 = TradeValidator.PancakeswapV3SwapEnforcement({
+            feeTier: 500,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xeeeeffff),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+        TradeValidator.PancakeswapV3SwapEnforcement memory pa1 = TradeValidator.PancakeswapV3SwapEnforcement({
+            feeTier: 500,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(0xeeeeffff),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: uint160(111222333)
+        });
+        assertTrue(
+            tradeValidator.hashPancakeswapV3Swap(pa0) != tradeValidator.hashPancakeswapV3Swap(pa1),
+            "M-2 (Pancake): sqrtPriceLimitX96 must alter enforcement hash"
+        );
+    }
+
+    /// @notice UniV4 hookDataHash also alters the enforcement hash.
+    function test_m2_uniV4_hookDataHash_changesEnforcementHash() public view {
+        TradeValidator.UniswapV4SwapEnforcement memory a = TradeValidator.UniswapV4SwapEnforcement({
+            currency0: address(tokenA),
+            currency1: address(tokenB),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0),
+            zeroForOne: true,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            universalRouter: address(0xa1a2a3a4),
+            hookDataHash: keccak256("")
+        });
+        TradeValidator.UniswapV4SwapEnforcement memory b = TradeValidator.UniswapV4SwapEnforcement({
+            currency0: address(tokenA),
+            currency1: address(tokenB),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0),
+            zeroForOne: true,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            universalRouter: address(0xa1a2a3a4),
+            hookDataHash: keccak256("non-empty-hook-data")
+        });
+        assertTrue(
+            tradeValidator.hashUniswapV4Swap(a) != tradeValidator.hashUniswapV4Swap(b),
+            "M-2 (V4): hookDataHash must alter enforcement hash"
         );
     }
 }
