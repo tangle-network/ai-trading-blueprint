@@ -499,3 +499,239 @@ contract EnvelopeInvariantsTest is Setup {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit M-1: per-call allowance MUST be reset to 0 after every execute path.
+// Pre-fix: `forceApprove(spender, amountIn)` lingered after the trade so a
+// misbehaving / upgraded router could pull the residual allowance later.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @dev Mock UniswapV3-style router — accepts canonical `exactInputSingle`,
+///      pulls `amountIn` from caller (vault), mints `amountOutMinimum` to recipient.
+contract M1MockUniV3Router {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    function exactInputSingle(ExactInputSingleParams calldata p) external returns (uint256 amountOut) {
+        (bool ok, bytes memory ret) =
+            p.tokenIn.call(abi.encodeWithSelector(0x23b872dd, msg.sender, address(this), p.amountIn));
+        require(ok && (ret.length == 0 || abi.decode(ret, (bool))), "transferFrom failed");
+        amountOut = p.amountOutMinimum;
+        MockERC20(p.tokenOut).mint(p.recipient, amountOut);
+    }
+}
+
+/// @dev Minimal mock target for the legacy `executeWithApprovals` path.
+contract M1MockTarget {
+    MockERC20 public immutable outputToken;
+
+    constructor(MockERC20 _outputToken) {
+        outputToken = _outputToken;
+    }
+
+    function swap(address to, uint256 outputAmount) external {
+        outputToken.mint(to, outputAmount);
+    }
+}
+
+contract EnvelopeAllowanceResetTest is Setup {
+    bytes32 constant BOT_ID_HASH = keccak256("m1-allowance-bot");
+
+    address public vault;
+
+    function setUp() public override {
+        super.setUp();
+        vm.warp(1_700_000_000);
+        (vault,) = _createTestVault();
+    }
+
+    function _sortedThreeValidators() internal view returns (address[] memory addrs) {
+        addrs = new address[](3);
+        addrs[0] = validator1;
+        addrs[1] = validator2;
+        addrs[2] = validator3;
+        for (uint256 i = 0; i < addrs.length; ++i) {
+            for (uint256 j = i + 1; j < addrs.length; ++j) {
+                if (uint160(addrs[j]) < uint160(addrs[i])) {
+                    address t = addrs[i];
+                    addrs[i] = addrs[j];
+                    addrs[j] = t;
+                }
+            }
+        }
+    }
+
+    function _baseEnv(bytes32 enforcementHash) internal view returns (TradeValidator.Envelope memory) {
+        address[] memory sorted = _sortedThreeValidators();
+        bytes memory packed;
+        for (uint256 i = 0; i < sorted.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(sorted[i]));
+        }
+        return TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: vault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("m1-protocol"),
+            policyHash: keccak256("m1-policy"),
+            enforcementHash: enforcementHash,
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+    }
+
+    function _twoEnvSigs(TradeValidator.Envelope memory env)
+        internal
+        view
+        returns (bytes[] memory sigs, uint256[] memory scores)
+    {
+        sigs = new bytes[](2);
+        scores = new uint256[](2);
+        bytes32 digest = tradeValidator.envelopeDigest(env);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest);
+        sigs[0] = abi.encodePacked(r1, s1, v1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest);
+        sigs[1] = abi.encodePacked(r2, s2, v2);
+        scores[0] = 80;
+        scores[1] = 90;
+    }
+
+    /// @notice After an envelope-mode swap returns, the router's allowance MUST be 0.
+    ///         Pre-fix: `s.amountIn` allowance lingered.
+    function test_m1_envelopeSwap_resetsAllowanceToZero() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.prank(address(vaultFactory));
+        policyEngine.setWhitelist(vault, tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = address(router);
+        vm.prank(address(vaultFactory));
+        policyEngine.setTargetWhitelist(vault, targets, true);
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            minOutputPerInput: 1e18,
+            router: address(router),
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB)
+        });
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+        bytes memory data = abi.encodeWithSelector(
+            bytes4(0x414bf389),
+            address(tokenA),
+            address(tokenB),
+            uint24(enf.feeTier),
+            vault,
+            uint256(block.timestamp + 600),
+            amountIn,
+            minOut,
+            uint160(0)
+        );
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: data,
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("m1-uni"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        // Pre-call: allowance is 0
+        assertEq(tokenA.allowance(vault, address(router)), 0, "pre-call allowance");
+
+        vm.prank(operator);
+        TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(
+            params, env, enf, _sortedThreeValidators(), sigs, scores
+        );
+
+        // Post-call: allowance MUST be 0 — `_resetApprovalsMemory` cleared it.
+        assertEq(
+            tokenA.allowance(vault, address(router)),
+            0,
+            "M-1: residual allowance must be 0 after envelope swap"
+        );
+    }
+
+    /// @notice Legacy `executeWithApprovals` path also clears the approval. Pairs M-1
+    ///         coverage with `_applyApprovals` (calldata) + `_resetApprovals`.
+    function test_m1_executeWithApprovals_resetsAllowanceToZero() public {
+        M1MockTarget target = new M1MockTarget(MockERC20(address(tokenB)));
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.prank(address(vaultFactory));
+        policyEngine.setWhitelist(vault, tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        vm.prank(address(vaultFactory));
+        policyEngine.setTargetWhitelist(vault, targets, true);
+        vm.prank(address(vaultFactory));
+        policyEngine.setPositionLimit(vault, address(tokenB), 1_000 ether);
+
+        TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
+        approvals[0] = TradingVault.ApprovalCall({
+            token: address(tokenA),
+            spender: address(target),
+            amount: 5 ether
+        });
+
+        bytes memory data = abi.encodeWithSelector(M1MockTarget.swap.selector, vault, 5 ether);
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(target),
+            data: data,
+            value: 0,
+            minOutput: 1,
+            outputToken: address(tokenB),
+            intentHash: keccak256("m1-legacy"),
+            deadline: block.timestamp + 600
+        });
+
+        bytes32 executionHash = TradingVault(payable(vault)).computeExecutionHash(params, approvals);
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory scores = new uint256[](2);
+        scores[0] = 80;
+        scores[1] = 80;
+        sigs[0] = _signValidation(
+            validator1Key, params.intentHash, executionHash, vault, scores[0], params.deadline, 0
+        );
+        sigs[1] = _signValidation(
+            validator2Key, params.intentHash, executionHash, vault, scores[1], params.deadline, 0
+        );
+
+        tokenA.mint(vault, 100 ether);
+
+        vm.prank(operator);
+        TradingVault(payable(vault)).executeWithApprovals(params, approvals, sigs, scores);
+
+        // Post-call: allowance MUST be 0 — `_resetApprovals` cleared it.
+        assertEq(
+            tokenA.allowance(vault, address(target)),
+            0,
+            "M-1: residual allowance must be 0 after executeWithApprovals"
+        );
+    }
+}

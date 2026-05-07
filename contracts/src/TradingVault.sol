@@ -527,6 +527,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareExecution(params, signatures, scores, _hashApprovals(approvals));
         _applyApprovals(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovals(approvals);
     }
 
     /// @notice Execute a validated debt-reducing action with vault-held token approvals.
@@ -540,6 +542,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareDebtReduction(params, signatures, scores, _hashApprovals(approvals));
         _applyApprovals(approvals, params.target);
         _executeDebtReduction(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovals(approvals);
     }
 
     /// @notice Execute a validated action and require Aave-style health factor to remain above the signed threshold.
@@ -552,6 +556,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _prepareHealthFactor(params, signatures, scores, _hashApprovals(approvals));
         _applyApprovals(approvals, params.target);
         _executeHealthFactor(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovals(approvals);
     }
 
     function _prepareExecution(
@@ -584,6 +590,18 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (approval.spender != target) revert ApprovalSpenderMismatch(approval.spender, target);
             IERC20(approval.token).forceApprove(approval.spender, approval.amount);
             emit SpenderApprovalUpdated(approval.token, approval.spender, approval.amount);
+        }
+    }
+
+    /// @dev Audit M-1: reset every approval to 0 after the trade. Pairs with `_applyApprovals`.
+    ///      A misbehaving / upgraded router could otherwise pull the residual allowance after
+    ///      the executor returns. Reverts in the executor unwind the whole tx so this only
+    ///      runs on success.
+    function _resetApprovals(ApprovalCall[] calldata approvals) internal {
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall calldata approval = approvals[i];
+            IERC20(approval.token).forceApprove(approval.spender, 0);
+            emit SpenderApprovalUpdated(approval.token, approval.spender, 0);
         }
     }
 
@@ -1494,6 +1512,17 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
+    /// @dev Audit M-1: reset every approval to 0 after the envelope-mode trade. Pairs with
+    ///      `_applyApprovalsMemory`. A misbehaving / upgraded router could otherwise pull the
+    ///      residual allowance after the executor returns.
+    function _resetApprovalsMemory(ApprovalCall[] memory approvals) internal {
+        for (uint256 i = 0; i < approvals.length; ++i) {
+            ApprovalCall memory a = approvals[i];
+            IERC20(a.token).forceApprove(a.spender, 0);
+            emit SpenderApprovalUpdated(a.token, a.spender, 0);
+        }
+    }
+
     /// @dev Envelope-mode prepare for trade-shape executions: skip _checkValidators
     ///      since envelope sigs already verified in validateXxxEnvelope.
     function _prepareEnvelopeTrade(ExecuteParams calldata params) internal {
@@ -1693,6 +1722,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     function executeUniswapV4SwapEnvelope(
@@ -1727,6 +1758,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: tokenIn, spender: params.target, amount: uint256(s.amountIn)});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     function executeAerodromeSwapEnvelope(
@@ -1758,6 +1791,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     /// @notice PancakeSwap V3 swap. PancakeSwap V3 calldata is byte-identical to
@@ -1792,6 +1827,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: s.tokenIn, spender: params.target, amount: s.amountIn});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     /// @notice Curve StableSwap exchange. Index-based: caller passes signed int128
@@ -1826,6 +1863,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: enf.tokenIn, spender: params.target, amount: dx});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     // ── Aave V3 ──
@@ -1852,6 +1891,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     function executeAaveWithdrawEnvelope(
@@ -1929,6 +1970,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
         _applyApprovalsMemory(approvals, params.target);
         _executeDebtReduction(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     // ── Morpho ──
@@ -1955,6 +1998,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: mp.loanToken, spender: params.target, amount: assets});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 
     function executeMorphoWithdrawEnvelope(
@@ -2033,5 +2078,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         approvals[0] = ApprovalCall({token: mp.loanToken, spender: params.target, amount: assets});
         _applyApprovalsMemory(approvals, params.target);
         _executeDebtReduction(params);
+        // Audit M-1: clear residual allowance to prevent the router from pulling later.
+        _resetApprovalsMemory(approvals);
     }
 }
