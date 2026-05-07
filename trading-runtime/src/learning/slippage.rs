@@ -87,7 +87,9 @@ impl PairStats {
         // Failure backoff: if recent failures exceed pulls/5, loosen by 50bps.
         let pulls = self.observed_bps.len() as u64;
         if pulls > 0
-            && self.failure_count.saturating_mul(FAILURE_BACKOFF_DENOMINATOR)
+            && self
+                .failure_count
+                .saturating_mul(FAILURE_BACKOFF_DENOMINATOR)
                 > pulls.saturating_mul(FAILURE_BACKOFF_NUMERATOR)
         {
             bps = bps.saturating_add(FAILURE_BACKOFF_BPS);
@@ -97,9 +99,42 @@ impl PairStats {
 }
 
 /// Observed-slippage learner. Maintains [`PairStats`] keyed by [`PairKey`].
+///
+/// `per_pair` serializes as an array of `[PairKey, PairStats]` tuples because
+/// JSON object keys must be strings — using `Vec<(K, V)>` for the wire format
+/// keeps `(Address, Address)` keys lossless.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct SlippageLearner {
+    #[serde(with = "pair_map_serde")]
     pub per_pair: HashMap<PairKey, PairStats>,
+}
+
+mod pair_map_serde {
+    use super::{PairKey, PairStats};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+
+    pub fn serialize<S>(map: &HashMap<PairKey, PairStats>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut entries: Vec<(&PairKey, &PairStats)> = map.iter().collect();
+        // Stable order keeps the on-disk JSON diffable across writes.
+        entries.sort_by(|a, b| {
+            a.0.token_in
+                .cmp(&b.0.token_in)
+                .then_with(|| a.0.token_out.cmp(&b.0.token_out))
+        });
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<PairKey, PairStats>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let entries: Vec<(PairKey, PairStats)> = Vec::deserialize(deserializer)?;
+        Ok(entries.into_iter().collect())
+    }
 }
 
 impl SlippageLearner {
@@ -108,12 +143,7 @@ impl SlippageLearner {
     }
 
     /// Append a successful-fill slippage observation.
-    pub fn record_fill(
-        &mut self,
-        token_in: Address,
-        token_out: Address,
-        observed_bps: u32,
-    ) {
+    pub fn record_fill(&mut self, token_in: Address, token_out: Address, observed_bps: u32) {
         self.per_pair
             .entry(PairKey::new(token_in, token_out))
             .or_default()
@@ -130,12 +160,7 @@ impl SlippageLearner {
 
     /// Recommended `max_slippage_bps` for `(token_in, token_out)`. Returns
     /// `fallback` (clamped to bounds) when no observations exist.
-    pub fn recommend_max_bps(
-        &self,
-        token_in: Address,
-        token_out: Address,
-        fallback: u32,
-    ) -> u32 {
+    pub fn recommend_max_bps(&self, token_in: Address, token_out: Address, fallback: u32) -> u32 {
         match self.per_pair.get(&PairKey::new(token_in, token_out)) {
             Some(stats) if !stats.observed_bps.is_empty() => stats.current_max_bps,
             _ => fallback.clamp(MIN_RECOMMENDED_BPS, MAX_RECOMMENDED_BPS),

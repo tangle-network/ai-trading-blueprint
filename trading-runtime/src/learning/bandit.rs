@@ -51,8 +51,7 @@ impl BanditArm {
         if self.pulls == 0 {
             return f64::INFINITY;
         }
-        let exploration =
-            (2.0 * (total_pulls.max(1) as f64).ln() / self.pulls as f64).sqrt();
+        let exploration = (2.0 * (total_pulls.max(1) as f64).ln() / self.pulls as f64).sqrt();
         self.mean_reward() + exploration
     }
 }
@@ -134,14 +133,11 @@ impl StrategyBandit {
     /// Highest mean-reward arm (ignores exploration term). Unpulled arms are
     /// excluded so we don't report a default-zero "best".
     pub fn best_arm(&self) -> Option<&BanditArm> {
-        self.arms
-            .iter()
-            .filter(|a| a.pulls > 0)
-            .max_by(|a, b| {
-                a.mean_reward()
-                    .partial_cmp(&b.mean_reward())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        self.arms.iter().filter(|a| a.pulls > 0).max_by(|a, b| {
+            a.mean_reward()
+                .partial_cmp(&b.mean_reward())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 }
 
