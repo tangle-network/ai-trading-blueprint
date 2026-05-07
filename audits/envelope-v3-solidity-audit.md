@@ -19,8 +19,8 @@
 | M-1 | Medium | `TradingVault.sol` `_applyApprovalsMemory` (and `_applyApprovals`) | Per-execution allowance is set to `s.amountIn` but never reset to 0 after the protocol call. A misbehaving / upgraded router could pull residual allowance later. |
 | M-2 | Medium | `TradingVault.sol` envelope swap executors (UniV3 / Aerodrome / Pancake / UniV4) | `s.sqrtPriceLimitX96` (and `s.hookData` for V4) are not pinned to the enforcement struct. Operator can set tight price limits to grief, but cannot drain (slippage check in `_executeTrade` plus `_consumeEnvelope` cap). |
 | M-3 | Medium | `TradingVault.sol` envelope executors generally | `params.value` (native ETH) is unbounded. For non-ETH protocols this is harmless (call reverts), but a misconfigured or upgraded target could absorb ETH. |
-| L-1 | Low | `TradeValidator.sol` `_validateEnvelopeWithEnforcementHash` | Validator does not check `env.chainId == block.chainid` (only `!= 0`). Cross-chain replay is still blocked by the EIP-712 domain separator and by the executor's `_checkEnvelopeBasics`, but the structural inconsistency is fix-worthy. |
-| L-2 | Low | `TradeValidator.sol` `_validateEnvelopeWithEnforcementHash` | Validator does not check `env.issuedAt <= block.timestamp` nor `env.issuedAt < env.expiresAt`. Future-dated or temporally-inverted envelopes can pass `validateXxxEnvelope` but fail in the executor's `_checkEnvelopeBasics`. |
+| L-1 | Low (Fixed) | `TradeValidator.sol` `_validateEnvelopeWithEnforcementHash` | Validator does not check `env.chainId == block.chainid` (only `!= 0`). Cross-chain replay is still blocked by the EIP-712 domain separator and by the executor's `_checkEnvelopeBasics`, but the structural inconsistency is fix-worthy. **Fixed** — see commit `harden(validator): require chainId == block.chainid and issuedAt <= block.timestamp`. |
+| L-2 | Low (Fixed) | `TradeValidator.sol` `_validateEnvelopeWithEnforcementHash` | Validator does not check `env.issuedAt <= block.timestamp` nor `env.issuedAt < env.expiresAt`. Future-dated or temporally-inverted envelopes can pass `validateXxxEnvelope` but fail in the executor's `_checkEnvelopeBasics`. **Fixed** (the `issuedAt <= block.timestamp` half) — see commit `harden(validator): require chainId == block.chainid and issuedAt <= block.timestamp`. |
 | L-3 | Low | `TradeValidator.sol` `Envelope.expiresAt` | `expiresAt` is `uint64` seconds → overflows in 2106. Document; defer enforcement until the type changes. |
 | L-4 | Low | `TradeValidator.sol` `_validateEnvelopeWithEnforcementHash` | O(N²) signer dedup is unbounded in N. With OPERATOR_ROLE-gated submission this is self-griefing only, not a vault-funds threat. Bound N (e.g., 32) to harden. |
 | L-5 | Low | `TradingVault.sol` `executeMorphoSupplyEnvelope` / Borrow / Withdraw / Repay | Decoder discards Morpho's `shares` field and any `extra` callback bytes. Combined with the per-call `forceApprove(amount=assets)`, an operator can't bypass the per-envelope cap (Morpho rejects mixed mode and reverts on missing allowance), but explicit `shares == 0` and `extra.length == 0` checks would close the surface. |
@@ -104,7 +104,7 @@ The severity is High rather than Critical because:
 
 **Impact.** Display / inconsistency only. No replay surface.
 
-**Recommendation.** Replace `env.chainId == 0` with `env.chainId != block.chainid`. Defer if you want to keep the validator usable for off-chain simulation across chains.
+**Status:** Fixed in commit `harden(validator): require chainId == block.chainid and issuedAt <= block.timestamp`. The structural-revert clause now rejects `env.chainId != block.chainid` directly. Regression test `EnvelopeValidatorTest::test_revert_chain_id_not_block_chainid`.
 
 ### L-2 — Validator missing `issuedAt` checks
 
@@ -115,7 +115,7 @@ The severity is High rather than Critical because:
 
 **Impact.** None on funds; off-chain UX inconsistency.
 
-**Recommendation.** Add `env.issuedAt > env.expiresAt` to the structural-revert clause.
+**Status:** Fixed in commit `harden(validator): require chainId == block.chainid and issuedAt <= block.timestamp`. The structural-revert clause now rejects `env.issuedAt > block.timestamp`. Regression test `EnvelopeValidatorTest::test_revert_future_issued_at`. (`issuedAt > expiresAt` is still subsumed by the executor's `_checkEnvelopeBasics`; tightening the validator further is deferred.)
 
 ### L-3 — `expiresAt` y2106 overflow
 
