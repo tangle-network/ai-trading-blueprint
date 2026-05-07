@@ -1,0 +1,309 @@
+# Deploy pipeline for the trading-blueprint envelope-v3 contracts.
+#
+# Two deployment targets:
+#   - staging      — auto-deploys on push to `staging` branch, or manual.
+#   - production   — manual-only; requires environment approval (2 reviewers).
+#
+# Both targets:
+#   - Reuse the build-and-test gates from ci.yml (forge, rust, clippy, fmt, audit).
+#   - Run forge script DeployEnvelopeV3 with --broadcast --verify against the
+#     target chain, capturing addresses to deployments/{chainId}/v3.json.
+#   - Run forge script VerifyEnvelopeV3 to assert typehashes and digest invariants.
+#   - Open a PR (staging) or commit directly (production) updating the deployment
+#     manifest under deployments/.
+#   - Notify Slack on success and failure.
+#
+# Required GitHub secrets (per environment):
+#   STAGING_OPERATOR_KEY         — 0x-prefixed deployer private key for staging.
+#   STAGING_RPC_URL              — staging chain RPC endpoint.
+#   STAGING_ASSET_TOKEN          — canonical USDC for the staging chain.
+#   STAGING_ADMIN                — admin multisig address (staging).
+#   STAGING_SIGNER_ONE           — first envelope signer.
+#   STAGING_SIGNER_TWO           — second envelope signer.
+#   PRODUCTION_OPERATOR_KEY      — same shape; production chain.
+#   PRODUCTION_RPC_URL
+#   PRODUCTION_ASSET_TOKEN
+#   PRODUCTION_ADMIN
+#   PRODUCTION_SIGNER_ONE
+#   PRODUCTION_SIGNER_TWO
+#   ETHERSCAN_API_KEY            — used by --verify on the deploy script.
+#   SLACK_DEPLOY_WEBHOOK_URL     — incoming webhook for #deploys channel.
+#
+# Required GitHub environment configuration:
+#   `staging`     — no required reviewers; auto on push to staging branch.
+#   `production`  — required reviewers: 2. Branch protection: only `master`
+#                   may target this environment.
+
+name: Deploy
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment target'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      service_id:
+        description: 'SERVICE_ID for the sample vault'
+        required: false
+        default: '0'
+      required_sigs:
+        description: 'REQUIRED_SIGS (m-of-n threshold)'
+        required: false
+        default: '2'
+
+concurrency:
+  # Serialize deploys per target — never run two prod deploys concurrently.
+  group: deploy-${{ github.event.inputs.target || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FOUNDRY_PROFILE: default
+
+jobs:
+  # ── Reuse the gating CI workflow before any deploy fires. ────────────────
+  build-and-test:
+    name: Gate (build + test)
+    uses: ./.github/workflows/ci.yml
+
+  # ── Staging deploy ───────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to staging
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'staging')
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.explorer_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install Soldeer deps
+        run: forge soldeer install
+
+      - name: Deploy DeployEnvelopeV3
+        id: deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.STAGING_OPERATOR_KEY }}
+          RPC_URL: ${{ secrets.STAGING_RPC_URL }}
+          ASSET_TOKEN: ${{ secrets.STAGING_ASSET_TOKEN }}
+          ADMIN: ${{ secrets.STAGING_ADMIN }}
+          SIGNER_ONE: ${{ secrets.STAGING_SIGNER_ONE }}
+          SIGNER_TWO: ${{ secrets.STAGING_SIGNER_TWO }}
+          SERVICE_ID: ${{ github.event.inputs.service_id || '0' }}
+          REQUIRED_SIGS: ${{ github.event.inputs.required_sigs || '2' }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: |
+          set -euo pipefail
+          forge script contracts/script/DeployEnvelopeV3.s.sol \
+            --rpc-url "$RPC_URL" \
+            --broadcast \
+            --slow \
+            --verify \
+            --etherscan-api-key "$ETHERSCAN_API_KEY"
+
+          # Resolve chainId + key addresses from the freshly written manifest.
+          CHAIN_ID=$(forge config --json | jq -r '.chain_id // empty')
+          if [ -z "$CHAIN_ID" ]; then
+            CHAIN_ID=$(cast chain-id --rpc-url "$RPC_URL")
+          fi
+          MANIFEST="deployments/${CHAIN_ID}/v3.json"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::Deploy script did not write $MANIFEST"
+            exit 1
+          fi
+
+          TRADE_VALIDATOR=$(jq -r '.tradeValidator' "$MANIFEST")
+          SAMPLE_VAULT=$(jq -r '.sampleVault' "$MANIFEST")
+          VAULT_FACTORY=$(jq -r '.vaultFactory' "$MANIFEST")
+
+          {
+            echo "chain_id=$CHAIN_ID"
+            echo "manifest=$MANIFEST"
+            echo "trade_validator=$TRADE_VALIDATOR"
+            echo "sample_vault=$SAMPLE_VAULT"
+            echo "vault_factory=$VAULT_FACTORY"
+            echo "explorer_url=https://etherscan.io/address/$VAULT_FACTORY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post-deploy verification
+        env:
+          RPC_URL: ${{ secrets.STAGING_RPC_URL }}
+          TRADE_VALIDATOR: ${{ steps.deploy.outputs.trade_validator }}
+          SAMPLE_VAULT: ${{ steps.deploy.outputs.sample_vault }}
+        run: |
+          set -euo pipefail
+          forge script contracts/script/VerifyEnvelopeV3.s.sol \
+            --rpc-url "$RPC_URL"
+
+      - name: Open deployment-manifest PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANIFEST: ${{ steps.deploy.outputs.manifest }}
+          CHAIN_ID: ${{ steps.deploy.outputs.chain_id }}
+        run: |
+          set -euo pipefail
+          BRANCH="deploy/staging-${CHAIN_ID}-${GITHUB_RUN_ID}"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add "$MANIFEST"
+          git commit -m "deploy(staging): refresh deployments/${CHAIN_ID}/v3.json"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "deploy(staging): refresh deployments/${CHAIN_ID}/v3.json" \
+            --body "Automated staging deploy. See run ${GITHUB_RUN_ID}." \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$BRANCH"
+
+      - name: Notify Slack — success
+        if: success()
+        env:
+          SLACK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST -H 'Content-Type: application/json' "$SLACK_URL" \
+            -d "{\"text\":\":rocket: Staging deploy succeeded — chain ${{ steps.deploy.outputs.chain_id }}, VaultFactory ${{ steps.deploy.outputs.vault_factory }}\"}"
+
+      - name: Notify Slack — failure
+        if: failure()
+        env:
+          SLACK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST -H 'Content-Type: application/json' "$SLACK_URL" \
+            -d "{\"text\":\":x: Staging deploy FAILED — see https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+
+  # ── Production deploy ────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to production
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'production'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    environment:
+      # The `production` GitHub environment must be configured with required
+      # reviewers (2) and branch protection so only `master` can target it.
+      name: production
+      url: ${{ steps.deploy.outputs.explorer_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install Soldeer deps
+        run: forge soldeer install
+
+      - name: Deploy DeployEnvelopeV3
+        id: deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.PRODUCTION_OPERATOR_KEY }}
+          RPC_URL: ${{ secrets.PRODUCTION_RPC_URL }}
+          ASSET_TOKEN: ${{ secrets.PRODUCTION_ASSET_TOKEN }}
+          ADMIN: ${{ secrets.PRODUCTION_ADMIN }}
+          SIGNER_ONE: ${{ secrets.PRODUCTION_SIGNER_ONE }}
+          SIGNER_TWO: ${{ secrets.PRODUCTION_SIGNER_TWO }}
+          SERVICE_ID: ${{ github.event.inputs.service_id || '0' }}
+          REQUIRED_SIGS: ${{ github.event.inputs.required_sigs || '2' }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: |
+          set -euo pipefail
+          forge script contracts/script/DeployEnvelopeV3.s.sol \
+            --rpc-url "$RPC_URL" \
+            --broadcast \
+            --slow \
+            --verify \
+            --etherscan-api-key "$ETHERSCAN_API_KEY"
+
+          CHAIN_ID=$(cast chain-id --rpc-url "$RPC_URL")
+          MANIFEST="deployments/${CHAIN_ID}/v3.json"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::Deploy script did not write $MANIFEST"
+            exit 1
+          fi
+
+          TRADE_VALIDATOR=$(jq -r '.tradeValidator' "$MANIFEST")
+          SAMPLE_VAULT=$(jq -r '.sampleVault' "$MANIFEST")
+          VAULT_FACTORY=$(jq -r '.vaultFactory' "$MANIFEST")
+
+          {
+            echo "chain_id=$CHAIN_ID"
+            echo "manifest=$MANIFEST"
+            echo "trade_validator=$TRADE_VALIDATOR"
+            echo "sample_vault=$SAMPLE_VAULT"
+            echo "vault_factory=$VAULT_FACTORY"
+            echo "explorer_url=https://etherscan.io/address/$VAULT_FACTORY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post-deploy verification
+        env:
+          RPC_URL: ${{ secrets.PRODUCTION_RPC_URL }}
+          TRADE_VALIDATOR: ${{ steps.deploy.outputs.trade_validator }}
+          SAMPLE_VAULT: ${{ steps.deploy.outputs.sample_vault }}
+        run: |
+          set -euo pipefail
+          forge script contracts/script/VerifyEnvelopeV3.s.sol \
+            --rpc-url "$RPC_URL"
+
+      - name: Commit deployment manifest to master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANIFEST: ${{ steps.deploy.outputs.manifest }}
+          CHAIN_ID: ${{ steps.deploy.outputs.chain_id }}
+        run: |
+          set -euo pipefail
+          BRANCH="deploy/production-${CHAIN_ID}-${GITHUB_RUN_ID}"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add "$MANIFEST"
+          git commit -m "deploy(production): chain ${CHAIN_ID} v3.json"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "deploy(production): chain ${CHAIN_ID} v3.json" \
+            --body "Automated production deploy. Run ${GITHUB_RUN_ID}." \
+            --base master \
+            --head "$BRANCH" \
+            --label "deployment,production"
+
+      - name: Notify Slack — success
+        if: success()
+        env:
+          SLACK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST -H 'Content-Type: application/json' "$SLACK_URL" \
+            -d "{\"text\":\":tada: Production deploy succeeded — chain ${{ steps.deploy.outputs.chain_id }}, VaultFactory ${{ steps.deploy.outputs.vault_factory }}\"}"
+
+      - name: Notify Slack — failure
+        if: failure()
+        env:
+          SLACK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST -H 'Content-Type: application/json' "$SLACK_URL" \
+            -d "{\"text\":\":fire: Production deploy FAILED — see https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
