@@ -112,9 +112,6 @@ mod tests {
             assert!(!s.has_recorded_iteration("v1", &format!("iter-{i}")));
         }
         // The most recent entries must still be present.
-        assert!(s.has_recorded_iteration(
-            "v1",
-            &format!("iter-{}", MAX_RECORDED_ITERATIONS + 4)
-        ));
+        assert!(s.has_recorded_iteration("v1", &format!("iter-{}", MAX_RECORDED_ITERATIONS + 4)));
     }
 }

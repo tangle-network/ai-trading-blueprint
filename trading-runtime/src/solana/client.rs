@@ -213,13 +213,9 @@ mod tests {
     /// echo the same signature the SDK computes locally (the SDK's
     /// `send_transaction_with_config` rejects a mismatched response sig).
     fn build_signed_test_tx(payer: &Keypair, blockhash: Hash) -> VersionedTransaction {
-        let msg = solana_sdk::message::v0::Message::try_compile(
-            &payer.pubkey(),
-            &[],
-            &[],
-            blockhash,
-        )
-        .expect("compile v0 msg");
+        let msg =
+            solana_sdk::message::v0::Message::try_compile(&payer.pubkey(), &[], &[], blockhash)
+                .expect("compile v0 msg");
         VersionedTransaction::try_new(solana_sdk::message::VersionedMessage::V0(msg), &[payer])
             .expect("sign v0 tx")
     }
