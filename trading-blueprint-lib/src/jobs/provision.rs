@@ -107,7 +107,8 @@ fn parse_renewal_webhook_url(strategy_config: Option<&Map<String, Value>>) -> Op
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false);
     let lower = trimmed.to_ascii_lowercase();
-    let scheme_ok = lower.starts_with("https://") || (allow_plain_http && lower.starts_with("http://"));
+    let scheme_ok =
+        lower.starts_with("https://") || (allow_plain_http && lower.starts_with("http://"));
     if !scheme_ok {
         return None;
     }

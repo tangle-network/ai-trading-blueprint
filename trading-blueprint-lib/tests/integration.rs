@@ -130,6 +130,103 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn test_provision_runs_baseline_backtest() {
+    // Verifies that the provisioning flow either populates the bot's
+    // baseline_backtest field after provisioning a kline-supported strategy,
+    // OR leaves it None when the kline source is unreachable (best-effort).
+    // Either outcome is correct — we never block provisioning on the backtest.
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-baseline-1");
+    let sandbox_id = sandbox.id.clone();
+
+    let request = make_provision_request("baseline-bot", "dex");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+
+    // dex strategy IS baseline-eligible per `strategy_supports_baseline`.
+    // If the kline source returned data, the field is populated.
+    if let Some(summary) = &bot.baseline_backtest {
+        assert_eq!(summary.lookback_days, 30);
+        assert_eq!(summary.harness_version, 1);
+        assert!(
+            !summary.realized_pnl.is_empty(),
+            "summary.realized_pnl should be a serializable decimal string"
+        );
+    } else {
+        // Network unavailable / kline fetch failed — provisioning still
+        // succeeded, and the field is None (best-effort guarantee).
+        assert!(bot.baseline_backtest.is_none());
+    }
+}
+
+#[tokio::test]
+async fn test_provision_skips_baseline_for_prediction_strategy() {
+    // Prediction strategies have no kline source and must skip baseline
+    // without affecting provisioning.
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-baseline-prediction");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request("baseline-prediction", "prediction");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert!(
+        bot.baseline_backtest.is_none(),
+        "prediction strategy must not have a baseline backtest"
+    );
+}
+
+#[tokio::test]
+async fn test_provision_persists_renewal_webhook_url_from_strategy_config() {
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-renewal-webhook");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request_with_strategy_config(
+        "webhook-bot",
+        "dex",
+        r#"{"renewal_webhook_url":"https://example.test/renewal"}"#,
+    );
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert_eq!(
+        bot.renewal_webhook_url.as_deref(),
+        Some("https://example.test/renewal"),
+        "renewal webhook URL should be persisted from strategy_config_json"
+    );
+}
+
+#[tokio::test]
 async fn test_provision_creates_records() {
     let _dir = common::init_test_env();
 

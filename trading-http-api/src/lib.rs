@@ -1,6 +1,8 @@
 pub mod amounts;
 pub mod auth;
 pub mod candle_store;
+pub mod envelope_renewal;
+pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
 pub mod routes;
@@ -79,6 +81,23 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .with_state(state)
 }
 
+/// Lightweight bot record summary used by the envelope renewal cron.
+///
+/// Mirrors the fields the cron needs without taking a hard dependency on
+/// `trading-blueprint-lib::TradingBotRecord`. The binary builds these from
+/// its persistent store and hands them to the cron once per tick.
+#[derive(Clone, Debug)]
+pub struct EnvelopeBotInfo {
+    pub bot_id: String,
+    pub vault_address: String,
+    pub chain_id: u64,
+    pub rpc_url: String,
+    pub strategy_config: serde_json::Value,
+    pub risk_params: serde_json::Value,
+    pub validation_trust: trading_runtime::ValidationTrust,
+    pub renewal_webhook_url: Option<String>,
+}
+
 /// Resolved bot context for per-request state in multi-bot mode.
 ///
 /// This is a lightweight struct that doesn't depend on `trading-blueprint-lib`.
@@ -118,6 +137,12 @@ pub struct MultiBotTradingState {
     /// Resolves a bearer token into a BotContext. Injected by the binary.
     #[allow(clippy::type_complexity)]
     pub resolve_bot: Box<dyn Fn(&str) -> Option<BotContext> + Send + Sync>,
+    /// Enumerates bots that have envelope-mode authorization enabled.
+    /// Used by the envelope renewal cron to scan for expiring/consumed
+    /// envelopes. `None` disables the cron (the binary opts in by setting
+    /// this; tests default to `None`).
+    #[allow(clippy::type_complexity)]
+    pub list_envelope_bots: Option<Box<dyn Fn() -> Vec<EnvelopeBotInfo> + Send + Sync>>,
     /// Polymarket CLOB client (None if not configured).
     pub clob_client: Option<Arc<ClobClient>>,
     /// Shared chain client for nonce serialization across concurrent requests.
@@ -514,8 +539,15 @@ mod tests {
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.
 /// The auth middleware resolves the calling bot from the bearer token and
 /// injects the bot record into request extensions.
+///
+/// Side effects: when `state.list_envelope_bots` is set, this also spawns the
+/// envelope renewal cron as a background task ticking every
+/// [`envelope_renewal::RENEWAL_CRON_INTERVAL`].
 pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     use axum::routing::get;
+    if state.list_envelope_bots.is_some() {
+        envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
+    }
     Router::new()
         .route("/health", get(multi_bot_health))
         .route("/ready", get(multi_bot_ready))
@@ -534,6 +566,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::candles::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
+        .merge(routes::learning::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())
         .merge(routes::supported_assets::multi_bot_router())
         .layer(axum::middleware::from_fn_with_state(

@@ -1951,6 +1951,7 @@ fn multi_bot_state_with_strategy_config_and_bot(
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
@@ -1974,6 +1975,7 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
@@ -2113,6 +2115,65 @@ async fn test_universal_envelope_route_accepts_signed_envelope() {
     let body = get.into_body().collect().await.unwrap().to_bytes();
     let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["bot_id"].as_str().unwrap(), bot.bot_id);
+}
+
+#[tokio::test]
+async fn test_envelope_status_null_when_no_envelope_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-status-empty-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("status-empty-token", bot);
+    let app = build_multi_bot_router(state);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/envelope/status")
+                .header("authorization", "Bearer status-empty-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.is_null());
+}
+
+#[tokio::test]
+async fn test_envelope_status_reports_basics_when_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-status-stored-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("status-stored-token", bot.clone());
+    let signed = signed_envelope_for_bot(&bot);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "status-stored-token",
+        &signed,
+    )
+    .await;
+
+    let res = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .uri("/envelope/status")
+                .header("authorization", "Bearer status-stored-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.is_object());
+    assert_eq!(v["min_signatures"].as_u64().unwrap(), 1);
+    assert_eq!(v["signature_count"].as_u64().unwrap(), 1);
+    assert!(v["expires_in_seconds"].as_i64().unwrap() > 0);
+    assert_eq!(v["protocol"].as_str().unwrap(), "hyperliquid");
 }
 
 #[tokio::test]
@@ -3641,6 +3702,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
                 }
             }
         }),
+        list_envelope_bots: None,
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
@@ -4330,6 +4392,7 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
@@ -4991,6 +5054,7 @@ async fn test_multi_bot_clob_execute() {
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
@@ -5114,6 +5178,7 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
@@ -5199,6 +5264,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: None, // not configured
         chain_client: None,
         chain_client_rpc_url: None,
@@ -5290,6 +5356,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
                 None
             }
         }),
+        list_envelope_bots: None,
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
@@ -6284,4 +6351,186 @@ async fn test_backtest_run_multi_token() {
     let tokens = json["result"]["tokens_traded"].as_array().unwrap();
     assert!(tokens.contains(&serde_json::json!("ETH")));
     assert!(tokens.contains(&serde_json::json!("BTC")));
+}
+
+// ── /learning/* — strategy bandit + slippage learner ────────────────────────
+
+#[tokio::test]
+async fn test_multi_bot_learning_slippage_returns_fallback_when_unobserved() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/slippage?token_in=0x0000000000000000000000000000000000000111&token_out=0x0000000000000000000000000000000000000222&fallback=75")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["recommended_max_bps"], 75);
+    assert_eq!(json["observation_count"], 0);
+    assert_eq!(json["failure_count"], 0);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_strategy_outcome_records_arm_pull() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state.clone());
+
+    // Record one outcome for variant-x.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/learning/strategy-outcome")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "variant_id": "variant-x",
+                        "reward": 2.5,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["variant_id"], "variant-x");
+    assert_eq!(json["arm_pulls"], 1);
+    assert_eq!(json["total_pulls"], 1);
+    assert!((json["arm_mean_reward"].as_f64().unwrap() - 2.5).abs() < 1e-9);
+
+    // Second outcome stacks on the same arm.
+    let resp2 = build_multi_bot_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/learning/strategy-outcome")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "variant_id": "variant-x",
+                        "reward": 4.5,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp2.status(), 200);
+    let body = resp2.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["arm_pulls"], 2);
+    assert!((json["arm_mean_reward"].as_f64().unwrap() - 3.5).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_bandit_status_reports_best_arm() {
+    // Use a fresh bot so prior tests don't leak state into the assertion.
+    let bot_id = format!("bandit-status-bot-{}", uuid::Uuid::new_v4());
+    let token = format!("bandit-status-token-{}", uuid::Uuid::new_v4());
+    let state =
+        multi_bot_state_with_market_and_bot("http://localhost:1234", &token, &bot_id, 31337);
+
+    // Seed two arms with different rewards.
+    for (variant, reward) in [("alpha", 1.0_f64), ("beta", 5.0_f64)] {
+        build_multi_bot_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/learning/strategy-outcome")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "variant_id": variant,
+                            "reward": reward,
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let resp = build_multi_bot_router(state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/bandit-status")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["bot_id"], bot_id);
+    assert_eq!(json["total_pulls"], 2);
+    let arms = json["arms"].as_array().unwrap();
+    assert_eq!(arms.len(), 2);
+    assert_eq!(json["best_arm"]["variant_id"], "beta");
+    assert!((json["best_arm"]["total_reward"].as_f64().unwrap() - 5.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_rejects_unauthenticated_request() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    // Bad bearer -> auth middleware rejects with 401, simulating the
+    // "missing/unresolvable bot" path before any handler logic runs.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/bandit-status")
+                .header("authorization", "Bearer nope-not-a-real-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_slippage_rejects_invalid_token_address() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/slippage?token_in=not-an-address&token_out=0x0000000000000000000000000000000000000222")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
 }
