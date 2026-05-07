@@ -108,13 +108,13 @@ fn rebuild_workflow_profile(bot: &crate::state::TradingBotRecord, workflow_id: u
     let pack = crate::prompts::packs::get_pack(&bot.strategy_type);
     let (prompt, profile, max_turns, timeout_ms) = match &pack {
         Some(p) => (
-            crate::prompts::build_pack_loop_prompt(p, bot),
+            crate::prompts::build_pack_loop_prompt(p, bot, bot.validation_trust),
             crate::prompts::build_pack_agent_profile(p, bot),
             p.max_turns,
             p.timeout_ms,
         ),
         None => (
-            crate::prompts::build_loop_prompt(&bot.strategy_type),
+            crate::prompts::build_loop_prompt(&bot.strategy_type, bot.validation_trust),
             crate::prompts::packs::build_generic_agent_profile(&bot.strategy_type, bot),
             10,
             600_000,
