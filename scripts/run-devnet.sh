@@ -136,6 +136,7 @@ const fs = require('fs');
 const path = process.env.ARENA_ENV_FILE;
 let text = fs.readFileSync(path, 'utf8');
 const updates = {
+  VITE_DEX_BASE_ENABLED: 'false',
   VITE_DEX_ETHEREUM_ENABLED: 'true',
   VITE_DEX_ETHEREUM_CHAIN_ID: process.env.EXECUTION_CHAIN_ID,
   VITE_DEX_ETHEREUM_PROTOCOL_CHAIN_ID: '1',

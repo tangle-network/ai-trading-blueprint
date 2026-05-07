@@ -28,12 +28,19 @@ MANAGEMENT_FEE_BPS="${MANAGEMENT_FEE_BPS:-200}"
 VALIDATOR_FEE_SHARE_BPS="${VALIDATOR_FEE_SHARE_BPS:-3000}"
 WHITELISTED_TOKENS="${WHITELISTED_TOKENS:-}"
 WHITELISTED_TARGETS="${WHITELISTED_TARGETS:-}"
+CHAINLINK_USD_FEEDS="${CHAINLINK_USD_FEEDS:-}"
 UNISWAP_V3_ROUTER="${UNISWAP_V3_ROUTER:-0xE592427A0AEce92De3Edee1F18E0157C05861564}"
 AAVE_V3_POOL="${AAVE_V3_POOL:-0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2}"
 MAINNET_WETH="${MAINNET_WETH:-0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2}"
 MAINNET_USDC="${MAINNET_USDC:-0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48}"
+MAINNET_USDT="${MAINNET_USDT:-0xdAC17F958D2ee523a2206206994597C13D831ec7}"
+MAINNET_DAI="${MAINNET_DAI:-0x6B175474E89094C44Da98b954EedeAC495271d0F}"
+MAINNET_WBTC="${MAINNET_WBTC:-0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599}"
 CHAINLINK_ETH_USD_FEED="${CHAINLINK_ETH_USD_FEED:-0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419}"
 CHAINLINK_USDC_USD_FEED="${CHAINLINK_USDC_USD_FEED:-0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6}"
+CHAINLINK_USDT_USD_FEED="${CHAINLINK_USDT_USD_FEED:-0x3E7d1eAB13ad0104d2750B8863b489D65364e32D}"
+CHAINLINK_DAI_USD_FEED="${CHAINLINK_DAI_USD_FEED:-0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9}"
+CHAINLINK_WBTC_USD_FEED="${CHAINLINK_WBTC_USD_FEED:-0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c}"
 CHAINLINK_MAX_STALENESS="${CHAINLINK_MAX_STALENESS:-0}"
 AAVE_AWETH="${AAVE_AWETH:-0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8}"
 AAVE_AUSDC="${AAVE_AUSDC:-0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c}"
@@ -245,6 +252,29 @@ WRAPPED_ASSET_VALUATOR="$(deploy_contract "$ROOT_DIR/contracts/out/WrappedAssetV
 
 send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$MAINNET_WETH" "$CHAINLINK_ETH_USD_FEED" "$CHAINLINK_MAX_STALENESS"
 send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$MAINNET_USDC" "$CHAINLINK_USDC_USD_FEED" "$CHAINLINK_MAX_STALENESS"
+send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$MAINNET_USDT" "$CHAINLINK_USDT_USD_FEED" "$CHAINLINK_MAX_STALENESS"
+send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$MAINNET_DAI" "$CHAINLINK_DAI_USD_FEED" "$CHAINLINK_MAX_STALENESS"
+send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$MAINNET_WBTC" "$CHAINLINK_WBTC_USD_FEED" "$CHAINLINK_MAX_STALENESS"
+
+if [[ -n "$CHAINLINK_USD_FEEDS" ]]; then
+  IFS=',' read -r -a feed_items <<< "$CHAINLINK_USD_FEEDS"
+  for feed_item in "${feed_items[@]}"; do
+    feed_item="$(printf '%s' "$feed_item" | xargs)"
+    [[ -n "$feed_item" ]] || continue
+    if [[ "$feed_item" != *"="* ]]; then
+      echo "ERROR: CHAINLINK_USD_FEEDS entries must use token=feed format" >&2
+      exit 1
+    fi
+    token="$(printf '%s' "${feed_item%%=*}" | xargs)"
+    feed="$(printf '%s' "${feed_item#*=}" | xargs)"
+    if [[ -z "$token" || -z "$feed" ]]; then
+      echo "ERROR: CHAINLINK_USD_FEEDS entries must include both token and feed" >&2
+      exit 1
+    fi
+    send_tx "$CHAINLINK_USD_VALUATOR" "setFeed(address,address,uint48)" "$token" "$feed" "$CHAINLINK_MAX_STALENESS"
+  done
+fi
+
 send_tx "$WRAPPED_ASSET_VALUATOR" "setUnderlying(address,address)" "$AAVE_AWETH" "$MAINNET_WETH"
 send_tx "$WRAPPED_ASSET_VALUATOR" "setUnderlying(address,address)" "$AAVE_AUSDC" "$MAINNET_USDC"
 send_tx "$WRAPPED_ASSET_VALUATOR" "setUnderlying(address,address)" "$AAVE_DEBT_WETH" "$MAINNET_WETH"
@@ -261,6 +291,20 @@ send_tx "$VAULT_FACTORY" "setAuthorizedCaller(address,bool)" "$OPERATOR_TWO" tru
 send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$ASSET_TOKEN_ADDRESS" true
 send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$MAINNET_WETH" true
 send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$MAINNET_USDC" true
+send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$MAINNET_USDT" true
+send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$MAINNET_DAI" true
+send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$MAINNET_WBTC" true
+
+if [[ -n "$CHAINLINK_USD_FEEDS" ]]; then
+  IFS=',' read -r -a feed_items <<< "$CHAINLINK_USD_FEEDS"
+  for feed_item in "${feed_items[@]}"; do
+    feed_item="$(printf '%s' "$feed_item" | xargs)"
+    [[ -n "$feed_item" ]] || continue
+    token="$(printf '%s' "${feed_item%%=*}" | xargs)"
+    [[ -n "$token" ]] || continue
+    send_tx "$VAULT_FACTORY" "setDefaultWhitelistedToken(address,bool)" "$token" true
+  done
+fi
 
 if [[ -n "$WHITELISTED_TOKENS" ]]; then
   IFS=',' read -r -a token_items <<< "$WHITELISTED_TOKENS"
@@ -289,6 +333,8 @@ EXECUTION_OPERATOR_ONE=$OPERATOR_ONE
 EXECUTION_OPERATOR_TWO=$OPERATOR_TWO
 EXECUTION_SERVICE_ID=$EXECUTION_SERVICE_ID
 EXECUTION_ASSET_TOKEN=$ASSET_TOKEN_ADDRESS
+EXECUTION_DEFAULT_SUPPORTED_ASSETS=$MAINNET_WETH,$MAINNET_USDC,$MAINNET_USDT,$MAINNET_DAI,$MAINNET_WBTC
+EXECUTION_CHAINLINK_USD_FEEDS=$CHAINLINK_USD_FEEDS
 EXECUTION_POLICY_ENGINE=$POLICY_ENGINE
 EXECUTION_TRADE_VALIDATOR=$TRADE_VALIDATOR
 EXECUTION_FEE_DISTRIBUTOR=$FEE_DISTRIBUTOR
@@ -307,6 +353,7 @@ echo "Execution fork ready."
 echo "  RPC URL:         $RPC_URL"
 echo "  Chain ID:        $CHAIN_ID"
 echo "  Asset token:     $ASSET_TOKEN_ADDRESS"
+echo "  Supported assets: WETH, USDC, USDT, DAI, WBTC"
 echo "  VaultFactory:    $VAULT_FACTORY"
 echo "  Chainlink val:   $CHAINLINK_USD_VALUATOR"
 echo "  TradeValidator:  $TRADE_VALIDATOR"
