@@ -32,11 +32,14 @@ jobs:
       # caches the binary across runs. `command: check` runs all four
       # sections (advisories, bans, licenses, sources) — same as a
       # local `cargo deny check`.
+      # `deny.toml` is auto-detected from the repo root, so we don't pass
+      # `--config` explicitly — older cargo-deny CLIs only accept it as a
+      # subcommand flag and the action injects `arguments` at the top
+      # level. Keeping the call minimal keeps us version-portable.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           log-level: warn
           command: check
-          arguments: --config deny.toml
 
   cargo-audit:
     name: Cargo Audit (RustSec advisory DB)

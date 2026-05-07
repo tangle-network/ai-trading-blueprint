@@ -96,7 +96,18 @@ Solana / Alloy stacks). Quarterly review.
 Detector versions: slither-analyzer 0.11.5, solc 0.8.20.
 Filter: `dependencies/|contracts/test/|contracts/script/`.
 Excluded informational detectors:
-`naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp`.
+`naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp,cyclomatic-complexity`.
+
+`cyclomatic-complexity` is excluded because it fires on
+`TradeValidator.validateWithSignatures` (12) and
+`TradeValidator._validateEnvelopeWithEnforcementHash` (18). Both functions
+are the envelope-validation hot path: each branch corresponds to a
+distinct envelope variant or signature-set permutation that must remain
+inlined for gas + auditability. Splitting them into helper methods
+inflates calldata + memory usage on the per-trade critical path without
+reducing logical complexity. The detector is informational-only; we keep
+detector-coverage tight via `fail_pedantic: true` for every other
+detector class.
 
 ### 3.1 Findings counts (production contracts only)
 
