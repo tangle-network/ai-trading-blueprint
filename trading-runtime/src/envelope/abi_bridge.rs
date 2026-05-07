@@ -11,8 +11,9 @@ use alloy::sol_types::SolCall;
 use crate::contracts::ITradingVault;
 use crate::envelope::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
-    AerodromeSwapEnforcement, EnvelopeEnforcement, EnvelopeError, MorphoBorrowEnforcement,
-    MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement, SignedEnvelope,
+    AerodromeSwapEnforcement, CurveStableSwapEnforcement, EnvelopeEnforcement, EnvelopeError,
+    MorphoBorrowEnforcement, MorphoRepayEnforcement, MorphoSupplyEnforcement,
+    MorphoWithdrawEnforcement, PancakeswapV3SwapEnforcement, SignedEnvelope,
     UniswapV3SwapEnforcement, UniswapV4SwapEnforcement,
 };
 
@@ -162,6 +163,36 @@ impl AerodromeSwapEnforcement {
     }
 }
 
+impl PancakeswapV3SwapEnforcement {
+    pub fn to_sol(&self) -> ITradingVault::PancakeswapV3SwapEnforcement {
+        ITradingVault::PancakeswapV3SwapEnforcement {
+            feeTier: U256::from(self.fee_tier),
+            maxSingleAmountIn: self.max_single_amount_in,
+            maxTotalAmountIn: self.max_total_amount_in,
+            minOutputPerInput: self.min_output_per_input,
+            router: self.router,
+            tokenIn: self.token_in,
+            tokenOut: self.token_out,
+        }
+    }
+}
+
+impl CurveStableSwapEnforcement {
+    pub fn to_sol(&self) -> ITradingVault::CurveStableSwapEnforcement {
+        // alloy renders `int128` fields as the native Rust `i128`.
+        ITradingVault::CurveStableSwapEnforcement {
+            i: self.i,
+            j: self.j,
+            maxSingleAmountIn: self.max_single_amount_in,
+            maxTotalAmountIn: self.max_total_amount_in,
+            minOutputPerInput: self.min_output_per_input,
+            pool: self.pool,
+            tokenIn: self.token_in,
+            tokenOut: self.token_out,
+        }
+    }
+}
+
 impl AaveSupplyEnforcement {
     pub fn to_sol(&self) -> ITradingVault::AaveSupplyEnforcement {
         ITradingVault::AaveSupplyEnforcement {
@@ -305,6 +336,28 @@ pub fn encode_swap_or_supply(
             scores,
         }
         .abi_encode(),
+        EnvelopeEnforcement::PancakeswapV3Swap(e) => {
+            ITradingVault::executePancakeswapV3SwapEnvelopeCall {
+                params,
+                env,
+                enf: e.to_sol(),
+                approvalSigners: signers,
+                signatures: sigs,
+                scores,
+            }
+            .abi_encode()
+        }
+        EnvelopeEnforcement::CurveStableSwap(e) => {
+            ITradingVault::executeCurveStableSwapEnvelopeCall {
+                params,
+                env,
+                enf: e.to_sol(),
+                approvalSigners: signers,
+                signatures: sigs,
+                scores,
+            }
+            .abi_encode()
+        }
         EnvelopeEnforcement::AaveSupply(e) => ITradingVault::executeAaveSupplyEnvelopeCall {
             params,
             env,
@@ -551,12 +604,12 @@ mod tests {
     /// for that variant. We test each by swapping in a different enforcement
     /// and re-computing both digests.
     #[test]
-    fn cross_domain_digest_equivalence_holds_for_all_eleven_variants() {
+    fn cross_domain_digest_equivalence_holds_for_all_thirteen_variants() {
         use crate::envelope::{
             AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement,
-            AaveWithdrawEnforcement, AerodromeSwapEnforcement, MorphoBorrowEnforcement,
-            MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement,
-            UniswapV4SwapEnforcement,
+            AaveWithdrawEnforcement, AerodromeSwapEnforcement, CurveStableSwapEnforcement,
+            MorphoBorrowEnforcement, MorphoRepayEnforcement, MorphoSupplyEnforcement,
+            MorphoWithdrawEnforcement, PancakeswapV3SwapEnforcement, UniswapV4SwapEnforcement,
         };
         let p = Address::from_str("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2").unwrap();
         let asset = Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
@@ -606,6 +659,33 @@ mod tests {
                     token_in: weth,
                     token_out: asset,
                     tick_spacing: 60,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    min_output_per_input: amt_one,
+                }),
+            ),
+            (
+                "pancakeswap_v3",
+                EnvelopeEnforcement::PancakeswapV3Swap(PancakeswapV3SwapEnforcement {
+                    router: Address::from_str("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4")
+                        .unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    fee_tier: 500,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    min_output_per_input: amt_one,
+                }),
+            ),
+            (
+                "curve",
+                EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
+                    pool: Address::from_str("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
+                        .unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    i: 0,
+                    j: 1,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
                     min_output_per_input: amt_one,

@@ -100,17 +100,34 @@ pub struct PancakeswapV3SwapEnforcement {
 
 /// Curve StableSwap — index-based exchange via `exchange(int128 i, int128 j, uint256 dx, uint256 min_dy)`.
 /// `i`/`j` are the pool's signed-int token indices; the on-chain executor
-/// verifies them plus the resolved token addresses.
+/// verifies them plus the resolved token addresses. We serialize indices as
+/// strings because `serde_json` doesn't support `i128` natively without
+/// `arbitrary_precision`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CurveStableSwapEnforcement {
     pub pool: Address,
     pub token_in: Address,
     pub token_out: Address,
+    #[serde(with = "i128_serde_str")]
     pub i: i128,
+    #[serde(with = "i128_serde_str")]
     pub j: i128,
     pub max_single_amount_in: U256,
     pub max_total_amount_in: U256,
     pub min_output_per_input: U256,
+}
+
+mod i128_serde_str {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &i128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i128, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<i128>().map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -721,6 +738,25 @@ mod tests {
                 max_total_amount_in: amt_two,
                 min_output_per_input: amt_one,
             }),
+            EnvelopeEnforcement::PancakeswapV3Swap(PancakeswapV3SwapEnforcement {
+                router: addr("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"),
+                token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                token_out: asset,
+                fee_tier: 500,
+                max_single_amount_in: amt_one,
+                max_total_amount_in: amt_two,
+                min_output_per_input: amt_one,
+            }),
+            EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
+                pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
+                token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                token_out: asset,
+                i: 0,
+                j: 1,
+                max_single_amount_in: amt_one,
+                max_total_amount_in: amt_two,
+                min_output_per_input: amt_one,
+            }),
             EnvelopeEnforcement::AaveSupply(AaveSupplyEnforcement {
                 pool: p,
                 asset,
@@ -780,9 +816,9 @@ mod tests {
     }
 
     #[test]
-    fn all_eleven_variants_have_pairwise_distinct_hashes() {
+    fn all_thirteen_variants_have_pairwise_distinct_hashes() {
         let variants = one_of_each();
-        assert_eq!(variants.len(), 11);
+        assert_eq!(variants.len(), 13);
         let hashes: Vec<_> = variants.iter().map(|v| v.struct_hash().unwrap()).collect();
         for i in 0..hashes.len() {
             for j in i + 1..hashes.len() {
@@ -791,6 +827,104 @@ mod tests {
                     "variants {i} and {j} produced identical hashes",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn pancakeswap_v3_struct_hash_distinct_from_uniswap_v3_for_same_fields() {
+        // Critical regression guard: PancakeSwap V3 uses the same field shape as
+        // Uniswap V3 — only the typehash differs, which must produce distinct hashes.
+        let pancake = PancakeswapV3SwapEnforcement {
+            router: addr("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"),
+            token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            token_out: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            fee_tier: 3000,
+            max_single_amount_in: U256::from(1u64),
+            max_total_amount_in: U256::from(2u64),
+            min_output_per_input: U256::from(1u64),
+        };
+        let uni = UniswapV3SwapEnforcement {
+            router: pancake.router,
+            token_in: pancake.token_in,
+            token_out: pancake.token_out,
+            fee_tier: pancake.fee_tier,
+            max_single_amount_in: pancake.max_single_amount_in,
+            max_total_amount_in: pancake.max_total_amount_in,
+            min_output_per_input: pancake.min_output_per_input,
+        };
+        assert_ne!(pancake.struct_hash(), uni.struct_hash());
+    }
+
+    #[test]
+    fn curve_stable_swap_negative_i_round_trips() {
+        // i128 sign-extends to int256 via two's complement; a negative index must
+        // produce a different hash than its positive counterpart.
+        let neg = CurveStableSwapEnforcement {
+            pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
+            token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            token_out: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            i: -1,
+            j: 2,
+            max_single_amount_in: U256::from(1u64),
+            max_total_amount_in: U256::from(2u64),
+            min_output_per_input: U256::from(1u64),
+        };
+        let pos = CurveStableSwapEnforcement {
+            i: 1,
+            ..neg.clone()
+        };
+        assert_ne!(neg.struct_hash(), pos.struct_hash());
+    }
+
+    #[test]
+    fn curve_stable_swap_swapping_i_and_j_alters_hash() {
+        // (i=0, j=1) and (i=1, j=0) describe opposite-direction swaps and MUST
+        // produce distinct hashes so an envelope can't be reused for both directions.
+        let a = CurveStableSwapEnforcement {
+            pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
+            token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            token_out: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            i: 0,
+            j: 1,
+            max_single_amount_in: U256::from(1u64),
+            max_total_amount_in: U256::from(2u64),
+            min_output_per_input: U256::from(1u64),
+        };
+        let b = CurveStableSwapEnforcement {
+            i: 1,
+            j: 0,
+            ..a.clone()
+        };
+        assert_ne!(a.struct_hash(), b.struct_hash());
+    }
+
+    #[test]
+    fn pancake_and_curve_round_trip_through_serde() {
+        let p = EnvelopeEnforcement::PancakeswapV3Swap(PancakeswapV3SwapEnforcement {
+            router: addr("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"),
+            token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            token_out: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            fee_tier: 500,
+            max_single_amount_in: U256::from(10u64),
+            max_total_amount_in: U256::from(100u64),
+            min_output_per_input: U256::from(1u64),
+        });
+        let c = EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
+            pool: addr("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
+            token_in: addr("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            token_out: addr("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            i: -2,
+            j: 3,
+            max_single_amount_in: U256::from(10u64),
+            max_total_amount_in: U256::from(100u64),
+            min_output_per_input: U256::from(1u64),
+        });
+        for v in [p, c] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: EnvelopeEnforcement = serde_json::from_str(&json).unwrap();
+            assert_eq!(v.protocol_id(), restored.protocol_id());
+            assert_eq!(v.action(), restored.action());
+            assert_eq!(v.struct_hash().unwrap(), restored.struct_hash().unwrap());
         }
     }
 

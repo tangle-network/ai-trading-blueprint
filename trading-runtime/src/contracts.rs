@@ -133,6 +133,27 @@ sol! {
             address tokenOut;
         }
 
+        struct PancakeswapV3SwapEnforcement {
+            uint256 feeTier;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address router;
+            address tokenIn;
+            address tokenOut;
+        }
+
+        struct CurveStableSwapEnforcement {
+            int128 i;
+            int128 j;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 minOutputPerInput;
+            address pool;
+            address tokenIn;
+            address tokenOut;
+        }
+
         struct AaveSupplyEnforcement {
             address asset;
             uint256 maxSingleAmount;
@@ -199,6 +220,8 @@ sol! {
         function executeUniswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeUniswapV4SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV4SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAerodromeSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, AerodromeSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executePancakeswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, PancakeswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeCurveStableSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, CurveStableSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, AaveSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
