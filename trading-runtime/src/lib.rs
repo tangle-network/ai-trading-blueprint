@@ -15,6 +15,7 @@ pub mod intent;
 pub mod leaderboard;
 pub mod learning;
 pub mod market_data;
+pub mod multicall;
 pub mod polymarket_clob;
 pub mod portfolio;
 pub mod signature_verify;

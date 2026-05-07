@@ -54,6 +54,42 @@ pub fn to_sol_envelope(signed: &SignedEnvelope) -> Result<ITradingVault::Envelop
     })
 }
 
+/// Struct hash of an `ITradingVault::Envelope` matching the on-chain
+/// `TradeValidator.hashEnvelope` pure function (and `_hashEnvelope` internally).
+///
+/// On-chain `vault.envelopeConsumedAmount(bytes32)` is keyed by exactly this
+/// hash, so the off-chain agent can precompute it and skip the validator
+/// round-trip — this is what lets the envelope watcher batch consumed-amount
+/// reads across N bots into a single Multicall3 RPC.
+///
+/// SECURITY: a divergence between this function and on-chain `_hashEnvelope`
+/// would silently flag bots as "unconsumed" forever (key miss = 0 returned).
+/// The cross-domain proptest in `envelope::abi_bridge::tests` exercises that
+/// the digest (which transitively wraps this struct hash) matches Solidity
+/// — the proptest covers each of the 13 enforcement variants.
+pub fn envelope_struct_hash(env: &ITradingVault::Envelope) -> FixedBytes<32> {
+    use alloy::sol_types::SolValue;
+    let envelope_typehash = keccak256(
+        "Envelope(uint64 version,bytes32 botIdHash,address vault,uint64 chainId,bytes32 protocolHash,bytes32 policyHash,bytes32 enforcementHash,uint64 issuedAt,uint64 expiresAt,uint64 nonce,bytes32 signersHash,uint64 minSignatures)"
+            .as_bytes(),
+    );
+    keccak256(SolValue::abi_encode(&(
+        envelope_typehash,
+        U256::from(env.version),
+        env.botIdHash,
+        env.vault,
+        U256::from(env.chainId),
+        env.protocolHash,
+        env.policyHash,
+        env.enforcementHash,
+        U256::from(env.issuedAt),
+        U256::from(env.expiresAt),
+        U256::from(env.nonce),
+        env.signersHash,
+        U256::from(env.minSignatures),
+    )))
+}
+
 /// Sorted-address hash matching `_hashApprovalSigners` in TradeValidator.sol.
 fn sorted_addresses_hash(values: &[String]) -> Result<FixedBytes<32>, EnvelopeError> {
     let mut addrs: Vec<Address> = values
@@ -487,30 +523,13 @@ mod tests {
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
-    /// Reimplements the Solidity `_hashEnvelope` calculation in Rust by ABI-encoding
-    /// the converted Solidity Envelope struct directly. If this matches the off-chain
-    /// `SignedEnvelope::digest()`, off-chain signatures will verify on-chain.
+    /// Reimplements the Solidity `_hashEnvelope` calculation in Rust. Now a thin
+    /// wrapper around the public [`envelope_struct_hash`] so we have a single
+    /// source of truth — the cross-domain proptest below still asserts that
+    /// the digest path (which transitively uses this struct hash) matches the
+    /// on-chain digest for every protocol variant.
     fn solidity_compatible_envelope_struct_hash(env: &ITradingVault::Envelope) -> FixedBytes<32> {
-        use alloy::sol_types::SolValue;
-        let envelope_typehash = keccak256(
-            "Envelope(uint64 version,bytes32 botIdHash,address vault,uint64 chainId,bytes32 protocolHash,bytes32 policyHash,bytes32 enforcementHash,uint64 issuedAt,uint64 expiresAt,uint64 nonce,bytes32 signersHash,uint64 minSignatures)"
-                .as_bytes(),
-        );
-        keccak256(SolValue::abi_encode(&(
-            envelope_typehash,
-            U256::from(env.version),
-            env.botIdHash,
-            env.vault,
-            U256::from(env.chainId),
-            env.protocolHash,
-            env.policyHash,
-            env.enforcementHash,
-            U256::from(env.issuedAt),
-            U256::from(env.expiresAt),
-            U256::from(env.nonce),
-            env.signersHash,
-            U256::from(env.minSignatures),
-        )))
+        envelope_struct_hash(env)
     }
 
     fn solidity_compatible_envelope_digest(env: &ITradingVault::Envelope) -> FixedBytes<32> {

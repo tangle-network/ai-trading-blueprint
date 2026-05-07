@@ -474,6 +474,26 @@ sol! {
         function idToMarketParams(bytes32 id) external view returns (MarketParams memory);
     }
 
+    /// Canonical Multicall3 contract — used to batch read-only `eth_call`s
+    /// across many bots in a single RPC. The same address
+    /// `0xcA11bde05977b3631167028862bE2a173976CA11` is deployed on every
+    /// major EVM chain (mainnet, all major L2s and testnets); operators can
+    /// override per-chain via the `MULTICALL3_<chain_id>` env var.
+    /// See [https://www.multicall3.com] for the canonical deployment list.
+    #[sol(rpc)]
+    interface IMulticall3 {
+        struct Call3 {
+            address target;
+            bool allowFailure;
+            bytes callData;
+        }
+        struct Result {
+            bool success;
+            bytes returnData;
+        }
+        function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory);
+    }
+
     #[sol(rpc)]
     interface IStrategyRegistry {
         struct StrategyInfo {
