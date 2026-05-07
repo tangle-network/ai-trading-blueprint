@@ -2696,9 +2696,12 @@ async fn execute_multi_bot(
     let mut signed_envelope: Option<SignedEnvelope> = None;
     let mut signed_uniswap_envelope: Option<SignedUniswapEnvelope> = None;
 
-    // Envelope loading and verification applies to both paper and live modes:
-    // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
-    if bot.validation_trust == ValidationTrust::Envelope {
+    // Generic signed envelopes are Hyperliquid-scoped. Paper envelope tests
+    // still use them for constraint fidelity, but live Uniswap V3 envelope
+    // trades resolve their protocol-specific proof below.
+    let should_load_generic_envelope = bot.validation_trust == ValidationTrust::Envelope
+        && (bot.paper_trade || normalized_req.intent.target_protocol == "hyperliquid");
+    if should_load_generic_envelope {
         let envelope = super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
             (
                 StatusCode::FORBIDDEN,

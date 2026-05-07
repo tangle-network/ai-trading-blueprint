@@ -20,7 +20,7 @@ use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router}
 use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
 use trading_runtime::adapters::ActionParams;
-use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::contracts::{IAssetValuator, ITradeValidator, ITradingVault};
 use trading_runtime::envelope::{PerpsPolicy, SignedEnvelope, TradingPolicy};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
@@ -590,6 +590,46 @@ async fn mock_live_vault_reconciliation_base(
         ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
     )
     .await;
+}
+
+async fn mock_uniswap_envelope_preflight_rpc(rpc_mock: &MockServer) {
+    let asset: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        .parse()
+        .expect("asset address");
+    let adapter: Address = "0x1000000000000000000000000000000000000001"
+        .parse()
+        .expect("adapter address");
+
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::assetCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(asset.abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(ITradingVault::valuationAdaptersCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(adapter.abi_encode())),
+    )
+    .await;
+    mock_rpc_selector(
+        rpc_mock,
+        &selector_hex(IAssetValuator::isSupportedCall::SELECTOR),
+        ResponseTemplate::new(200).set_body_json(rpc_result_hex(true.abi_encode())),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("eth_getBlockByNumber"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "timestamp": format!("0x{:x}", chrono::Utc::now().timestamp().max(0))
+            }
+        })))
+        .mount(rpc_mock)
+        .await;
 }
 
 async fn mock_live_aave_debt_balance(
@@ -2123,6 +2163,50 @@ async fn test_live_envelope_execute_requires_signed_envelope() {
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn test_live_uniswap_envelope_execute_does_not_require_hyperliquid_envelope() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_uniswap_envelope_preflight_rpc(&rpc_mock).await;
+
+    let bot_id = format!("bot-uniswap-envelope-missing-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({"strategy_type": "dex"});
+    bot.risk_params = serde_json::json!({
+        "uniswap_envelope": {
+            "enabled": true,
+            "max_duration_secs": 3600,
+            "max_single_amount_in": "1000000000000000000",
+            "max_total_amount_in": "2000000000000000000",
+            "max_slippage_bps": 100,
+            "allowed_pairs": [{
+                "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            }]
+        }
+    });
+    let state = multi_bot_state_for_bot("bot-token-uniswap-envelope-missing", bot);
+    let app = build_multi_bot_router(state);
+    let body: serde_json::Value =
+        serde_json::from_str(&execute_body_for_chain(Some(31337))).expect("execute body");
+
+    let response = execute_with_body(app, "bot-token-uniswap-envelope-missing", body).await;
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8_lossy(&body);
+
+    assert_eq!(status, 403, "{text}");
+    assert!(
+        text.contains("Live Uniswap Envelope trust mode requires a signed Uniswap envelope proof"),
+        "unexpected body: {text}"
+    );
+    assert!(
+        !text.contains("Envelope trust mode requires a signed per-bot envelope approval"),
+        "Uniswap execute was still blocked by Hyperliquid envelope preload: {text}"
+    );
 }
 
 #[tokio::test]
