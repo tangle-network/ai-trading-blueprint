@@ -45,6 +45,8 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     setValidatorMode: vi.fn(),
     customValidatorIds: '',
     setCustomValidatorIds: vi.fn(),
+    validationTrust: 'per_trade' as const,
+    setValidationTrust: vi.fn(),
     runtimeBackend: 'docker' as const,
     setRuntimeBackend: vi.fn(),
     firecrackerSupported: false,
@@ -178,6 +180,91 @@ describe('AdvancedSettingsDialog', () => {
     expect(setValidatorMode).toHaveBeenCalledWith('default');
     expect(setCustomValidatorIds).toHaveBeenCalledWith('');
     expect(setRuntimeBackend).toHaveBeenCalledWith('docker');
+  });
+
+  describe('validation trust', () => {
+    it('renders all three trust options with per-trade selected by default', () => {
+      render(<AdvancedSettingsDialog {...defaultProps()} />);
+      expect(screen.getByText('Validation Trust')).toBeInTheDocument();
+      const perTradeRadio = document.querySelector(
+        'input[name="validation-trust"][value="per_trade"]',
+      ) as HTMLInputElement | null;
+      const envelopeRadio = document.querySelector(
+        'input[name="validation-trust"][value="envelope"]',
+      ) as HTMLInputElement | null;
+      const selfOperatedRadio = document.querySelector(
+        'input[name="validation-trust"][value="self_operated"]',
+      ) as HTMLInputElement | null;
+      expect(perTradeRadio).toBeInTheDocument();
+      expect(envelopeRadio).toBeInTheDocument();
+      expect(selfOperatedRadio).toBeInTheDocument();
+      expect(perTradeRadio!).toBeChecked();
+      expect(envelopeRadio!).not.toBeChecked();
+      expect(selfOperatedRadio!).toBeDisabled();
+    });
+
+    it('updates validation trust when Envelope radio is selected', () => {
+      const setValidationTrust = vi.fn();
+      render(
+        <AdvancedSettingsDialog
+          {...defaultProps({ setValidationTrust })}
+        />,
+      );
+      const envelopeRadio = document.querySelector(
+        'input[name="validation-trust"][value="envelope"]',
+      ) as HTMLInputElement | null;
+      expect(envelopeRadio).not.toBeNull();
+      // Use change event directly (radix Tooltip.Trigger sets pointer-events:none on body)
+      envelopeRadio!.click();
+      expect(setValidationTrust).toHaveBeenCalledWith('envelope');
+    });
+
+    it('shows envelope explanatory notice when envelope is selected', () => {
+      render(
+        <AdvancedSettingsDialog
+          {...defaultProps({ validationTrust: 'envelope' })}
+        />,
+      );
+      expect(
+        screen.getByText(
+          /After provisioning, you'll be redirected to the Envelope tab/i,
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('does not show the envelope notice when per-trade is selected', () => {
+      render(<AdvancedSettingsDialog {...defaultProps()} />);
+      expect(
+        screen.queryByText(
+          /After provisioning, you'll be redirected to the Envelope tab/i,
+        ),
+      ).not.toBeInTheDocument();
+    });
+
+    it('keeps the self-operated radio disabled', () => {
+      render(<AdvancedSettingsDialog {...defaultProps()} />);
+      const selfOperatedRadio = document.querySelector(
+        'input[name="validation-trust"][value="self_operated"]',
+      ) as HTMLInputElement | null;
+      expect(selfOperatedRadio).not.toBeNull();
+      expect(selfOperatedRadio!).toBeDisabled();
+      expect(selfOperatedRadio!).not.toBeChecked();
+    });
+
+    it('resets validation trust to per_trade on Reset to Defaults', async () => {
+      const setValidationTrust = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <AdvancedSettingsDialog
+          {...defaultProps({
+            validationTrust: 'envelope',
+            setValidationTrust,
+          })}
+        />,
+      );
+      await user.click(screen.getByText('Reset to Defaults'));
+      expect(setValidationTrust).toHaveBeenCalledWith('per_trade');
+    });
   });
 
   it('does not reset runtime when tee blueprint is pinned', async () => {

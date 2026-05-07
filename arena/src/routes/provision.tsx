@@ -89,7 +89,7 @@ import {
   type ServiceInfo,
   type DiscoveredService,
 } from './provision/types';
-import type { BotLifecycleStatus } from '~/lib/types/bot';
+import type { BotLifecycleStatus, ValidationTrust } from '~/lib/types/bot';
 
 export const FIRECRACKER_RUNTIME_SUPPORTED = false;
 
@@ -123,6 +123,7 @@ interface OperatorProvisionBodyOptions extends ProvisionStrategyConfigOptions {
   effectiveCron: string;
   validatorServiceIds: bigint[];
   vaultAddress?: Address;
+  validationTrust?: ValidationTrust;
 }
 
 interface InstanceServiceConfigOptions extends StrategyConfigOptions {
@@ -612,6 +613,7 @@ export function buildOperatorProvisionBody({
   selectedExecutionTarget,
   includeExecutionTarget,
   executionConfig,
+  validationTrust,
   ...strategyConfigOptions
 }: OperatorProvisionBodyOptions) {
   const strategyConfig = buildProvisionStrategyConfig({
@@ -632,6 +634,12 @@ export function buildOperatorProvisionBody({
         : '{}',
     trading_loop_cron: effectiveCron,
     validator_service_ids: validatorServiceIds.map((id) => Number(id)),
+    // Only include `validation_trust` when it diverges from the default
+    // (`per_trade`). Older operator builds reject unknown fields, so
+    // omitting the field preserves the old behavior unchanged.
+    ...(validationTrust && validationTrust !== 'per_trade'
+      ? { validation_trust: validationTrust }
+      : {}),
     ...(includeExecutionTarget && executionConfig
       ? {
           chain_id: Number(executionConfig.chainId),
@@ -1180,6 +1188,9 @@ export default function ProvisionPage() {
     'default',
   );
   const [customValidatorIds, setCustomValidatorIds] = useState('');
+  const [validationTrust, setValidationTrust] = useState<ValidationTrust>(
+    'per_trade',
+  );
 
   // Deploy step
   const {
@@ -1681,6 +1692,7 @@ export default function ProvisionPage() {
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
+            validationTrust,
           });
 
           const res = await fetch(`${operatorApiUrl}/api/bot/provision`, {
@@ -1746,6 +1758,7 @@ export default function ProvisionPage() {
       researchEnabled,
       validatorMode,
       customValidatorIds,
+      validationTrust,
       customExpertKnowledge,
       customInstructions,
       operatorApiUrl,
@@ -3173,6 +3186,7 @@ export default function ProvisionPage() {
             setStep={setStep}
             resetTx={resetTx}
             defaultProvider={defaultProvider}
+            validationTrust={validationTrust}
           />
         )}
       </div>
@@ -3236,6 +3250,8 @@ export default function ProvisionPage() {
         setValidatorMode={setValidatorMode}
         customValidatorIds={customValidatorIds}
         setCustomValidatorIds={setCustomValidatorIds}
+        validationTrust={validationTrust}
+        setValidationTrust={setValidationTrust}
         runtimeBackend={runtimeBackend}
         setRuntimeBackend={setRuntimeBackend}
         firecrackerSupported={FIRECRACKER_RUNTIME_SUPPORTED}
