@@ -166,14 +166,17 @@ that ages out before the slot lands it (~60s window), the RPC returns
 **Impact.** Same as (5): operator believes order placed, but no on-chain
 state changed.
 
-**Fix (commit 4).** Note: a true retry requires re-signing, which is the
-caller's responsibility (we don't hold the keypair here). Update the
-docstring to be accurate, and surface `BlockhashExpired` cleanly so the
-*route handler* can re-fetch + re-sign + re-submit. Document the contract:
-callers MUST handle `SolanaError::BlockhashExpired` by re-running the
-build → sign → submit pipeline. Add a `submit_with_retry` helper that takes
-a `Fn() -> impl Future<Output = Result<VersionedTransaction>>` builder for
-the signing closure. The Drift route uses it.
+**Status:** Fixed in commit `harden(solana): bounded blockhash-expiry retry on tx submission`.
+
+Adds `SolanaClient::submit_with_retry<F: FnMut(Hash) -> Result<VersionedTransaction, SolanaError>>`:
+fetches a fresh blockhash, invokes the builder, submits; on
+`SolanaError::BlockhashExpired` re-fetches + re-builds + re-submits **once**;
+any further `BlockhashExpired` propagates so the caller can alert.
+`routes::solana::jupiter_swap` and `routes::solana::drift_order` switched to
+this path. Module docs updated to make the bounded-1-attempt contract
+explicit; module-level docstring revised so the comment matches behavior.
+Wiremock-backed regression tests in `solana::client::tests::submit_retries_once_on_blockhash_expiry`
+and `submit_with_retry_propagates_after_one_retry`.
 
 ### 7. MEDIUM — Binance `recvWindow` not bounded
 

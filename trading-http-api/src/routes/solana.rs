@@ -42,8 +42,7 @@ use trading_runtime::envelope::check::{
 };
 use trading_runtime::solana::client::SolanaClient;
 use trading_runtime::solana::drift::{
-    DriftOrderParams, DriftOrderRequest, DriftPlacePerpOrderAccounts, DriftVenue,
-    build_place_perp_order_ix,
+    DriftOrderParams, DriftOrderRequest, DriftPlacePerpOrderAccounts, build_place_perp_order_ix,
 };
 use trading_runtime::solana::jupiter::JupiterVenue;
 use trading_runtime::solana::keys::load_operator_keypair_from_env;
@@ -181,23 +180,6 @@ fn reject_when_paper_trade(bot: &BotContext) -> Result<(), (StatusCode, String)>
         ));
     }
     Ok(())
-}
-
-/// Sign a `VersionedTransaction` returned unsigned by Jupiter.
-fn sign_versioned_tx(
-    tx: VersionedTransaction,
-    signer: &Keypair,
-) -> Result<VersionedTransaction, (StatusCode, String)> {
-    let msg = match &tx.message {
-        VersionedMessage::Legacy(m) => VersionedMessage::Legacy(m.clone()),
-        VersionedMessage::V0(m) => VersionedMessage::V0(m.clone()),
-    };
-    VersionedTransaction::try_new(msg, &[signer]).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to sign Solana tx: {e}"),
-        )
-    })
 }
 
 // ── Audit fix (HIGH/CRITICAL): quote tampering & fee-payer guards ──────────
@@ -421,9 +403,28 @@ async fn jupiter_swap(
     // returned tx names the operator as fee-payer & first signer.
     assert_jupiter_tx_payer_is_operator(&unsigned, &kp.pubkey())?;
 
-    let signed = sign_versioned_tx(unsigned, kp)?;
-    let sig = venue
-        .submit(signed)
+    // Audit fix (HIGH): bounded blockhash-expiry retry. Jupiter's swap tx
+    // already carries a recent blockhash; on `BlockhashExpired` we
+    // re-target the existing message at a fresh blockhash and re-sign in
+    // place rather than re-quoting Jupiter (which would risk price drift).
+    // Retry is bounded to 1 attempt — see `SolanaClient::submit_with_retry`.
+    let sig = rpc_client()
+        .submit_with_retry(|fresh_blockhash| {
+            let mut new_msg = unsigned.message.clone();
+            match &mut new_msg {
+                VersionedMessage::Legacy(m) => {
+                    m.recent_blockhash = fresh_blockhash;
+                }
+                VersionedMessage::V0(m) => {
+                    m.recent_blockhash = fresh_blockhash;
+                }
+            }
+            VersionedTransaction::try_new(new_msg, &[kp]).map_err(|e| {
+                trading_runtime::solana::error::SolanaError::RpcFailed(format!(
+                    "re-sign jupiter swap tx after blockhash refresh: {e}"
+                ))
+            })
+        })
         .await
         .map_err(<(StatusCode, String)>::from)?;
 
@@ -506,12 +507,6 @@ async fn drift_order(
     )
     .map_err(<(StatusCode, String)>::from)?;
 
-    let venue = DriftVenue::new(rpc_client().clone());
-    let blockhash = rpc_client()
-        .latest_blockhash()
-        .await
-        .map_err(<(StatusCode, String)>::from)?;
-
     // Audit fix (HIGH): prepend compute-budget ixs. Without these, Drift's
     // `place_perp_order` ix can blow past the default 200K CU limit on
     // busy slots, and a zero priority-fee tx is dropped during
@@ -519,21 +514,25 @@ async fn drift_order(
     let cb = drift_compute_budget_ixs();
     let ixs = [cb[0].clone(), cb[1].clone(), ix];
 
-    let msg = solana_sdk::message::v0::Message::try_compile(&kp.pubkey(), &ixs, &[], blockhash)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("compile drift tx: {e}"),
-            )
-        })?;
-    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[kp]).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("sign drift tx: {e}"),
-        )
-    })?;
-    let sig = venue
-        .submit(tx)
+    // Audit fix (HIGH): bounded blockhash-expiry retry. The closure
+    // re-compiles the Drift tx against the fresh blockhash on retry —
+    // ixs (incl. compute budget) and accounts are stable, only the
+    // recent_blockhash anchor changes. Retry bounded to 1 attempt.
+    let sig = rpc_client()
+        .submit_with_retry(|blockhash| {
+            let msg =
+                solana_sdk::message::v0::Message::try_compile(&kp.pubkey(), &ixs, &[], blockhash)
+                    .map_err(|e| {
+                        trading_runtime::solana::error::SolanaError::RpcFailed(format!(
+                            "compile drift tx: {e}"
+                        ))
+                    })?;
+            VersionedTransaction::try_new(VersionedMessage::V0(msg), &[kp]).map_err(|e| {
+                trading_runtime::solana::error::SolanaError::RpcFailed(format!(
+                    "sign drift tx: {e}"
+                ))
+            })
+        })
         .await
         .map_err(<(StatusCode, String)>::from)?;
 
