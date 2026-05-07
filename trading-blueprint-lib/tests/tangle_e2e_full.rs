@@ -821,6 +821,7 @@ async fn test_full_bot_lifecycle() -> Result<()> {
             0,
             "0x0000000000000000000000000000000000000000".into(),
             None,
+            None,
         )
         .await
         .expect("provision_core should succeed");

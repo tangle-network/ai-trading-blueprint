@@ -186,6 +186,7 @@ async fn test_activate_paper_trade_bot_allows_unresolved_factory_vault() {
         7,
         "0xPAPERCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -227,6 +228,7 @@ async fn test_activate_live_bot_still_fails_with_unresolved_factory_vault() {
         43,
         8,
         "0xLIVECALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -271,6 +273,7 @@ async fn test_activate_live_bot_rejects_factory_placeholder_that_is_really_a_vau
         45,
         10,
         "0xLIVEDIRECTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -319,6 +322,7 @@ async fn test_activate_live_bot_accepts_explicit_direct_vault_binding() {
         11,
         "0xLIVEDIRECTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -363,6 +367,7 @@ async fn test_activate_paper_trade_bot_allows_reverting_factory_lookup() {
         44,
         9,
         "0xPAPERREVERTCALLER".to_string(),
+        None,
         None,
     )
     .await

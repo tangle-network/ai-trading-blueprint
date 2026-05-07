@@ -921,6 +921,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         service_id,
         caller.clone(),
         None,
+        None,
     )
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
