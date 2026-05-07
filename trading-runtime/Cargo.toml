@@ -47,11 +47,17 @@ hmac = "0.12"
 sha2 = "0.10"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 
+# Security primitives — sourcing CSPRNG nonces (Coinbase JWT) and zeroizing
+# keypair-adjacent buffers on drop (Solana operator key loader).
+getrandom = "0.2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
 [dev-dependencies]
 alloy = { version = "1", features = ["node-bindings"] }
 axum = "0.8"
 dotenv = "0.15"
 hex = "0.4"
+proptest = "1"
 rust_decimal = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 trading-validator-lib = { path = "../trading-validator-lib" }

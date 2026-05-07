@@ -17,7 +17,6 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use reqwest::{Client, Method, StatusCode};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{
     CexAccountInfo, CexBalance, CexError, CexFee, CexOpenOrder, CexOrderRequest, CexOrderResponse,
@@ -413,23 +412,22 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// 32 bytes of OS-supplied entropy, hex-encoded — the JWT `nonce` claim.
+///
+/// Coinbase enforces nonce uniqueness across active JWTs. We can't allow a
+/// guessable nonce: the previous implementation hashed `(time_nanos, pid,
+/// counter)`, all of which are predictable from outside the process, which
+/// degrades replay protection to roughly nothing.
+///
+/// We use `getrandom::getrandom` (which delegates to `getrandom(2)` on Linux,
+/// `BCryptGenRandom` on Windows) — the same syscall the OS uses for
+/// `/dev/urandom`. If the OS RNG fails we panic deliberately: a Coinbase
+/// request without a CSPRNG nonce is worse than a failed request.
 fn random_nonce() -> String {
-    // Cheap nonce: hex(sha256(time_nanos || random)). Good enough for replay
-    // protection in 120s windows; we don't depend on rand here.
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id() as u128;
-    let counter = NONCE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128;
-    let mut hasher = Sha256::new();
-    hasher.update(nanos.to_le_bytes());
-    hasher.update(pid.to_le_bytes());
-    hasher.update(counter.to_le_bytes());
-    hex::encode(hasher.finalize())
+    let mut buf = [0u8; 32];
+    getrandom::getrandom(&mut buf).expect("OS CSPRNG must be available for Coinbase JWT nonce");
+    hex::encode(buf)
 }
-
-static NONCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 // ── Response translation ────────────────────────────────────────────────────
 
@@ -768,5 +766,22 @@ mod tests {
         let v = serde_json::json!({ "value": "1.23456789", "currency": "BTC" });
         let parsed = parse_decimal_from_value_obj(Some(&v)).unwrap();
         assert_eq!(parsed.to_string(), "1.23456789");
+    }
+
+    /// Audit fix (HIGH): the old `random_nonce` hashed deterministic inputs
+    /// (time_nanos || pid || counter); two nonces produced microseconds
+    /// apart from the same process were effectively predictable. Verify the
+    /// new implementation is non-deterministic and 64 hex chars wide.
+    #[test]
+    fn random_nonce_is_unique_and_well_formed() {
+        let n1 = random_nonce();
+        let n2 = random_nonce();
+        assert_eq!(n1.len(), 64, "nonce must be 32 bytes hex-encoded");
+        assert_eq!(n2.len(), 64);
+        assert!(n1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(n1, n2, "two CSPRNG nonces must differ");
+        // Sanity-check entropy: no two of 32 generated nonces should collide.
+        let many: std::collections::HashSet<String> = (0..32).map(|_| random_nonce()).collect();
+        assert_eq!(many.len(), 32, "32 CSPRNG nonces unexpectedly collided");
     }
 }

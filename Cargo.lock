@@ -16131,11 +16131,13 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "ethers-signers",
  "futures",
+ "getrandom 0.2.17",
  "hex",
  "hmac 0.12.1",
  "hyperliquid",
  "jsonwebtoken 9.3.1",
  "polymarket-client-sdk",
+ "proptest",
  "reqwest 0.12.28",
  "rust_decimal",
  "serde",
@@ -16154,6 +16156,7 @@ dependencies = [
  "url",
  "uuid 1.23.1",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]
