@@ -348,6 +348,26 @@ async fn handle_validate_envelope(
     }
 
     if let Some(ref signer) = server.signer {
+        if !request
+            .approval_signers
+            .iter()
+            .filter_map(|signer| signer.parse::<Address>().ok())
+            .any(|approval_signer| approval_signer == signer.address())
+        {
+            reasoning = "Uniswap envelope rejected: validator signer is not in approval_signers"
+                .to_string();
+            return Json(ValidateEnvelopeResponse {
+                approved: false,
+                score: 0,
+                signature: zero_signature(),
+                reasoning,
+                validator: validator_address,
+                chain_id: signer_chain_id,
+                verifying_contract: signer_contract,
+                validated_at,
+                signed_envelope: None,
+            });
+        }
         match signer.sign_uniswap_envelope(&request.envelope, score as u64) {
             Ok((sig_bytes, addr)) => {
                 let sig = UniswapEnvelopeSignature {
@@ -1084,6 +1104,29 @@ mod tests {
             .unwrap()
     }
 
+    fn test_uniswap_envelope(approval_signers: Vec<String>) -> UniswapEnvelope {
+        let approval_hash = approval_signers_hash(&approval_signers).unwrap();
+        UniswapEnvelope {
+            envelope_id: format!("0x{}", "11".repeat(32)),
+            bot_id_hash: trading_runtime::uniswap_envelope::bot_id_hash("test-bot"),
+            vault: "0x0000000000000000000000000000000000000001".into(),
+            chain_id: 31337,
+            router: "0xE592427A0AEce92De3Edee1F18E0157C05861564".into(),
+            token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into(),
+            token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into(),
+            action: "swap".into(),
+            max_single_amount_in: "1000000000000000000".into(),
+            max_total_amount_in: "2000000000000000000".into(),
+            max_slippage_bps: 100,
+            min_output_per_input: "1".into(),
+            valid_from: chrono::Utc::now().timestamp().max(0) as u64,
+            valid_until: chrono::Utc::now().timestamp().max(0) as u64 + 3600,
+            nonce: 1,
+            approval_signers_hash: format!("0x{}", hex::encode(approval_hash.as_slice())),
+            min_signatures: 1,
+        }
+    }
+
     fn test_intent(
         deadline: u64,
         amount_in: rust_decimal::Decimal,
@@ -1633,6 +1676,45 @@ mod tests {
             Some("0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string())
         );
         assert!(!resp.validated_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_validate_uniswap_envelope_rejects_unselected_signer() {
+        let server = test_signing_server();
+        let app = server.router();
+        let approval_signers = vec!["0x70997970c51812dc3A010C7d01b50e0d17dc79C8".to_string()];
+        let envelope = test_uniswap_envelope(approval_signers.clone());
+        let req_body = serde_json::json!({
+            "envelope": envelope,
+            "approval_signers": approval_signers,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/envelopes/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ValidateEnvelopeResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(!resp.approved);
+        assert_eq!(resp.score, 0);
+        assert_eq!(resp.signature, zero_signature());
+        assert!(resp.signed_envelope.is_none());
+        assert!(
+            resp.reasoning
+                .contains("validator signer is not in approval_signers")
+        );
     }
 
     #[tokio::test]

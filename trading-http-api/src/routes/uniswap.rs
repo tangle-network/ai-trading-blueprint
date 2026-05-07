@@ -46,7 +46,7 @@ struct StoredUniswapEnvelopes {
     envelopes: Vec<SignedUniswapEnvelope>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ValidateEnvelopeRequest {
     envelope: UniswapEnvelope,
     approval_signers: Vec<String>,
@@ -317,6 +317,10 @@ pub(crate) async fn get_or_request_signed_uniswap_envelope(
     let client = reqwest::Client::new();
     let mut signatures = Vec::new();
     let mut seen = HashSet::new();
+    let approval_signer_set = approval_signers
+        .iter()
+        .map(|signer| signer.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
     let mut errors = Vec::new();
 
     for endpoint in &bot.validator_endpoints {
@@ -359,7 +363,28 @@ pub(crate) async fn get_or_request_signed_uniswap_envelope(
             continue;
         };
         for signature in signed.signatures {
-            let key = signature.signer.to_ascii_lowercase();
+            let parsed_signer = match signature.signer.parse::<Address>() {
+                Ok(address) => address,
+                Err(error) => {
+                    errors.push(format!(
+                        "{endpoint}: ignored invalid Uniswap envelope signer {}: {error}",
+                        signature.signer
+                    ));
+                    continue;
+                }
+            };
+            let key = format!("{parsed_signer:#x}");
+            if !approval_signer_set.contains(&key) {
+                tracing::warn!(
+                    endpoint = %endpoint,
+                    signer = %key,
+                    "ignored Uniswap envelope signature outside selected approval signer set"
+                );
+                errors.push(format!(
+                    "{endpoint}: ignored Uniswap envelope signature from {key} outside selected approval_signers"
+                ));
+                continue;
+            }
             if seen.insert(key) {
                 signatures.push(signature);
             }
@@ -971,6 +996,9 @@ mod tests {
     const TEST_VALIDATOR_PRIVATE_KEY: &str =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const TEST_VALIDATOR_ADDRESS: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    const SECOND_VALIDATOR_PRIVATE_KEY: &str =
+        "59c6995e998f97a5a004497e5da8e8e1e82cc5f0105b9569e973e99508d83f0b";
+    const SECOND_VALIDATOR_ADDRESS: &str = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
     const TEST_TRADE_VALIDATOR: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
     fn ensure_test_state_dir() {
@@ -988,6 +1016,40 @@ mod tests {
             .with_signer(TEST_VALIDATOR_PRIVATE_KEY, 31337, contract)
             .unwrap()
             .router();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_unselected_signing_validator() -> String {
+        async fn handler(Json(request): Json<ValidateEnvelopeRequest>) -> Json<serde_json::Value> {
+            let signature = request
+                .envelope
+                .sign_with_private_key(
+                    SECOND_VALIDATOR_PRIVATE_KEY,
+                    80,
+                    31337,
+                    TEST_TRADE_VALIDATOR,
+                )
+                .unwrap();
+            let signed_envelope = SignedUniswapEnvelope {
+                envelope: request.envelope,
+                approval_signers: request.approval_signers,
+                signatures: vec![signature],
+            };
+            Json(serde_json::json!({
+                "approved": true,
+                "score": 80,
+                "reasoning": "unselected validator signed anyway",
+                "validator": SECOND_VALIDATOR_ADDRESS,
+                "signed_envelope": signed_envelope
+            }))
+        }
+
+        let app = Router::new().route("/envelopes/validate", axum::routing::post(handler));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1104,6 +1166,56 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(reused.envelope.envelope_id, signed.envelope.envelope_id);
+    }
+
+    #[tokio::test]
+    async fn ignores_uniswap_envelope_signatures_outside_selected_approval_signers() {
+        ensure_test_state_dir();
+        let selected_validator = spawn_validator().await;
+        let unselected_validator = spawn_unselected_signing_validator().await;
+        let rpc_url = spawn_rpc(chrono::Utc::now().timestamp().max(0) as u64).await;
+        let state = test_state();
+        let mut bot = test_bot(selected_validator, rpc_url);
+        bot.validator_endpoints.push(unselected_validator);
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("dex-test")
+            .action(Action::Swap)
+            .token_in("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+            .token_out("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+            .amount_in(Decimal::from(500_000_000_000_000_000u128))
+            .min_amount_out(Decimal::from(1_000_000_000u64))
+            .target_protocol("uniswap_v3")
+            .chain_id(31337)
+            .build()
+            .unwrap();
+
+        let signed = get_or_request_signed_uniswap_envelope(
+            &state,
+            &bot,
+            &intent,
+            vec![TEST_VALIDATOR_ADDRESS.into()],
+            1,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(signed.signatures.len(), 1);
+        assert_eq!(
+            signed.signatures[0].signer.to_ascii_lowercase(),
+            TEST_VALIDATOR_ADDRESS
+        );
+        assert_ne!(
+            signed.signatures[0].signer.to_ascii_lowercase(),
+            SECOND_VALIDATOR_ADDRESS
+        );
+
+        let stored = read_signed_uniswap_envelopes(&bot.bot_id);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].signatures.len(), 1);
+        assert_eq!(
+            stored[0].signatures[0].signer.to_ascii_lowercase(),
+            TEST_VALIDATOR_ADDRESS
+        );
     }
 
     #[tokio::test]
