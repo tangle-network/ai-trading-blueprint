@@ -497,7 +497,7 @@ fn build_envelope(
         .filter(|value| *value > 0)
         .unwrap_or(3600);
     let max_slippage_bps = json_u64(policy.get("max_slippage_bps")).unwrap_or(100);
-    let approval_hash = approval_signers_hash(&approval_signers.to_vec())
+    let approval_hash = approval_signers_hash(approval_signers)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     let expiry_basis = chain_now.max(execution_now);
     let nonce = expiry_basis
