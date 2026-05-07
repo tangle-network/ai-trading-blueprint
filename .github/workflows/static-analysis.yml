@@ -1,0 +1,38 @@
+name: Static Analysis
+
+# Supply-chain + lint gates that don't need a full build matrix.
+# Runs on every PR and on develop/main pushes. Kept in a separate
+# workflow from `ci.yml` so a slow `cargo deny` advisory-db fetch
+# doesn't block the build matrix.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    name: Cargo Deny (advisories + licences + sources + bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The action wraps `cargo install cargo-deny --locked` and
+      # caches the binary across runs. `command: check` runs all four
+      # sections (advisories, bans, licenses, sources) — same as a
+      # local `cargo deny check`.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          log-level: warn
+          command: check
+          arguments: --config deny.toml
