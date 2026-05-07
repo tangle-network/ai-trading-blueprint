@@ -27,6 +27,21 @@ tracing = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# Solana venues — Jupiter (DEX aggregator) and Drift v2 (perps).
+# `drift-rs` only publishes a 1.0.0-alpha that pulls a heavy anchor
+# toolchain; we hand-build the place_perp_order instruction with
+# solana-sdk + borsh to keep the dep footprint reasonable
+# (see solana::drift for details).
+solana-sdk = "2"
+solana-client = "2"
+solana-transaction-status = "2"
+spl-token = "8"
+spl-associated-token-account = "8"
+ed25519-dalek = "2"
+borsh = { version = "1", features = ["derive"] }
+base64 = "0.22"
+bincode = "1"
+
 [dev-dependencies]
 alloy = { version = "1", features = ["node-bindings"] }
 axum = "0.8"

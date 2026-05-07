@@ -18,6 +18,7 @@ pub mod polymarket_clob;
 pub mod portfolio;
 pub mod signature_verify;
 pub mod simulator;
+pub mod solana;
 pub mod strategy;
 pub mod supported_assets;
 pub mod token_metadata;
