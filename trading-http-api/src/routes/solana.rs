@@ -29,6 +29,8 @@ use axum::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use solana_sdk::instruction::Instruction;
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
@@ -198,6 +200,137 @@ fn sign_versioned_tx(
     })
 }
 
+// ── Audit fix (HIGH/CRITICAL): quote tampering & fee-payer guards ──────────
+
+/// Audit fix (CRITICAL): the typed `SolanaQuote` is what we gate against,
+/// but `quote.raw` is what we forward to Jupiter `/swap`. An attacker could
+/// craft a `SolanaQuote` whose typed mints/amounts pass the vault gate
+/// while `raw` points to a different swap. Reject any mismatch before
+/// signing.
+///
+/// We compare the *typed* fields against the matching keys in `quote.raw`:
+/// `inputMint`, `outputMint`, `inAmount`, `otherAmountThreshold`. Jupiter
+/// quote responses always include these; if they're missing the request is
+/// malformed and we reject for safety.
+fn validate_quote_self_consistent(quote: &SolanaQuote) -> Result<(), (StatusCode, String)> {
+    let bad = |reason: &str| -> (StatusCode, String) {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Solana quote self-consistency check failed: {reason}"),
+        )
+    };
+
+    let raw = quote
+        .raw
+        .as_object()
+        .ok_or_else(|| bad("raw is not a JSON object"))?;
+
+    let raw_input = raw
+        .get("inputMint")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| bad("raw.inputMint missing"))?;
+    if raw_input != quote.input_mint.to_string() {
+        return Err(bad("typed input_mint != raw.inputMint"));
+    }
+
+    let raw_output = raw
+        .get("outputMint")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| bad("raw.outputMint missing"))?;
+    if raw_output != quote.output_mint.to_string() {
+        return Err(bad("typed output_mint != raw.outputMint"));
+    }
+
+    let raw_in = raw
+        .get("inAmount")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| bad("raw.inAmount missing or non-string"))?;
+    if raw_in != quote.in_amount.to_string() {
+        return Err(bad("typed in_amount != raw.inAmount"));
+    }
+
+    let raw_threshold = raw
+        .get("otherAmountThreshold")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| bad("raw.otherAmountThreshold missing or non-string"))?;
+    if raw_threshold != quote.other_amount_threshold.to_string() {
+        return Err(bad(
+            "typed other_amount_threshold != raw.otherAmountThreshold",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Audit fix (HIGH): before signing the Jupiter-supplied unsigned tx,
+/// confirm that:
+///   1. The fee payer (account index 0 in Solana's static account keys)
+///      is the operator pubkey. If Jupiter were compromised it could
+///      return a tx whose fee payer is the *attacker* — signing it would
+///      attach the operator's signature to an arbitrary instruction set.
+///   2. The operator pubkey appears as the first signer.
+///
+/// Both checks reduce blind-trust in Jupiter to "Jupiter can choose which
+/// instructions go in *the operator's* tx", which is what we already gate
+/// against via the universal/vault policy checks.
+fn assert_jupiter_tx_payer_is_operator(
+    tx: &VersionedTransaction,
+    operator: &Pubkey,
+) -> Result<(), (StatusCode, String)> {
+    let bad = |reason: String| -> (StatusCode, String) {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Jupiter swap tx rejected: {reason}"),
+        )
+    };
+
+    let static_keys = match &tx.message {
+        VersionedMessage::Legacy(m) => &m.account_keys,
+        VersionedMessage::V0(m) => &m.account_keys,
+    };
+    let header = match &tx.message {
+        VersionedMessage::Legacy(m) => &m.header,
+        VersionedMessage::V0(m) => &m.header,
+    };
+
+    if header.num_required_signatures == 0 {
+        return Err(bad("tx has no required signers".into()));
+    }
+
+    let payer = static_keys
+        .first()
+        .ok_or_else(|| bad("tx has no static account keys".into()))?;
+    if payer != operator {
+        return Err(bad(format!(
+            "fee payer {payer} != operator {operator}; refusing to sign"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Audit fix (HIGH): Drift `place_perp_order` is heavy (200K-400K CUs on a
+/// busy slot). The default per-ix limit is 200K, so the tx can silently
+/// fail with `ComputeBudgetExceeded`. Without a priority fee the tx may
+/// also be dropped during congestion. Prepend two compute-budget ixs.
+const DRIFT_DEFAULT_COMPUTE_UNIT_LIMIT: u32 = 400_000;
+const DRIFT_DEFAULT_PRIORITY_FEE_MICROLAMPORTS: u64 = 50_000;
+
+fn drift_compute_budget_ixs() -> [Instruction; 2] {
+    let cu_limit = std::env::var("DRIFT_COMPUTE_UNIT_LIMIT")
+        .ok()
+        .and_then(|raw| raw.parse::<u32>().ok())
+        .unwrap_or(DRIFT_DEFAULT_COMPUTE_UNIT_LIMIT);
+    let priority = std::env::var("DRIFT_PRIORITY_FEE_MICROLAMPORTS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .unwrap_or(DRIFT_DEFAULT_PRIORITY_FEE_MICROLAMPORTS);
+    [
+        ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
+        ComputeBudgetInstruction::set_compute_unit_price(priority),
+    ]
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 async fn jupiter_quote(
@@ -230,6 +363,11 @@ async fn jupiter_swap(
     Json(req): Json<JupiterSwapHttpRequest>,
 ) -> Result<Json<SolanaSubmitResponse>, (StatusCode, String)> {
     reject_when_paper_trade(&bot)?;
+
+    // Audit fix (CRITICAL): the typed quote drives policy gates while
+    // `quote.raw` is what we send to Jupiter `/swap`. They MUST agree on
+    // mint identity and amounts or the gate is bypassed.
+    validate_quote_self_consistent(&req.quote)?;
 
     let trade_size_usd = parse_decimal("trade_size_usd", &req.trade_size_usd)?;
     let current_exposure = parse_decimal(
@@ -278,6 +416,11 @@ async fn jupiter_swap(
         .build_swap_tx(&req.quote, kp.pubkey())
         .await
         .map_err(<(StatusCode, String)>::from)?;
+
+    // Audit fix (HIGH): defense-in-depth before signing — confirm Jupiter's
+    // returned tx names the operator as fee-payer & first signer.
+    assert_jupiter_tx_payer_is_operator(&unsigned, &kp.pubkey())?;
+
     let signed = sign_versioned_tx(unsigned, kp)?;
     let sig = venue
         .submit(signed)
@@ -368,7 +511,15 @@ async fn drift_order(
         .latest_blockhash()
         .await
         .map_err(<(StatusCode, String)>::from)?;
-    let msg = solana_sdk::message::v0::Message::try_compile(&kp.pubkey(), &[ix], &[], blockhash)
+
+    // Audit fix (HIGH): prepend compute-budget ixs. Without these, Drift's
+    // `place_perp_order` ix can blow past the default 200K CU limit on
+    // busy slots, and a zero priority-fee tx is dropped during
+    // congestion.
+    let cb = drift_compute_budget_ixs();
+    let ixs = [cb[0].clone(), cb[1].clone(), ix];
+
+    let msg = solana_sdk::message::v0::Message::try_compile(&kp.pubkey(), &ixs, &[], blockhash)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -516,6 +667,170 @@ mod tests {
     fn parse_decimal_rejects_garbage() {
         let err = parse_decimal("trade_size_usd", "not a number").unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    fn make_quote(
+        input_mint: &Pubkey,
+        output_mint: &Pubkey,
+        in_amt: u64,
+        threshold: u64,
+    ) -> SolanaQuote {
+        SolanaQuote {
+            venue: "jupiter".into(),
+            input_mint: *input_mint,
+            output_mint: *output_mint,
+            in_amount: in_amt,
+            out_amount: in_amt - 1,
+            other_amount_threshold: threshold,
+            price_impact_pct: 0.001,
+            raw: serde_json::json!({
+                "inputMint": input_mint.to_string(),
+                "outputMint": output_mint.to_string(),
+                "inAmount": in_amt.to_string(),
+                "outAmount": (in_amt - 1).to_string(),
+                "otherAmountThreshold": threshold.to_string(),
+                "priceImpactPct": "0.001",
+                "swapMode": "ExactIn",
+                "routePlan": []
+            }),
+        }
+    }
+
+    /// Audit fix (CRITICAL): the typed `SolanaQuote` is what we gate
+    /// against, but `quote.raw` is forwarded verbatim to Jupiter `/swap`.
+    /// Mismatched fields can be exploited to bypass the vault gate.
+    #[test]
+    fn validate_quote_self_consistent_passes_for_matched_quote() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let q = make_quote(&a, &b, 1_000_000, 990_000);
+        validate_quote_self_consistent(&q).expect("matched quote must pass");
+    }
+
+    #[test]
+    fn validate_quote_self_consistent_rejects_mint_swap() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let mut q = make_quote(&a, &b, 1_000_000, 990_000);
+        // Attacker swaps the typed mint while leaving the raw mint intact —
+        // the raw mint is what Jupiter actually swaps.
+        q.input_mint = Pubkey::new_unique();
+        let err = validate_quote_self_consistent(&q).expect_err("must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("input_mint"), "{}", err.1);
+    }
+
+    #[test]
+    fn validate_quote_self_consistent_rejects_inflated_in_amount() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let mut q = make_quote(&a, &b, 1_000_000, 990_000);
+        // Typed in_amount is what the universal/vault check uses; raw is
+        // what Jupiter swaps. Diverging the two is an exploit.
+        q.in_amount = 1; // tiny typed value, real swap is 1M
+        let err = validate_quote_self_consistent(&q).expect_err("must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("in_amount"), "{}", err.1);
+    }
+
+    #[test]
+    fn validate_quote_self_consistent_rejects_threshold_tampering() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let mut q = make_quote(&a, &b, 1_000_000, 990_000);
+        q.other_amount_threshold = 1_000_000; // 0 bps slippage on the typed
+        // copy, but raw still says 990_000 — Jupiter executes at 1% slippage
+        // while the policy thinks slippage is 0 bps.
+        let err = validate_quote_self_consistent(&q).expect_err("must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("other_amount_threshold"), "{}", err.1);
+    }
+
+    #[test]
+    fn validate_quote_self_consistent_rejects_non_object_raw() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let mut q = make_quote(&a, &b, 1_000_000, 990_000);
+        q.raw = serde_json::json!("not an object");
+        let err = validate_quote_self_consistent(&q).expect_err("must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    /// Audit fix (HIGH): if Jupiter returned a tx whose fee payer is not
+    /// the operator, signing it would attach the operator's signature to
+    /// arbitrary instructions. Reject before signing.
+    #[test]
+    fn assert_jupiter_tx_payer_rejects_foreign_payer() {
+        use solana_sdk::message::MessageHeader;
+        use solana_sdk::message::v0::Message as V0Message;
+
+        let operator = Pubkey::new_unique();
+        let attacker = Pubkey::new_unique();
+
+        let header = MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 0,
+        };
+        let msg = V0Message {
+            header,
+            account_keys: vec![attacker],
+            recent_blockhash: solana_sdk::hash::Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![],
+        };
+        let tx = VersionedTransaction {
+            signatures: vec![Default::default()],
+            message: VersionedMessage::V0(msg),
+        };
+        let err = assert_jupiter_tx_payer_is_operator(&tx, &operator)
+            .expect_err("foreign payer must be rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("fee payer"), "{}", err.1);
+    }
+
+    #[test]
+    fn assert_jupiter_tx_payer_accepts_operator_payer() {
+        use solana_sdk::message::MessageHeader;
+        use solana_sdk::message::v0::Message as V0Message;
+
+        let operator = Pubkey::new_unique();
+        let header = MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 0,
+        };
+        let msg = V0Message {
+            header,
+            account_keys: vec![operator],
+            recent_blockhash: solana_sdk::hash::Hash::default(),
+            instructions: vec![],
+            address_table_lookups: vec![],
+        };
+        let tx = VersionedTransaction {
+            signatures: vec![Default::default()],
+            message: VersionedMessage::V0(msg),
+        };
+        assert_jupiter_tx_payer_is_operator(&tx, &operator)
+            .expect("operator-as-payer must be accepted");
+    }
+
+    /// Audit fix (HIGH): verify compute-budget ixs are produced and have
+    /// the right discriminators. We don't assert exact CU/priority values
+    /// because they're env-overridable, but we do assert there are exactly
+    /// two compute-budget ixs and they're of the expected variants.
+    #[test]
+    fn drift_compute_budget_ixs_emit_limit_then_price() {
+        let ixs = drift_compute_budget_ixs();
+        // Compute-budget program id is fixed.
+        let cb_pid = solana_sdk::compute_budget::id();
+        assert_eq!(ixs[0].program_id, cb_pid);
+        assert_eq!(ixs[1].program_id, cb_pid);
+        // The first byte of the data is the variant discriminator.
+        // SetComputeUnitLimit = 2, SetComputeUnitPrice = 3 (per
+        // ComputeBudgetInstruction enum).
+        assert_eq!(ixs[0].data[0], 2, "first ix must be SetComputeUnitLimit");
+        assert_eq!(ixs[1].data[0], 3, "second ix must be SetComputeUnitPrice");
     }
 
     #[test]
