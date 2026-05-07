@@ -60,9 +60,9 @@ pub fn build_pack_loop_prompt(
                         Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
                      3. Check the circuit breaker before any trade:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-                     4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, then call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
+                     4. If the setup is actionable, quote the exact Uniswap route with `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, use the returned `min_amount_out`, then build a `swap` intent for `uniswap_v3`, call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
                         Use `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')` instead of hardcoding addresses, and send raw base units (for example `\"2000000000\"` for 2,000 USDC with 6 decimals, or `\"500000000000000000\"` for 0.5 WETH).\n\
-                        Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
+                        Include `amount_format:'base_units'` and never compute `min_amount_out` from CoinGecko alone; use the executable route quote.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
                         Do not manually rebuild the validation payload or validator signatures.\n\
                         Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
@@ -312,7 +312,7 @@ pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
          1. Run `node /home/agent/tools/get-portfolio.js`. A spot position with `protocol:\"vault\"` is a vault-held balance available for vault-backed swaps, not a locked protocol position.\n\
          2. Fetch prices: `node -e \"require('/home/agent/tools/api-client').getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r)))\"`\n\
          3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         4. If actionable setup exists → choose `token_in` from an available spot balance, build a swap intent with `api.resolveTokenAddress('USDC')` / `api.resolveTokenAddress('WETH')`, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
+         4. If actionable setup exists → choose `token_in` from an available spot balance, call `api.quoteUniswapSwap({{token_in, token_out, amount_in}})`, build a swap intent with the quoted `min_amount_out`, set `amount_format:'base_units'`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
          Record the candle and log your decision. Report: price, action, reason (one line)."
     )
 }

@@ -183,6 +183,16 @@ async function getPrices(tokens) {
   return apiCall('POST', '/market-data/prices', { tokens });
 }
 
+async function quoteUniswapSwap({ token_in, tokenIn, token_out, tokenOut, amount_in, amountIn, fee_tier, feeTier, chain_id, chainId }) {
+  return apiCall('POST', '/envelope/quote/uniswap_v3', {
+    token_in: resolveTokenAddress(token_in || tokenIn),
+    token_out: resolveTokenAddress(token_out || tokenOut),
+    amount_in: String(amount_in || amountIn || '0'),
+    fee_tier: fee_tier || feeTier || 3000,
+    chain_id: chain_id || chainId,
+  });
+}
+
 async function getAdapters() {
   return apiCall('GET', '/adapters');
 }
@@ -207,6 +217,7 @@ module.exports = {
   checkCircuitBreaker,
   getPortfolio,
   getPrices,
+  quoteUniswapSwap,
   getAdapters,
   getSupportedAssets,
   getMetrics,
