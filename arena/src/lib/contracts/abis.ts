@@ -34,6 +34,10 @@ export const tangleServicesAbi = [
             name: 'details',
             type: 'tuple',
             components: [
+              // tnt-core v0.13.0: `requester` is the FIRST field of QuoteDetails.
+              // Bound into the EIP-712 typed data so the operator's signature
+              // commits to the consumer; on-chain verifier rejects address(0).
+              { name: 'requester', type: 'address' },
               { name: 'blueprintId', type: 'uint64' },
               { name: 'ttlBlocks', type: 'uint64' },
               { name: 'totalCost', type: 'uint256' },

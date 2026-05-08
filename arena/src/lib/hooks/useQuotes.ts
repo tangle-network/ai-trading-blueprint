@@ -30,6 +30,12 @@ export interface OperatorQuote {
   signature: `0x${string}`;
   /** Raw quote details for the contract tuple */
   details: {
+    /**
+     * tnt-core v0.13.0: address bound into the EIP-712 typed data; on-chain
+     * verifier rejects `address(0)` and enforces equality with `msg.sender`.
+     * Frontend MUST set this to the connected wallet that will submit the tx.
+     */
+    requester: Address;
     blueprintId: bigint;
     ttlBlocks: bigint;
     totalCost: bigint;
@@ -200,6 +206,7 @@ function mapQuoteDetails(
   operator: Address,
   signature: Uint8Array,
   requireTee: boolean,
+  requester: Address,
 ): OperatorQuote {
   const totalCost = costRateToScaledAmount(details.totalCostRate);
   const securityCommitments = details.securityCommitments.map(mapSecurityCommitment);
@@ -216,6 +223,18 @@ function mapQuoteDetails(
     teeAttested: response.teeAttested,
     teeProvider: response.teeProvider || undefined,
     details: {
+      // tnt-core v0.13.0: bind quote to the caller. The pricing engine echoes
+      // back the requester it signed; we take that source of truth when present
+      // so the on-chain digest matches. Fallback to the caller's wallet — if
+      // the operator returned a different address, on-chain verification fails
+      // (which is the desired behaviour: don't accept quotes addressed to
+      // someone else).
+      requester:
+        details.requester && details.requester.length === 20
+          ? (`0x${Array.from(details.requester)
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('')}` as Address)
+          : requester,
       blueprintId: details.blueprintId,
       ttlBlocks: details.ttlBlocks,
       totalCost,
@@ -237,6 +256,13 @@ export function useQuotes(
   enabled: boolean,
   pricingModel: PricingModelHint,
   requireTee = false,
+  /**
+   * tnt-core v0.13.0: address that will be `msg.sender` for
+   * `createServiceFromQuotes`. Bound into the EIP-712 typed data so the
+   * operator's signature commits to the consumer. When undefined we hold the
+   * fetch — the on-chain verifier rejects `address(0)`.
+   */
+  requester?: Address,
 ): UseQuotesResult {
   const [quotes, setQuotes] = useState<OperatorQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -246,7 +272,7 @@ export function useQuotes(
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
   useEffect(() => {
-    if (!enabled || operators.length === 0) {
+    if (!enabled || operators.length === 0 || !requester) {
       setQuotes([]);
       setErrors(new Map());
       return;
@@ -256,6 +282,10 @@ export function useQuotes(
     setIsLoading(true);
     setQuotes([]);
     setErrors(new Map());
+
+    // Cache the resolved requester so the closure always sees the same address
+    // even if the prop reference changes between renders.
+    const resolvedRequester = requester;
 
     async function fetchQuotes() {
       const results: OperatorQuote[] = [];
@@ -272,7 +302,12 @@ export function useQuotes(
           const timestamp = BigInt(Math.floor(Date.now() / 1000));
           const proofOfWork = await solvePoW(blueprintId, timestamp);
 
-          // Call GetPrice
+          // Call GetPrice. tnt-core v0.13.0: the operator binds `requester`
+          // into `quoteDetails.requester` (and the EIP-712 signature). Today's
+          // pricing engine derives the requester from auth context — the
+          // request schema does NOT carry it. We surface the operator-signed
+          // value back through `mapQuoteDetails` so the on-chain tuple
+          // matches the digest.
           const response = await client.getPrice({
             blueprintId,
             ttlBlocks,
@@ -298,6 +333,7 @@ export function useQuotes(
             operatorIdToAddress(response.operatorId) ?? op.address,
             response.signature,
             requireTee,
+            resolvedRequester,
           );
           if (!cancelled) results.push(quote);
         } catch (err) {
@@ -318,7 +354,7 @@ export function useQuotes(
 
     fetchQuotes();
     return () => { cancelled = true; };
-  }, [operators, blueprintId, ttlBlocks, enabled, pricingModel, fetchKey, requireTee]);
+  }, [operators, blueprintId, ttlBlocks, enabled, pricingModel, fetchKey, requireTee, requester]);
 
   const totalCost = quotes.reduce((sum, q) => sum + q.totalCost, 0n);
 
