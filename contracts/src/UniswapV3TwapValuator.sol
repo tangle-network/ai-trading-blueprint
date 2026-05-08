@@ -218,6 +218,9 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
 
     function isSupported(address token, address asset) external view override returns (bool) {
         if (token == asset) return true;
+        // unused-return: this is a probe — the actual values are immaterial,
+        // only success/failure matters. The catch arm is the signal.
+        // slither-disable-next-line unused-return
         try this.previewConfigured(token, asset) returns (int24, uint128, int24) {
             return true;
         } catch {
@@ -249,7 +252,10 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
         // too shallow cannot serve the window — `observe()` reverts "OLD". By
         // gating registration here we surface that misconfig at config time
         // instead of silently breaking NAV reads later.
+        // unused-return: only `spotTick` and `cardinality` matter; the rest
+        // of the slot0 tuple is irrelevant to this gate.
         uint16 cardinality;
+        // slither-disable-next-line unused-return
         (, spotTick,, cardinality,,,) = IUniswapV3Pool(pool).slot0();
         if (cardinality < MIN_OBSERVATION_CARDINALITY) {
             revert InsufficientObservationCardinality(cardinality, MIN_OBSERVATION_CARDINALITY);
@@ -342,10 +348,17 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
 }
 
 /// @dev Minimal Uniswap V3 TickMath implementation used to convert average ticks into quotes.
+/// @dev Verbatim port of Uniswap V3 core's TickMath.getSqrtRatioAtTick. Slither flags
+///      the divide-before-multiply pattern (ratio = type(uint256).max / ratio at the
+///      end, then implicit multiplication via `>> 32` rounding) but this is the
+///      canonical Uniswap-audited implementation. Replacing with a non-Uniswap
+///      variant would diverge from the protocol's tick semantics. Suppress
+///      cluster-wide; rationale tracked in audits/static-analysis-triage.md.
 library TickMath {
     int24 internal constant MIN_TICK = -887272;
     int24 internal constant MAX_TICK = 887272;
 
+    // slither-disable-next-line divide-before-multiply
     function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
         uint256 absTick = tick < 0 ? uint256(uint24(-tick)) : uint256(uint24(tick));
         require(absTick <= uint256(uint24(MAX_TICK)), "T");

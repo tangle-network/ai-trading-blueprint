@@ -99,7 +99,7 @@ jobs:
       - name: Run slither on production contracts
         run: |
           set -e
-          for f in TradeValidator TradingVault PolicyEngine FeeDistributor StrategyRegistry VaultDeployer VaultFactory VaultShare VaultShareDeployer ChainlinkUsdValuator WrappedAssetValuator; do
+          for f in TradeValidator TradingVault PolicyEngine FeeDistributor StrategyRegistry VaultDeployer VaultFactory VaultShare VaultShareDeployer ChainlinkUsdValuator WrappedAssetValuator UniswapV3TwapValuator; do
             echo "=== slither contracts/src/$f.sol ==="
             slither contracts/src/$f.sol --config-file slither.config.json
           done
