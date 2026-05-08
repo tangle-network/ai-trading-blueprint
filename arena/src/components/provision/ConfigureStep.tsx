@@ -38,10 +38,12 @@ interface ConfigureStepProps {
   baseAssetAddress?: Address;
   setBaseAssetAddress?: (v: Address) => void;
   selectedAssetAddresses?: Address[];
-  addAssetToUniverse?: (value: string) => boolean;
+  addAssetToUniverse?: (value: string) => boolean | Promise<boolean>;
   removeAssetFromUniverse?: (address: Address) => void;
   manualAssetInput?: string;
   setManualAssetInput?: (v: string) => void;
+  customAssetChecking?: boolean;
+  customAssetError?: string | null;
   collateralCapPct: string;
   setCollateralCapPct: (v: string) => void;
   canNext: boolean;
@@ -70,6 +72,8 @@ export function ConfigureStep({
   removeAssetFromUniverse = () => {},
   manualAssetInput = '',
   setManualAssetInput = () => {},
+  customAssetChecking = false,
+  customAssetError = null,
   collateralCapPct,
   setCollateralCapPct,
   canNext,
@@ -120,7 +124,7 @@ export function ConfigureStep({
                 Asset Universe
               </span>
               <p className="text-xs text-arena-elements-textTertiary mt-1">
-                The bot can swap and hold only these selected Uniswap assets. Live valuation uses Chainlink.
+                The bot can swap and hold only these selected Uniswap assets. Custom assets must pass ERC20 and valuation checks.
               </p>
             </div>
 
@@ -175,7 +179,11 @@ export function ConfigureStep({
                         {asset.symbol}
                       </span>
                       <span className="text-xs text-arena-elements-textTertiary">
-                        {asset.known ? 'Chainlink ready' : 'Chainlink feed required'}
+                        {asset.known || asset.valuationSource === 'chainlink'
+                          ? 'Chainlink ready'
+                          : asset.valuationSource === 'uniswap_v3_twap'
+                            ? 'V3 TWAP ready'
+                            : 'Needs V3 TWAP check'}
                       </span>
                       {!isBase && (
                         <button
@@ -200,20 +208,24 @@ export function ConfigureStep({
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();
-                      addAssetToUniverse(manualAssetInput);
+                      void addAssetToUniverse(manualAssetInput);
                     }
                   }}
                 />
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => addAssetToUniverse(manualAssetInput)}
+                  disabled={customAssetChecking}
+                  onClick={() => void addAssetToUniverse(manualAssetInput)}
                   className="gap-2"
                 >
                   <Plus className="h-4 w-4" />
-                  Add Custom
+                  {customAssetChecking ? 'Checking' : 'Add Custom'}
                 </Button>
               </div>
+              {customAssetError && (
+                <p className="text-xs text-red-500">{customAssetError}</p>
+              )}
             </div>
 
             <label className="block">

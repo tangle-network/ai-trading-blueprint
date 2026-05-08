@@ -81,8 +81,11 @@ import {
   dexAssetSelectionsForChain,
   resolveDexAssetInput,
   type DexAssetUniverse,
+  type DexAssetSelection,
 } from '~/lib/assetUniverse';
 import { isTokenAddress } from '~/lib/tradeTokenMetadata';
+import { operatorJsonWithAuth } from '~/lib/operator/fetch';
+import { truncateAddress } from '~/lib/format';
 import {
   isStaleStateError,
   readOperatorError,
@@ -204,6 +207,21 @@ interface SubmitSnapshot {
   blueprintId: string;
   blueprintType?: string;
   serviceId?: number;
+}
+
+interface DexAssetPreflightResponse {
+  ok: boolean;
+  chain_id: number;
+  token_address: Address;
+  base_asset: Address;
+  symbol?: string | null;
+  name?: string | null;
+  decimals?: number | null;
+  valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | string | null;
+  valuation_adapter?: string | null;
+  selected_fee_tier?: number | null;
+  warnings?: string[];
+  message?: string | null;
 }
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -755,6 +773,11 @@ function sameAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+function readOperatorErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return 'Custom token check failed. Confirm the token address and selected base asset.';
+}
+
 function instanceVaultEnvAddressForBlueprint(
   blueprint: TradingBlueprintDef | undefined,
 ): Address | undefined {
@@ -1304,14 +1327,41 @@ export default function ProvisionPage() {
     selectedExecutionTarget,
     provisionPaperTrade,
   );
+  const operatorApiUrl = useMemo(
+    () =>
+      getOperatorApiUrlForBlueprint(
+        selectedBlueprint?.id,
+      ),
+    [selectedBlueprint?.id],
+  );
+  const operatorAuth = useOperatorAuth(operatorApiUrl);
+  const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
   const assetUniverseChainId =
     selectedExecutionTarget?.protocolChainId ??
     selectedExecutionTarget?.chainId ??
     targetChain.id;
-  const assetOptions = useMemo(
+  const defaultAssetOptions = useMemo(
     () => dexAssetSelectionsForChain(assetUniverseChainId),
     [assetUniverseChainId],
   );
+  const [customAssetSelections, setCustomAssetSelections] = useState<DexAssetSelection[]>([]);
+  const [customAssetChecking, setCustomAssetChecking] = useState(false);
+  const [customAssetError, setCustomAssetError] = useState<string | null>(null);
+  const assetOptions = useMemo(() => {
+    const byAddress = new Map<string, DexAssetSelection>();
+    for (const asset of defaultAssetOptions) {
+      byAddress.set(asset.address.toLowerCase(), asset);
+    }
+    for (const asset of customAssetSelections) {
+      byAddress.set(asset.address.toLowerCase(), asset);
+    }
+    return [...byAddress.values()];
+  }, [customAssetSelections, defaultAssetOptions]);
+  useEffect(() => {
+    setCustomAssetSelections([]);
+    setCustomAssetError(null);
+    setManualAssetInput('');
+  }, [assetUniverseChainId]);
   useEffect(() => {
     if (strategyType !== 'dex') return;
     const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;
@@ -1333,30 +1383,117 @@ export default function ProvisionPage() {
     });
   }, [assetOptions, selectedExecutionTarget?.assetToken, strategyType]);
   const addAssetToUniverse = useCallback(
-    (value: string) => {
+    async (value: string) => {
+      setCustomAssetError(null);
       if (!isTokenAddress(value.trim())) {
-        toast.error('Select common assets above or paste a full token address');
+        const message = 'Select common assets above or paste a full token address';
+        setCustomAssetError(message);
+        toast.error(message);
         return false;
       }
       const resolved = resolveDexAssetInput(value, assetUniverseChainId);
       if (!resolved) {
-        toast.error('Paste a valid full token address');
+        const message = 'Paste a valid full token address';
+        setCustomAssetError(message);
+        toast.error(message);
         return false;
+      }
+      let assetToAdd = resolved;
+      if (!resolved.known) {
+        if (!operatorApiUrl) {
+          const message = 'Operator API is unavailable, so custom tokens cannot be checked.';
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        }
+        if (!selectedExecutionTarget?.rpcUrl) {
+          const message = 'Execution RPC is unavailable, so custom tokens cannot be checked.';
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        }
+        setCustomAssetChecking(true);
+        try {
+          if (!operatorAuth.getCachedToken()) {
+            await operatorAuth.getToken();
+          }
+          const preflight = await operatorJsonWithAuth<DexAssetPreflightResponse>(
+            operatorApiUrl,
+            '/api/dex/assets/preflight',
+            operatorAuth,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                strategy_type: 'dex',
+                protocol: 'uniswap_v3',
+                chain_id: assetUniverseChainId,
+                rpc_url: selectedExecutionTarget.rpcUrl,
+                token_address: resolved.address,
+                base_asset: baseAssetAddress,
+              }),
+            },
+          );
+          if (!preflight.ok) {
+            const message =
+              preflight.message ??
+              'This token cannot be priced against the selected base asset.';
+            setCustomAssetError(message);
+            toast.error(message);
+            return false;
+          }
+          const symbol = preflight.symbol?.trim() || truncateAddress(preflight.token_address);
+          const name = preflight.name?.trim() || symbol;
+          assetToAdd = {
+            address: preflight.token_address,
+            symbol,
+            name,
+            decimals: preflight.decimals ?? 18,
+            known: preflight.valuation_source === 'chainlink',
+            valuationSource:
+              preflight.valuation_source === 'chainlink' ||
+              preflight.valuation_source === 'uniswap_v3_twap' ||
+              preflight.valuation_source === 'base_asset'
+                ? preflight.valuation_source
+                : 'uniswap_v3_twap',
+            verifiedBaseAsset: baseAssetAddress,
+          };
+          setCustomAssetSelections((current) => {
+            const next = current.filter(
+              (asset) => asset.address.toLowerCase() !== assetToAdd.address.toLowerCase(),
+            );
+            return [...next, assetToAdd];
+          });
+        } catch (err) {
+          const message = readOperatorErrorMessage(err);
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        } finally {
+          setCustomAssetChecking(false);
+        }
       }
       setSelectedAssetAddresses((current) => {
         if (
           current.some(
-            (address) => address.toLowerCase() === resolved.address.toLowerCase(),
+            (address) => address.toLowerCase() === assetToAdd.address.toLowerCase(),
           )
         ) {
           return current;
         }
-        return [...current, resolved.address];
+        return [...current, assetToAdd.address];
       });
       setManualAssetInput('');
+      toast.success(`${assetToAdd.symbol} added to the asset universe`);
       return true;
     },
-    [assetUniverseChainId],
+    [
+      assetUniverseChainId,
+      baseAssetAddress,
+      operatorApiUrl,
+      operatorAuth,
+      selectedExecutionTarget?.rpcUrl,
+    ],
   );
   const removeAssetFromUniverse = useCallback(
     (address: Address) => {
@@ -1386,9 +1523,10 @@ export default function ProvisionPage() {
             chainId: assetUniverseChainId,
             baseAsset: baseAssetAddress,
             selectedAssets: selectedAssetAddresses,
+            assetSelections: assetOptions,
           })
         : undefined,
-    [assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, strategyType],
+    [assetOptions, assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, strategyType],
   );
   const hasEnabledExecutionTarget =
     selectedPack.executionMode !== 'single-chain' ||
@@ -1619,15 +1757,6 @@ export default function ProvisionPage() {
     ],
   );
 
-  const operatorApiUrl = useMemo(
-    () =>
-      getOperatorApiUrlForBlueprint(
-        selectedBlueprint?.id ?? latestDeployment?.blueprintType,
-      ),
-    [latestDeployment?.blueprintType, selectedBlueprint?.id],
-  );
-  const operatorAuth = useOperatorAuth(operatorApiUrl);
-  const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
   const expectedOperatorKind = useMemo(
     () =>
       getExpectedDeploymentKindForBlueprint(
@@ -3236,6 +3365,8 @@ export default function ProvisionPage() {
             removeAssetFromUniverse={removeAssetFromUniverse}
             manualAssetInput={manualAssetInput}
             setManualAssetInput={setManualAssetInput}
+            customAssetChecking={customAssetChecking}
+            customAssetError={customAssetError}
             collateralCapPct={collateralCapPct}
             setCollateralCapPct={setCollateralCapPct}
             canNext={canNext ?? false}

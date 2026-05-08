@@ -4,6 +4,7 @@
 //! `ai-agent-sandbox-blueprint-lib` for workflow scheduling, prompt/task
 //! execution, and sandbox lifecycle primitives.
 
+pub mod asset_preflight;
 pub mod context;
 pub mod discovery;
 pub mod fees;

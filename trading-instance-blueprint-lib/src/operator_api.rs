@@ -13,6 +13,9 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
+use trading_blueprint_lib::asset_preflight::{
+    DexAssetPreflightRequest, DexAssetPreflightResponse, preflight_dex_asset,
+};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
@@ -501,6 +504,7 @@ pub fn build_instance_router() -> Router {
         // Session auth
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
+        .route("/api/dex/assets/preflight", post(preflight_dex_asset_route))
         // Instance provisioning (off-chain — replaces on-chain JOB_PROVISION)
         .route("/api/bot/provision", post(provision_bot))
         // Singleton bot management
@@ -1727,6 +1731,16 @@ async fn create_session(
         sandbox_runtime::session_auth::exchange_signature_for_token(&req.nonce, &req.signature)
             .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
     Ok((StatusCode::OK, Json(serde_json::to_value(token).unwrap())))
+}
+
+async fn preflight_dex_asset_route(
+    SessionAuth(_caller): SessionAuth,
+    Json(request): Json<DexAssetPreflightRequest>,
+) -> ApiResult<DexAssetPreflightResponse> {
+    preflight_dex_asset(request)
+        .await
+        .map(Json)
+        .map_err(|err| ApiError::message(StatusCode::BAD_REQUEST, err))
 }
 
 // ── Instance provision handler ────────────────────────────────────────────

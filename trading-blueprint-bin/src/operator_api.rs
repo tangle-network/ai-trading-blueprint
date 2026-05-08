@@ -42,6 +42,9 @@ struct LiveTerminalSessionSummary {
     title: String,
 }
 
+use trading_blueprint_lib::asset_preflight::{
+    DexAssetPreflightRequest, DexAssetPreflightResponse, preflight_dex_asset,
+};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 #[derive(Deserialize)]
@@ -583,6 +586,7 @@ pub fn build_operator_router() -> Router {
         // Session auth (delegates to sandbox-runtime's session_auth)
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
+        .route("/api/dex/assets/preflight", post(preflight_dex_asset_route))
         // Bot management
         .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/{bot_id}", get(get_bot))
@@ -704,6 +708,16 @@ async fn create_session(
         )
     })?;
     Ok((StatusCode::OK, Json(value)))
+}
+
+async fn preflight_dex_asset_route(
+    SessionAuth(_caller): SessionAuth,
+    Json(request): Json<DexAssetPreflightRequest>,
+) -> ApiResult<DexAssetPreflightResponse> {
+    preflight_dex_asset(request)
+        .await
+        .map(Json)
+        .map_err(|err| ApiError::message(StatusCode::BAD_REQUEST, err))
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
@@ -1008,6 +1022,13 @@ async fn list_bots(
 
     // Exact match by on-chain call_id + service_id (most reliable lookup)
     if let (Some(call_id), Some(service_id)) = (query.call_id, query.service_id) {
+        if call_id == 0 {
+            return Err(ApiError::conflict(
+                "call_id=0 is not a unique bot identity; use bot_id or sandbox_id instead"
+                    .to_string(),
+            ));
+        }
+
         let matches = state::bot_lookup_candidates_by_call_id(service_id, call_id)
             .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -3986,6 +4007,13 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
 async fn get_provision(
     Path(call_id): Path<u64>,
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
+    if call_id == 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "call_id=0 is not a unique provision identity".to_string(),
+        ));
+    }
+
     let progress = sandbox_runtime::provision_progress::get_provision(call_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| {
@@ -4069,6 +4097,48 @@ mod tests {
         assert!(json["total"].is_number());
         assert!(json["limit"].is_number());
         assert!(json["offset"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_zero_call_id_lookup_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/bots?call_id=0&service_id=1")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_zero_call_id_provision_lookup_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/provisions/0")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
