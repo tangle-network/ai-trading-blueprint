@@ -40,6 +40,8 @@ contract FullE2EForkTest is Test {
     address validator1;
     uint256 validator2Key;
     address validator2;
+    uint256 validator3Key;
+    address validator3;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Deployed contracts (on Arbitrum fork)
@@ -61,6 +63,7 @@ contract FullE2EForkTest is Test {
         operator = makeAddr("operator");
         (validator1, validator1Key) = makeAddrAndKey("validator1");
         (validator2, validator2Key) = makeAddrAndKey("validator2");
+        (validator3, validator3Key) = makeAddrAndKey("validator3");
 
         vm.deal(owner, 10 ether);
         vm.deal(operator, 10 ether);
@@ -92,9 +95,10 @@ contract FullE2EForkTest is Test {
 
         // ── Create vault with real USDC as deposit asset ────────────────────
 
-        address[] memory signers = new address[](2);
+        address[] memory signers = new address[](3);
         signers[0] = validator1;
         signers[1] = validator2;
+        signers[2] = validator3;
 
         (address vaultAddr, address shareAddr) = factory.createVault(
             1, // serviceId
@@ -102,7 +106,7 @@ contract FullE2EForkTest is Test {
             owner,
             operator,
             signers,
-            2, // 2-of-2 signatures required
+            2, // 2-of-3 signatures required (H-2/H-4 floor: >=3 signers + 2/3 supermajority)
             "AI Trading Vault Shares",
             "atUSDC",
             bytes32("e2e-salt"),

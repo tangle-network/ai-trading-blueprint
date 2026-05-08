@@ -58,7 +58,6 @@ interface IEnvelopeAdapter {
         Trade, // _executeTrade — output-token-gain post-condition
         HealthFactor, // _executeHealthFactor — pool/account healthFactor floor
         DebtReduction // _executeDebtReduction — debtToken balance decrease
-
     }
 
     /// @notice Decoded approval call: applied before the target call, reset to 0 after.

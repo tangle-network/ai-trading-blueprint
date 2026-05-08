@@ -115,8 +115,8 @@ contract UniswapV3SwapAdapter is IEnvelopeAdapter {
         // Mirror TradingVault.executeUniswapV3SwapEnvelope cross-checks.
         if (
             p.target != enf.router || s.tokenIn != enf.tokenIn || s.tokenOut != enf.tokenOut
-                || uint256(s.fee) != enf.feeTier || p.outputToken != enf.tokenOut || s.sqrtPriceLimitX96 != uint256(enf.sqrtPriceLimitX96)
-                || p.value > enf.maxValue
+                || uint256(s.fee) != enf.feeTier || p.outputToken != enf.tokenOut
+                || s.sqrtPriceLimitX96 != uint256(enf.sqrtPriceLimitX96) || p.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
         // Note: time-window and recipient/this checks happen in the vault layer
         // (the adapter is pure; it can't know address(this) of the vault). The

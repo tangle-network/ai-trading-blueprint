@@ -99,7 +99,9 @@ contract EnvelopeRegistryTest is Test {
         registry.register(uniV3Adapter);
 
         UniswapV3SwapAdapter dup = new UniswapV3SwapAdapter();
-        vm.expectRevert(abi.encodeWithSelector(EnvelopeRegistry.AdapterAlreadyRegistered.selector, keccak256("UniswapV3Swap")));
+        vm.expectRevert(
+            abi.encodeWithSelector(EnvelopeRegistry.AdapterAlreadyRegistered.selector, keccak256("UniswapV3Swap"))
+        );
         vm.prank(admin);
         registry.register(dup);
     }
