@@ -25,6 +25,7 @@ contract MockUniswapV3Factory {
 contract MockUniswapV3Pool {
     address public immutable token0;
     address public immutable token1;
+    uint24 public immutable fee;
 
     int24 public spotTick;
     int56 public pastTickCumulative;
@@ -32,10 +33,16 @@ contract MockUniswapV3Pool {
     uint160 public pastSecondsPerLiquidityCumulativeX128;
     uint160 public nowSecondsPerLiquidityCumulativeX128;
     bool public observeReverts;
+    uint16 public observationCardinality_ = 64;
 
-    constructor(address token0_, address token1_) {
+    constructor(address token0_, address token1_, uint24 fee_) {
         token0 = token0_;
         token1 = token1_;
+        fee = fee_;
+    }
+
+    function setObservationCardinality(uint16 v) external {
+        observationCardinality_ = v;
     }
 
     function setOracle(int24 meanTick, int24 spotTick_, uint32 window, uint128 harmonicLiquidity) external {
@@ -80,8 +87,8 @@ contract MockUniswapV3Pool {
         sqrtPriceX96 = 0;
         tick = spotTick;
         observationIndex = 0;
-        observationCardinality = 2;
-        observationCardinalityNext = 2;
+        observationCardinality = observationCardinality_;
+        observationCardinalityNext = observationCardinality_;
         feeProtocol = 0;
         unlocked = true;
     }
@@ -99,9 +106,11 @@ contract UniswapV3TwapValuatorTest is Test {
 
     function setUp() public {
         factory = new MockUniswapV3Factory();
-        pool = new MockUniswapV3Pool(TOKEN, ASSET);
+        pool = new MockUniswapV3Pool(TOKEN, ASSET, FEE);
         pool.setOracle(0, 0, WINDOW, 1_000_000);
         factory.setPool(TOKEN, ASSET, FEE, address(pool));
+        // 1800s window, harmonic-liquidity floor 100_000 (well above the contract's
+        // 1000 tripwire), 5% deviation cap.
         valuator = new UniswapV3TwapValuator(address(this), address(factory), WINDOW, 100_000, 500);
     }
 
@@ -123,11 +132,14 @@ contract UniswapV3TwapValuatorTest is Test {
     }
 
     function test_set_pair_reverts_when_historical_liquidity_is_low() public {
-        pool.setOracle(0, 0, WINDOW, 10);
+        // 50_000 is below the configured per-pair floor of 100_000 but above the
+        // contract-level MIN_HARMONIC_LIQUIDITY_FLOOR (1000), so the per-pair gate
+        // is what fires.
+        pool.setOracle(0, 0, WINDOW, 50_000);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                UniswapV3TwapValuator.InsufficientHistoricalLiquidity.selector, uint128(10), uint128(100_000)
+                UniswapV3TwapValuator.InsufficientHistoricalLiquidity.selector, uint128(50_000), uint128(100_000)
             )
         );
         valuator.setPairFromFactory(TOKEN, ASSET, FEE);
@@ -149,5 +161,70 @@ contract UniswapV3TwapValuatorTest is Test {
         pool.setObserveReverts(true);
 
         assertFalse(valuator.isSupported(TOKEN, ASSET));
+    }
+
+    // ── audit FIX-2 hardening tests ──────────────────────────────────────────
+
+    /// @notice Constructor refuses a TWAP window below MIN_TWAP_WINDOW.
+    function test_constructor_rejects_short_twap_window() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TwapValuator.TwapWindowTooShort.selector, uint32(60), uint32(600))
+        );
+        new UniswapV3TwapValuator(address(this), address(factory), 60, 100_000, 500);
+    }
+
+    /// @notice Constructor refuses a harmonic-liquidity floor below MIN_HARMONIC_LIQUIDITY_FLOOR.
+    function test_constructor_rejects_low_harmonic_liquidity_floor() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TwapValuator.MinHarmonicLiquidityTooLow.selector, uint128(1), uint128(1000)
+            )
+        );
+        new UniswapV3TwapValuator(address(this), address(factory), WINDOW, 1, 500);
+    }
+
+    /// @notice setPairWithConfig refuses any pool the canonical factory does not
+    ///         return for (token, asset, pool.fee()) — closes the fake-pool
+    ///         attack where owner registers a contract that mimics the pool ABI.
+    function test_setPairWithConfig_rejects_pool_not_from_factory() public {
+        // Deploy a parallel pool that mimics the ABI and has the same tokens
+        // and fee, but is NOT registered with the factory.
+        MockUniswapV3Pool rogue = new MockUniswapV3Pool(TOKEN, ASSET, FEE);
+        rogue.setOracle(0, 0, WINDOW, 1_000_000);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TwapValuator.PoolNotFromFactory.selector, address(rogue), address(pool))
+        );
+        valuator.setPairWithConfig(TOKEN, ASSET, address(rogue), WINDOW, 100_000, 500);
+    }
+
+    /// @notice setPairWithConfig refuses a TWAP window below the floor.
+    function test_setPairWithConfig_rejects_short_twap_window() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV3TwapValuator.TwapWindowTooShort.selector, uint32(300), uint32(600))
+        );
+        valuator.setPairWithConfig(TOKEN, ASSET, address(pool), 300, 100_000, 500);
+    }
+
+    /// @notice setPairWithConfig refuses a harmonic-liquidity floor below the tripwire.
+    function test_setPairWithConfig_rejects_low_harmonic_liquidity_floor() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TwapValuator.MinHarmonicLiquidityTooLow.selector, uint128(500), uint128(1000)
+            )
+        );
+        valuator.setPairWithConfig(TOKEN, ASSET, address(pool), WINDOW, 500, 500);
+    }
+
+    /// @notice _previewPool refuses a pool with cardinality below MIN_OBSERVATION_CARDINALITY.
+    function test_setPair_rejects_low_observation_cardinality() public {
+        pool.setObservationCardinality(8);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV3TwapValuator.InsufficientObservationCardinality.selector, uint16(8), uint16(32)
+            )
+        );
+        valuator.setPairFromFactory(TOKEN, ASSET, FEE);
     }
 }

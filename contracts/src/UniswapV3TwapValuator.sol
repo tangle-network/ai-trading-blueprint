@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./interfaces/IAssetValuator.sol";
 
@@ -12,6 +12,7 @@ interface IUniswapV3Factory {
 interface IUniswapV3Pool {
     function token0() external view returns (address);
     function token1() external view returns (address);
+    function fee() external view returns (uint24);
     function observe(uint32[] calldata secondsAgos)
         external
         view
@@ -33,15 +34,49 @@ interface IUniswapV3Pool {
 /// @title UniswapV3TwapValuator
 /// @notice Values custom ERC-20s against a vault asset using direct Uniswap V3 TWAP pools.
 /// @dev Intended as a fallback when Chainlink is unavailable. The pair config is checked on every NAV read.
-contract UniswapV3TwapValuator is IAssetValuator, Ownable {
+///
+///      Hardening (audit FIX-2):
+///      - Ownable2Step + a minimum-config floor enforced at constructor + setPair*
+///        time so single-tx ownership change can't immediately point a token at
+///        a hostile spot oracle.
+///      - MIN_TWAP_WINDOW = 600s (10 minutes); MIN_HARMONIC_LIQUIDITY_FLOOR = 1000;
+///        MIN_OBSERVATION_CARDINALITY = 32. These prevent a token of "spot price"
+///        masquerading as TWAP and rule out pools too thin to manipulate cheaply.
+///      - Factory provenance: setPairWithConfig refuses any pool the canonical
+///        factory does not return for the (token0, token1, pool.fee()) triple.
+contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
     error ZeroAddress();
     error InvalidConfig();
     error PoolNotFound(address token, address asset, uint24 fee);
     error PoolTokenMismatch(address pool, address token, address asset);
+    error PoolNotFromFactory(address pool, address derivedPool);
     error PairNotConfigured(address token, address asset);
     error InsufficientHistoricalLiquidity(uint128 observed, uint128 required);
+    error InsufficientObservationCardinality(uint16 observed, uint16 required);
+    error TwapWindowTooShort(uint32 observed, uint32 required);
+    error MinHarmonicLiquidityTooLow(uint128 observed, uint128 required);
     error SpotTwapDeviation(uint256 observedBps, uint256 maxBps);
     error InvalidOraclePrice(address token, address asset);
+
+    /// @notice Hard floor for the TWAP averaging window (10 minutes).
+    /// @dev Stops a one-tx ownership-takeover from setting window=1 (effectively
+    ///      spot price). Real-world manipulation cost scales with window^2, so a
+    ///      10-minute floor adds a meaningful gas-cost floor on top of pool depth.
+    uint32 public constant MIN_TWAP_WINDOW = 600;
+
+    /// @notice Floor for `minHarmonicLiquidity` config. Refuses 0/1 which would
+    ///         render the harmonic-liquidity gate vacuous.
+    /// @dev 1000 = the smallest value where the gate is non-trivially defended.
+    ///      Production deployments should set per-pair values orders of
+    ///      magnitude above this; the floor exists as a tripwire for misconfig.
+    uint128 public constant MIN_HARMONIC_LIQUIDITY_FLOOR = 1000;
+
+    /// @notice Minimum required `observationCardinality` for a pool to qualify.
+    /// @dev Pools with low cardinality cannot serve a `MIN_TWAP_WINDOW`-second
+    ///      TWAP — `observe()` reverts "OLD". Pinning a floor at registration
+    ///      time prevents a freshly-bumped pool from being registered before
+    ///      it can actually serve the window.
+    uint16 public constant MIN_OBSERVATION_CARDINALITY = 32;
 
     struct PairConfig {
         address pool;
@@ -76,7 +111,11 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable {
         uint32 defaultMaxSpotTwapDeviationBps_
     ) Ownable(owner_) {
         if (owner_ == address(0) || factory_ == address(0)) revert ZeroAddress();
-        if (defaultTwapWindow_ == 0 || defaultMaxSpotTwapDeviationBps_ > 10_000) {
+        if (defaultTwapWindow_ < MIN_TWAP_WINDOW) revert TwapWindowTooShort(defaultTwapWindow_, MIN_TWAP_WINDOW);
+        if (defaultMinHarmonicLiquidity_ < MIN_HARMONIC_LIQUIDITY_FLOOR) {
+            revert MinHarmonicLiquidityTooLow(defaultMinHarmonicLiquidity_, MIN_HARMONIC_LIQUIDITY_FLOOR);
+        }
+        if (defaultMaxSpotTwapDeviationBps_ == 0 || defaultMaxSpotTwapDeviationBps_ > 10_000) {
             revert InvalidConfig();
         }
         factory = IUniswapV3Factory(factory_);
@@ -113,7 +152,26 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable {
         uint32 maxSpotTwapDeviationBps
     ) public onlyOwner {
         _validatePairShape(token, asset, pool);
-        if (twapWindow == 0 || maxSpotTwapDeviationBps > 10_000) revert InvalidConfig();
+        // Audit FIX-2: factory-provenance gate. The pool MUST be the one the
+        // canonical factory returns for (token0, token1, pool.fee()) — refuses
+        // any contract that passes the token-shape check but isn't a real
+        // Uniswap V3 pool. Closes the "owner registers a fake pool that returns
+        // hand-picked tickCumulatives" attack.
+        uint24 poolFee = IUniswapV3Pool(pool).fee();
+        address derivedPool = factory.getPool(token, asset, poolFee);
+        if (derivedPool != pool) revert PoolNotFromFactory(pool, derivedPool);
+
+        // Audit FIX-2: enforce minimum-config floors. Reverts on window too
+        // short, harmonic-liquidity below the tripwire, or zero/over-100%
+        // deviation cap.
+        if (twapWindow < MIN_TWAP_WINDOW) revert TwapWindowTooShort(twapWindow, MIN_TWAP_WINDOW);
+        if (minHarmonicLiquidity < MIN_HARMONIC_LIQUIDITY_FLOOR) {
+            revert MinHarmonicLiquidityTooLow(minHarmonicLiquidity, MIN_HARMONIC_LIQUIDITY_FLOOR);
+        }
+        if (maxSpotTwapDeviationBps == 0 || maxSpotTwapDeviationBps > 10_000) revert InvalidConfig();
+
+        // Probe the pool — fails fast if cardinality / liquidity / deviation
+        // are out of bounds at registration time.
         _previewPool(pool, token, asset, twapWindow, minHarmonicLiquidity, maxSpotTwapDeviationBps);
 
         pairConfigs[_pairKey(token, asset)] = PairConfig({
@@ -186,12 +244,22 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable {
         uint32 maxSpotTwapDeviationBps
     ) internal view returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity, int24 spotTick) {
         if (twapWindow == 0 || maxSpotTwapDeviationBps > 10_000) revert InvalidConfig();
+
+        // Audit FIX-2: cardinality check. A pool whose observation buffer is
+        // too shallow cannot serve the window — `observe()` reverts "OLD". By
+        // gating registration here we surface that misconfig at config time
+        // instead of silently breaking NAV reads later.
+        uint16 cardinality;
+        (, spotTick,, cardinality,,,) = IUniswapV3Pool(pool).slot0();
+        if (cardinality < MIN_OBSERVATION_CARDINALITY) {
+            revert InsufficientObservationCardinality(cardinality, MIN_OBSERVATION_CARDINALITY);
+        }
+
         (arithmeticMeanTick, harmonicMeanLiquidity) = _consult(pool, twapWindow);
         if (harmonicMeanLiquidity < minHarmonicLiquidity) {
             revert InsufficientHistoricalLiquidity(harmonicMeanLiquidity, minHarmonicLiquidity);
         }
 
-        (, spotTick,,,,,) = IUniswapV3Pool(pool).slot0();
         uint256 deviationBps = _spotTwapDeviationBps(spotTick, arithmeticMeanTick, token, asset);
         if (deviationBps > maxSpotTwapDeviationBps) {
             revert SpotTwapDeviation(deviationBps, maxSpotTwapDeviationBps);
@@ -220,7 +288,7 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable {
         unchecked {
             secondsPerLiquidityDelta = secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
         }
-        if (secondsPerLiquidityDelta == 0) revert InvalidOraclePrice(address(0), address(0));
+        if (secondsPerLiquidityDelta == 0) revert InvalidOraclePrice(pool, address(0));
         uint256 liquidity = (uint256(secondsAgo) << 128) / uint256(secondsPerLiquidityDelta);
         harmonicMeanLiquidity = liquidity > type(uint128).max ? type(uint128).max : uint128(liquidity);
     }
