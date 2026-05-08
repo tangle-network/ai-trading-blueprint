@@ -1,4 +1,7 @@
-use crate::live_portfolio::{LiveRiskInput, enforce_live_risk, max_drawdown_from_strategy_config};
+use crate::live_portfolio::{
+    LiveRiskInput, enforce_live_risk, max_drawdown_from_strategy_config,
+    resolve_live_token_usd_valuation,
+};
 use crate::routes::metrics::capture_metrics_snapshot_for_bot;
 use crate::trade_store::{
     self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
@@ -18,6 +21,7 @@ use rust_decimal::Decimal;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::adapters::ActionParams;
@@ -998,9 +1002,10 @@ async fn resolve_market_valuation(
     market_client: &MarketDataClient,
     chain_id: Option<u64>,
     intent: &IntentPayload,
+    live_input: Option<&LiveRiskInput>,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
     if intent.action.eq_ignore_ascii_case("swap") && intent.token_in != intent.token_out {
-        return resolve_swap_valuation(market_client, chain_id, intent).await;
+        return resolve_swap_valuation(market_client, chain_id, intent, live_input).await;
     }
 
     let (position_size, amount_out) = resolve_position_size(chain_id, intent)?;
@@ -1018,6 +1023,25 @@ async fn resolve_market_valuation(
             price.price_usd,
         )),
         Err(error) => {
+            if let Some(live_input) = live_input {
+                if let Some(amount_raw) = amount_out_raw(intent) {
+                    let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+                    if let Some(valuation) = resolve_live_token_usd_valuation(
+                        live_input,
+                        &intent.token_out,
+                        amount_raw,
+                        decimals,
+                    )
+                    .await
+                    {
+                        return Ok(TradeValuationSnapshot::priced(
+                            position_size,
+                            amount_out,
+                            valuation.price_usd,
+                        ));
+                    }
+                }
+            }
             tracing::warn!(
                 token = %intent.token_out,
                 error = %error,
@@ -1032,6 +1056,7 @@ async fn resolve_swap_valuation(
     market_client: &MarketDataClient,
     chain_id: Option<u64>,
     intent: &IntentPayload,
+    live_input: Option<&LiveRiskInput>,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
     let raw_amount_in: Decimal = intent.amount_in.parse().map_err(|e| {
         (
@@ -1053,21 +1078,37 @@ async fn resolve_swap_valuation(
         intent.amount_format,
     );
 
-    let token_out_price = market_client
+    let mut token_out_price = market_client
         .get_price_for_chain(chain_id, &intent.token_out)
         .await
-        .ok();
+        .ok()
+        .map(|price| price.price_usd);
+    if token_out_price.is_none() {
+        if let (Some(live_input), Ok(amount_raw)) =
+            (live_input, U256::from_str(&intent.min_amount_out))
+        {
+            let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+            token_out_price = resolve_live_token_usd_valuation(
+                live_input,
+                &intent.token_out,
+                amount_raw,
+                decimals,
+            )
+            .await
+            .map(|valuation| valuation.price_usd);
+        }
+    }
     let estimated_amount_out = match (
         market_client
             .get_price_for_chain(chain_id, &intent.token_in)
             .await
             .ok(),
-        token_out_price.as_ref(),
+        token_out_price,
     ) {
         (Some(token_in_price), Some(token_out_price))
-            if amount_in > Decimal::ZERO && token_out_price.price_usd > Decimal::ZERO =>
+            if amount_in > Decimal::ZERO && token_out_price > Decimal::ZERO =>
         {
-            Some((amount_in * token_in_price.price_usd) / token_out_price.price_usd)
+            Some((amount_in * token_in_price.price_usd) / token_out_price)
         }
         _ => None,
     };
@@ -1083,7 +1124,7 @@ async fn resolve_swap_valuation(
         Some(token_out_price) => Ok(TradeValuationSnapshot::priced(
             position_size,
             amount_out,
-            token_out_price.price_usd,
+            token_out_price,
         )),
         None => {
             tracing::warn!(
@@ -1093,6 +1134,12 @@ async fn resolve_swap_valuation(
             Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
         }
     }
+}
+
+fn amount_out_raw(intent: &IntentPayload) -> Option<U256> {
+    U256::from_str(&intent.min_amount_out)
+        .ok()
+        .filter(|amount| !amount.is_zero())
 }
 
 fn normalize_trade_amount(
@@ -2279,17 +2326,20 @@ async fn execute(
     // Live production trades must refresh source-of-truth chain state; paper
     // trades keep the in-memory portfolio path.
     let max_drawdown = Decimal::new(10, 0);
-    if state.paper_trade {
+    let live_pricing_input = if state.paper_trade {
         check_circuit_breaker(&state.portfolio, max_drawdown).await?;
+        None
     } else {
         let input = LiveRiskInput::from_state(&state)?;
         enforce_live_risk(&input, max_drawdown).await?;
-    }
+        Some(input)
+    };
 
     let valuation = resolve_market_valuation(
         &state.market_client,
         protocol_chain_id,
         &normalized_request.intent,
+        live_pricing_input.as_ref(),
     )
     .await?;
 
@@ -2471,6 +2521,7 @@ async fn execute_multi_bot(
     // - SelfOperated: no external validation, local policy only (instant)
     use trading_runtime::ValidationTrust;
     let mut signed_envelope = None;
+    let mut live_pricing_input = None;
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
@@ -2547,6 +2598,7 @@ async fn execute_multi_bot(
         } else {
             let live_input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
             enforce_live_risk(&live_input, max_drawdown).await?;
+            live_pricing_input = Some(live_input);
         }
     } else if check_and_insert_intent(&canonical_intent_hash) {
         return Err((
@@ -2560,6 +2612,7 @@ async fn execute_multi_bot(
         &market_client,
         Some(protocol_chain_id),
         &normalized_req.intent,
+        live_pricing_input.as_ref(),
     )
     .await?;
 

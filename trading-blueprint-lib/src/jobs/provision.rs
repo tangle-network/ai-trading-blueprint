@@ -283,12 +283,83 @@ fn valuation_adapter_address_from_env(kind: ValuationAdapterKind) -> Option<Addr
             "CHAINLINK_VALUATOR_ADDRESS",
             "DEPLOY_CHAINLINK_USD_VALUATOR",
         ]),
+        ValuationAdapterKind::ChainlinkOrUniswapV3Twap => env_address(&[
+            "CHAINLINK_USD_VALUATOR_ADDRESS",
+            "EXECUTION_CHAINLINK_USD_VALUATOR",
+            "CHAINLINK_VALUATOR_ADDRESS",
+            "DEPLOY_CHAINLINK_USD_VALUATOR",
+        ]),
+        ValuationAdapterKind::UniswapV3Twap => env_address(&[
+            "UNISWAP_V3_TWAP_VALUATOR_ADDRESS",
+            "EXECUTION_UNISWAP_V3_TWAP_VALUATOR",
+            "DEPLOY_UNISWAP_V3_TWAP_VALUATOR",
+        ]),
         ValuationAdapterKind::WrappedAsset => env_address(&[
             "WRAPPED_ASSET_VALUATOR_ADDRESS",
             "EXECUTION_WRAPPED_ASSET_VALUATOR",
             "WRAPPED_VALUATOR_ADDRESS",
             "DEPLOY_WRAPPED_ASSET_VALUATOR",
         ]),
+    }
+}
+
+fn uniswap_twap_valuator_address_from_env() -> Option<Address> {
+    env_address(&[
+        "UNISWAP_V3_TWAP_VALUATOR_ADDRESS",
+        "EXECUTION_UNISWAP_V3_TWAP_VALUATOR",
+        "DEPLOY_UNISWAP_V3_TWAP_VALUATOR",
+    ])
+}
+
+fn env_u32(names: &[&str], default: u32) -> u32 {
+    names
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u128(names: &[&str], default: u128) -> u128 {
+    names
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+fn uniswap_twap_fee_tiers_from_env() -> Vec<u32> {
+    std::env::var("UNISWAP_V3_TWAP_FEE_TIERS")
+        .or_else(|_| std::env::var("EXECUTION_UNISWAP_V3_TWAP_FEE_TIERS"))
+        .unwrap_or_else(|_| "500,3000,10000".to_string())
+        .split(',')
+        .filter_map(|value| value.trim().parse().ok())
+        .collect::<Vec<_>>()
+}
+
+fn uniswap_twap_config_from_env() -> crate::on_chain::UniswapV3TwapConfig {
+    crate::on_chain::UniswapV3TwapConfig {
+        fee_tiers: uniswap_twap_fee_tiers_from_env(),
+        twap_window: env_u32(
+            &[
+                "UNISWAP_V3_TWAP_WINDOW_SECS",
+                "EXECUTION_UNISWAP_V3_TWAP_WINDOW_SECS",
+            ],
+            1_800,
+        ),
+        min_harmonic_liquidity: env_u128(
+            &[
+                "UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY",
+                "EXECUTION_UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY",
+            ],
+            1,
+        ),
+        max_spot_twap_deviation_bps: env_u32(
+            &[
+                "UNISWAP_V3_TWAP_MAX_SPOT_DEVIATION_BPS",
+                "EXECUTION_UNISWAP_V3_TWAP_MAX_SPOT_DEVIATION_BPS",
+            ],
+            500,
+        ),
     }
 }
 
@@ -316,6 +387,9 @@ fn vault_supported_asset_configs(
             } else {
                 match asset.valuation_adapter {
                     ValuationAdapterKind::None => None,
+                    ValuationAdapterKind::ChainlinkOrUniswapV3Twap => {
+                        valuation_adapter_address_from_env(asset.valuation_adapter)
+                    }
                     kind => Some(valuation_adapter_address_from_env(kind).ok_or_else(|| {
                         format!(
                             "{} is supported but missing vault valuation adapter for {:?}. Set the corresponding valuator address env var.",
@@ -324,11 +398,22 @@ fn vault_supported_asset_configs(
                     })?),
                 }
             };
+            let fallback_adapter_address = match asset.valuation_adapter {
+                ValuationAdapterKind::ChainlinkOrUniswapV3Twap => uniswap_twap_valuator_address_from_env(),
+                _ => None,
+            };
+            let twap_config = matches!(
+                asset.valuation_adapter,
+                ValuationAdapterKind::ChainlinkOrUniswapV3Twap | ValuationAdapterKind::UniswapV3Twap
+            )
+            .then(uniswap_twap_config_from_env);
             Ok(crate::on_chain::VaultSupportedAssetConfig {
                 token,
                 symbol: asset.symbol,
                 valuation_adapter: asset.valuation_adapter,
                 adapter_address,
+                fallback_adapter_address,
+                twap_config,
             })
         })
         .collect()
@@ -406,8 +491,21 @@ pub async fn provision_core(
     // Race-safety: PROVISION_INFLIGHT prevents TOCTOU between the
     // find_bot_by_call check and the later insert. If another concurrent
     // provision for the same key is already running, we block it here.
-    if call_id > 0 {
-        if let Ok(Some(existing)) = crate::state::find_bot_by_call(service_id, call_id) {
+    if let Ok(matches) = crate::state::bot_lookup_candidates_by_call_id(service_id, call_id) {
+        if matches.live.len() > 1 {
+            let ids: Vec<String> = matches.live.iter().map(|bot| bot.id.clone()).collect();
+            return Err(format!(
+                "Multiple live bots already exist for service_id={service_id}, call_id={call_id}: {}. Reset local state before provisioning another agent.",
+                ids.join(", ")
+            ));
+        }
+
+        if let Some(existing) = matches.live.into_iter().next() {
+            if call_id == 0 {
+                return Err(format!(
+                    "Refusing to reuse non-unique call_id=0 for service_id={service_id}; reset local state or fix the job call id source before provisioning another agent."
+                ));
+            }
             tracing::info!(
                 bot_id = %existing.id,
                 service_id,
@@ -427,26 +525,22 @@ pub async fn provision_core(
                 workflow_id: existing.workflow_id.unwrap_or(0),
             });
         }
+    }
 
-        // Atomically claim this (service_id, call_id) slot. If another call
-        // already holds it, reject as duplicate-in-progress.
-        let already_inflight = {
-            let mut set = PROVISION_INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
-            !set.insert((service_id, call_id))
-        };
-        if already_inflight {
-            return Err(format!(
-                "Provision already in progress for (service_id={service_id}, call_id={call_id})"
-            ));
-        }
+    // Atomically claim this (service_id, call_id) slot. If another call
+    // already holds it, reject as duplicate-in-progress.
+    let already_inflight = {
+        let mut set = PROVISION_INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        !set.insert((service_id, call_id))
+    };
+    if already_inflight {
+        return Err(format!(
+            "Provision already in progress for (service_id={service_id}, call_id={call_id})"
+        ));
     }
 
     // Drop guard: auto-clears PROVISION_INFLIGHT on any exit (success, error, panic).
-    let _inflight_guard = if call_id > 0 {
-        Some(InflightGuard(service_id, call_id))
-    } else {
-        None
-    };
+    let _inflight_guard = InflightGuard(service_id, call_id);
 
     // 1. Generate bot ID and API token
     let bot_id = format!("trading-{}", uuid::Uuid::new_v4());

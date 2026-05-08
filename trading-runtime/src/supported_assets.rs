@@ -19,6 +19,8 @@ pub enum TradeAssetRole {
 pub enum ValuationAdapterKind {
     None,
     ChainlinkUsd,
+    ChainlinkOrUniswapV3Twap,
+    UniswapV3Twap,
     WrappedAsset,
 }
 
@@ -212,6 +214,10 @@ fn parse_valuation_adapter_kind(value: &str) -> Option<ValuationAdapterKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "none" => Some(ValuationAdapterKind::None),
         "chainlink_usd" | "chainlink" => Some(ValuationAdapterKind::ChainlinkUsd),
+        "chainlink_or_uniswap_v3_twap" | "chainlink_or_twap" | "auto" => {
+            Some(ValuationAdapterKind::ChainlinkOrUniswapV3Twap)
+        }
+        "uniswap_v3_twap" | "twap" => Some(ValuationAdapterKind::UniswapV3Twap),
         "wrapped_asset" | "wrapped" => Some(ValuationAdapterKind::WrappedAsset),
         _ => None,
     }
@@ -385,6 +391,40 @@ mod tests {
                 Some(&config)
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn configured_dex_assets_can_request_twap_fallback_valuation() {
+        let config = serde_json::json!({
+            "asset_universe": {
+                "base_asset": "USDC",
+                "allowed_assets": [{
+                    "strategy_type": "dex",
+                    "protocol": "uniswap_v3",
+                    "chain_id": 1,
+                    "symbol": "CUSTOM",
+                    "address": "0x1111111111111111111111111111111111111111",
+                    "decimals": 18,
+                    "roles": ["input", "output"],
+                    "valuation_adapter": "chainlink_or_uniswap_v3_twap"
+                }]
+            }
+        });
+
+        let asset = is_supported_trade_asset_for_config(
+            "dex",
+            1,
+            "uniswap_v3",
+            "0x1111111111111111111111111111111111111111",
+            TradeAssetRole::Output,
+            Some(&config),
+        )
+        .expect("custom asset should be supported by the configured asset universe");
+
+        assert_eq!(
+            asset.valuation_adapter,
+            ValuationAdapterKind::ChainlinkOrUniswapV3Twap
         );
     }
 
