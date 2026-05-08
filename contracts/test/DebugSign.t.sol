@@ -22,6 +22,9 @@ contract DebugSignTest is Test {
 
         // Build a test quote
         Types.QuoteDetails memory quote;
+        // v0.13.0: bind quote to a specific requester. address(0) is rejected
+        // on-chain so use a non-zero placeholder for the EIP-712 digest.
+        quote.requester = address(0xbEEF);
         quote.blueprintId = 0;
         quote.ttlBlocks = 216000;
         quote.totalCost = 22874400000;

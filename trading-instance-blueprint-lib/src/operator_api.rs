@@ -491,6 +491,12 @@ struct JobQuoteRequest {
     #[allow(dead_code)]
     proof_of_work: Option<String>,
     challenge_timestamp: Option<String>,
+    /// tnt-core v0.13.0: 0x-prefixed EVM address (20 bytes) the quote must be
+    /// bound to. The on-chain verifier rejects `address(0)`, so production
+    /// callers MUST supply this. We accept `Option` for staged rollout — when
+    /// `None`, the response echoes `address(0)` and the operator-side handler
+    /// logs a warning so callers notice before they hit the on-chain reject.
+    requester: Option<String>,
 }
 
 // ── Router ──────────────────────────────────────────────────────────────
@@ -2766,12 +2772,25 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
     let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
     let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
 
+    // tnt-core v0.13.0: every job quote MUST commit to a non-zero requester.
+    // This REST endpoint is informational (real signing happens in the gRPC
+    // pricing engine), but we still surface the requester so clients exercising
+    // the JSON path notice a missing field early. Default to address(0) so the
+    // on-chain verifier rejects, not silently accepts a wildcard.
+    let requester = body.requester.as_deref().unwrap_or_else(|| {
+        tracing::warn!(
+            "pricing_job_quote: requester field omitted — quote would be rejected on-chain"
+        );
+        "0x0000000000000000000000000000000000000000"
+    });
+
     Json(serde_json::json!({
         "operator": operator_address,
         "total_cost": "0",
         "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "cost_rate": 0.0,
         "details": {
+            "requester": requester,
             "service_id": service_id,
             "job_index": job_index,
             "price": "0",

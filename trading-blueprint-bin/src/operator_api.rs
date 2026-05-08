@@ -3898,6 +3898,10 @@ struct JobQuoteRequest {
     proof_of_work: Option<String>,
     #[allow(dead_code)]
     challenge_timestamp: Option<String>,
+    /// tnt-core v0.13.0: 0x-prefixed EVM address (20 bytes) the quote must be
+    /// bound to. The on-chain verifier rejects `address(0)`, so production
+    /// callers MUST supply this. `Option` keeps wire compat for staged rollout.
+    requester: Option<String>,
 }
 
 /// Returns subscription pricing info.
@@ -3935,11 +3939,23 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
     let multipliers = [50, 2, 1, 1, 0, 1, 10]; // PRICE_MULT_* from contract
     let multiplier = multipliers.get(job_index as usize).copied().unwrap_or(0);
 
+    // tnt-core v0.13.0: every job quote MUST commit to a non-zero requester.
+    // Echo the field back so JSON callers can spot a missing/zero requester
+    // before they hit the on-chain reject. Subscription pricing means no
+    // signed quote is produced here — the gRPC pricing engine handles signing.
+    let requester = body.requester.as_deref().unwrap_or_else(|| {
+        tracing::warn!(
+            "pricing_job_quote: requester field omitted — quote would be rejected on-chain"
+        );
+        "0x0000000000000000000000000000000000000000"
+    });
+
     Json(serde_json::json!({
         "pricing_model": "subscription",
         "job_index": job_index,
         "per_job_cost": "0",
         "multiplier": multiplier,
+        "requester": requester,
         "note": "All jobs are covered by the service subscription. No per-job payment required.",
     }))
 }
