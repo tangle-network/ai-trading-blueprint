@@ -306,20 +306,24 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint256 requiredSigs;
         if (cfg.signers.length > 0) {
             signers = cfg.signers;
-            // H-2: enforce minimum quorum. Explicit config honored if >= 2, else floor at 2.
-            uint256 cfgReq = cfg.requiredSignatures > 0 ? cfg.requiredSignatures : 2;
-            requiredSigs = cfgReq < 2 ? 2 : cfgReq;
+            uint256 cfgReq = cfg.requiredSignatures;
+            uint256 floor = _supermajority(signers.length);
+            // H-2/H-4: clamp up to the 2/3 supermajority floor. Explicit configs above
+            // the floor are honored; below-floor configs are tightened, not rejected.
+            requiredSigs = cfgReq < floor ? floor : cfgReq;
         } else {
             signers = new address[](operators.length);
             for (uint256 i = 0; i < operators.length; i++) {
                 signers[i] = operators[i];
             }
-            // H-2: default to 2-of-n (not 1-of-n) to prevent single-key compromise drain.
-            requiredSigs = signers.length >= 2 ? 2 : signers.length;
+            // H-2/H-4: default to ceil(2n/3) supermajority threshold.
+            requiredSigs = _supermajority(signers.length);
         }
 
-        if (signers.length == 0 || requiredSigs == 0) {
-            emit BotVaultSkipped(serviceId, 0, "no signers at service init");
+        // H-2/H-4: VaultFactory rejects fewer than 3 signers. Skip cleanly here so
+        // operators get a diagnostic event rather than a bricked onJobResult.
+        if (signers.length < 3 || requiredSigs == 0) {
+            emit BotVaultSkipped(serviceId, 0, "signer floor not met (need >=3 signers)");
             return;
         }
 
@@ -636,8 +640,8 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         // provision job with `signers = [theirAddr]` and single-sig requirement,
         // bypassing the stricter signer set the service was approved under.
         address[] memory signers = _serviceOperators[serviceId];
-        // H-2: default to 2-of-n (not 1-of-n) to prevent single-key compromise drain.
-        uint256 requiredSigs = signers.length >= 2 ? 2 : signers.length;
+        // H-2/H-4: default to ceil(2n/3) supermajority over the joined operator set.
+        uint256 requiredSigs = _supermajority(signers.length);
         if (pp.signers.length > 0) {
             address[] memory approved = svcCfg.signers;
             if (approved.length > 0) {
@@ -659,7 +663,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
                 }
             }
             signers = pp.signers;
-            requiredSigs = pp.requiredSigs;
+            // H-2/H-4: if pp.requiredSigs is below the supermajority floor, clamp up.
+            uint256 floor = _supermajority(signers.length);
+            requiredSigs = pp.requiredSigs < floor ? floor : pp.requiredSigs;
         }
 
         // Require valid config — emit diagnostic event on skip so operators can diagnose.
@@ -668,8 +674,9 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
             emit BotVaultSkipped(serviceId, jobCallId, "no asset token");
             return;
         }
-        if (signers.length == 0 || requiredSigs == 0) {
-            emit BotVaultSkipped(serviceId, jobCallId, "no signers (operators may not have joined yet)");
+        // H-2/H-4: VaultFactory rejects fewer than 3 signers; skip cleanly here.
+        if (signers.length < 3 || requiredSigs == 0) {
+            emit BotVaultSkipped(serviceId, jobCallId, "signer floor not met (need >=3 signers)");
             return;
         }
 
@@ -763,6 +770,14 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
     function _defaultFeeConfig() internal pure returns (FeeDistributor.FeeConfig memory) {
         return FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000});
+    }
+
+    /// @dev H-2/H-4 supermajority floor: ceil(2n/3). Returns 0 for n=0.
+    ///      For n>=3 this matches VaultFactory's branch-free check
+    ///      `requiredSigs * 3 >= signers.length * 2`.
+    function _supermajority(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return 0;
+        return (n * 2 + 2) / 3;
     }
 
     /// @dev Convert uint64 to decimal string (for share token symbols).

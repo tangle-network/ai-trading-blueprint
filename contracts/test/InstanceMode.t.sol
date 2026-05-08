@@ -14,6 +14,7 @@ contract InstanceModeTest is Setup {
     address public tangleCore;
     address public op1;
     address public op2;
+    address public op3;
 
     uint64 public requestId = 1;
     uint64 public serviceId = 1;
@@ -25,6 +26,7 @@ contract InstanceModeTest is Setup {
         tangleCore = makeAddr("tangleCore");
         op1 = makeAddr("op1");
         op2 = makeAddr("op2");
+        op3 = makeAddr("op3");
 
         // Initialize blueprint
         blueprint.onBlueprintCreated(42, address(this), tangleCore);
@@ -44,9 +46,10 @@ contract InstanceModeTest is Setup {
     /// @dev Build request inputs with asset token + signers for vault creation
     ///      Full TradingProvisionRequest tuple (matches frontend encoding)
     function _buildRequestInputsWithAsset() internal view returns (bytes memory) {
-        address[] memory signers = new address[](2);
+        address[] memory signers = new address[](3);
         signers[0] = validator1;
         signers[1] = validator2;
+        signers[2] = validator3;
         uint64[] memory validatorIds = new uint64[](0);
 
         return abi.encode(
@@ -57,7 +60,7 @@ contract InstanceModeTest is Setup {
             address(0), // factoryAddress (unused)
             address(tokenA), // assetToken
             signers, // signers
-            uint256(1), // requiredSignatures
+            uint256(2), // requiredSignatures (2-of-3 supermajority per H-2/H-4)
             uint256(0), // chainId
             "", // rpcUrl
             "", // cron
@@ -305,9 +308,12 @@ contract InstanceModeTest is Setup {
         vm.prank(tangleCore);
         blueprint.onRequest(requestId, address(0), new address[](0), inputs, 0, address(0), 0);
 
-        address[] memory operators = new address[](2);
+        // VaultFactory's H-2/H-4 floor requires >=3 signers; supply 3 operators so
+        // the operator-set-as-default-signers code path is actually exercised.
+        address[] memory operators = new address[](3);
         operators[0] = op1;
         operators[1] = op2;
+        operators[2] = op3;
 
         vm.prank(tangleCore);
         blueprint.onServiceInitialized(0, requestId, serviceId, address(0), operators, 0);

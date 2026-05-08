@@ -326,7 +326,8 @@ sol! {
         function whitelistToken(address vault, address token, bool allowed) external;
         function setTargetWhitelist(address vault, address[] calldata targets, bool allowed) external;
         function setPositionLimit(address vault, address token, uint256 maxAmount) external;
-        function validateTrade(address vault, address token, uint256 amount, address target, uint256 leverage) external returns (bool);
+        function checkTrade(address vault, address token, uint256 amount, address target) external view returns (bool);
+        function recordTrade(address vault) external;
     }
 
     #[sol(rpc)]

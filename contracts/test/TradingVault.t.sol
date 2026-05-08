@@ -646,6 +646,106 @@ contract TradingVaultTest is Setup {
         assertEq(tokenB.balanceOf(address(vault)), 500 ether);
     }
 
+    /// @notice H-3: leverage cap enforced post-trade in _executeHealthFactor.
+    ///         Default policy sets leverageCap = 50000 (5x). With totalCollateral=600
+    ///         and totalDebt=500 the implied leverage is 600/(600-500) = 6x = 60000
+    ///         BPS, which exceeds the cap and must revert.
+    function test_executeHealthFactorRevertsWhenLeverageCapExceeded() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        pool.setLeverageState(600 ether, 500 ether); // implied leverage 6x
+
+        bytes32 intentHash = keccak256("leverage-cap-exceeded");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        // 600 / (600 - 500) = 6 → 60000 BPS, cap is 50000.
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.LeverageCapExceeded.selector, 60000, 50000));
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+    }
+
+    /// @notice H-3: a trade that pushes leverage exactly to the 5x cap is allowed.
+    function test_executeHealthFactorAllowsLeverageAtCap() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        pool.setLeverageState(500 ether, 400 ether); // implied leverage exactly 5x
+
+        bytes32 intentHash = keccak256("leverage-at-cap");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+        assertEq(tokenB.balanceOf(address(vault)), 500 ether, "Trade at exact cap should succeed");
+    }
+
+    /// @notice H-3: leverageCap = 0 disables the on-chain check entirely.
+    function test_executeHealthFactor_leverageCapZeroDisablesEnforcement() public {
+        vm.prank(user);
+        vault.deposit(10000 ether, user);
+        _configurePolicyForTrade();
+        // Setting cap to 0 disables on-chain enforcement; debt > collateral is then OK.
+        vm.prank(address(vaultFactory));
+        policyEngine.setLeverageCap(address(vault), 0);
+
+        MockAavePoolHealth pool = new MockAavePoolHealth(2 ether);
+        pool.setLeverageState(600 ether, 500 ether); // would exceed any non-zero cap
+
+        bytes32 intentHash = keccak256("leverage-cap-disabled");
+        uint256 deadline = block.timestamp + 1 hours;
+        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+            target: address(mockTarget),
+            data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
+            value: 0,
+            minOutput: 500 ether,
+            outputToken: address(tokenB),
+            pool: address(pool),
+            account: address(vault),
+            minHealthFactor: 1.5 ether,
+            intentHash: intentHash,
+            deadline: deadline
+        });
+        TradingVault.ApprovalCall[] memory approvals = _emptyApprovals();
+        (bytes[] memory sigs, uint256[] memory scores) = _createHealthFactorSigs(params, deadline);
+
+        vm.prank(operator);
+        vault.executeHealthFactorWithApprovals(params, approvals, sigs, scores);
+        assertEq(tokenB.balanceOf(address(vault)), 500 ether, "Disabled cap should not block trade");
+    }
+
     function test_executeHealthFactorRevertsWhenHealthTooLow() public {
         vm.prank(user);
         vault.deposit(10000 ether, user);
@@ -1342,6 +1442,8 @@ contract MockDebtRepayTarget {
 
 contract MockAavePoolHealth {
     uint256 public healthFactor;
+    uint256 public totalCollateral;
+    uint256 public totalDebt;
 
     constructor(uint256 _healthFactor) {
         healthFactor = _healthFactor;
@@ -1349,6 +1451,12 @@ contract MockAavePoolHealth {
 
     function setHealthFactor(uint256 _healthFactor) external {
         healthFactor = _healthFactor;
+    }
+
+    /// @dev H-3 leverage tests configure both legs of the leverage ratio.
+    function setLeverageState(uint256 _totalCollateral, uint256 _totalDebt) external {
+        totalCollateral = _totalCollateral;
+        totalDebt = _totalDebt;
     }
 
     function getUserAccountData(address)
@@ -1363,6 +1471,6 @@ contract MockAavePoolHealth {
             uint256 returnedHealthFactor
         )
     {
-        return (0, 0, 0, 0, 0, healthFactor);
+        return (totalCollateral, totalDebt, 0, 0, 0, healthFactor);
     }
 }

@@ -34,7 +34,6 @@ contract PolicyEngine is Ownable2Step {
     );
     event VaultAdminUpdated(address indexed vault, address indexed newAdmin);
     event PolicyUpdated(address indexed vault, uint8 indexed policyType);
-    event TradeRejected(address indexed vault, address indexed token, uint256 amount, uint8 indexed reason);
 
     /// @dev Policy type codes for PolicyUpdated event
     uint8 public constant POLICY_TOKEN_WHITELIST = 1;
@@ -44,12 +43,6 @@ contract PolicyEngine is Ownable2Step {
     uint8 public constant POLICY_RATE_LIMIT = 5;
     uint8 public constant POLICY_MAX_SLIPPAGE = 6;
 
-    /// @dev Rejection reason codes for TradeRejected event
-    uint8 public constant REJECT_NOT_INITIALIZED = 1;
-    uint8 public constant REJECT_TOKEN_NOT_WHITELISTED = 2;
-    uint8 public constant REJECT_TARGET_NOT_WHITELISTED = 3;
-    uint8 public constant REJECT_POSITION_LIMIT = 4;
-    uint8 public constant REJECT_RATE_LIMIT = 5;
     event AuthorizedCallerUpdated(address indexed caller, bool authorized);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -93,7 +86,7 @@ contract PolicyEngine is Ownable2Step {
     /// @notice Per-vault circular buffer of trade timestamps for rate limiting
     mapping(address vault => uint256[]) public tradeTimestamps;
 
-    /// @notice Addresses authorized to call validateTrade (e.g. vault contracts)
+    /// @notice Addresses authorized to call recordTrade (e.g. vault contracts)
     mapping(address => bool) public authorizedCallers;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -228,8 +221,12 @@ contract PolicyEngine is Ownable2Step {
         emit PolicyUpdated(vault, POLICY_POSITION_LIMIT);
     }
 
-    /// @notice Set the maximum leverage for a vault (advisory — enforced off-chain by AI validators)
-    /// @dev Stored for off-chain tooling and UI display. Not enforced in validateTrade().
+    /// @notice Set the maximum leverage cap for a vault, in BPS (10000 = 1x).
+    /// @dev H-3: enforced on-chain in TradingVault._executeHealthFactor. Computed as
+    ///      totalCollateralBase * 10000 / (totalCollateralBase - totalDebtBase) from the
+    ///      Aave health-factor reading, the cap is checked post-borrow / post-withdraw
+    ///      so any leverage-increasing action that breaks the cap reverts the trade.
+    ///      A 0 cap disables the on-chain check (off-chain validators may still gate).
     function setLeverageCap(address vault, uint256 maxLeverage)
         external
         vaultInitialized(vault)
@@ -255,8 +252,13 @@ contract PolicyEngine is Ownable2Step {
         emit PolicyUpdated(vault, POLICY_RATE_LIMIT);
     }
 
-    /// @notice Set the maximum allowed slippage for a vault (advisory — enforced by TradingVault.minOutput)
-    /// @dev Stored for off-chain tooling. On-chain slippage is enforced by the minOutput check in execute().
+    /// @notice Set the maximum allowed slippage for a vault, in BPS (e.g. 50 = 0.5%).
+    /// @dev H-3: enforced on-chain in TradingVault swap-envelope entry points via
+    ///      `_assertSlippageCap`. The validator-signed minOutput must price out (in
+    ///      deposit-asset units) within `maxSlippageBps` of the input value, where
+    ///      both sides are valued by the vault's per-token IAssetValuator adapters.
+    ///      A 0 cap disables the on-chain check (validator-signed minOutputPerInput
+    ///      remains the only gate).
     function setMaxSlippage(address vault, uint256 bps) external vaultInitialized(vault) onlyVaultAdminOrOwner(vault) {
         policies[vault].maxSlippageBps = bps;
         emit PolicyUpdated(vault, POLICY_MAX_SLIPPAGE);
@@ -266,73 +268,55 @@ contract PolicyEngine is Ownable2Step {
     // VALIDATION
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Validate a trade against all configured policies for a vault
-    /// @dev Leverage and slippage are enforced off-chain by AI validators and the trading runtime.
+    /// @notice Check whether a trade satisfies on-chain policy WITHOUT recording it.
+    /// @dev H-5: split from the legacy `validateTrade` so the rate-limit slot is only
+    ///      consumed on a fully successful trade. Callers (TradingVault) check this
+    ///      pre-call and then invoke `recordTrade` post-success.
     ///      On-chain enforcement covers: token/target whitelists, position limits, and rate limiting.
-    ///      Slippage is enforced by TradingVault.execute()'s minOutput check.
-    /// @dev NOTE: Rate-limit slot is consumed on successful validation even if the trade later
-    ///      fails validator checks. This is by design — splitting validate/record would require
-    ///      a callback pattern. The practical impact is limited since only OPERATOR_ROLE can call.
-    function validateTrade(
-        address vault,
-        address token,
-        uint256 amount,
-        address target,
-        uint256 /* leverage */
-    )
+    ///      Slippage and leverage are enforced elsewhere (TradingVault.minOutput check + envelope sigs).
+    function checkTrade(address vault, address token, uint256 amount, address target)
         external
-        onlyAuthorizedOrOwner
+        view
         returns (bool valid)
     {
         VaultPolicy storage policy = policies[vault];
-        if (!policy.initialized) {
-            emit TradeRejected(vault, token, amount, REJECT_NOT_INITIALIZED);
-            return false;
-        }
-
-        if (!tokenWhitelisted[vault][token]) {
-            emit TradeRejected(vault, token, amount, REJECT_TOKEN_NOT_WHITELISTED);
-            return false;
-        }
-
-        if (!targetWhitelisted[vault][target]) {
-            emit TradeRejected(vault, token, amount, REJECT_TARGET_NOT_WHITELISTED);
-            return false;
-        }
+        if (!policy.initialized) return false;
+        if (!tokenWhitelisted[vault][token]) return false;
+        if (!targetWhitelisted[vault][target]) return false;
 
         uint256 limit = positionLimit[vault][token];
         if (limit > 0) {
             uint256 currentExposure = token == address(0) ? vault.balance : IERC20(token).balanceOf(vault);
-            if (currentExposure + amount > limit) {
-                emit TradeRejected(vault, token, amount, REJECT_POSITION_LIMIT);
-                return false;
-            }
+            if (currentExposure + amount > limit) return false;
         }
 
-        // Rate limit (anti-churning via circular buffer)
         if (policy.maxTradesPerHour > 0) {
             uint256[] storage timestamps = tradeTimestamps[vault];
             uint256 oneHourAgo = block.timestamp > 1 hours ? block.timestamp - 1 hours : 0;
             uint256 recentTrades = 0;
-
             for (uint256 i = 0; i < timestamps.length; i++) {
-                if (timestamps[i] > oneHourAgo) {
-                    recentTrades++;
-                }
+                if (timestamps[i] > oneHourAgo) recentTrades++;
             }
-
-            if (recentTrades >= policy.maxTradesPerHour) {
-                emit TradeRejected(vault, token, amount, REJECT_RATE_LIMIT);
-                return false;
-            }
-
-            if (timestamps.length > 0) {
-                timestamps[policy.tradeTimestampIndex] = block.timestamp;
-                policy.tradeTimestampIndex = (policy.tradeTimestampIndex + 1) % timestamps.length;
-            }
+            if (recentTrades >= policy.maxTradesPerHour) return false;
         }
 
         return true;
+    }
+
+    /// @notice Record a successful trade against the rate-limit ring buffer for a vault.
+    /// @dev H-5: invoked by TradingVault AFTER the executor returns successfully so failed
+    ///      trades do not burn rate-limit slots. Caller must hold authorized status; the
+    ///      slot is only consumed when the trade actually completed.
+    function recordTrade(address vault) external onlyAuthorizedOrOwner {
+        VaultPolicy storage policy = policies[vault];
+        if (!policy.initialized) revert VaultNotInitialized(vault);
+        if (policy.maxTradesPerHour == 0) return;
+
+        uint256[] storage timestamps = tradeTimestamps[vault];
+        if (timestamps.length == 0) return;
+
+        timestamps[policy.tradeTimestampIndex] = block.timestamp;
+        policy.tradeTimestampIndex = (policy.tradeTimestampIndex + 1) % timestamps.length;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

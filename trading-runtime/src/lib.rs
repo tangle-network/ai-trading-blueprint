@@ -6,6 +6,7 @@ pub mod chain;
 #[allow(clippy::too_many_arguments)]
 pub mod contracts;
 pub mod envelope;
+pub mod envelope_registry;
 pub mod error;
 pub mod execution_hash;
 pub mod executor;

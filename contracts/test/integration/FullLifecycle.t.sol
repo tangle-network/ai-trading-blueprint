@@ -88,11 +88,9 @@ contract FullLifecycleTest is Setup {
         assertEq(shareToken.balanceOf(user), depositAmount, "User should have shares");
     }
 
-    function _validateTradePolicy() internal {
-        // Prank as vault since PolicyEngine.validateTrade is access-controlled
-        vm.prank(address(vault));
-        bool policyValid =
-            policyEngine.validateTrade(address(vault), address(tokenB), 1000 ether, address(mockTarget), 20000);
+    function _validateTradePolicy() internal view {
+        // checkTrade is view + permissionless (read-only) — no prank needed.
+        bool policyValid = policyEngine.checkTrade(address(vault), address(tokenB), 1000 ether, address(mockTarget));
         assertTrue(policyValid, "Policy validation should pass");
     }
 

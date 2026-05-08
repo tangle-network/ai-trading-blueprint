@@ -30,8 +30,7 @@ import "../test/helpers/Setup.sol"; // MockERC20 (only used when ASSET_TOKEN is 
  *   PRIVATE_KEY=0x... \
  *   ASSET_TOKEN=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
  *   ADMIN=0x... \
- *   SIGNER_ONE=0x... \
- *   SIGNER_TWO=0x... \
+ *   SIGNERS=0xaaa,0xbbb,0xccc \
  *     forge script contracts/script/DeployEnvelopeV3.s.sol \
  *       --rpc-url $RPC_URL --broadcast --slow
  *
@@ -42,12 +41,15 @@ import "../test/helpers/Setup.sol"; // MockERC20 (only used when ASSET_TOKEN is 
  *
  * Optional env vars:
  *   SERVICE_ID            — uint64 service id for the sample vault (default: 0)
- *   REQUIRED_SIGS         — m-of-n threshold (default: 2)
+ *   REQUIRED_SIGS         — m-of-n threshold (default: 2; must satisfy 2/3 supermajority)
  *   MIN_SCORE_THRESHOLD   — minimum average score for envelope approval (default: 50)
  *   VAULT_NAME            — share token name (default: "Envelope V3 Vault Shares")
  *   VAULT_SYMBOL          — share token symbol (default: "ev3SHARE")
  *   WRITE_DEPLOYMENT_JSON — "false" to skip writing deployments/{chainId}/v3.json (default: true)
  *   DEPLOYMENT_JSON_DIR   — override base directory (default: "./deployments")
+ *
+ * Signer floor: VaultFactory rejects fewer than 3 signers or below ceil(2n/3) requiredSigs
+ *               (H-2/H-4 audit fix). Provide at least 3 distinct addresses in SIGNERS.
  */
 contract DeployEnvelopeV3 is Script {
     using stdJson for string;
@@ -56,6 +58,7 @@ contract DeployEnvelopeV3 is Script {
     uint256 internal constant ANVIL_DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal constant ANVIL_SIGNER_ONE = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address internal constant ANVIL_SIGNER_TWO = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    address internal constant ANVIL_SIGNER_THREE = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
 
     struct DeploymentResult {
         uint256 chainId;
@@ -83,8 +86,7 @@ contract DeployEnvelopeV3 is Script {
     struct DeployConfig {
         uint256 deployerKey;
         address admin;
-        address signerOne;
-        address signerTwo;
+        address[] signers;
         uint64 serviceId;
         uint256 requiredSigs;
         uint256 minScoreThreshold;
@@ -100,12 +102,26 @@ contract DeployEnvelopeV3 is Script {
 
     /// @notice Test-friendly entry point — no env reads beyond the supplied config.
     function runWithConfig(DeployConfig memory cfg) public returns (DeploymentResult memory result) {
-        if (cfg.signerOne == cfg.signerTwo) {
-            revert("DeployEnvelopeV3: SIGNER_ONE and SIGNER_TWO must differ");
+        // VaultFactory enforces >=3 signers and requiredSigs * 3 >= signers.length * 2
+        // (H-2/H-4 audit fix). Surface the same requirements up front for a useful error.
+        if (cfg.signers.length < 3) {
+            revert("DeployEnvelopeV3: SIGNERS must have at least 3 distinct addresses");
         }
-        if (cfg.requiredSigs < 2) {
-            // VaultFactory enforces >= 2 — surface the requirement up front.
-            revert("DeployEnvelopeV3: REQUIRED_SIGS must be >= 2");
+        if (cfg.requiredSigs * 3 < cfg.signers.length * 2) {
+            revert("DeployEnvelopeV3: REQUIRED_SIGS must satisfy 2/3 supermajority");
+        }
+        if (cfg.requiredSigs > cfg.signers.length) {
+            revert("DeployEnvelopeV3: REQUIRED_SIGS exceeds signers length");
+        }
+        for (uint256 i = 0; i < cfg.signers.length; i++) {
+            if (cfg.signers[i] == address(0)) {
+                revert("DeployEnvelopeV3: signer is zero address");
+            }
+            for (uint256 j = i + 1; j < cfg.signers.length; j++) {
+                if (cfg.signers[i] == cfg.signers[j]) {
+                    revert("DeployEnvelopeV3: duplicate signer");
+                }
+            }
         }
         if (cfg.minScoreThreshold > 100) {
             revert("DeployEnvelopeV3: MIN_SCORE_THRESHOLD must be 0..100");
@@ -151,10 +167,8 @@ contract DeployEnvelopeV3 is Script {
         console.log("VaultShareDeployer:  ", address(vaultShareDeployer));
         console.log("StrategyRegistry:    ", address(strategyRegistry));
 
-        // ── Sample vault (envelope-ready: 2-of-2 signers + score threshold). ──
-        address[] memory signers = new address[](2);
-        signers[0] = cfg.signerOne;
-        signers[1] = cfg.signerTwo;
+        // ── Sample vault (envelope-ready: m-of-n signers + score threshold). ──
+        address[] memory signers = cfg.signers;
 
         bytes32 salt = keccak256(abi.encodePacked("envelope-v3", uint256(block.chainid), cfg.serviceId, deployer));
 
@@ -219,9 +233,11 @@ contract DeployEnvelopeV3 is Script {
         console.log("Sample Vault:        ", sampleVault);
         console.log("Service ID:          ", cfg.serviceId);
         console.log("Required Sigs:       ", cfg.requiredSigs);
+        console.log("Signers ({n}):       ", cfg.signers.length);
+        for (uint256 i = 0; i < cfg.signers.length; i++) {
+            console.log("  -", cfg.signers[i]);
+        }
         console.log("Min Score Threshold (requested):", cfg.minScoreThreshold);
-        console.log("Signer 1:            ", cfg.signerOne);
-        console.log("Signer 2:            ", cfg.signerTwo);
     }
 
     function _loadConfigFromEnv() internal returns (DeployConfig memory cfg) {
@@ -234,8 +250,17 @@ contract DeployEnvelopeV3 is Script {
         cfg.vaultName = vm.envOr("VAULT_NAME", string("Envelope V3 Vault Shares"));
         cfg.vaultSymbol = vm.envOr("VAULT_SYMBOL", string("ev3SHARE"));
         cfg.admin = vm.envOr("ADMIN", deployer);
-        cfg.signerOne = vm.envOr("SIGNER_ONE", ANVIL_SIGNER_ONE);
-        cfg.signerTwo = vm.envOr("SIGNER_TWO", ANVIL_SIGNER_TWO);
+
+        // SIGNERS env: comma-separated list of addresses. Falls back to the
+        // three Anvil dev keys (accounts 1/2/3) for local-only deploys so the
+        // 3-signer floor is satisfied out of the box. Production deploys MUST
+        // set SIGNERS explicitly.
+        address[] memory defaultSigners = new address[](3);
+        defaultSigners[0] = ANVIL_SIGNER_ONE;
+        defaultSigners[1] = ANVIL_SIGNER_TWO;
+        defaultSigners[2] = ANVIL_SIGNER_THREE;
+        cfg.signers = vm.envOr("SIGNERS", ",", defaultSigners);
+
         cfg.assetTokenOverride = vm.envOr("ASSET_TOKEN", address(0));
         cfg.writeJson = _strEq(vm.envOr("WRITE_DEPLOYMENT_JSON", string("true")), "true");
     }

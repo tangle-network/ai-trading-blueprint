@@ -1961,6 +1961,7 @@ fn multi_bot_state_with_strategy_config_and_bot(
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     })
 }
 
@@ -1990,6 +1991,7 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     })
 }
 
@@ -3785,6 +3787,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     });
     let app = build_multi_bot_router(state);
 
@@ -4480,6 +4483,7 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     })
 }
 
@@ -5147,6 +5151,7 @@ async fn test_multi_bot_clob_execute() {
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     });
 
     let app = build_multi_bot_router(state);
@@ -5276,6 +5281,7 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     });
     let app = build_multi_bot_router(state);
 
@@ -5367,6 +5373,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     });
 
     let app = build_multi_bot_router(state);
@@ -5464,6 +5471,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
             trading_http_api::rate_limit::PerBotRateLimiter::default(),
         ),
         key_provider: trading_runtime::cex::default_provider(),
+        nav_stream_config: None,
     });
 
     let app = build_multi_bot_router(state);

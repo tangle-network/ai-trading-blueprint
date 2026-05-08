@@ -17,14 +17,12 @@ contract CreateSingletonVault is Script {
         uint64 serviceId = uint64(vm.envUint("SERVICE_ID"));
         address assetToken = vm.envAddress("ASSET_TOKEN");
         address admin = vm.envAddress("ADMIN_ADDRESS");
-        address signerOne = vm.envAddress("SIGNER_ONE");
-        address signerTwo = vm.envAddress("SIGNER_TWO");
+        // SIGNERS: comma-separated address list. Must satisfy VaultFactory's
+        // H-2/H-4 floor (>=3 signers, requiredSigs >= ceil(2n/3)).
+        address[] memory signers = vm.envAddress("SIGNERS", ",");
+        uint256 requiredSigs = vm.envOr("REQUIRED_SIGS", uint256(2));
         string memory vaultName = vm.envOr("VAULT_NAME", string("Instance Vault"));
         string memory vaultSymbol = vm.envOr("VAULT_SYMBOL", string("iVAULT"));
-
-        address[] memory signers = new address[](2);
-        signers[0] = signerOne;
-        signers[1] = signerTwo;
 
         vm.startBroadcast(deployerKey);
         (address vault, address share) = VaultFactory(vaultFactoryAddress)
@@ -34,7 +32,7 @@ contract CreateSingletonVault is Script {
                 admin,
                 address(0),
                 signers,
-                2,
+                requiredSigs,
                 vaultName,
                 vaultSymbol,
                 keccak256(abi.encodePacked(serviceId, uint64(0), "manual-singleton")),

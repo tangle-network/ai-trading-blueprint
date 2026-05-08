@@ -587,11 +587,12 @@ contract TradingBlueprintMultiOpTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice When provision inputs have empty signers, the blueprint should fall back
-    ///         to using service operators as TradeValidator signers (1-of-N).
+    ///         to using service operators as TradeValidator signers.
     function test_provisionJob_usesOperatorsAsSigners() public {
         _initService();
         _joinOperator(operator);
         _joinOperator(operator2);
+        _joinOperator(operator3);
 
         // Provision with no explicit signers — should use operators as signers
         bytes memory inputs = _buildBotProvisionInputsNoSigners();
@@ -603,11 +604,12 @@ contract TradingBlueprintMultiOpTest is Setup {
         address vault = blueprint.botVaults(serviceId, 1);
         assertTrue(vault != address(0), "Bot vault should be deployed");
 
-        // H-2: default is now 2-of-n (not 1-of-n) to prevent single-key compromise.
-        assertEq(tradeValidator.getSignerCount(vault), 2, "Should have 2 signers (the operators)");
-        assertEq(tradeValidator.getRequiredSignatures(vault), 2, "Should require 2 signatures (H-2 floor)");
+        // H-2/H-4: default is now ceil(2n/3) supermajority. With 3 operators, requires 2.
+        assertEq(tradeValidator.getSignerCount(vault), 3, "Should have 3 signers (the operators)");
+        assertEq(tradeValidator.getRequiredSignatures(vault), 2, "Should require 2-of-3 (H-2/H-4 floor)");
         assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
         assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator3), "Operator3 should be a signer");
     }
 
     function test_serviceInitialized_ignoresPermittedCallersForVaultSigners() public {
@@ -624,6 +626,7 @@ contract TradingBlueprintMultiOpTest is Setup {
         blueprint.onServiceInitialized(0, requestId, serviceId, address(0), permittedCallers, 0);
         _joinOperator(operator);
         _joinOperator(operator2);
+        _joinOperator(operator3);
 
         bytes memory inputs = _buildBotProvisionInputsNoSigners();
         vm.prank(tangleCore);
@@ -633,9 +636,10 @@ contract TradingBlueprintMultiOpTest is Setup {
 
         address vault = blueprint.botVaults(serviceId, 1);
         assertTrue(vault != address(0), "Bot vault should be deployed");
-        assertEq(tradeValidator.getSignerCount(vault), 2, "Only joined operators should be signers");
+        assertEq(tradeValidator.getSignerCount(vault), 3, "Only joined operators should be signers");
         assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
         assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator3), "Operator3 should be a signer");
         assertFalse(tradeValidator.isVaultSigner(vault, permitted1), "Permitted caller should not be a signer");
         assertFalse(tradeValidator.isVaultSigner(vault, permitted2), "Permitted caller should not be a signer");
     }
@@ -645,6 +649,7 @@ contract TradingBlueprintMultiOpTest is Setup {
         _joinOperator(operator);
         _joinOperator(operator);
         _joinOperator(operator2);
+        _joinOperator(operator3);
 
         bytes memory inputs = _buildBotProvisionInputsNoSigners();
         vm.prank(tangleCore);
@@ -654,9 +659,10 @@ contract TradingBlueprintMultiOpTest is Setup {
 
         address vault = blueprint.botVaults(serviceId, 1);
         assertTrue(vault != address(0), "Bot vault should be deployed");
-        assertEq(tradeValidator.getSignerCount(vault), 2, "Duplicate operator joins should be ignored");
+        assertEq(tradeValidator.getSignerCount(vault), 3, "Duplicate operator joins should be ignored");
         assertTrue(tradeValidator.isVaultSigner(vault, operator), "Operator1 should be a signer");
         assertTrue(tradeValidator.isVaultSigner(vault, operator2), "Operator2 should be a signer");
+        assertTrue(tradeValidator.isVaultSigner(vault, operator3), "Operator3 should be a signer");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -673,7 +679,7 @@ contract TradingBlueprintMultiOpTest is Setup {
         blueprint.onJobCall{value: 0}(serviceId, JOB_PROVISION, 1, inputs);
 
         vm.expectEmit(true, true, false, true);
-        emit TradingBlueprint.BotVaultSkipped(serviceId, 1, "no signers (operators may not have joined yet)");
+        emit TradingBlueprint.BotVaultSkipped(serviceId, 1, "signer floor not met (need >=3 signers)");
 
         vm.prank(tangleCore);
         blueprint.onJobResult(serviceId, JOB_PROVISION, 1, operator, inputs, "");
@@ -765,9 +771,10 @@ contract TradingBlueprintMultiOpTest is Setup {
     /// @notice VaultFactory.createBotVault() should revert with InvalidSignerConfig
     ///         when requiredSigs exceeds signers.length.
     function test_createBotVault_revertsOnExcessiveRequiredSigs() public {
-        address[] memory signers = new address[](2);
+        address[] memory signers = new address[](3);
         signers[0] = validator1;
         signers[1] = validator2;
+        signers[2] = validator3;
 
         vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
         vaultFactory.createBotVault(
@@ -776,10 +783,80 @@ contract TradingBlueprintMultiOpTest is Setup {
             address(this), // admin
             address(0), // operator
             signers,
-            uint256(3), // requiredSigs > signers.length
+            uint256(4), // requiredSigs > signers.length
             "Test Bot",
             "tBOT",
             bytes32("test-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
+        );
+    }
+
+    /// @notice H-2/H-4: VaultFactory must enforce a 3-signer minimum floor.
+    ///         Two-signer setups offer no quorum margin and are rejected.
+    function test_createBotVault_revertsOnTwoSignerFloor() public {
+        address[] memory signers = new address[](2);
+        signers[0] = validator1;
+        signers[1] = validator2;
+
+        vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
+        vaultFactory.createBotVault(
+            serviceId,
+            address(tokenA),
+            address(this),
+            address(0),
+            signers,
+            uint256(2),
+            "Test Bot",
+            "tBOT",
+            bytes32("test-salt-floor"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
+        );
+    }
+
+    /// @notice H-2/H-4: VaultFactory must enforce a 2/3 supermajority threshold.
+    ///         A 1-of-3 or 2-of-4 signer config falls below ceil(2n/3) and is rejected.
+    function test_createBotVault_revertsOnSubSupermajority() public {
+        address[] memory signers = new address[](3);
+        signers[0] = validator1;
+        signers[1] = validator2;
+        signers[2] = validator3;
+
+        // 1-of-3 < ceil(2*3/3)=2
+        vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
+        vaultFactory.createBotVault(
+            serviceId,
+            address(tokenA),
+            address(this),
+            address(0),
+            signers,
+            uint256(1),
+            "Test Bot",
+            "tBOT",
+            bytes32("test-salt-sub-supermajority-3"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
+        );
+
+        // 2-of-4 < ceil(2*4/3)=3
+        address[] memory fourSigners = new address[](4);
+        fourSigners[0] = validator1;
+        fourSigners[1] = validator2;
+        fourSigners[2] = validator3;
+        fourSigners[3] = makeAddr("validator4");
+
+        vm.expectRevert(VaultFactory.InvalidSignerConfig.selector);
+        vaultFactory.createBotVault(
+            serviceId,
+            address(tokenA),
+            address(this),
+            address(0),
+            fourSigners,
+            uint256(2),
+            "Test Bot",
+            "tBOT",
+            bytes32("test-salt-sub-supermajority-4"),
             _defaultPolicyConfig(),
             _defaultFeeConfig()
         );
