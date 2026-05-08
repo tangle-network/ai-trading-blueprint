@@ -178,11 +178,22 @@ export function ConfigureStep({
                       <span className="font-medium text-arena-elements-textPrimary">
                         {asset.symbol}
                       </span>
-                      <span className="text-xs text-arena-elements-textTertiary">
+                      <span
+                        className={
+                          asset.valuationSource === 'uniswap_v3_twap'
+                            ? 'text-xs text-amber-600 dark:text-amber-400'
+                            : 'text-xs text-arena-elements-textTertiary'
+                        }
+                        title={
+                          asset.valuationSource === 'uniswap_v3_twap'
+                            ? 'No Chainlink feed: priced from a Uniswap V3 TWAP. Higher oracle-manipulation risk than Chainlink-priced assets — small custom-asset positions only.'
+                            : undefined
+                        }
+                      >
                         {asset.known || asset.valuationSource === 'chainlink'
                           ? 'Chainlink ready'
                           : asset.valuationSource === 'uniswap_v3_twap'
-                            ? 'V3 TWAP ready'
+                            ? '⚠ TWAP only (higher risk)'
                             : 'Needs V3 TWAP check'}
                       </span>
                       {!isBase && (

@@ -219,7 +219,10 @@ interface DexAssetPreflightResponse {
   symbol?: string | null;
   name?: string | null;
   decimals?: number | null;
-  valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | string | null;
+  // Audit FIX-7: the trailing `| string` defeats the discriminated-union
+  // narrowing. Drop it; a future backend change that adds a new tag will be
+  // a TypeScript error here, which is the desired loud failure.
+  valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | null;
   valuation_adapter?: string | null;
   selected_fee_tier?: number | null;
   warnings?: string[];
@@ -1389,26 +1392,56 @@ export default function ProvisionPage() {
     setCustomAssetError(null);
     setManualAssetInput('');
   }, [assetUniverseChainId]);
+
+  // Audit FIX-7: this effect previously depended on `assetOptions`, which
+  // recomputes on every customAssetSelections change. As a result, adding a
+  // custom asset re-fired the effect and (a) unconditionally clobbered the
+  // user's chosen base asset back to USDC/target and (b) force-re-injected
+  // WETH after the user removed it. Both are silent overrides of explicit
+  // user intent.
+  //
+  // Fix:
+  //   1. Depend ONLY on stable prerequisites (chain / strategy / execution
+  //      target). Adding a custom asset no longer reseeds the universe.
+  //   2. Only set `baseAssetAddress` when it isn't already a valid choice.
+  //   3. WETH-as-default seed only on first run — if the user later removes
+  //      it, that decision sticks.
   useEffect(() => {
     if (strategyType !== 'dex') return;
     const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;
+    // Snapshot defaultAssetOptions, NOT assetOptions, so this effect doesn't
+    // re-run when customAssetSelections changes.
     const defaultBase =
       targetAsset ??
-      assetOptions.find((asset) => asset.symbol === 'USDC')?.address ??
-      assetOptions[0]?.address;
+      defaultAssetOptions.find((asset) => asset.symbol === 'USDC')?.address ??
+      defaultAssetOptions[0]?.address;
     if (!defaultBase) return;
-    setBaseAssetAddress(defaultBase);
+
+    setBaseAssetAddress((current) => {
+      // Keep the user's choice when it remains a valid default-set asset;
+      // only reseed when current is empty or no longer in the option set.
+      const available = new Set(defaultAssetOptions.map((a) => a.address.toLowerCase()));
+      if (current && available.has(current.toLowerCase())) return current;
+      return defaultBase;
+    });
+
     setSelectedAssetAddresses((current) => {
-      const available = new Set(assetOptions.map((asset) => asset.address.toLowerCase()));
+      const available = new Set(defaultAssetOptions.map((a) => a.address.toLowerCase()));
       const kept = current.filter((address) => available.has(address.toLowerCase()));
       const next = new Map<string, Address>();
       next.set(defaultBase.toLowerCase(), defaultBase);
       for (const address of kept) next.set(address.toLowerCase(), address);
-      const weth = assetOptions.find((asset) => asset.symbol === 'WETH')?.address;
-      if (weth) next.set(weth.toLowerCase(), weth);
+      // Seed WETH only when the selection is otherwise empty — i.e. on the
+      // first run for this chain/strategy/target combo. If the user later
+      // explicitly removes WETH, this effect won't re-inject it on the next
+      // dep change because `kept` will already include the user's choices.
+      if (current.length === 0) {
+        const weth = defaultAssetOptions.find((a) => a.symbol === 'WETH')?.address;
+        if (weth) next.set(weth.toLowerCase(), weth);
+      }
       return [...next.values()];
     });
-  }, [assetOptions, selectedExecutionTarget?.assetToken, strategyType]);
+  }, [defaultAssetOptions, selectedExecutionTarget?.assetToken, strategyType]);
   const addAssetToUniverse = useCallback(
     async (value: string) => {
       setCustomAssetError(null);
