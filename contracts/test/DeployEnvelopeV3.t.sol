@@ -26,6 +26,7 @@ contract DeployEnvelopeV3Test is Test {
     uint256 internal constant TEST_DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal constant TEST_SIGNER_ONE = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address internal constant TEST_SIGNER_TWO = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    address internal constant TEST_SIGNER_THREE = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
 
     function setUp() public {
         deployScript = new DeployEnvelopeV3();
@@ -39,10 +40,13 @@ contract DeployEnvelopeV3Test is Test {
     function _baseConfig() internal pure returns (DeployEnvelopeV3.DeployConfig memory cfg) {
         cfg.deployerKey = TEST_DEPLOYER_KEY;
         cfg.admin = TEST_DEPLOYER_ADDRESS;
-        cfg.signerOne = TEST_SIGNER_ONE;
-        cfg.signerTwo = TEST_SIGNER_TWO;
+        address[] memory signers = new address[](3);
+        signers[0] = TEST_SIGNER_ONE;
+        signers[1] = TEST_SIGNER_TWO;
+        signers[2] = TEST_SIGNER_THREE;
+        cfg.signers = signers;
         cfg.serviceId = 0;
-        cfg.requiredSigs = 2;
+        cfg.requiredSigs = 2; // 2-of-3 satisfies VaultFactory's 2/3 supermajority floor
         cfg.minScoreThreshold = 50;
         cfg.assetTokenOverride = address(0); // -> mock USDC
         cfg.vaultName = "Envelope V3 Vault Shares";
@@ -79,15 +83,17 @@ contract DeployEnvelopeV3Test is Test {
         TradeValidator tv = TradeValidator(result.tradeValidator);
         assertEq(tv.owner(), result.vaultFactory, "factory should own TradeValidator");
 
-        // Sample vault is wired with the configured 2-of-2 signer set.
+        // Sample vault is wired with the configured 2-of-3 signer set.
         assertEq(tv.getRequiredSignatures(result.sampleVault), 2, "sample vault required sigs != 2");
         assertTrue(tv.isVaultSigner(result.sampleVault, TEST_SIGNER_ONE));
         assertTrue(tv.isVaultSigner(result.sampleVault, TEST_SIGNER_TWO));
+        assertTrue(tv.isVaultSigner(result.sampleVault, TEST_SIGNER_THREE));
 
         // sampleSigners array is mirrored in the result.
-        assertEq(result.sampleSigners.length, 2, "sampleSigners length");
+        assertEq(result.sampleSigners.length, 3, "sampleSigners length");
         assertEq(result.sampleSigners[0], TEST_SIGNER_ONE);
         assertEq(result.sampleSigners[1], TEST_SIGNER_TWO);
+        assertEq(result.sampleSigners[2], TEST_SIGNER_THREE);
         assertEq(result.sampleRequiredSignatures, 2);
     }
 
@@ -223,23 +229,35 @@ contract DeployEnvelopeV3Test is Test {
         assertEq(verifyScript.failed(), 0, "VerifyEnvelopeV3 must report zero failures");
     }
 
-    /// @notice Reverts when REQUIRED_SIGS < 2 because VaultFactory enforces
-    ///         a minimum 2-of-n threshold. This locks in the safety floor at
+    /// @notice Reverts when REQUIRED_SIGS falls below the 2/3 supermajority floor
+    ///         that VaultFactory enforces (H-2/H-4). Locks in the safety floor at
     ///         the deploy boundary.
-    function test_deploy_envelope_v3_rejects_required_sigs_below_two() public {
+    function test_deploy_envelope_v3_rejects_sub_supermajority_required_sigs() public {
         DeployEnvelopeV3.DeployConfig memory cfg = _baseConfig();
-        cfg.requiredSigs = 1;
-        vm.expectRevert(bytes("DeployEnvelopeV3: REQUIRED_SIGS must be >= 2"));
+        cfg.requiredSigs = 1; // 1-of-3 < ceil(2*3/3)=2
+        vm.expectRevert(bytes("DeployEnvelopeV3: REQUIRED_SIGS must satisfy 2/3 supermajority"));
         deployScript.runWithConfig(cfg);
     }
 
-    /// @notice Reverts when SIGNER_ONE == SIGNER_TWO — duplicate signers are
-    ///         rejected by TradeValidator anyway, but failing fast in the
-    ///         script gives a clearer error.
+    /// @notice Reverts when fewer than 3 signers are supplied — VaultFactory's
+    ///         signer floor (H-2/H-4) requires at least 3 distinct signers.
+    function test_deploy_envelope_v3_rejects_below_signer_floor() public {
+        DeployEnvelopeV3.DeployConfig memory cfg = _baseConfig();
+        address[] memory twoSigners = new address[](2);
+        twoSigners[0] = TEST_SIGNER_ONE;
+        twoSigners[1] = TEST_SIGNER_TWO;
+        cfg.signers = twoSigners;
+        vm.expectRevert(bytes("DeployEnvelopeV3: SIGNERS must have at least 3 distinct addresses"));
+        deployScript.runWithConfig(cfg);
+    }
+
+    /// @notice Reverts when any signer slot duplicates another — duplicate signers
+    ///         are rejected by TradeValidator anyway, but failing fast in the script
+    ///         gives a clearer error.
     function test_deploy_envelope_v3_rejects_duplicate_signers() public {
         DeployEnvelopeV3.DeployConfig memory cfg = _baseConfig();
-        cfg.signerTwo = cfg.signerOne;
-        vm.expectRevert(bytes("DeployEnvelopeV3: SIGNER_ONE and SIGNER_TWO must differ"));
+        cfg.signers[1] = cfg.signers[0]; // collide signer[1] with signer[0]
+        vm.expectRevert(bytes("DeployEnvelopeV3: duplicate signer"));
         deployScript.runWithConfig(cfg);
     }
 

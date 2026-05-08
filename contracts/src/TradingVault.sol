@@ -35,9 +35,12 @@ interface IAavePoolHealth {
 ///      Multi-asset deployment: multiple vaults share one share token (full ERC-7575).
 ///
 ///      Trade execution requires:
-///        1. PolicyEngine.validateTrade() — per-vault hard limits
+///        1. PolicyEngine.checkTrade() — per-vault hard limits (read-only)
 ///        2. TradeValidator.validateWithSignatures() — m-of-n EIP-712 sigs
-///        3. Only then: target.call(data)
+///        3. target.call(data)
+///        4. PolicyEngine.recordTrade() — consume the rate-limit slot only on success
+///           (H-5: paired with executedIntents commit so a reverted trade does not
+///           burn either the intent or the rate-limit credit)
 contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -117,6 +120,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error DebtDecreaseNotMet(uint256 actual, uint256 required);
     error HealthFactorTooLow(uint256 actual, uint256 required);
     error PositionLimitExceeded(address token, uint256 actual, uint256 limit);
+    error LeverageCapExceeded(uint256 actualBps, uint256 capBps);
+    error SlippageCapExceeded(uint256 actualBps, uint256 capBps);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -572,9 +577,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (params.minOutput == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
 
-        // 0. Intent deduplication — prevents multiple operators executing the same trade
+        // 0. Intent deduplication — H-5: read-only check pre-call. The actual write
+        //    is deferred to `_commitIntent` in the executor success path so that a
+        //    reverted trade leaves the intent reusable.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         // 1. Policy engine check
         _checkPolicy(params.outputToken, params.minOutput, params.target);
@@ -618,8 +624,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
         if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
 
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         _checkPolicy(params.inputToken, params.maxInput, params.target);
 
@@ -643,8 +649,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
 
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         _checkPolicy(params.outputToken, params.minOutput, params.target);
 
@@ -652,10 +658,66 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
-    function _checkPolicy(address outputToken, uint256 minOutput, address target) internal {
-        if (!policyEngine.validateTrade(address(this), outputToken, minOutput, target, 0)) {
+    /// @dev H-5: read-only policy check — does NOT consume the rate-limit slot. The
+    ///      slot is consumed via `policyEngine.recordTrade(this)` in the executor
+    ///      success paths so a reverted trade does not burn a rate-limit credit.
+    function _checkPolicy(address outputToken, uint256 minOutput, address target) internal view {
+        if (!policyEngine.checkTrade(address(this), outputToken, minOutput, target)) {
             revert PolicyCheckFailed();
         }
+    }
+
+    /// @dev H-5: post-success hooks — consume executedIntents and rate-limit slot.
+    ///      Invoked at the end of every `_executeXxx` happy path AFTER all minOutput /
+    ///      health / debt-decrease checks pass. Reverts in the executor leave both
+    ///      the intent and the rate-limit credit reusable.
+    function _commitIntent(bytes32 intentHash) internal {
+        executedIntents[intentHash] = true;
+        policyEngine.recordTrade(address(this));
+    }
+
+    /// @dev H-3: enforce maxSlippageBps on the validator-signed minOutput. Compares the
+    ///      input value (amountIn of tokenIn, priced in the deposit asset) against the
+    ///      output value (signedMinOutput of tokenOut, priced in the deposit asset)
+    ///      and reverts when the implied slippage exceeds the policy cap. Skips when
+    ///      the cap is 0 (disabled) — slippage is then enforced solely by the
+    ///      validator-signed minOutputPerInput rate baked into the envelope.
+    ///      Reverts on missing valuators so a slippage-capped vault cannot trade
+    ///      tokens it cannot price.
+    function _assertSlippageCap(address tokenIn, uint256 amountIn, address tokenOut, uint256 signedMinOutput)
+        internal
+        view
+    {
+        // unused-return: only `maxSlippageBps` matters here; the other policy
+        // fields are inspected on their own dedicated paths (leverageCap in the
+        // health-factor executor, maxTradesPerHour via PolicyEngine.recordTrade).
+        // slither-disable-next-line unused-return
+        (,,, uint256 maxSlippageBps,) = policyEngine.policies(address(this));
+        if (maxSlippageBps == 0) return;
+        if (amountIn == 0 || signedMinOutput == 0) return;
+
+        address depAsset = asset();
+        uint256 inputValue = _valueInDepositAsset(tokenIn, amountIn, depAsset);
+        uint256 outputValue = _valueInDepositAsset(tokenOut, signedMinOutput, depAsset);
+
+        // Slippage cap: outputValue >= inputValue * (10000 - maxSlippageBps) / 10000
+        if (outputValue * 10000 < inputValue * (10000 - maxSlippageBps)) {
+            uint256 actualBps = inputValue > outputValue ? (inputValue - outputValue) * 10000 / inputValue : 0;
+            revert SlippageCapExceeded(actualBps, maxSlippageBps);
+        }
+    }
+
+    /// @dev Helper for `_assertSlippageCap`. Returns `amount` of `token` denominated
+    ///      in the vault's deposit asset. Reverts when no valuator is configured for
+    ///      a non-deposit-asset token — H-3 requires both sides of a slippage-capped
+    ///      trade to be priceable.
+    function _valueInDepositAsset(address token, uint256 amount, address depAsset) internal view returns (uint256) {
+        if (token == depAsset) return amount;
+        IAssetValuator adapter = valuationAdapters[token];
+        if (address(adapter) == address(0) || !adapter.isSupported(token, depAsset)) {
+            revert UnsupportedValuationAsset(token, depAsset);
+        }
+        return adapter.valueInAsset(token, amount, depAsset);
     }
 
     function _checkValidators(
@@ -831,6 +893,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
+        _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
 
@@ -856,6 +925,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
+        _commitIntent(params.intentHash);
         emit DebtReductionExecuted(
             params.target, params.value, params.inputToken, debtDecreased, params.debtToken, params.intentHash
         );
@@ -880,12 +956,33 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkFinalPositionLimit(params.outputToken);
 
         // Aave returns (totalCollateralBase, totalDebtBase, availableBorrowsBase,
-        // currentLiquidationThreshold, ltv, healthFactor); only healthFactor
-        // gates the post-borrow / post-withdraw safety check.
+        // currentLiquidationThreshold, ltv, healthFactor). healthFactor gates the
+        // post-borrow / post-withdraw safety check; collateral + debt gate the
+        // H-3 leverage-cap enforcement below.
         // slither-disable-next-line unused-return
-        (,,,,, uint256 healthFactor) = IAavePoolHealth(params.pool).getUserAccountData(params.account);
+        (uint256 totalCollateralBase, uint256 totalDebtBase,,,, uint256 healthFactor) =
+            IAavePoolHealth(params.pool).getUserAccountData(params.account);
         if (healthFactor < params.minHealthFactor) {
             revert HealthFactorTooLow(healthFactor, params.minHealthFactor);
+        }
+
+        // H-3: enforce leverageCap on-chain. Leverage is defined as
+        //     totalCollateralBase / equity, where equity = collateral - debt,
+        // expressed in BPS so it lines up with PolicyEngine.leverageCap (10000 = 1x).
+        // A 0 cap disables the check (off-chain validators may still gate).
+        // slither-disable-next-line unused-return
+        (, uint256 leverageCap,,,) = policyEngine.policies(address(this));
+        if (leverageCap > 0 && totalCollateralBase > 0) {
+            if (totalDebtBase >= totalCollateralBase) {
+                // Debt at or above collateral — undefined / liquidation-imminent;
+                // treat as cap-exceeded with sentinel value.
+                revert LeverageCapExceeded(type(uint256).max, leverageCap);
+            }
+            uint256 equity = totalCollateralBase - totalDebtBase;
+            uint256 leverageBps = totalCollateralBase * 10000 / equity;
+            if (leverageBps > leverageCap) {
+                revert LeverageCapExceeded(leverageBps, leverageCap);
+            }
         }
 
         if (depositAssetReserveBps > 0) {
@@ -894,6 +991,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
+        _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
 
@@ -923,9 +1027,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (recipient == address(0)) revert ZeroAddress();
         if (maxCollateralBps == 0) revert CollateralNotEnabled();
 
-        // Intent deduplication
+        // Intent deduplication — H-5: read-only check; commit deferred to post-success.
         if (executedIntents[intentHash]) revert IntentAlreadyExecuted(intentHash);
-        executedIntents[intentHash] = true;
 
         // BPS cap: totalOutstanding + amount <= totalAssets * maxCollateralBps / 10000
         // Use totalAssets() which already includes current totalOutstandingCollateral
@@ -944,6 +1047,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
         _asset.safeTransfer(recipient, amount);
 
+        // H-5: commit only after the transfer succeeds. releaseCollateral is not a
+        // policy-engine path so we mark the intent directly without recordTrade.
+        executedIntents[intentHash] = true;
         emit CollateralReleased(msg.sender, amount, recipient, intentHash);
     }
 
@@ -1597,28 +1703,28 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @dev Envelope-mode prepare for trade-shape executions: skip _checkValidators
     ///      since envelope sigs already verified in validateXxxEnvelope.
-    function _prepareEnvelopeTrade(ExecuteParams calldata params) internal {
+    function _prepareEnvelopeTrade(ExecuteParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
         if (params.minOutput == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.outputToken, params.minOutput, params.target);
     }
 
-    function _prepareEnvelopeDebtReduction(DebtReductionParams calldata params) internal {
+    function _prepareEnvelopeDebtReduction(DebtReductionParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0) || params.inputToken == address(0) || params.debtToken == address(0)) {
             revert ZeroAddress();
         }
         if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.inputToken, params.maxInput, params.target);
     }
 
-    function _prepareEnvelopeHealthFactor(HealthFactorParams calldata params) internal {
+    function _prepareEnvelopeHealthFactor(HealthFactorParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (
             params.target == address(0) || params.outputToken == address(0) || params.pool == address(0)
@@ -1626,8 +1732,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         ) revert ZeroAddress();
         if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.outputToken, params.minOutput, params.target);
     }
 
@@ -1788,6 +1894,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1830,6 +1938,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(uint256(s.amountOutMinimum), reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(tokenIn, uint256(s.amountIn), params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV4SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1869,6 +1979,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAerodromeSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1910,6 +2022,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validatePancakeswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1949,6 +2063,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (minDy < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(minDy, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(enf.tokenIn, dx, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateCurveStableSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();

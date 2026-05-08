@@ -1318,3 +1318,275 @@ contract EnvelopeMaxApprovalSignersTest is Setup {
         tv.validateUniswapV3SwapEnvelope(env, enf, many, sigs, scores);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit H-3: maxSlippageBps must bind on-chain at envelope-mode swap entry.
+// Pre-fix: maxSlippageBps was an "advisory" config that the vault never
+// referenced. Post-fix: TradingVault._assertSlippageCap values both legs in
+// deposit-asset units via IAssetValuator and reverts when the validator-signed
+// minOutput implies slippage above the cap.
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract EnvelopeSlippageCapTest is Setup {
+    bytes32 constant BOT_ID_HASH = keccak256("h3-slippage-bot");
+
+    address public vault;
+
+    function setUp() public override {
+        super.setUp();
+        vm.warp(1_700_000_000);
+        (vault,) = _createTestVault();
+    }
+
+    function _sortedThreeValidators() internal view returns (address[] memory addrs) {
+        addrs = new address[](3);
+        addrs[0] = validator1;
+        addrs[1] = validator2;
+        addrs[2] = validator3;
+        for (uint256 i = 0; i < addrs.length; ++i) {
+            for (uint256 j = i + 1; j < addrs.length; ++j) {
+                if (uint160(addrs[j]) < uint160(addrs[i])) {
+                    address t = addrs[i];
+                    addrs[i] = addrs[j];
+                    addrs[j] = t;
+                }
+            }
+        }
+    }
+
+    function _baseEnv(bytes32 enforcementHash) internal view returns (TradeValidator.Envelope memory) {
+        address[] memory sorted = _sortedThreeValidators();
+        bytes memory packed;
+        for (uint256 i = 0; i < sorted.length; ++i) {
+            packed = bytes.concat(packed, abi.encodePacked(sorted[i]));
+        }
+        return TradeValidator.Envelope({
+            version: 2,
+            botIdHash: BOT_ID_HASH,
+            vault: vault,
+            chainId: uint64(block.chainid),
+            protocolHash: keccak256("h3-protocol"),
+            policyHash: keccak256("h3-policy"),
+            enforcementHash: enforcementHash,
+            issuedAt: uint64(block.timestamp - 100),
+            expiresAt: uint64(block.timestamp + 3600),
+            nonce: 1,
+            signersHash: keccak256(packed),
+            minSignatures: 2
+        });
+    }
+
+    function _twoEnvSigs(TradeValidator.Envelope memory env)
+        internal
+        view
+        returns (bytes[] memory sigs, uint256[] memory scores)
+    {
+        sigs = new bytes[](2);
+        scores = new uint256[](2);
+        bytes32 digest = tradeValidator.envelopeDigest(env);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(validator1Key, digest);
+        sigs[0] = abi.encodePacked(r1, s1, v1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, digest);
+        sigs[1] = abi.encodePacked(r2, s2, v2);
+        scores[0] = 80;
+        scores[1] = 90;
+    }
+
+    function _whitelistRouter(address router) internal {
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.prank(address(vaultFactory));
+        policyEngine.setWhitelist(vault, tokens, true);
+        address[] memory targets = new address[](1);
+        targets[0] = router;
+        vm.prank(address(vaultFactory));
+        policyEngine.setTargetWhitelist(vault, targets, true);
+    }
+
+    function _baseV3Enforcement(address router)
+        internal
+        view
+        returns (TradeValidator.UniswapV3SwapEnforcement memory enf)
+    {
+        enf = TradeValidator.UniswapV3SwapEnforcement({
+            feeTier: 3000,
+            maxSingleAmountIn: 100 ether,
+            maxTotalAmountIn: 1000 ether,
+            maxValue: 0,
+            minOutputPerInput: 1e18,
+            router: router,
+            tokenIn: address(tokenA),
+            tokenOut: address(tokenB),
+            sqrtPriceLimitX96: 0
+        });
+    }
+
+    function _v3Calldata(uint256 amountIn, uint256 minOut) internal view returns (bytes memory) {
+        return abi.encodeWithSelector(
+            bytes4(0x414bf389),
+            address(tokenA),
+            address(tokenB),
+            uint24(3000),
+            vault,
+            uint256(block.timestamp + 600),
+            amountIn,
+            minOut,
+            uint160(0)
+        );
+    }
+
+    /// @notice H-3: a swap whose value-implied slippage exceeds the configured
+    ///         maxSlippageBps must revert with SlippageCapExceeded. Setup: deposit
+    ///         asset is tokenA; tokenB valuator returns 0.5 (1 tokenB = 0.5 tokenA),
+    ///         so a 1:1 amountIn:minOutput pair implies 50% slippage. With cap=100
+    ///         BPS the executor must reject.
+    function test_h3_envelopeSwap_revertsAboveSlippageCap() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+        _whitelistRouter(address(router));
+
+        // Tighten cap and skew the tokenB → tokenA rate so output is worth half.
+        vm.prank(address(vaultFactory));
+        policyEngine.setMaxSlippage(vault, 100); // 1%
+        mockAssetValuator.setRate(address(tokenB), address(tokenA), 5e17); // 1 tokenB = 0.5 tokenA
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _baseV3Enforcement(address(router));
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18; // 10 tokenB
+
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: _v3Calldata(amountIn, minOut),
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("h3-slippage-violate"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        // Input value = 10 (1:1 asset), output value = 10 * 0.5 = 5 → 5000 BPS slippage,
+        // cap is 100 BPS.
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.SlippageCapExceeded.selector, 5000, 100));
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+
+    /// @notice H-3: a swap exactly at the slippage cap is accepted.
+    function test_h3_envelopeSwap_allowsAtSlippageCap() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+        _whitelistRouter(address(router));
+
+        vm.prank(address(vaultFactory));
+        policyEngine.setMaxSlippage(vault, 1000); // 10%
+        mockAssetValuator.setRate(address(tokenB), address(tokenA), 9e17); // 1 tokenB = 0.9 tokenA → exactly 10% slippage
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _baseV3Enforcement(address(router));
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: _v3Calldata(amountIn, minOut),
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("h3-slippage-at-cap"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        vm.prank(operator);
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
+
+        assertEq(MockERC20(tokenB).balanceOf(vault), minOut, "swap at exact slippage cap should succeed");
+    }
+
+    /// @notice H-3: maxSlippageBps = 0 disables the on-chain check; a 50%-loss swap
+    ///         is allowed (the validator-signed minOutputPerInput remains the only
+    ///         gate, so operators must still sign carefully off-chain).
+    function test_h3_envelopeSwap_capZeroSkipsEnforcement() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+        _whitelistRouter(address(router));
+
+        vm.prank(address(vaultFactory));
+        policyEngine.setMaxSlippage(vault, 0); // disabled
+        mockAssetValuator.setRate(address(tokenB), address(tokenA), 5e17); // 50% loss
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _baseV3Enforcement(address(router));
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: _v3Calldata(amountIn, minOut),
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("h3-slippage-disabled"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        vm.prank(operator);
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
+
+        assertEq(MockERC20(tokenB).balanceOf(vault), minOut, "cap=0 must not block the swap");
+    }
+
+    /// @notice H-3: when a non-deposit token has no valuator and the cap is non-zero,
+    ///         the helper reverts with UnsupportedValuationAsset rather than silently
+    ///         skipping. Slippage-capped vaults cannot trade tokens they cannot price.
+    function test_h3_envelopeSwap_revertsWhenValuatorMissing() public {
+        M1MockUniV3Router router = new M1MockUniV3Router();
+        _whitelistRouter(address(router));
+
+        vm.prank(address(vaultFactory));
+        policyEngine.setMaxSlippage(vault, 100);
+
+        // Drop the tokenB valuator so the helper has nothing to value the output with.
+        vm.prank(owner);
+        TradingVault(payable(vault)).setValuationAdapter(address(tokenB), address(0));
+
+        TradeValidator.UniswapV3SwapEnforcement memory enf = _baseV3Enforcement(address(router));
+        TradeValidator.Envelope memory env = _baseEnv(tradeValidator.hashUniswapV3Swap(enf));
+
+        uint256 amountIn = 10 ether;
+        uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
+
+        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+            target: address(router),
+            data: _v3Calldata(amountIn, minOut),
+            value: 0,
+            minOutput: minOut,
+            outputToken: address(tokenB),
+            intentHash: keccak256("h3-slippage-no-valuator"),
+            deadline: block.timestamp + 600
+        });
+
+        tokenA.mint(vault, amountIn);
+        (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
+
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(TradingVault.UnsupportedValuationAsset.selector, address(tokenB), address(tokenA))
+        );
+        TradingVault(payable(vault))
+            .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
+    }
+}

@@ -240,25 +240,18 @@ contract ErrorPathsTest is Setup {
         policyEngine.setPositionLimit(fakeVault, address(tokenA), 1000 ether);
     }
 
-    function test_pe_tradeRejected_emitsNotInitialized() public {
+    /// @notice H-5: PolicyEngine.checkTrade is view + permissionless. Uninitialized
+    ///         vaults return false rather than emitting a diagnostic event.
+    function test_pe_checkTrade_returnsFalseOnUninitializedVault() public {
         address uninit = makeAddr("uninitVault3");
-        // Cache constants before prank (external view calls consume prank)
-        uint8 rejectCode = policyEngine.REJECT_NOT_INITIALIZED();
-        vm.startPrank(address(vaultFactory));
-        vm.expectEmit(true, true, true, true);
-        emit PolicyEngine.TradeRejected(uninit, address(tokenA), 100 ether, rejectCode);
-        policyEngine.validateTrade(uninit, address(tokenA), 100 ether, address(mockTarget), 0);
-        vm.stopPrank();
+        bool ok = policyEngine.checkTrade(uninit, address(tokenA), 100 ether, address(mockTarget));
+        assertFalse(ok, "uninitialized vault should not pass policy check");
     }
 
-    function test_pe_tradeRejected_emitsTokenNotWhitelisted() public {
+    function test_pe_checkTrade_returnsFalseOnUnwhitelistedToken() public {
         address unlistedToken = makeAddr("unlistedToken");
-        uint8 rejectCode = policyEngine.REJECT_TOKEN_NOT_WHITELISTED();
-        vm.startPrank(address(vaultFactory));
-        vm.expectEmit(true, true, true, true);
-        emit PolicyEngine.TradeRejected(address(vault), unlistedToken, 100 ether, rejectCode);
-        policyEngine.validateTrade(address(vault), unlistedToken, 100 ether, address(mockTarget), 0);
-        vm.stopPrank();
+        bool ok = policyEngine.checkTrade(address(vault), unlistedToken, 100 ether, address(mockTarget));
+        assertFalse(ok, "unwhitelisted token should not pass policy check");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

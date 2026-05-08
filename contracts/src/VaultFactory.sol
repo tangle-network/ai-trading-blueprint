@@ -267,9 +267,13 @@ contract VaultFactory is Ownable2Step, ReentrancyGuard {
             revert ZeroAddress();
         }
         // H-2+H-4: enforce minimum signer floor. 1-of-n collapses the validator
-        // layer — a single compromised key = bounded-by-whitelist theft. Require at
-        // least 2 signers with at least 2-of-n threshold for meaningful multi-sig.
-        if (signers.length < 2 || requiredSigs < 2 || requiredSigs > signers.length) {
+        // layer entirely — one compromised key = bounded-by-whitelist theft. 2-of-2
+        // is also too weak: a single key compromise turns the second signer into a
+        // single point of failure (no quorum margin to survive a key loss). The
+        // audit-spec floor is ≥3 signers AND a 2/3 supermajority threshold:
+        //   requiredSigs >= ceil(signers.length * 2 / 3)
+        // expressed branch-free as: requiredSigs * 3 >= signers.length * 2.
+        if (signers.length < 3 || requiredSigs > signers.length || requiredSigs * 3 < signers.length * 2) {
             revert InvalidSignerConfig();
         }
         VaultDeployer vaultDeployer = deployer;
