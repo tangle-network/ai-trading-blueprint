@@ -84,6 +84,7 @@ async fn test_state(mock_uri: &str) -> Arc<TradingApiState> {
         rpc_url: None,
         chain_id: None,
         clob_client: None,
+        strategy_config: serde_json::Value::Null,
     })
 }
 
@@ -115,6 +116,7 @@ async fn test_state_with_bot_id(mock_uri: &str, bot_id: &str) -> Arc<TradingApiS
         rpc_url: None,
         chain_id: None,
         clob_client: None,
+        strategy_config: serde_json::Value::Null,
     })
 }
 
@@ -159,6 +161,7 @@ async fn test_state_with_bot_id_and_clob(
         rpc_url: None,
         chain_id: None,
         clob_client: Some(Arc::new(clob_client)),
+        strategy_config: serde_json::Value::Null,
     })
 }
 
@@ -190,6 +193,7 @@ async fn test_state_with_chain_id(mock_uri: &str, chain_id: u64) -> Arc<TradingA
         rpc_url: None,
         chain_id: Some(chain_id),
         clob_client: None,
+        strategy_config: serde_json::Value::Null,
     })
 }
 
@@ -222,6 +226,7 @@ async fn live_test_state(market_uri: &str, rpc_uri: &str) -> Arc<TradingApiState
         rpc_url: Some(rpc_uri.to_string()),
         chain_id: None,
         clob_client: None,
+        strategy_config: serde_json::Value::Null,
     })
 }
 
@@ -746,6 +751,7 @@ async fn test_health_reports_degraded_live_dependencies() {
         rpc_url: None,
         chain_id: Some(31337),
         clob_client: None,
+        strategy_config: serde_json::Value::Null,
     });
     let app = build_router(state);
 
@@ -5558,6 +5564,7 @@ async fn test_state_with_clob(mock_uri: &str, clob_mock_uri: &str) -> Arc<Tradin
         rpc_url: None,
         chain_id: None,
         clob_client: Some(Arc::new(clob_client)),
+        strategy_config: serde_json::Value::Null,
     })
 }
 

@@ -299,6 +299,7 @@ async fn run_full_pipeline(ai_provider: Option<AiProvider>) -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(31337),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -640,6 +641,7 @@ async fn test_vault_execute_on_chain() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(31337),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -1118,6 +1120,7 @@ async fn test_fee_settlement_on_chain() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(31337),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let api_router = trading_http_api::build_router(api_state);
@@ -1357,6 +1360,7 @@ async fn test_adversarial_contract_paths() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(31337),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let api_router = trading_http_api::build_router(api_state);

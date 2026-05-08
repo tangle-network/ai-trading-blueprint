@@ -165,6 +165,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(31337),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let api_router = trading_http_api::build_router(api_state);

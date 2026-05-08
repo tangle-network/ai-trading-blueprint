@@ -1,8 +1,26 @@
+use std::str::FromStr;
+
+use alloy::primitives::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::warn;
 
 use crate::aave_v3_registry::market_for_chain;
 use crate::token_metadata::token_metadata_for_chain;
+
+/// Audit FIX-6: per-entry parse error. Surfaces the reason an entry was
+/// rejected so operators can see misconfigs in logs (and a future Prometheus
+/// counter can tag them by `kind`). Replaces the silent `filter_map` that
+/// turned typos into empty universes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupportedAssetParseError {
+    MissingAddress,
+    InvalidAddress(String),
+    StrategyMismatch { expected: String, actual: String },
+    ProtocolMismatch { expected: String, actual: String },
+    ChainIdMismatch { expected: u64, actual: u64 },
+    UnknownValuationAdapter(String),
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -111,25 +129,70 @@ fn configured_assets_from_value(
         .or_else(|| asset_universe.and_then(|universe| universe.get("assets")))
         .or_else(|| config.get("supported_assets"))?;
 
-    let assets = configured
-        .as_array()?
-        .iter()
-        .filter_map(|value| parse_supported_asset(value, strategy_type, chain_id, protocol))
-        .collect::<Vec<_>>();
+    // Audit FIX-6: track parse rejections so a malformed entry doesn't silently
+    // shrink the universe. If EVERY entry fails to parse we bail with `None`
+    // so callers fall back to the default-asset registry rather than running
+    // a bot with zero supported assets. Each rejection logs a warning naming
+    // the reason — operators see misconfigs in stderr / structured logs.
+    let total_entries = configured.as_array()?.len();
+    let mut assets = Vec::new();
+    let mut rejected = 0usize;
+    for value in configured.as_array()?.iter() {
+        match parse_supported_asset(value, strategy_type, chain_id, protocol) {
+            Ok(asset) => assets.push(asset),
+            Err(err) => {
+                rejected += 1;
+                warn!(
+                    target: "supported_assets",
+                    strategy = %strategy_type,
+                    chain_id = chain_id,
+                    protocol = %protocol,
+                    error = ?err,
+                    "rejected configured asset entry"
+                );
+            }
+        }
+    }
+
+    if assets.is_empty() && rejected > 0 {
+        warn!(
+            target: "supported_assets",
+            strategy = %strategy_type,
+            chain_id = chain_id,
+            protocol = %protocol,
+            rejected = rejected,
+            total = total_entries,
+            "all configured asset entries rejected — falling back to default-asset registry"
+        );
+        return None;
+    }
 
     Some(assets)
 }
 
-fn parse_supported_asset(
+/// Parse a single configured asset entry. Returns a typed error on rejection
+/// rather than `None`, so the caller can log/metric per-entry reasons.
+/// Audit FIX-6: stop silent fallbacks — unknown valuation_adapter strings
+/// are a hard error (was: silent default to ChainlinkUsd, which let a typo
+/// quietly route a custom token through Chainlink and miss the TWAP path).
+pub fn parse_supported_asset(
     value: &Value,
     strategy_type: &str,
     chain_id: u64,
     protocol: &str,
-) -> Option<SupportedAsset> {
-    let address = value.get("address")?.as_str()?.trim();
-    if !address.starts_with("0x") {
-        return None;
-    }
+) -> Result<SupportedAsset, SupportedAssetParseError> {
+    let address = value
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or(SupportedAssetParseError::MissingAddress)?;
+
+    // Audit FIX-6: hex-prefix check is not address validation. Anything
+    // starting with `0x` would pass. Use Address::from_str so a malformed
+    // address surfaces here (with the bad input echoed back) instead of
+    // poisoning the universe with a "valid-shaped" garbage entry.
+    Address::from_str(address)
+        .map_err(|_| SupportedAssetParseError::InvalidAddress(address.to_string()))?;
 
     let symbol = value
         .get("symbol")
@@ -142,24 +205,39 @@ fn parse_supported_asset(
         .get("strategy_type")
         .and_then(Value::as_str)
         .unwrap_or(strategy_type);
-    if normalize_strategy_type(asset_strategy) != normalize_strategy_type(strategy_type) {
-        return None;
+    let normalized_asset_strategy = normalize_strategy_type(asset_strategy);
+    let normalized_expected_strategy = normalize_strategy_type(strategy_type);
+    if normalized_asset_strategy != normalized_expected_strategy {
+        return Err(SupportedAssetParseError::StrategyMismatch {
+            expected: normalized_expected_strategy,
+            actual: normalized_asset_strategy,
+        });
     }
 
     let asset_protocol = value
         .get("protocol")
         .and_then(Value::as_str)
         .unwrap_or(protocol);
-    if normalize_protocol(asset_protocol) != normalize_protocol(protocol) {
-        return None;
+    let normalized_asset_protocol = normalize_protocol(asset_protocol);
+    let normalized_expected_protocol = normalize_protocol(protocol);
+    if normalized_asset_protocol != normalized_expected_protocol {
+        return Err(SupportedAssetParseError::ProtocolMismatch {
+            expected: normalized_expected_protocol,
+            actual: normalized_asset_protocol,
+        });
     }
 
     let asset_chain_id = value
         .get("chain_id")
         .and_then(Value::as_u64)
         .unwrap_or(chain_id);
-    if registry_chain_id(asset_chain_id) != registry_chain_id(chain_id) {
-        return None;
+    let normalized_asset_chain = registry_chain_id(asset_chain_id);
+    let normalized_expected_chain = registry_chain_id(chain_id);
+    if normalized_asset_chain != normalized_expected_chain {
+        return Err(SupportedAssetParseError::ChainIdMismatch {
+            expected: normalized_expected_chain,
+            actual: normalized_asset_chain,
+        });
     }
 
     let roles = value
@@ -181,13 +259,18 @@ fn parse_supported_asset(
         .or_else(|| token_metadata_for_chain(Some(chain_id), address).map(|token| token.decimals))
         .unwrap_or(18);
 
-    let valuation_adapter = value
-        .get("valuation_adapter")
-        .and_then(Value::as_str)
-        .and_then(parse_valuation_adapter_kind)
-        .unwrap_or(ValuationAdapterKind::ChainlinkUsd);
+    // Audit FIX-6: unknown adapter strings are a hard error. Was: silent
+    // ChainlinkUsd default. Now a typo like "chinlink_usd" surfaces in the
+    // log with the offending string instead of misrouting the token.
+    let valuation_adapter =
+        if let Some(raw) = value.get("valuation_adapter").and_then(Value::as_str) {
+            parse_valuation_adapter_kind(raw)
+                .ok_or_else(|| SupportedAssetParseError::UnknownValuationAdapter(raw.to_string()))?
+        } else {
+            ValuationAdapterKind::ChainlinkUsd
+        };
 
-    Some(SupportedAsset {
+    Ok(SupportedAsset {
         strategy_type: normalize_strategy_type(strategy_type),
         protocol: normalize_protocol(protocol),
         chain_id: registry_chain_id(chain_id),
@@ -440,5 +523,74 @@ mod tests {
         );
         assert!(assets.iter().any(|asset| asset.symbol == "variableDebtWETH"
             && asset.roles.contains(&TradeAssetRole::Debt)));
+    }
+
+    // ── audit FIX-6 tests: parse-error surface + fallback behavior ──────────
+
+    /// Parse error surfaces a typed reason for malformed addresses (was: silent None).
+    #[test]
+    fn parse_supported_asset_rejects_invalid_address() {
+        let value = serde_json::json!({"address":"0xnotreallyanaddress","symbol":"X"});
+        let err = parse_supported_asset(&value, "dex", 1, "uniswap_v3").unwrap_err();
+        assert_eq!(
+            err,
+            SupportedAssetParseError::InvalidAddress("0xnotreallyanaddress".into())
+        );
+    }
+
+    /// Parse error surfaces a typed reason for unknown valuation_adapter strings
+    /// (was: silent default to ChainlinkUsd, which let typos misroute tokens).
+    #[test]
+    fn parse_supported_asset_rejects_unknown_adapter() {
+        let value = serde_json::json!({
+            "address": "0x0000000000000000000000000000000000000001",
+            "symbol": "X",
+            "valuation_adapter": "chinlink_usd"
+        });
+        let err = parse_supported_asset(&value, "dex", 1, "uniswap_v3").unwrap_err();
+        assert_eq!(
+            err,
+            SupportedAssetParseError::UnknownValuationAdapter("chinlink_usd".into())
+        );
+    }
+
+    /// Strategy / protocol / chain mismatches produce typed errors (was: silent None).
+    #[test]
+    fn parse_supported_asset_rejects_chain_mismatch() {
+        let value = serde_json::json!({
+            "address":"0x0000000000000000000000000000000000000001",
+            "chain_id": 42161,
+            "symbol":"X"
+        });
+        let err = parse_supported_asset(&value, "dex", 1, "uniswap_v3").unwrap_err();
+        assert!(matches!(
+            err,
+            SupportedAssetParseError::ChainIdMismatch {
+                expected: 1,
+                actual: 42161
+            }
+        ));
+    }
+
+    /// When EVERY configured entry fails to parse we fall back to the default
+    /// registry instead of running the bot with a zero-asset universe (was:
+    /// configured_assets_from_value returned `Some(empty Vec)` and the bot
+    /// silently had nothing to trade).
+    #[test]
+    fn configured_assets_falls_back_to_default_when_all_entries_invalid() {
+        let bad_config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [
+                    {"address":"not_hex","symbol":"X"},
+                    {"address":"0xnotreallyanaddress","symbol":"Y"}
+                ]
+            }
+        });
+        let assets = supported_assets_for_config("dex", 1, "uniswap_v3", Some(&bad_config));
+        // Falls back to default registry, which has WETH + USDC for ethereum / uniswap_v3.
+        assert!(
+            !assets.is_empty(),
+            "all-invalid config should fall back to defaults instead of empty universe"
+        );
     }
 }
