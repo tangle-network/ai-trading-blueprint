@@ -688,6 +688,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         internal
         view
     {
+        // unused-return: only `maxSlippageBps` matters here; the other policy
+        // fields are inspected on their own dedicated paths (leverageCap in the
+        // health-factor executor, maxTradesPerHour via PolicyEngine.recordTrade).
+        // slither-disable-next-line unused-return
         (,,, uint256 maxSlippageBps,) = policyEngine.policies(address(this));
         if (maxSlippageBps == 0) return;
         if (amountIn == 0 || signedMinOutput == 0) return;
@@ -889,6 +893,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
@@ -915,6 +925,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         _commitIntent(params.intentHash);
         emit DebtReductionExecuted(
             params.target, params.value, params.inputToken, debtDecreased, params.debtToken, params.intentHash
@@ -943,6 +959,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // currentLiquidationThreshold, ltv, healthFactor). healthFactor gates the
         // post-borrow / post-withdraw safety check; collateral + debt gate the
         // H-3 leverage-cap enforcement below.
+        // slither-disable-next-line unused-return
         (uint256 totalCollateralBase, uint256 totalDebtBase,,,, uint256 healthFactor) =
             IAavePoolHealth(params.pool).getUserAccountData(params.account);
         if (healthFactor < params.minHealthFactor) {
@@ -953,6 +970,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         //     totalCollateralBase / equity, where equity = collateral - debt,
         // expressed in BPS so it lines up with PolicyEngine.leverageCap (10000 = 1x).
         // A 0 cap disables the check (off-chain validators may still gate).
+        // slither-disable-next-line unused-return
         (, uint256 leverageCap,,,) = policyEngine.policies(address(this));
         if (leverageCap > 0 && totalCollateralBase > 0) {
             if (totalDebtBase >= totalCollateralBase) {
@@ -973,6 +991,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        // reentrancy-benign: H-5 audit fix REQUIRES this write to happen post-success
+        // so a reverted trade doesn't burn the intent or rate-limit slot. The entry
+        // point carries `nonReentrant`, blocking any cross-function re-entry into a
+        // path that could observe stale state between the external call and this
+        // write. See contract-level @dev block + audit ref H-5.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
