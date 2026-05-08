@@ -7,6 +7,7 @@ pub mod envelope_watcher;
 pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
+pub mod nav_stream;
 pub mod rate_limit;
 pub mod routes;
 pub mod session_auth;
@@ -176,6 +177,11 @@ pub struct MultiBotTradingState {
     /// short-circuit the middleware for tests; the limiter itself is
     /// always present so the field never has to be optional.
     pub rate_limiter: Arc<rate_limit::PerBotRateLimiter>,
+    /// Optional configuration for the NAV WebSocket stream. When set, the
+    /// multi-bot router exposes `GET /v1/ws/nav?vault=…&chainId=…` ahead of
+    /// the auth middleware so the dapp can subscribe without a token.
+    /// Defaults to `None`; binaries opt in by injecting a `NavStreamConfig`.
+    pub nav_stream_config: Option<nav_stream::NavStreamConfig>,
 }
 
 impl Default for MultiBotTradingState {
@@ -194,6 +200,7 @@ impl Default for MultiBotTradingState {
             alert_sink: alerts::AlertSink::new(None, None),
             rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
             key_provider: trading_runtime::cex::default_provider(),
+            nav_stream_config: None,
         }
     }
 }
@@ -603,6 +610,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     // Prometheus exporter is mounted on the *outer* router, ahead of the
     // auth middleware below, so scrapers can hit it without a bearer token.
     let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
+    let nav_stream_config = state.nav_stream_config.clone();
     let auth_router = Router::new()
         .route("/health", get(multi_bot_health))
         .route("/ready", get(multi_bot_ready))
@@ -644,7 +652,14 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state);
 
-    Router::new().merge(prom_router).merge(auth_router)
+    // The NAV WebSocket stream sits ahead of auth so browser clients can
+    // subscribe without setting an Authorization header on the upgrade
+    // request. The data is read-only and reflects the on-chain NAV.
+    let mut outer = Router::new().merge(prom_router);
+    if let Some(nav_config) = nav_stream_config {
+        outer = outer.merge(routes::nav_ws::router(nav_config));
+    }
+    outer.merge(auth_router)
 }
 
 fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {

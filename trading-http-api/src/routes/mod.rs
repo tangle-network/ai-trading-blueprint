@@ -14,6 +14,7 @@ pub mod hyperliquid;
 pub mod learning;
 pub mod market_data;
 pub mod metrics;
+pub mod nav_ws;
 pub mod portfolio;
 pub mod preflight;
 pub mod prometheus;
