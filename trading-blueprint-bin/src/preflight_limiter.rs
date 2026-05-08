@@ -24,22 +24,25 @@ type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 /// Per-session governor bucket. Lookup keyed on the session caller address.
 pub struct PreflightLimiter {
     quotas: DashMap<String, Arc<DirectLimiter>>,
-    per_minute: u32,
 }
 
 impl PreflightLimiter {
     fn new() -> Self {
-        // Env-tunable; default 30 / minute. Tight enough that a single session
-        // can't drive RPC fanout, loose enough that legitimate UI flows
-        // (load asset list → preflight a handful of candidates) never trip it.
-        let per_minute = std::env::var("PREFLIGHT_RATE_LIMIT_PER_MINUTE")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(30);
         Self {
             quotas: DashMap::new(),
-            per_minute,
         }
+    }
+
+    /// Read the env-tunable per-minute budget at the moment a new caller's
+    /// limiter is built. Default 30 / minute — tight enough that a single
+    /// session can't drive RPC fanout, loose enough that legitimate UI
+    /// flows (load asset list → preflight a handful of candidates) never
+    /// trip it.
+    fn current_per_minute() -> u32 {
+        std::env::var("PREFLIGHT_RATE_LIMIT_PER_MINUTE")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(30)
     }
 
     /// Returns `Ok(())` when the session has budget; `Err(retry_after)`
@@ -49,8 +52,9 @@ impl PreflightLimiter {
             .quotas
             .entry(caller.to_string())
             .or_insert_with(|| {
-                let nz = NonZeroU32::new(self.per_minute.max(1))
-                    .expect("max(1) keeps the value non-zero");
+                let per_minute = Self::current_per_minute();
+                let nz =
+                    NonZeroU32::new(per_minute.max(1)).expect("max(1) keeps the value non-zero");
                 Arc::new(RateLimiter::direct(Quota::per_minute(nz)))
             })
             .clone();
