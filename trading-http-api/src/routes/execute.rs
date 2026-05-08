@@ -970,6 +970,17 @@ impl TradeValuationSnapshot {
     }
 }
 
+struct RealTradeExecution<'a> {
+    bot_id: &'a str,
+    executor: &'a TradeExecutor,
+    intent: &'a TradeIntent,
+    req: &'a ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &'a TradeValuationSnapshot,
+    strategy_config: Option<&'a serde_json::Value>,
+    alert_sink: &'a crate::alerts::AlertSink,
+}
+
 fn resolve_position_size(
     chain_id: Option<u64>,
     intent: &IntentPayload,
@@ -2179,15 +2190,18 @@ fn u256_to_f64(value: U256) -> f64 {
 }
 
 async fn execute_real_trade(
-    bot_id: &str,
-    executor: &TradeExecutor,
-    intent: &TradeIntent,
-    req: &ExecuteRequest,
-    stored_validation: StoredValidation,
-    valuation: &TradeValuationSnapshot,
-    strategy_config: Option<&serde_json::Value>,
-    alert_sink: &crate::alerts::AlertSink,
+    execution: RealTradeExecution<'_>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let RealTradeExecution {
+        bot_id,
+        executor,
+        intent,
+        req,
+        stored_validation,
+        valuation,
+        strategy_config,
+        alert_sink,
+    } = execution;
     let started_at = std::time::Instant::now();
     let metrics_protocol = intent.target_protocol.clone();
     let metrics_action = action_label(&intent.action);
@@ -2808,16 +2822,16 @@ async fn execute(
     }
 
     let alert_sink = noop_alert_sink();
-    let result = execute_real_trade(
-        &state.bot_id,
-        &state.executor,
-        &intent,
-        &normalized_request,
+    let result = execute_real_trade(RealTradeExecution {
+        bot_id: &state.bot_id,
+        executor: &state.executor,
+        intent: &intent,
+        req: &normalized_request,
         stored_validation,
-        &valuation,
-        None,
-        &alert_sink,
-    )
+        valuation: &valuation,
+        strategy_config: None,
+        alert_sink: &alert_sink,
+    })
     .await?;
 
     update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
@@ -3196,16 +3210,16 @@ async fn execute_multi_bot(
         }
     }
 
-    let response = execute_real_trade(
-        &bot.bot_id,
-        &executor,
-        &intent,
-        &normalized_req,
+    let response = execute_real_trade(RealTradeExecution {
+        bot_id: &bot.bot_id,
+        executor: &executor,
+        intent: &intent,
+        req: &normalized_req,
         stored_validation,
-        &valuation,
-        Some(&bot.strategy_config),
-        &state.alert_sink,
-    )
+        valuation: &valuation,
+        strategy_config: Some(&bot.strategy_config),
+        alert_sink: &state.alert_sink,
+    })
     .await?;
     if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
         tracing::warn!(

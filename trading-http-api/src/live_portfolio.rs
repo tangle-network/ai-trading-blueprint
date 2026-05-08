@@ -41,6 +41,17 @@ pub struct LiveTokenUsdValuation {
     pub value_usd: Decimal,
 }
 
+struct LiveTokenValuationInput<'a> {
+    market_client: &'a MarketDataClient,
+    chain_id: u64,
+    vault_addr: Address,
+    asset_addr: Address,
+    token_addr: Address,
+    symbol: &'a str,
+    amount_raw: U256,
+    token_decimals: u8,
+}
+
 #[derive(Clone, Debug)]
 pub struct LiveRiskInput {
     pub bot_id: String,
@@ -247,14 +258,16 @@ pub async fn reconcile_live_portfolio(
         } else {
             resolve_token_usd_valuation(
                 &provider,
-                &market_client,
-                protocol_chain_id,
-                vault_addr,
-                asset_addr,
-                token_addr,
-                &symbol,
-                raw_balance,
-                decimals,
+                LiveTokenValuationInput {
+                    market_client: &market_client,
+                    chain_id: protocol_chain_id,
+                    vault_addr,
+                    asset_addr,
+                    token_addr,
+                    symbol: &symbol,
+                    amount_raw: raw_balance,
+                    token_decimals: decimals,
+                },
             )
             .await
         };
@@ -447,14 +460,16 @@ pub async fn resolve_live_token_usd_valuation(
 
     resolve_token_usd_valuation(
         &provider,
-        &market_client,
-        protocol_chain_id,
-        vault_addr,
-        asset_addr,
-        token_addr,
-        &symbol,
-        amount_raw,
-        token_decimals,
+        LiveTokenValuationInput {
+            market_client: &market_client,
+            chain_id: protocol_chain_id,
+            vault_addr,
+            asset_addr,
+            token_addr,
+            symbol: &symbol,
+            amount_raw,
+            token_decimals,
+        },
     )
     .await
 }
@@ -562,15 +577,18 @@ async fn price_for_token(
 
 async fn resolve_token_usd_valuation(
     provider: &impl Provider,
-    market_client: &MarketDataClient,
-    chain_id: u64,
-    vault_addr: Address,
-    asset_addr: Address,
-    token_addr: Address,
-    symbol: &str,
-    amount_raw: U256,
-    token_decimals: u8,
+    input: LiveTokenValuationInput<'_>,
 ) -> Option<LiveTokenUsdValuation> {
+    let LiveTokenValuationInput {
+        market_client,
+        chain_id,
+        vault_addr,
+        asset_addr,
+        token_addr,
+        symbol,
+        amount_raw,
+        token_decimals,
+    } = input;
     let token = format!("{token_addr:#x}");
     let mut price = price_for_token(market_client, chain_id, &token).await;
     if price.is_none() && symbol != token {
