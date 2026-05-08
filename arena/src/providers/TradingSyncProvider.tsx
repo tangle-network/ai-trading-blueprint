@@ -680,7 +680,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
           id: botId,
           serviceId: operatorBot.service_id || matchingProvision?.serviceId || vaultEntry?.serviceId || 0,
           name: resolveBotDisplayName({
-            primaryName: matchingProvision?.name || operatorBot.name,
+            primaryName: operatorBot.name || matchingProvision?.name,
             strategyType: operatorBot.strategy_type,
           }),
           operatorAddress: operatorBot.operator_address || (vaultEntry?.operators[0] ?? zeroAddress),

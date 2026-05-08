@@ -12,9 +12,16 @@ mockFramerMotion();
 // ── Hook mocks ────────────────────────────────────────────────────────
 
 const mockTrades: Trade[] = [];
+let mockTradesIsError = false;
+let mockTradesError: unknown = null;
 
 vi.mock('~/lib/hooks/useBotApi', () => ({
-  useBotTrades: () => ({ data: mockTrades, isLoading: false }),
+  useBotTrades: () => ({
+    data: mockTrades,
+    isLoading: false,
+    isError: mockTradesIsError,
+    error: mockTradesError,
+  }),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
@@ -64,11 +71,24 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
 describe('TradeHistoryTab', () => {
   beforeEach(() => {
     setTrades([]);
+    mockTradesIsError = false;
+    mockTradesError = null;
   });
 
   it('renders empty state when no trades', () => {
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
     expect(screen.getByText('No trades recorded for this bot.')).toBeInTheDocument();
+  });
+
+  it('shows an unavailable state when trade history fails to load', () => {
+    mockTradesIsError = true;
+    mockTradesError = new Error('operator request failed');
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('Trade history unavailable')).toBeInTheDocument();
+    expect(screen.getByText('operator request failed')).toBeInTheDocument();
+    expect(screen.queryByText('No trades recorded for this bot.')).not.toBeInTheDocument();
   });
 
   it('renders trade rows with correct data', () => {

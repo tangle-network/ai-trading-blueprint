@@ -4,6 +4,7 @@
 //! `ai-agent-sandbox-blueprint-lib` for workflow scheduling, prompt/task
 //! execution, and sandbox lifecycle primitives.
 
+pub mod asset_preflight;
 pub mod context;
 pub mod discovery;
 pub mod fees;
@@ -18,6 +19,7 @@ pub mod registration;
 pub mod session_auth;
 pub mod state;
 pub mod wind_down;
+pub mod workflow_compat;
 
 pub use providers::{EventContext, ProviderRegistry, TradingProvider, registry};
 

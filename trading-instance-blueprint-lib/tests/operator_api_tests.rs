@@ -766,14 +766,14 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
         .unwrap();
     let auth = test_auth_header(SUBMITTER);
 
-    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "instance-run-success".to_string(),
-            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "instance-run-success".to_string(),
                 workflow_id: workflow_id + 2,
-                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
                 started_at: 1_775_823_500,
                 completed_at: Some(1_775_823_560),
                 session_id: Some("convo-instance-1775823500".to_string()),
@@ -786,14 +786,14 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
             },
         )
         .expect("insert successful run");
-    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "instance-run-failed".to_string(),
-            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "instance-run-failed".to_string(),
                 workflow_id,
-                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Failed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Failed,
                 started_at: 1_775_823_800,
                 completed_at: Some(1_775_823_801),
                 session_id: None,
@@ -806,8 +806,8 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
             },
         )
         .expect("insert failed run");
-    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
-        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "instance-run-success".to_string(),
             session_id: "convo-instance-1775823500".to_string(),
             captured_at: 1_775_823_560,
@@ -920,14 +920,14 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
     set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
     let auth = test_auth_header(SUBMITTER);
 
-    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "instance-run-live-error".to_string(),
-            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "instance-run-live-error".to_string(),
                 workflow_id,
-                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Running,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Running,
                 started_at: 1_775_823_950,
                 completed_at: None,
                 session_id: Some("convo-instance-live-error".to_string()),
@@ -940,8 +940,8 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
             },
         )
         .expect("insert running run");
-    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
-        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "instance-run-live-error".to_string(),
             session_id: "convo-instance-live-error".to_string(),
             captured_at: 1_775_823_955,
@@ -993,14 +993,14 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     set_sandbox_sidecar_url(&sandbox_id, &sidecar_url);
     let auth = test_auth_header(SUBMITTER);
 
-    ai_agent_sandbox_blueprint_lib::workflows::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "instance-run-paged".to_string(),
-            ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "instance-run-paged".to_string(),
                 workflow_id,
-                status: ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunStatus::Completed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
                 started_at: 1_775_824_000,
                 completed_at: Some(1_775_824_060),
                 session_id: Some("convo-instance-paged".to_string()),
@@ -1013,8 +1013,8 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
             },
         )
         .expect("insert completed run");
-    ai_agent_sandbox_blueprint_lib::workflows::insert_workflow_run_transcript_for_testing(
-        ai_agent_sandbox_blueprint_lib::workflows::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "instance-run-paged".to_string(),
             session_id: "convo-instance-paged".to_string(),
             captured_at: 1_775_824_060,

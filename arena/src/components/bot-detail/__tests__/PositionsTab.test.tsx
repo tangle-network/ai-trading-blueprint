@@ -145,8 +145,8 @@ describe('PositionsTab', () => {
 
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
-    expect(screen.getByText('Portfolio valuation partially available')).toBeInTheDocument();
-    expect(screen.getByText('Some positions only have current market value available.')).toBeInTheDocument();
+    expect(screen.queryByText('Portfolio valuation partially available')).not.toBeInTheDocument();
+    expect(screen.queryByText('Some positions only have current market value available.')).not.toBeInTheDocument();
     expect(screen.getByText('Value only')).toBeInTheDocument();
     expect(screen.getAllByText('$4,200').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('$2,100')).toBeInTheDocument();

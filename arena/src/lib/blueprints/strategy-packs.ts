@@ -123,12 +123,16 @@ export const strategyPacks: StrategyPackDef[] = [
     timeoutMs: 150_000,
     expertKnowledge: `### Uniswap V3 Expert Knowledge
 
-Key Contracts (Ethereum Mainnet):
+Key Contracts:
 - Router: 0xE592427A0AEce92De3Edee1F18E0157C05861564
 - Quoter V2: 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6
 - Factory: 0x1F98431c8aD98523631AE4a59f267346ea31F984
-- WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-- USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+
+Asset rules:
+- The configured Asset Universe is the source of truth for what this bot may trade and hold.
+- Use /supported-assets and api.resolveTokenAddress('<configured-symbol>') instead of hardcoding token addresses.
+- If a route needs an intermediate token, that token must also be in the configured Asset Universe.
+- For custom token addresses, live trades require Chainlink valuation support; skip if validation rejects the token.
 
 Fee tiers: 500 (0.05%), 3000 (0.3%), 10000 (1%)
 

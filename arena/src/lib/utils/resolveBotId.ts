@@ -173,6 +173,7 @@ export async function resolveBotId(
     code: 'auth_required' as const,
   };
   let staleError: string | null = null;
+  const uniqueCallId = isUniqueCallId(opts.callId) ? opts.callId : undefined;
 
   // Strategy 1: verify known bot ID exists
   if (opts.botId) {
@@ -185,17 +186,17 @@ export async function resolveBotId(
   }
 
   // Strategy 2: lookup by on-chain call_id + service_id (most reliable)
-  if (isUniqueCallId(opts.callId)) {
+  if (uniqueCallId != null) {
     try {
       const res = await fetch(
-        `${operatorApiUrl}/api/provisions/${opts.callId}`,
+        `${operatorApiUrl}/api/provisions/${uniqueCallId}`,
         { headers },
       );
       if (res.ok) {
         const data = await res.json();
         if (typeof data?.metadata?.bot_id === 'string' && data.metadata.bot_id.length > 0) {
           const provisionHints = {
-            callId: opts.callId,
+            callId: uniqueCallId,
             serviceId: opts.serviceId ?? numberFromUnknown(data?.metadata?.service_id),
           };
           const verified = await verifyBotCandidate(
@@ -221,10 +222,10 @@ export async function resolveBotId(
   }
 
   // Strategy 3: lookup by on-chain call_id + service_id
-  if (isUniqueCallId(opts.callId) && opts.serviceId != null) {
+  if (uniqueCallId != null && opts.serviceId != null) {
     try {
       const params = new URLSearchParams({
-        call_id: String(opts.callId),
+        call_id: String(uniqueCallId),
         service_id: String(opts.serviceId),
       });
       const res = await fetch(

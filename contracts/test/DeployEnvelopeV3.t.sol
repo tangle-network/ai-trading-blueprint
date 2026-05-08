@@ -52,6 +52,12 @@ contract DeployEnvelopeV3Test is Test {
         cfg.vaultName = "Envelope V3 Vault Shares";
         cfg.vaultSymbol = "ev3SHARE";
         cfg.writeJson = false;
+        // TWAP valuator: skipped by default (no factory). Tests that need it
+        // override `uniswapV3Factory` on a per-case basis.
+        cfg.uniswapV3Factory = address(0);
+        cfg.twapWindowSecs = 1800;
+        cfg.twapMinHarmonicLiquidity = 1_000_000;
+        cfg.twapMaxSpotDeviationBps = 200;
     }
 
     /// @notice Happy path: script emits the full v3 envelope stack with

@@ -45,6 +45,7 @@ fn make_provision_request(name: &str, strategy: &str) -> TradingProvisionRequest
         max_lifetime_days: 30,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -86,6 +87,7 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
+        capabilities_json: String::new(),
     }
 }
 

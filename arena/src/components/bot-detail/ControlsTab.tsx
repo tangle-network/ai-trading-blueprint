@@ -841,6 +841,10 @@ function ProvisionedSettingsCard({
   const assetToken = readConfigString(strategyConfig, 'asset_token');
   const initialCapitalUsd = readConfigString(strategyConfig, 'initial_capital_usd');
   const assetDisplay = assetToken ? resolveAssetDisplay(assetToken, detail.chain_id) : null;
+  const assetUniverse = strategyConfig.asset_universe as
+    | { allowed_assets?: { symbol?: string; address?: string }[]; base_asset?: string }
+    | undefined;
+  const allowedAssets = assetUniverse?.allowed_assets ?? [];
 
   return (
     <div className="glass-card rounded-xl p-5">
@@ -877,6 +881,22 @@ function ProvisionedSettingsCard({
           <span className="text-arena-elements-textTertiary">Initial Capital</span>
           <span className="font-data">{formatUsdValue(initialCapitalUsd)}</span>
         </div>
+        {allowedAssets.length > 0 && (
+          <div className="flex items-start justify-between gap-4">
+            <span className="text-arena-elements-textTertiary">Asset Universe</span>
+            <div className="flex max-w-[240px] flex-wrap justify-end gap-1.5">
+              {allowedAssets.map((asset) => (
+                <span
+                  key={asset.address ?? asset.symbol}
+                  className="rounded-md border border-arena-elements-borderColor/70 px-2 py-1 text-xs font-data"
+                  title={asset.address}
+                >
+                  {asset.symbol ?? formatAddressPreview(asset.address ?? '')}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

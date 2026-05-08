@@ -189,8 +189,10 @@ mod tests {
 
     #[test]
     fn env_loader_reports_unset() {
-        // SAFETY: tests in this module set/unset SOLANA_OPERATOR_PRIVATE_KEY
-        // serially; this is single-threaded by tokio's #[test] default.
+        // Crate-shared lock; `cex::keys` tests touch the same env var.
+        let _guard = crate::TEST_ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe { std::env::remove_var(SOLANA_OPERATOR_KEY_ENV) };
         let err = load_operator_keypair_from_env().unwrap_err();
         assert!(matches!(err, SolanaError::KeypairUnavailable(_)));
@@ -224,8 +226,9 @@ mod tests {
     /// invalid env value still returns the expected error class.
     #[test]
     fn env_loader_clears_string_on_error_path() {
-        // SAFETY: this test mutates the same env var as `env_loader_reports_unset`.
-        // Both #[test]s run serially.
+        let _guard = crate::TEST_ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe { std::env::set_var(SOLANA_OPERATOR_KEY_ENV, "garbage-not-a-key") };
         let err = load_operator_keypair_from_env().unwrap_err();
         unsafe { std::env::remove_var(SOLANA_OPERATOR_KEY_ENV) };

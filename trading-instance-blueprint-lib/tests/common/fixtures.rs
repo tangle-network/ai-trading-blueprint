@@ -45,6 +45,7 @@ pub fn seed_sandbox_record(
         ssh_login_user: None,
         ssh_authorized_keys: Vec::new(),
         tee_attestation_json: None,
+        capabilities_json: String::new(),
     };
 
     sandbox_runtime::runtime::sandboxes()
@@ -90,6 +91,8 @@ pub fn seed_bot_record(
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_blueprint_lib::state::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
     bots()
         .expect("bots store")

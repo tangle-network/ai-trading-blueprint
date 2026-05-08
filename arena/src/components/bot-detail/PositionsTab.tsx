@@ -6,6 +6,7 @@ import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import { botStatusLabel, formatNumber, isLiveBotStatus } from '~/lib/format';
 import { AssetDisplay } from './shared/AssetDisplay';
+import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 
 interface PositionsTabProps {
   botId: string;
@@ -14,15 +15,17 @@ interface PositionsTabProps {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  assetMetadata?: TokenMetadata[];
 }
 
-export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState }: PositionsTabProps) {
+export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata }: PositionsTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const isLive = isLiveBotStatus(status);
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
     chainId,
     operatorApiUrl,
     operatorKind,
+    assetMetadata,
     enabled: true,
     refetchInterval: isLive ? 30_000 : false,
   });
@@ -74,14 +77,8 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
 
   const warningTitle = portfolio.hasUnpricedPositions
     ? 'Portfolio valuation unavailable'
-    : portfolio.hasValueOnlyPositions
-      ? 'Portfolio valuation partially available'
-      : 'Portfolio warnings';
-  const displayWarnings = portfolio.warnings.map((warning) => (
-    warning.includes('entry price') || warning.includes('PnL')
-      ? 'Some positions only have current market value available.'
-      : warning
-  ));
+    : 'Portfolio warnings';
+  const displayWarnings = portfolio.warnings;
 
   return (
     <div className="space-y-4">

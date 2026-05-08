@@ -213,14 +213,17 @@ describe('resolveBotId', () => {
     const result = await resolveBotId('http://operator.test', {
       callId: 0,
       serviceId: 1,
-      sandboxId: 'sandbox-from-before-reset',
     });
 
-    expect(result).toEqual({ error: 'Bot not found on operator. It may still be registering.', code: 'not_found' });
+    expect(result).toEqual({
+      error: 'Bot not found on operator. It may still be registering.',
+      code: 'not_found',
+    });
     expect(fetchMock).not.toHaveBeenCalledWith(
       'http://operator.test/api/provisions/0',
       expect.anything(),
     );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces backend conflict responses from service/call lookup', async () => {
@@ -259,28 +262,6 @@ describe('resolveBotId', () => {
 
   it('does not return a service/call fallback bot when the sandbox hint differs', async () => {
     const fetchMock = vi.fn(async (input: string) => {
-      if (input === 'http://operator.test/api/provisions/0') {
-        return {
-          ok: false,
-          status: 404,
-          text: async () => 'missing',
-        };
-      }
-      if (input === 'http://operator.test/api/bots?call_id=0&service_id=1') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            bots: [{
-              id: 'old-yield-bot',
-              sandbox_id: 'sandbox-old',
-              sandbox_exists: true,
-              call_id: 0,
-              service_id: 1,
-            }],
-          }),
-        };
-      }
       if (input === 'http://operator.test/api/bots?limit=200') {
         return {
           ok: true,
@@ -307,5 +288,9 @@ describe('resolveBotId', () => {
     });
 
     expect(result).toEqual({ botId: 'new-dex-bot' });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://operator.test/api/bots?call_id=0&service_id=1',
+      expect.anything(),
+    );
   });
 });

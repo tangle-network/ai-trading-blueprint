@@ -494,9 +494,13 @@ For each new EVM chain we want to support:
    export PRIVATE_KEY=<deployer key>
    export ASSET_TOKEN=<canonical USDC for chain>
    export ADMIN=<admin multisig>
-   export SIGNER_ONE=<signer1 addr>
-   export SIGNER_TWO=<signer2 addr>
+   export SIGNERS=<addr1>,<addr2>,<addr3>          # >= 3 distinct addresses
+   export REQUIRED_SIGS=2                          # >= ceil(2*n/3)
    export ETHERSCAN_KEY=<chain explorer api key>
+   # Optional but recommended: deploys UniswapV3TwapValuator alongside the
+   # rest of the stack so the bot can price custom assets that lack a
+   # Chainlink feed. Skip on chains without a Uniswap V3 deployment.
+   export UNISWAP_V3_FACTORY=<v3 factory addr>     # 0x1F98...984 on most chains
    ```
 
 3. **Deploy:**
@@ -507,7 +511,8 @@ For each new EVM chain we want to support:
      --verify --etherscan-api-key $ETHERSCAN_KEY
    ```
 
-   This writes `deployments/$CHAIN_ID/v3.json` (consumed by the arena).
+   This writes `deployments/$CHAIN_ID/v3.json` (consumed by the arena and
+   the operator runtime).
 
 4. **Verify post-deploy:**
 
@@ -519,15 +524,50 @@ For each new EVM chain we want to support:
 
    Must print `VERIFICATION PASSED`.
 
-5. **Wire arena chains.ts:** add the entry referencing the new
-   `deployments/$CHAIN_ID/v3.json`. Keep the JSON path canonical — the arena
-   build reads from there at compile time.
+5. **Seed Chainlink feeds.** `ChainlinkUsdValuator` deploys empty — every
+   token a bot will hold needs a `setFeed(token, feed, maxStaleness)` call
+   from the admin (per `cfg.admin`). At minimum: the deposit asset + every
+   token in the default arena asset list for this chain.
 
-6. **Add to operator env templates:** update `settings.env.example` and your
-   secrets manager templates to include the new chain's RPC URLs and asset
-   addresses.
+   ```bash
+   CHAINLINK_VALUATOR=$(jq -r '.chainlinkUsdValuator' deployments/$CHAIN_ID/v3.json)
+   cast send $CHAINLINK_VALUATOR \
+     "setFeed(address,address,uint48)" \
+     <token> <chainlink_usd_feed> <max_staleness_secs> \
+     --rpc-url $RPC_URL --private-key $ADMIN_KEY
+   ```
 
-7. **Smoke test** with a paper-trade bot before opening to depositors.
+   Repeat for each (token, feed) pair. `max_staleness_secs` should match
+   the feed's actual heartbeat (e.g., 86400 for Chainlink USD feeds on most
+   chains).
+
+6. **Wire operator env vars** before starting the trading-blueprint
+   binary. The provision flow reads valuator addresses from env; without
+   these, custom assets fail provisioning with `"... is supported but
+   missing vault valuation adapter for ..."` or `"... requires Uniswap V3
+   TWAP valuation, but no TWAP valuator address is configured"`.
+
+   ```bash
+   export CHAINLINK_USD_VALUATOR_ADDRESS=$(jq -r '.chainlinkUsdValuator' deployments/$CHAIN_ID/v3.json)
+   export UNISWAP_V3_TWAP_VALUATOR_ADDRESS=$(jq -r '.uniswapV3TwapValuator' deployments/$CHAIN_ID/v3.json)
+   ```
+
+   Empty `UNISWAP_V3_TWAP_VALUATOR_ADDRESS` is OK — bots that don't use
+   the TWAP-fallback adapter mode won't notice. Bots that do (any custom
+   asset without a Chainlink feed) will fail provision with the message
+   above.
+
+7. **Wire arena chains.ts:** add the entry referencing the new
+   `deployments/$CHAIN_ID/v3.json`. Keep the JSON path canonical — the
+   arena build reads from there at compile time.
+
+8. **Add to operator env templates:** update `settings.env.example` and
+   your secrets manager templates to include the new chain's RPC URLs,
+   asset addresses, and the two `*_VALUATOR_ADDRESS` env vars from step 6.
+
+9. **Smoke test** with a paper-trade bot before opening to depositors.
+   Provision a bot that includes a custom (non-Chainlink) asset in its
+   universe — exercises the TWAP-fallback resolution end-to-end.
 
 ---
 

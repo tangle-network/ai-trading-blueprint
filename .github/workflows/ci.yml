@@ -65,12 +65,18 @@ jobs:
 
       # Check our crates (not --workspace: bin crates pull in heavier
       # deployment-only dependencies).
+      #
+      # `trading-blueprint-bin` is checked + tested here. Sibling-repo drift
+      # on `ai_agent_sandbox_blueprint_lib::workflows::*` is bridged by the
+      # `crate::workflow_compat` shim, which re-implements the removed
+      # per-run history surface as bin-local in-memory storage.
       - name: Check
         run: |
           cargo check -p trading-runtime
           cargo check -p trading-http-api
           cargo check -p trading-validator-lib
           cargo check -p trading-blueprint-lib
+          cargo check -p trading-blueprint-bin --tests
 
       - name: Test (trading-validator-lib)
         run: cargo test -p trading-validator-lib --lib
@@ -83,6 +89,9 @@ jobs:
 
       - name: Test (trading-blueprint-lib)
         run: cargo test -p trading-blueprint-lib --lib
+
+      - name: Test (trading-blueprint-bin operator_api)
+        run: cargo test -p trading-blueprint-bin --test operator_api_tests
 
   clippy:
     name: Clippy
@@ -108,6 +117,7 @@ jobs:
           cargo clippy -p trading-http-api -- -D warnings -A clippy::collapsible-if
           cargo clippy -p trading-validator-lib -- -D warnings
           cargo clippy -p trading-blueprint-lib -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments
+          cargo clippy -p trading-blueprint-bin --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments
 
   fmt:
     name: Rustfmt

@@ -245,6 +245,13 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             chain_client,
             chain_client_rpc_url: Some(rpc_url_for_chain),
             chain_client_chain_id: Some(chain_id_for_chain),
+            list_envelope_bots: None,
+            alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
+            key_provider: trading_runtime::cex::default_provider(),
+            rate_limiter: std::sync::Arc::new(
+                trading_http_api::rate_limit::PerBotRateLimiter::default(),
+            ),
+            nav_stream_config: None,
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

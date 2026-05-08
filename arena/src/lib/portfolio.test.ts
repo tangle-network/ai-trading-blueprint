@@ -121,6 +121,7 @@ describe('mapApiPortfolioState', () => {
     expect(portfolio.positions[0]?.currentPrice).toBe(2100);
     expect(portfolio.positions[0]?.entryPrice).toBeNull();
     expect(portfolio.positions[0]?.displayPnlPercent).toBeNull();
+    expect(portfolio.warnings).toHaveLength(0);
   });
 
   it('resolves position token addresses against the bot chain id', () => {

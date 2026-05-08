@@ -20,6 +20,10 @@ type OperatorAuthSnapshot = Pick<ReturnType<typeof useOperatorAuth>, 'getCachedT
 /** Max time (ms) a provision can stay in job_submitted/job_processing before timing out */
 const PROVISION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+function isUniqueCallId(callId: number | undefined): callId is number {
+  return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
+}
+
 /**
  * ABI for decoding TradingProvisionOutput struct.
  *
@@ -55,7 +59,7 @@ function decodeProvisionOutput(output: `0x${string}`) {
 }
 
 function shouldPollOperatorProgress(provision: TrackedProvision): boolean {
-  if (provision.callId == null) return false;
+  if (!isUniqueCallId(provision.callId)) return false;
 
   if (provision.phase === 'job_submitted' || provision.phase === 'job_processing') {
     return true;
@@ -428,7 +432,7 @@ export function useProvisionWatcher() {
     const needsRepair = provisionsStore.get().filter(
       (p: TrackedProvision) =>
         ['active', 'awaiting_secrets'].includes(p.phase) &&
-        p.callId != null &&
+        isUniqueCallId(p.callId) &&
         (!p.vaultAddress || p.vaultAddress === zeroAddress || p.vaultAddress === '0x0000000000000000000000000000000000000020'),
     );
     if (needsRepair.length === 0) return;

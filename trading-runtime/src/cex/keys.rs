@@ -235,9 +235,16 @@ mod tests {
     use solana_sdk::signer::Signer;
 
     /// SAFETY: tests in this module mutate process env vars; the harness
-    /// runs them serially per Tokio's default `#[test]`. Run with
-    /// `--test-threads=1` if your CI parallelises further.
+    /// Crate-shared lock so cross-module env mutations
+    /// (`cex::keys` ↔ `solana::keys` tests both touch
+    /// `SOLANA_OPERATOR_PRIVATE_KEY`) don't interleave under parallel test
+    /// execution.
+    use crate::TEST_ENV_GUARD;
+
     fn with_env_vars<F: FnOnce()>(pairs: &[(&str, &str)], f: F) {
+        let _guard = TEST_ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (k, v) in pairs {
             unsafe { std::env::set_var(k, v) };
         }
@@ -262,7 +269,9 @@ mod tests {
 
     #[test]
     fn env_provider_returns_none_when_binance_env_unset() {
-        // Make sure we start clean.
+        let _guard = TEST_ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             std::env::remove_var("BINANCE_API_KEY");
             std::env::remove_var("BINANCE_API_SECRET");
@@ -273,6 +282,9 @@ mod tests {
 
     #[test]
     fn env_provider_solana_returns_none_when_unset() {
+        let _solana_guard = TEST_ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe { std::env::remove_var(crate::solana::keys::SOLANA_OPERATOR_KEY_ENV) };
         let p = EnvKeyProvider;
         assert!(p.solana_keypair("any-bot").is_none());

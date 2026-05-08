@@ -7,15 +7,17 @@
 //! - Fee settlement via `FeeDistributor.settleFees()`
 //! - Subscription billing via `ITangleServices.billSubscription()`
 
-use alloy::primitives::{Address, Bytes, FixedBytes, U256, keccak256};
+use alloy::primitives::{Address, Bytes, FixedBytes, U256, Uint, keccak256};
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
 use trading_runtime::chain::ChainClient;
 use trading_runtime::contracts::{
     IAssetValuator, IFeeDistributor, IPolicyEngine, IStrategyRegistry, ITangleServices,
-    ITradingVault, IVaultFactory,
+    ITradingVault, IUniswapV3TwapValuator, IVaultFactory,
 };
 use trading_runtime::supported_assets::ValuationAdapterKind;
+
+type Uint24 = Uint<24, 1>;
 
 /// Result of deploying a vault via VaultFactory.
 #[derive(Debug, Clone)]
@@ -31,6 +33,16 @@ pub struct VaultSupportedAssetConfig {
     pub symbol: String,
     pub valuation_adapter: ValuationAdapterKind,
     pub adapter_address: Option<Address>,
+    pub fallback_adapter_address: Option<Address>,
+    pub twap_config: Option<UniswapV3TwapConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UniswapV3TwapConfig {
+    pub fee_tiers: Vec<u32>,
+    pub twap_window: u32,
+    pub min_harmonic_liquidity: u128,
+    pub max_spot_twap_deviation_bps: u32,
 }
 
 /// Deploy a new vault via `VaultFactory.createVault()`.
@@ -210,40 +222,7 @@ pub async fn configure_vault_supported_assets(
         if asset.token == deposit_asset || asset.valuation_adapter == ValuationAdapterKind::None {
             continue;
         }
-        let adapter = asset.adapter_address.ok_or_else(|| {
-            format!(
-                "{} is supported but missing vault valuation adapter for {:?}",
-                asset.symbol, asset.valuation_adapter
-            )
-        })?;
-
-        let supported_call = IAssetValuator::isSupportedCall {
-            token: asset.token,
-            asset: deposit_asset,
-        };
-        let supported = IAssetValuator::isSupportedCall::abi_decode_returns(
-            &chain
-                .provider
-                .call(
-                    alloy::rpc::types::TransactionRequest::default()
-                        .to(adapter)
-                        .input(Bytes::from(supported_call.abi_encode()).into()),
-                )
-                .await
-                .map_err(|e| {
-                    format!(
-                        "{} valuation adapter support check failed for token {}: {e}",
-                        asset.symbol, asset.token
-                    )
-                })?,
-        )
-        .map_err(|e| format!("Failed to decode valuation adapter support check: {e}"))?;
-        if !supported {
-            return Err(format!(
-                "{} is supported but valuation adapter {adapter:#x} does not support valuing {} against deposit asset {deposit_asset:#x}",
-                asset.symbol, asset.token,
-            ));
-        }
+        let adapter = resolve_asset_valuation_adapter(chain, deposit_asset, asset).await?;
 
         let adapter_call = ITradingVault::setValuationAdapterCall {
             token: asset.token,
@@ -259,6 +238,166 @@ pub async fn configure_vault_supported_assets(
     }
 
     Ok(())
+}
+
+async fn resolve_asset_valuation_adapter(
+    chain: &ChainClient,
+    deposit_asset: Address,
+    asset: &VaultSupportedAssetConfig,
+) -> Result<Address, String> {
+    if let Some(adapter) = asset.adapter_address {
+        if adapter_supports(chain, adapter, asset.token, deposit_asset, &asset.symbol).await? {
+            return Ok(adapter);
+        }
+        if !matches!(
+            asset.valuation_adapter,
+            ValuationAdapterKind::ChainlinkOrUniswapV3Twap | ValuationAdapterKind::UniswapV3Twap
+        ) {
+            return Err(format!(
+                "{} is supported but valuation adapter {adapter:#x} does not support valuing {} against deposit asset {deposit_asset:#x}",
+                asset.symbol, asset.token,
+            ));
+        }
+    }
+
+    if matches!(
+        asset.valuation_adapter,
+        ValuationAdapterKind::ChainlinkOrUniswapV3Twap | ValuationAdapterKind::UniswapV3Twap
+    ) {
+        let adapter = match asset.valuation_adapter {
+            ValuationAdapterKind::ChainlinkOrUniswapV3Twap => asset.fallback_adapter_address,
+            ValuationAdapterKind::UniswapV3Twap => {
+                asset.adapter_address.or(asset.fallback_adapter_address)
+            }
+            _ => None,
+        }
+        .ok_or_else(|| {
+            format!(
+                "{} requires Uniswap V3 TWAP valuation, but no TWAP valuator address is configured",
+                asset.symbol
+            )
+        })?;
+        configure_uniswap_twap_pair(chain, adapter, deposit_asset, asset).await?;
+        if adapter_supports(chain, adapter, asset.token, deposit_asset, &asset.symbol).await? {
+            return Ok(adapter);
+        }
+        return Err(format!(
+            "{} Uniswap V3 TWAP adapter {adapter:#x} did not support {} after pair configuration",
+            asset.symbol, asset.token
+        ));
+    }
+
+    let adapter = asset.adapter_address.ok_or_else(|| {
+        format!(
+            "{} is supported but missing vault valuation adapter for {:?}",
+            asset.symbol, asset.valuation_adapter
+        )
+    })?;
+    Err(format!(
+        "{} is supported but valuation adapter {adapter:#x} does not support valuing {} against deposit asset {deposit_asset:#x}",
+        asset.symbol, asset.token,
+    ))
+}
+
+async fn adapter_supports(
+    chain: &ChainClient,
+    adapter: Address,
+    token: Address,
+    deposit_asset: Address,
+    symbol: &str,
+) -> Result<bool, String> {
+    let supported_call = IAssetValuator::isSupportedCall {
+        token,
+        asset: deposit_asset,
+    };
+    IAssetValuator::isSupportedCall::abi_decode_returns(
+        &chain
+            .provider
+            .call(
+                alloy::rpc::types::TransactionRequest::default()
+                    .to(adapter)
+                    .input(Bytes::from(supported_call.abi_encode()).into()),
+            )
+            .await
+            .map_err(|e| {
+                format!("{symbol} valuation adapter support check failed for token {token}: {e}")
+            })?,
+    )
+    .map_err(|e| format!("Failed to decode valuation adapter support check: {e}"))
+}
+
+async fn configure_uniswap_twap_pair(
+    chain: &ChainClient,
+    adapter: Address,
+    deposit_asset: Address,
+    asset: &VaultSupportedAssetConfig,
+) -> Result<(), String> {
+    let config = asset.twap_config.as_ref().ok_or_else(|| {
+        format!(
+            "{} requires Uniswap V3 TWAP valuation, but TWAP config is missing",
+            asset.symbol
+        )
+    })?;
+    let mut best_fee = None;
+    let mut best_liquidity = 0u128;
+
+    for fee in &config.fee_tiers {
+        let Ok(fee_tier) = Uint24::try_from(*fee) else {
+            continue;
+        };
+        let call = IUniswapV3TwapValuator::previewPoolCall {
+            token: asset.token,
+            asset: deposit_asset,
+            fee: fee_tier,
+            twapWindow: config.twap_window,
+            minHarmonicLiquidity: config.min_harmonic_liquidity,
+            maxSpotTwapDeviationBps: config.max_spot_twap_deviation_bps,
+        };
+        let preview_bytes = chain
+            .provider
+            .call(
+                alloy::rpc::types::TransactionRequest::default()
+                    .to(adapter)
+                    .input(Bytes::from(call.abi_encode()).into()),
+            )
+            .await;
+        let Ok(preview_bytes) = preview_bytes else {
+            continue;
+        };
+        let Ok(preview) =
+            IUniswapV3TwapValuator::previewPoolCall::abi_decode_returns(&preview_bytes)
+        else {
+            continue;
+        };
+        if preview.harmonicMeanLiquidity > best_liquidity {
+            best_liquidity = preview.harmonicMeanLiquidity;
+            best_fee = Some(*fee);
+        }
+    }
+
+    let fee = best_fee.ok_or_else(|| {
+        format!(
+            "{} has no safe direct Uniswap V3 TWAP pool against deposit asset {deposit_asset:#x}",
+            asset.symbol
+        )
+    })?;
+    let fee_tier =
+        Uint24::try_from(fee).map_err(|e| format!("Invalid Uniswap V3 fee tier {fee}: {e}"))?;
+    let call = IUniswapV3TwapValuator::setPairFromFactoryWithConfigCall {
+        token: asset.token,
+        asset: deposit_asset,
+        fee: fee_tier,
+        twapWindow: config.twap_window,
+        minHarmonicLiquidity: config.min_harmonic_liquidity,
+        maxSpotTwapDeviationBps: config.max_spot_twap_deviation_bps,
+    };
+    send_contract_call(
+        chain,
+        adapter,
+        Bytes::from(call.abi_encode()),
+        "UniswapV3TwapValuator.setPairFromFactoryWithConfig",
+    )
+    .await
 }
 
 async fn send_contract_call(

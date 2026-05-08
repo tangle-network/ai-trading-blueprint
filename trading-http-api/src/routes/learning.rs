@@ -275,15 +275,24 @@ mod tests {
         format!("learning-it-{}", uuid::Uuid::new_v4())
     }
 
-    fn install_test_dir() -> PathBuf {
-        // Per-test temp dir routed through the learning_store override —
-        // sibling tests in this crate also use the override so we don't
-        // race on `BLUEPRINT_STATE_DIR`.
+    /// `learning_store::set_test_dir` installs a single process-wide
+    /// override; parallel tests would overwrite each other's path mid-flight
+    /// and read each other's empty state. Hold this mutex for the test's
+    /// lifetime so tests in this module run serially regardless of the
+    /// `cargo test --test-threads` setting.
+    static TEST_DIR_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn install_test_dir() -> (PathBuf, std::sync::MutexGuard<'static, ()>) {
+        // Lock first, then install the override — the guard's lifetime is
+        // returned to the caller so the lock is held for the whole test.
+        let guard = TEST_DIR_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = tempfile::TempDir::new().expect("create test learning dir");
         let path = tmp.path().to_path_buf();
         std::mem::forget(tmp);
         learning_store::set_test_dir(path.clone());
-        path
+        (path, guard)
     }
 
     /// Build a router for the strategy-outcome endpoint with a fixed
@@ -328,7 +337,7 @@ mod tests {
     /// iteration_id (or absence of one) must NOT be deduplicated.
     #[tokio::test]
     async fn strategy_outcome_dedups_by_iteration_id() {
-        let _dir = install_test_dir();
+        let (_dir, _guard) = install_test_dir();
         let bot_id = unique_bot_id();
         let router = router_for_bot(&bot_id);
 
@@ -373,7 +382,7 @@ mod tests {
     /// Empty / oversized `iteration_id` is rejected.
     #[tokio::test]
     async fn strategy_outcome_rejects_bad_iteration_id() {
-        let _dir = install_test_dir();
+        let (_dir, _guard) = install_test_dir();
         let bot_id = unique_bot_id();
         let router = router_for_bot(&bot_id);
 

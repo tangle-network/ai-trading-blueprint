@@ -13,7 +13,7 @@ use crate::metrics_store;
 use crate::routes::portfolio::{PortfolioResponse, PositionEntry};
 use crate::{BotContext, TradingApiState};
 use trading_runtime::aave_v3_registry::{market_for_chain, reserve_by_a_token};
-use trading_runtime::contracts::ITradingVault;
+use trading_runtime::contracts::{IAssetValuator, ITradingVault};
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::token_metadata::{known_token_decimals, token_metadata_for_chain};
 use trading_runtime::types::ValuationStatus;
@@ -33,6 +33,23 @@ pub struct LivePortfolioSnapshot {
     pub drawdown_pct: Decimal,
     pub observed_at: DateTime<Utc>,
     pub nav_safe: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiveTokenUsdValuation {
+    pub price_usd: Decimal,
+    pub value_usd: Decimal,
+}
+
+struct LiveTokenValuationInput<'a> {
+    market_client: &'a MarketDataClient,
+    chain_id: u64,
+    vault_addr: Address,
+    asset_addr: Address,
+    token_addr: Address,
+    symbol: &'a str,
+    amount_raw: U256,
+    token_decimals: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -150,18 +167,22 @@ pub async fn reconcile_live_portfolio(
 
     let market_client = MarketDataClient::new(input.market_data_base_url.clone());
     let observed_at = Utc::now();
+    let protocol_chain_id =
+        crate::protocol_chain_id_from_config(input.chain_id, &input.strategy_config);
     let asset_token = format!("{asset_addr:#x}");
-    let asset_meta = token_metadata_for_chain(Some(input.chain_id), &asset_token);
+    let asset_meta = token_metadata_for_chain(Some(protocol_chain_id), &asset_token);
     let asset_symbol = asset_meta
         .map(|metadata| metadata.symbol.to_string())
         .unwrap_or_else(|| asset_token.clone());
     let asset_decimals = asset_meta
         .map(|metadata| metadata.decimals)
-        .unwrap_or_else(|| known_token_decimals(Some(input.chain_id), &asset_token).unwrap_or(18));
+        .unwrap_or_else(|| {
+            known_token_decimals(Some(protocol_chain_id), &asset_token).unwrap_or(18)
+        });
     let total_assets_decimal = u256_to_decimal(total_assets, asset_decimals)?;
-    let mut asset_price = price_for_token(&market_client, input.chain_id, &asset_token).await;
+    let mut asset_price = price_for_token(&market_client, protocol_chain_id, &asset_token).await;
     if asset_price.is_none() && asset_symbol != asset_token {
-        asset_price = price_for_token(&market_client, input.chain_id, &asset_symbol).await;
+        asset_price = price_for_token(&market_client, protocol_chain_id, &asset_symbol).await;
     }
     let mut account_value_usd = asset_price
         .map(|price| total_assets_decimal * price)
@@ -175,9 +196,6 @@ pub async fn reconcile_live_portfolio(
             "Vault asset {asset_symbol} is held on-chain but has no current market price, so total portfolio value is hidden."
         ));
     }
-    let protocol_chain_id =
-        crate::protocol_chain_id_from_config(input.chain_id, &input.strategy_config);
-
     let cash_raw = eth_call_u256(
         &provider,
         vault_addr,
@@ -217,7 +235,7 @@ pub async fn reconcile_live_portfolio(
         }
         let token = format!("{token_addr:#x}");
         let aave_reserve = reserve_by_a_token(protocol_chain_id, &token);
-        let metadata = token_metadata_for_chain(Some(input.chain_id), &token);
+        let metadata = token_metadata_for_chain(Some(protocol_chain_id), &token);
         let symbol = aave_reserve
             .map(|reserve| reserve.symbol.to_string())
             .or_else(|| metadata.map(|metadata| metadata.symbol.to_string()))
@@ -225,24 +243,38 @@ pub async fn reconcile_live_portfolio(
         let decimals = aave_reserve
             .map(|reserve| reserve.decimals)
             .or_else(|| metadata.map(|metadata| metadata.decimals))
-            .unwrap_or_else(|| known_token_decimals(Some(input.chain_id), &token).unwrap_or(18));
+            .unwrap_or_else(|| known_token_decimals(Some(protocol_chain_id), &token).unwrap_or(18));
         let amount = u256_to_decimal(raw_balance, decimals)?;
-        let price_token = aave_reserve
-            .map(|reserve| reserve.underlying)
-            .unwrap_or(token.as_str());
-        let price_chain_id = if aave_reserve.is_some() {
-            protocol_chain_id
+        let valuation = if let Some(reserve) = aave_reserve {
+            let mut price =
+                price_for_token(&market_client, protocol_chain_id, reserve.underlying).await;
+            if price.is_none() {
+                price = price_for_token(&market_client, protocol_chain_id, reserve.symbol).await;
+            }
+            price.map(|price| LiveTokenUsdValuation {
+                price_usd: price,
+                value_usd: amount * price,
+            })
         } else {
-            input.chain_id
+            resolve_token_usd_valuation(
+                &provider,
+                LiveTokenValuationInput {
+                    market_client: &market_client,
+                    chain_id: protocol_chain_id,
+                    vault_addr,
+                    asset_addr,
+                    token_addr,
+                    symbol: &symbol,
+                    amount_raw: raw_balance,
+                    token_decimals: decimals,
+                },
+            )
+            .await
         };
-        let mut price = price_for_token(&market_client, price_chain_id, price_token).await;
-        if price.is_none() && symbol != token {
-            price = price_for_token(&market_client, price_chain_id, &symbol).await;
-        }
-        let (value_usd, current_price, valuation_status) = match price {
-            Some(price) => (
-                Some((amount * price).to_string()),
-                Some(price.to_string()),
+        let (value_usd, current_price, valuation_status) = match valuation {
+            Some(valuation) => (
+                Some(valuation.value_usd.to_string()),
+                Some(valuation.price_usd.to_string()),
                 ValuationStatus::ValueOnly,
             ),
             None => {
@@ -403,6 +435,45 @@ pub async fn reconcile_live_portfolio(
     })
 }
 
+pub async fn resolve_live_token_usd_valuation(
+    input: &LiveRiskInput,
+    token: &str,
+    amount_raw: U256,
+    token_decimals: u8,
+) -> Option<LiveTokenUsdValuation> {
+    let provider = ProviderBuilder::new().connect_http(input.rpc_url.parse().ok()?);
+    let vault_addr: Address = input.vault_address.parse().ok()?;
+    let token_addr: Address = token.parse().ok()?;
+    let asset_addr = eth_call_address(
+        &provider,
+        vault_addr,
+        ITradingVault::assetCall {}.abi_encode(),
+    )
+    .await
+    .ok()?;
+    let market_client = MarketDataClient::new(input.market_data_base_url.clone());
+    let protocol_chain_id =
+        crate::protocol_chain_id_from_config(input.chain_id, &input.strategy_config);
+    let symbol = token_metadata_for_chain(Some(protocol_chain_id), token)
+        .map(|metadata| metadata.symbol.to_string())
+        .unwrap_or_else(|| token.to_string());
+
+    resolve_token_usd_valuation(
+        &provider,
+        LiveTokenValuationInput {
+            market_client: &market_client,
+            chain_id: protocol_chain_id,
+            vault_addr,
+            asset_addr,
+            token_addr,
+            symbol: &symbol,
+            amount_raw,
+            token_decimals,
+        },
+    )
+    .await
+}
+
 pub async fn enforce_live_risk(
     input: &LiveRiskInput,
     max_drawdown_pct: Decimal,
@@ -502,6 +573,89 @@ async fn price_for_token(
         .await
         .ok()
         .map(|price| price.price_usd)
+}
+
+async fn resolve_token_usd_valuation(
+    provider: &impl Provider,
+    input: LiveTokenValuationInput<'_>,
+) -> Option<LiveTokenUsdValuation> {
+    let LiveTokenValuationInput {
+        market_client,
+        chain_id,
+        vault_addr,
+        asset_addr,
+        token_addr,
+        symbol,
+        amount_raw,
+        token_decimals,
+    } = input;
+    let token = format!("{token_addr:#x}");
+    let mut price = price_for_token(market_client, chain_id, &token).await;
+    if price.is_none() && symbol != token {
+        price = price_for_token(market_client, chain_id, symbol).await;
+    }
+    if let Some(price_usd) = price {
+        let amount = u256_to_decimal(amount_raw, token_decimals).ok()?;
+        return Some(LiveTokenUsdValuation {
+            price_usd,
+            value_usd: amount * price_usd,
+        });
+    }
+
+    if token_addr == asset_addr {
+        return None;
+    }
+
+    let asset_token = format!("{asset_addr:#x}");
+    let asset_meta = token_metadata_for_chain(Some(chain_id), &asset_token);
+    let asset_symbol = asset_meta
+        .map(|metadata| metadata.symbol.to_string())
+        .unwrap_or_else(|| asset_token.clone());
+    let asset_decimals = asset_meta
+        .map(|metadata| metadata.decimals)
+        .unwrap_or_else(|| known_token_decimals(Some(chain_id), &asset_token).unwrap_or(18));
+    let mut asset_price = price_for_token(market_client, chain_id, &asset_token).await;
+    if asset_price.is_none() && asset_symbol != asset_token {
+        asset_price = price_for_token(market_client, chain_id, &asset_symbol).await;
+    }
+    let asset_price = asset_price?;
+
+    let adapter = eth_call_address(
+        provider,
+        vault_addr,
+        ITradingVault::valuationAdaptersCall { token: token_addr }.abi_encode(),
+    )
+    .await
+    .ok()?;
+    if adapter == Address::ZERO {
+        return None;
+    }
+
+    let value_raw = eth_call_u256(
+        provider,
+        adapter,
+        IAssetValuator::valueInAssetCall {
+            token: token_addr,
+            amount: amount_raw,
+            asset: asset_addr,
+        }
+        .abi_encode(),
+    )
+    .await
+    .ok()?;
+    let amount = u256_to_decimal(amount_raw, token_decimals).ok()?;
+    let value_in_asset = u256_to_decimal(value_raw, asset_decimals).ok()?;
+    let value_usd = value_in_asset * asset_price;
+    let price_usd = if amount > Decimal::ZERO {
+        value_usd / amount
+    } else {
+        Decimal::ZERO
+    };
+
+    Some(LiveTokenUsdValuation {
+        price_usd,
+        value_usd,
+    })
 }
 
 fn u256_to_decimal(amount: U256, decimals: u8) -> Result<Decimal, (StatusCode, String)> {

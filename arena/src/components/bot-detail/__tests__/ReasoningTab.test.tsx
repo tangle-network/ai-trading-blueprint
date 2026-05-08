@@ -13,9 +13,16 @@ mockFramerMotion();
 let allTrades: Trade[] = [];
 let recentTrades: Trade[] = [];
 let isLoading = false;
+let allTradesIsError = false;
+let allTradesError: unknown = null;
 
 vi.mock('~/lib/hooks/useBotApi', () => ({
-  useBotTrades: () => ({ data: allTrades, isLoading }),
+  useBotTrades: () => ({
+    data: allTrades,
+    isLoading,
+    isError: allTradesIsError,
+    error: allTradesError,
+  }),
   useBotRecentValidations: () => ({ data: recentTrades }),
 }));
 
@@ -63,6 +70,8 @@ describe('ReasoningTab', () => {
     allTrades = [];
     recentTrades = [];
     isLoading = false;
+    allTradesIsError = false;
+    allTradesError = null;
   });
 
   it('renders loading state with skeleton cards', () => {
@@ -78,6 +87,19 @@ describe('ReasoningTab', () => {
     expect(
       screen.getByText("No validation details available for this bot's trades."),
     ).toBeInTheDocument();
+  });
+
+  it('shows an unavailable state when validation history fails to load', () => {
+    allTradesIsError = true;
+    allTradesError = new Error('operator request failed');
+
+    render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('Validation details unavailable')).toBeInTheDocument();
+    expect(screen.getByText('operator request failed')).toBeInTheDocument();
+    expect(
+      screen.queryByText("No validation details available for this bot's trades."),
+    ).not.toBeInTheDocument();
   });
 
   it('renders historical trade with validation', () => {

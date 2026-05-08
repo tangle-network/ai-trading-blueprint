@@ -333,6 +333,33 @@ sol! {
     #[sol(rpc)]
     interface IAssetValuator {
         function isSupported(address token, address asset) external view returns (bool);
+        function valueInAsset(address token, uint256 amount, address asset) external view returns (uint256 value);
+    }
+
+    #[sol(rpc)]
+    interface IUniswapV3TwapValuator {
+        function previewPool(
+            address token,
+            address asset,
+            uint24 fee,
+            uint32 twapWindow,
+            uint128 minHarmonicLiquidity,
+            uint32 maxSpotTwapDeviationBps
+        ) external view returns (
+            address pool,
+            int24 arithmeticMeanTick,
+            uint128 harmonicMeanLiquidity,
+            int24 spotTick
+        );
+
+        function setPairFromFactoryWithConfig(
+            address token,
+            address asset,
+            uint24 fee,
+            uint32 twapWindow,
+            uint128 minHarmonicLiquidity,
+            uint32 maxSpotTwapDeviationBps
+        ) external;
     }
 
     #[sol(rpc)]

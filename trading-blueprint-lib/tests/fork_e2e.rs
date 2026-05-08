@@ -174,6 +174,7 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(42161),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
 
         let router = trading_http_api::build_router(api_state);
@@ -324,6 +325,7 @@ async fn test_fork_e2e_real_trade() -> Result<()> {
             rpc_url: Some(rpc_url.clone()),
             chain_id: Some(42161),
             clob_client: None,
+            strategy_config: serde_json::Value::Null,
         });
         let paper_router = trading_http_api::build_router(paper_state);
         let paper_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

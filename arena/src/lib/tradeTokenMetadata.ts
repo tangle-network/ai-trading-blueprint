@@ -1,7 +1,7 @@
 import { formatUnits } from 'viem';
 import { truncateAddress } from '~/lib/format';
 
-interface TokenMetadata {
+export interface TokenMetadata {
   symbol: string;
   name: string;
   decimals: number;
@@ -134,14 +134,22 @@ function tokenMatches(metadata: TokenMetadata, key: string): boolean {
   return metadata.aliases?.some((alias) => alias.toLowerCase() === key) ?? false;
 }
 
-function lookupKnownToken(token: string, chainId?: number): TokenMetadata | null {
+function lookupToken(
+  token: string,
+  chainId?: number,
+  tokens: TokenMetadata[] = KNOWN_TOKENS,
+): TokenMetadata | null {
   const key = normalizeTokenKey(token);
   if (chainId != null) {
-    const exact = KNOWN_TOKENS.find((metadata) => metadata.chainIds.includes(chainId) && tokenMatches(metadata, key));
+    const exact = tokens.find((metadata) => metadata.chainIds.includes(chainId) && tokenMatches(metadata, key));
     if (exact) return exact;
   }
 
-  return KNOWN_TOKENS.find((metadata) => tokenMatches(metadata, key)) ?? null;
+  return tokens.find((metadata) => tokenMatches(metadata, key)) ?? null;
+}
+
+function lookupKnownToken(token: string, chainId?: number): TokenMetadata | null {
+  return lookupToken(token, chainId);
 }
 
 function hashString(input: string): number {
@@ -173,13 +181,23 @@ export function getTradeTokenMetadata(token: string, chainId?: number): TokenMet
   return lookupKnownToken(token, chainId);
 }
 
+export function knownTradeTokensForChain(chainId?: number): TokenMetadata[] {
+  if (chainId == null) return [...KNOWN_TOKENS];
+  return KNOWN_TOKENS.filter((metadata) => metadata.chainIds.includes(chainId));
+}
+
 export function getTradeTokenDisplaySymbol(token: string, chainId?: number): string {
   return lookupKnownToken(token, chainId)?.symbol ?? token;
 }
 
-export function resolveAssetDisplay(token: string, chainId?: number): ResolvedAssetDisplay {
+export function resolveAssetDisplay(
+  token: string,
+  chainId?: number,
+  customTokens: TokenMetadata[] = [],
+): ResolvedAssetDisplay {
   const rawToken = token.trim();
-  const metadata = lookupKnownToken(rawToken, chainId);
+  const metadata =
+    lookupToken(rawToken, chainId, customTokens) ?? lookupKnownToken(rawToken, chainId);
 
   if (metadata) {
     return {
@@ -225,6 +243,7 @@ export function parseTradeDisplayAmount(
   rawAmount: string | number | undefined,
   rawToken: string,
   chainId?: number,
+  customTokens: TokenMetadata[] = [],
 ): number {
   if (rawAmount == null) return 0;
   if (typeof rawAmount === 'number') return Number.isFinite(rawAmount) ? rawAmount : 0;
@@ -232,7 +251,8 @@ export function parseTradeDisplayAmount(
   const raw = rawAmount.trim();
   if (raw === '') return 0;
 
-  const metadata = getTradeTokenMetadata(rawToken, chainId);
+  const metadata =
+    lookupToken(rawToken, chainId, customTokens) ?? getTradeTokenMetadata(rawToken, chainId);
   if (metadata && /^[0-9]+$/.test(raw)) {
     try {
       return Number(formatUnits(BigInt(raw), metadata.decimals));

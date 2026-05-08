@@ -32,6 +32,14 @@ pub mod vault_client;
 
 pub mod cex;
 
+/// Crate-private process-wide lock for tests that mutate global env vars.
+/// `cex::keys` and `solana::keys` test modules both touch
+/// `SOLANA_OPERATOR_PRIVATE_KEY`; without a single mutex shared across
+/// modules, parallel test execution interleaves their set/remove pairs
+/// and the test reading the value sees `None` mid-flight.
+#[cfg(test)]
+pub(crate) static TEST_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub use envelope::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
     AerodromeSwapEnforcement, ClobContext, ClobPolicy, CurveStableSwapEnforcement, EnvelopeBinding,

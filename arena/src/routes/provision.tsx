@@ -77,6 +77,16 @@ import {
 import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
 import {
+  buildDexAssetUniverse,
+  dexAssetSelectionsForChain,
+  resolveDexAssetInput,
+  type DexAssetUniverse,
+  type DexAssetSelection,
+} from '~/lib/assetUniverse';
+import { isTokenAddress } from '~/lib/tradeTokenMetadata';
+import { operatorJsonWithAuth } from '~/lib/operator/fetch';
+import { truncateAddress } from '~/lib/format';
+import {
   isStaleStateError,
   readOperatorError,
   type OperatorErrorBody,
@@ -108,6 +118,7 @@ interface StrategyConfigOptions {
   researchCron?: string;
   conversationEnabled?: boolean;
   researchEnabled?: boolean;
+  assetUniverse?: DexAssetUniverse;
 }
 
 interface ProvisionStrategyConfigOptions extends StrategyConfigOptions {
@@ -198,6 +209,24 @@ interface SubmitSnapshot {
   blueprintId: string;
   blueprintType?: string;
   serviceId?: number;
+}
+
+interface DexAssetPreflightResponse {
+  ok: boolean;
+  chain_id: number;
+  token_address: Address;
+  base_asset: Address;
+  symbol?: string | null;
+  name?: string | null;
+  decimals?: number | null;
+  // The discriminated union has no `| string` escape hatch — a future
+  // backend change that adds a new tag must surface as a TypeScript error
+  // here so the FE narrows are forced to widen consciously.
+  valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | null;
+  valuation_adapter?: string | null;
+  selected_fee_tier?: number | null;
+  warnings?: string[];
+  message?: string | null;
 }
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -340,6 +369,12 @@ const DEFAULT_ETHEREUM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
     false,
   ),
 };
+
+const DEFAULT_DEX_BASE_ASSET_ADDRESS = (
+  DEFAULT_BASE_EXECUTION_TARGET.enabled
+    ? DEFAULT_BASE_EXECUTION_TARGET.assetToken
+    : DEFAULT_ETHEREUM_EXECUTION_TARGET.assetToken
+) as Address;
 
 const DEFAULT_ARBITRUM_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'arbitrum',
@@ -492,6 +527,7 @@ export function buildStrategyConfigForProvision({
   researchCron,
   conversationEnabled = true,
   researchEnabled = true,
+  assetUniverse,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -510,6 +546,7 @@ export function buildStrategyConfigForProvision({
   }
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
+  if (assetUniverse) config.asset_universe = assetUniverse;
   if (conversationCron || researchCron || !conversationEnabled || !researchEnabled) {
     config.workflow_schedules = {
       ...(conversationCron ? { conversation_cron: conversationCron } : {}),
@@ -761,6 +798,11 @@ function nonZeroAddress(value: string | undefined | null): Address | undefined {
 
 function sameAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
+}
+
+function readOperatorErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return 'Custom token check failed. Confirm the token address and selected base asset.';
 }
 
 function instanceVaultEnvAddressForBlueprint(
@@ -1198,6 +1240,13 @@ export default function ProvisionPage() {
   const [customResearchCron, setCustomResearchCron] = useState('');
   const [conversationEnabled, setConversationEnabled] = useState(true);
   const [researchEnabled, setResearchEnabled] = useState(true);
+  const [baseAssetAddress, setBaseAssetAddress] = useState<Address>(
+    DEFAULT_DEX_BASE_ASSET_ADDRESS,
+  );
+  const [selectedAssetAddresses, setSelectedAssetAddresses] = useState<Address[]>([
+    DEFAULT_DEX_BASE_ASSET_ADDRESS,
+  ]);
+  const [manualAssetInput, setManualAssetInput] = useState('');
   const [collateralCapPct, setCollateralCapPct] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [validatorMode, setValidatorMode] = useState<'default' | 'custom'>(
@@ -1307,6 +1356,232 @@ export default function ProvisionPage() {
     strategyType,
     selectedExecutionTarget,
     provisionPaperTrade,
+  );
+  const operatorApiUrl = useMemo(
+    () =>
+      getOperatorApiUrlForBlueprint(
+        selectedBlueprint?.id,
+      ),
+    [selectedBlueprint?.id],
+  );
+  const operatorAuth = useOperatorAuth(operatorApiUrl);
+  const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
+  const assetUniverseChainId =
+    selectedExecutionTarget?.protocolChainId ??
+    selectedExecutionTarget?.chainId ??
+    targetChain.id;
+  const defaultAssetOptions = useMemo(
+    () => dexAssetSelectionsForChain(assetUniverseChainId),
+    [assetUniverseChainId],
+  );
+  const [customAssetSelections, setCustomAssetSelections] = useState<DexAssetSelection[]>([]);
+  const [customAssetChecking, setCustomAssetChecking] = useState(false);
+  const [customAssetError, setCustomAssetError] = useState<string | null>(null);
+  const assetOptions = useMemo(() => {
+    const byAddress = new Map<string, DexAssetSelection>();
+    for (const asset of defaultAssetOptions) {
+      byAddress.set(asset.address.toLowerCase(), asset);
+    }
+    for (const asset of customAssetSelections) {
+      byAddress.set(asset.address.toLowerCase(), asset);
+    }
+    return [...byAddress.values()];
+  }, [customAssetSelections, defaultAssetOptions]);
+  useEffect(() => {
+    setCustomAssetSelections([]);
+    setCustomAssetError(null);
+    setManualAssetInput('');
+  }, [assetUniverseChainId]);
+
+  // Seed defaults from the static `defaultAssetOptions` list, not the live
+  // `assetOptions` (which includes user-added custom assets and re-renders
+  // on each add). Triggering on the live list would clobber user choices:
+  //   1. `baseAssetAddress` would reset to USDC/target on every custom add.
+  //   2. WETH would re-inject after the user explicitly removed it.
+  // Strategy: depend only on stable prerequisites, preserve the user's
+  // current base when it remains valid, seed WETH only when the selection
+  // is otherwise empty (first run for this chain/strategy/target combo).
+  useEffect(() => {
+    if (strategyType !== 'dex') return;
+    const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;
+    // Snapshot defaultAssetOptions, NOT assetOptions, so this effect doesn't
+    // re-run when customAssetSelections changes.
+    const defaultBase =
+      targetAsset ??
+      defaultAssetOptions.find((asset) => asset.symbol === 'USDC')?.address ??
+      defaultAssetOptions[0]?.address;
+    if (!defaultBase) return;
+
+    setBaseAssetAddress((current) => {
+      // Keep the user's choice when it remains a valid default-set asset;
+      // only reseed when current is empty or no longer in the option set.
+      const available = new Set(defaultAssetOptions.map((a) => a.address.toLowerCase()));
+      if (current && available.has(current.toLowerCase())) return current;
+      return defaultBase;
+    });
+
+    setSelectedAssetAddresses((current) => {
+      const available = new Set(defaultAssetOptions.map((a) => a.address.toLowerCase()));
+      const kept = current.filter((address) => available.has(address.toLowerCase()));
+      const next = new Map<string, Address>();
+      next.set(defaultBase.toLowerCase(), defaultBase);
+      for (const address of kept) next.set(address.toLowerCase(), address);
+      // Seed WETH only when the selection is otherwise empty — i.e. on the
+      // first run for this chain/strategy/target combo. If the user later
+      // explicitly removes WETH, this effect won't re-inject it on the next
+      // dep change because `kept` will already include the user's choices.
+      if (current.length === 0) {
+        const weth = defaultAssetOptions.find((a) => a.symbol === 'WETH')?.address;
+        if (weth) next.set(weth.toLowerCase(), weth);
+      }
+      return [...next.values()];
+    });
+  }, [defaultAssetOptions, selectedExecutionTarget?.assetToken, strategyType]);
+  const addAssetToUniverse = useCallback(
+    async (value: string) => {
+      setCustomAssetError(null);
+      if (!isTokenAddress(value.trim())) {
+        const message = 'Select common assets above or paste a full token address';
+        setCustomAssetError(message);
+        toast.error(message);
+        return false;
+      }
+      const resolved = resolveDexAssetInput(value, assetUniverseChainId);
+      if (!resolved) {
+        const message = 'Paste a valid full token address';
+        setCustomAssetError(message);
+        toast.error(message);
+        return false;
+      }
+      let assetToAdd = resolved;
+      if (!resolved.known) {
+        if (!operatorApiUrl) {
+          const message = 'Operator API is unavailable, so custom tokens cannot be checked.';
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        }
+        if (!selectedExecutionTarget?.rpcUrl) {
+          const message = 'Execution RPC is unavailable, so custom tokens cannot be checked.';
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        }
+        setCustomAssetChecking(true);
+        try {
+          if (!operatorAuth.getCachedToken()) {
+            await operatorAuth.getToken();
+          }
+          const preflight = await operatorJsonWithAuth<DexAssetPreflightResponse>(
+            operatorApiUrl,
+            '/api/dex/assets/preflight',
+            operatorAuth,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                strategy_type: 'dex',
+                protocol: 'uniswap_v3',
+                chain_id: assetUniverseChainId,
+                rpc_url: selectedExecutionTarget.rpcUrl,
+                token_address: resolved.address,
+                base_asset: baseAssetAddress,
+              }),
+            },
+          );
+          if (!preflight.ok) {
+            const message =
+              preflight.message ??
+              'This token cannot be priced against the selected base asset.';
+            setCustomAssetError(message);
+            toast.error(message);
+            return false;
+          }
+          const symbol = preflight.symbol?.trim() || truncateAddress(preflight.token_address);
+          const name = preflight.name?.trim() || symbol;
+          assetToAdd = {
+            address: preflight.token_address,
+            symbol,
+            name,
+            decimals: preflight.decimals ?? 18,
+            known: preflight.valuation_source === 'chainlink',
+            valuationSource:
+              preflight.valuation_source === 'chainlink' ||
+              preflight.valuation_source === 'uniswap_v3_twap' ||
+              preflight.valuation_source === 'base_asset'
+                ? preflight.valuation_source
+                : 'uniswap_v3_twap',
+            verifiedBaseAsset: baseAssetAddress,
+          };
+          setCustomAssetSelections((current) => {
+            const next = current.filter(
+              (asset) => asset.address.toLowerCase() !== assetToAdd.address.toLowerCase(),
+            );
+            return [...next, assetToAdd];
+          });
+        } catch (err) {
+          const message = readOperatorErrorMessage(err);
+          setCustomAssetError(message);
+          toast.error(message);
+          return false;
+        } finally {
+          setCustomAssetChecking(false);
+        }
+      }
+      setSelectedAssetAddresses((current) => {
+        if (
+          current.some(
+            (address) => address.toLowerCase() === assetToAdd.address.toLowerCase(),
+          )
+        ) {
+          return current;
+        }
+        return [...current, assetToAdd.address];
+      });
+      setManualAssetInput('');
+      toast.success(`${assetToAdd.symbol} added to the asset universe`);
+      return true;
+    },
+    [
+      assetUniverseChainId,
+      baseAssetAddress,
+      operatorApiUrl,
+      operatorAuth,
+      selectedExecutionTarget?.rpcUrl,
+    ],
+  );
+  const removeAssetFromUniverse = useCallback(
+    (address: Address) => {
+      if (address.toLowerCase() === baseAssetAddress.toLowerCase()) return;
+      setSelectedAssetAddresses((current) =>
+        current.filter((asset) => asset.toLowerCase() !== address.toLowerCase()),
+      );
+    },
+    [baseAssetAddress],
+  );
+  useEffect(() => {
+    setSelectedAssetAddresses((current) => {
+      if (
+        current.some(
+          (address) => address.toLowerCase() === baseAssetAddress.toLowerCase(),
+        )
+      ) {
+        return current;
+      }
+      return [baseAssetAddress, ...current];
+    });
+  }, [baseAssetAddress]);
+  const dexAssetUniverse = useMemo(
+    () =>
+      strategyType === 'dex'
+        ? buildDexAssetUniverse({
+            chainId: assetUniverseChainId,
+            baseAsset: baseAssetAddress,
+            selectedAssets: selectedAssetAddresses,
+            assetSelections: assetOptions,
+          })
+        : undefined,
+    [assetOptions, assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, strategyType],
   );
   const hasEnabledExecutionTarget =
     selectedPack.executionMode !== 'single-chain' ||
@@ -1537,15 +1812,6 @@ export default function ProvisionPage() {
     ],
   );
 
-  const operatorApiUrl = useMemo(
-    () =>
-      getOperatorApiUrlForBlueprint(
-        selectedBlueprint?.id ?? latestDeployment?.blueprintType,
-      ),
-    [latestDeployment?.blueprintType, selectedBlueprint?.id],
-  );
-  const operatorAuth = useOperatorAuth(operatorApiUrl);
-  const { data: operatorMeta } = useOperatorMeta(operatorApiUrl);
   const expectedOperatorKind = useMemo(
     () =>
       getExpectedDeploymentKindForBlueprint(
@@ -1705,6 +1971,7 @@ export default function ProvisionPage() {
             researchCron: effectiveResearchCron,
             conversationEnabled,
             researchEnabled,
+            assetUniverse: dexAssetUniverse,
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
@@ -2171,6 +2438,7 @@ export default function ProvisionPage() {
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
+      assetUniverse: dexAssetUniverse,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
@@ -2242,7 +2510,9 @@ export default function ProvisionPage() {
       riskParams: '{}',
       vaultAddress: executionConfig?.provisionVaultAddress ?? zeroAddress,
       assetAddress:
-        executionConfig?.assetAddress ??
+        strategyType === 'dex'
+          ? baseAssetAddress
+          : executionConfig?.assetAddress ??
         ((import.meta.env.VITE_USDC_ADDRESS ??
           '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       depositors: vaultSigners.length > 0 ? vaultSigners : [],
@@ -2397,13 +2667,17 @@ export default function ProvisionPage() {
       researchCron: effectiveResearchCron,
       conversationEnabled,
       researchEnabled,
+      assetUniverse: dexAssetUniverse,
       effectiveCron,
       validatorServiceIds: instanceValidatorIds,
       vaultSigners: instanceVaultSigners,
       collateralBps,
       targetChainId: targetChain.id,
-      assetAddress: (import.meta.env.VITE_USDC_ADDRESS ??
-        '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address,
+      assetAddress:
+        strategyType === 'dex'
+          ? baseAssetAddress
+          : ((import.meta.env.VITE_USDC_ADDRESS ??
+              '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
       blueprintDefaults: bp.defaults,
       validationTrust,
     });
@@ -3141,6 +3415,16 @@ export default function ProvisionPage() {
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
             strategyExecutionNotice={strategyExecutionNotice}
+            assetOptions={assetOptions}
+            baseAssetAddress={baseAssetAddress}
+            setBaseAssetAddress={setBaseAssetAddress}
+            selectedAssetAddresses={selectedAssetAddresses}
+            addAssetToUniverse={addAssetToUniverse}
+            removeAssetFromUniverse={removeAssetFromUniverse}
+            manualAssetInput={manualAssetInput}
+            setManualAssetInput={setManualAssetInput}
+            customAssetChecking={customAssetChecking}
+            customAssetError={customAssetError}
             collateralCapPct={collateralCapPct}
             setCollateralCapPct={setCollateralCapPct}
             canNext={canNext ?? false}

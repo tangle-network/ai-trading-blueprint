@@ -1,4 +1,5 @@
-use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
+// Compat layer for the sibling repo's removed per-run history surface. See
+// crate::workflow_compat for the rationale + long-term path.
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
+use trading_blueprint_lib::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
 
@@ -42,6 +44,9 @@ struct LiveTerminalSessionSummary {
     title: String,
 }
 
+use trading_blueprint_lib::asset_preflight::{
+    DexAssetPreflightRequest, DexAssetPreflightResponse, preflight_dex_asset,
+};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 #[derive(Deserialize)]
@@ -583,6 +588,7 @@ pub fn build_operator_router() -> Router {
         // Session auth (delegates to sandbox-runtime's session_auth)
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
+        .route("/api/dex/assets/preflight", post(preflight_dex_asset_route))
         // Bot management
         .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/{bot_id}", get(get_bot))
@@ -708,6 +714,47 @@ async fn create_session(
         )
     })?;
     Ok((StatusCode::OK, Json(value)))
+}
+
+async fn preflight_dex_asset_route(
+    SessionAuth(caller): SessionAuth,
+    Json(request): Json<DexAssetPreflightRequest>,
+) -> ApiResult<DexAssetPreflightResponse> {
+    // Per-session rate limit. The endpoint dispatches 1-3 RPC calls per fee
+    // tier, so an unrate-limited session can drive a relay loop against any
+    // allowlisted RPC. 30/min default; env-tunable.
+    if let Err(retry_after) = crate::preflight_limiter::preflight_limiter().check(&caller) {
+        let secs = retry_after.as_secs().max(1);
+        return Err(ApiError::message(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("preflight rate limit exceeded; retry after {secs}s"),
+        ));
+    }
+
+    preflight_dex_asset(request).await.map(Json).map_err(|err| {
+        let status = classify_preflight_error(&err);
+        ApiError::message(status, err)
+    })
+}
+
+/// Map `preflight_dex_asset` string errors to status codes. RPC-side /
+/// infra failures → 5xx; everything else stays 400 so a caller-supplied
+/// bad input doesn't masquerade as a server fault.
+fn classify_preflight_error(err: &str) -> StatusCode {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("rpc unreachable")
+        || lower.contains("rpc error")
+        || lower.contains("connection")
+        || lower.contains("timeout")
+        || lower.contains("decode")
+        || lower.contains("network")
+    {
+        return StatusCode::BAD_GATEWAY;
+    }
+    if lower.contains("no allowlisted rpc") || lower.contains("rpc is not configured") {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    StatusCode::BAD_REQUEST
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
@@ -1014,6 +1061,13 @@ async fn list_bots(
 
     // Exact match by on-chain call_id + service_id (most reliable lookup)
     if let (Some(call_id), Some(service_id)) = (query.call_id, query.service_id) {
+        if call_id == 0 {
+            return Err(ApiError::conflict(
+                "call_id=0 is not a unique bot identity; use bot_id or sandbox_id instead"
+                    .to_string(),
+            ));
+        }
+
         let matches = state::bot_lookup_candidates_by_call_id(service_id, call_id)
             .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -1210,7 +1264,7 @@ fn replayable_run_for_session(
     }
 
     let run =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
             .into_iter()
             .find(|run| run.session_id.as_deref() == Some(session_id));
@@ -1265,7 +1319,7 @@ fn run_transcript_fallback_response(
     query: &TranscriptMessageQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
-        ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run_transcript(&run.run_id)
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let messages = match transcript {
         Some(record) => record.messages,
@@ -1324,7 +1378,7 @@ async fn list_bot_runs(
     let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
 
     let mut runs =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Some(cursor) = cursor.as_ref() {
@@ -1353,7 +1407,7 @@ async fn get_bot_run(
     let workflow_ids = workflow_ids_for_bot(&bot)
         .into_iter()
         .collect::<HashSet<_>>();
-    let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
+    let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
@@ -1588,11 +1642,8 @@ async fn run_now(
             )
         })?;
 
-    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
-        workflow_id,
-        Some(entry.target_sandbox_id.as_str()),
-    )
-    .map_err(map_run_now_error)?;
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
+        .map_err(map_run_now_error)?;
 
     let accepted_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1639,7 +1690,7 @@ async fn run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
+                                trading_blueprint_lib::workflow_compat::apply_workflow_failure(
                                     e, failed_at,
                                 );
                             })
@@ -2013,18 +2064,17 @@ async fn send_chat_message(
             // Safe: conv_file and toc_entry are server-generated slugs, not user input.
             let toc_update_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
                 sidecar_url: sandbox.sidecar_url.clone(),
-                command: format!(
-                    r#"node -e "
+                command: r#"node -e "
 const fs=require('fs'),p='/home/agent/memory/toc.md';
-try{{
+try{
   let t=fs.readFileSync(p,'utf8');
-  if(!t.includes(process.env.CONV_FILE)){{
+  if(!t.includes(process.env.CONV_FILE)){
     t=t.replace('## Conversations','## Conversations\n'+process.env.TOC_ENTRY);
     fs.writeFileSync(p,t);
-  }}
-}}catch(e){{/* toc.md not yet created, skip */}}"
-"#,
-                ),
+  }
+}catch(e){/* toc.md not yet created, skip */}"
+"#
+                .to_string(),
                 cwd: String::new(),
                 env_json: serde_json::json!({"CONV_FILE": conv_file, "TOC_ENTRY": toc_entry})
                     .to_string(),
@@ -3755,11 +3805,8 @@ async fn debug_run_now(
             )
         })?;
 
-    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
-        workflow_id,
-        Some(entry.target_sandbox_id.as_str()),
-    )
-    .map_err(map_run_now_error)?;
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
+        .map_err(map_run_now_error)?;
 
     let accepted_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3804,7 +3851,7 @@ async fn debug_run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
+                                trading_blueprint_lib::workflow_compat::apply_workflow_failure(
                                     e, failed_at,
                                 );
                             })
@@ -4000,6 +4047,13 @@ async fn list_provisions() -> Result<Json<ProvisionListResponse>, (StatusCode, S
 async fn get_provision(
     Path(call_id): Path<u64>,
 ) -> Result<Json<ProvisionProgressResponse>, (StatusCode, String)> {
+    if call_id == 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "call_id=0 is not a unique provision identity".to_string(),
+        ));
+    }
+
     let progress = sandbox_runtime::provision_progress::get_provision(call_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| {
@@ -4083,6 +4137,48 @@ mod tests {
         assert!(json["total"].is_number());
         assert!(json["limit"].is_number());
         assert!(json["offset"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_zero_call_id_lookup_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/bots?call_id=0&service_id=1")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_zero_call_id_provision_lookup_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/provisions/0")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -4398,6 +4494,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
         let _ = store.insert(state::bot_key("wd-bot"), bot);
 
@@ -4486,6 +4584,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
         let _ = state::bots()
             .expect("bots store")
@@ -4589,6 +4689,7 @@ mod tests {
             extra_ports: std::collections::HashMap::new(),
             ssh_login_user: None,
             ssh_authorized_keys: Vec::new(),
+            capabilities_json: String::new(),
             tee_attestation_json: None,
         };
         // Ignore flush errors — the in-memory data is what matters for
@@ -5141,7 +5242,7 @@ mod tests {
         let portfolio = map_trading_api_portfolio(payload).expect("portfolio should parse");
 
         assert_eq!(portfolio.total_value_usd, Some(2220.1));
-        assert_eq!(portfolio.has_unpriced_positions, false);
+        assert!(!portfolio.has_unpriced_positions);
         assert_eq!(
             portfolio.positions[0].valuation_status,
             trading_runtime::types::ValuationStatus::Priced

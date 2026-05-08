@@ -27,6 +27,15 @@ sol! {
         }
         function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
 
+        struct ExactInputParams {
+            bytes path;
+            address recipient;
+            uint256 deadline;
+            uint256 amountIn;
+            uint256 amountOutMinimum;
+        }
+        function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
+
         struct ExactOutputSingleParams {
             address tokenIn;
             address tokenOut;
@@ -82,6 +91,14 @@ struct ExactInputSingleArgs {
     deadline: u64,
 }
 
+struct ExactInputArgs {
+    path: Bytes,
+    amount_in: U256,
+    amount_out_min: U256,
+    recipient: Address,
+    deadline: u64,
+}
+
 struct ExactOutputSingleArgs {
     token_in: Address,
     token_out: Address,
@@ -122,6 +139,20 @@ impl UniswapV3Adapter {
         Bytes::from(call.abi_encode())
     }
 
+    /// Encode an exactInput call with an explicit Uniswap path.
+    fn encode_exact_input(&self, args: ExactInputArgs) -> Bytes {
+        let call = ISwapRouter::exactInputCall {
+            params: ISwapRouter::ExactInputParams {
+                path: args.path,
+                recipient: args.recipient,
+                deadline: U256::from(args.deadline),
+                amountIn: args.amount_in,
+                amountOutMinimum: args.amount_out_min,
+            },
+        };
+        Bytes::from(call.abi_encode())
+    }
+
     /// Encode an exactOutputSingle call.
     fn encode_exact_output_single(&self, args: ExactOutputSingleArgs) -> Bytes {
         let call = ISwapRouter::exactOutputSingleCall {
@@ -138,6 +169,65 @@ impl UniswapV3Adapter {
         };
         Bytes::from(call.abi_encode())
     }
+}
+
+fn route_tokens(extra: &serde_json::Value) -> Option<Vec<Address>> {
+    let values = extra
+        .get("route_tokens")
+        .or_else(|| extra.get("route"))
+        .and_then(serde_json::Value::as_array)?;
+    let tokens = values
+        .iter()
+        .map(|value| value.as_str()?.parse::<Address>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    (tokens.len() >= 2).then_some(tokens)
+}
+
+fn route_fee_tiers(extra: &serde_json::Value, hop_count: usize) -> Result<Vec<u32>, TradingError> {
+    let Some(values) = extra.get("fee_tiers").and_then(serde_json::Value::as_array) else {
+        return Err(TradingError::AdapterError {
+            protocol: "uniswap_v3".into(),
+            message: "fee_tiers is required when route_tokens is provided".into(),
+        });
+    };
+
+    if values.len() != hop_count {
+        return Err(TradingError::AdapterError {
+            protocol: "uniswap_v3".into(),
+            message: format!("fee_tiers must contain exactly {hop_count} entries"),
+        });
+    }
+
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let fee = value.as_u64().ok_or_else(|| TradingError::AdapterError {
+                protocol: "uniswap_v3".into(),
+                message: format!("fee_tiers[{index}] must be a number"),
+            })?;
+            if fee > 0xFF_FFFF {
+                return Err(TradingError::AdapterError {
+                    protocol: "uniswap_v3".into(),
+                    message: format!("fee_tiers[{index}] exceeds uint24"),
+                });
+            }
+            Ok(fee as u32)
+        })
+        .collect()
+}
+
+fn encode_uniswap_path(tokens: &[Address], fee_tiers: &[u32]) -> Bytes {
+    let mut path = Vec::with_capacity((tokens.len() * 20) + (fee_tiers.len() * 3));
+    for (index, token) in tokens.iter().enumerate() {
+        path.extend_from_slice(token.as_slice());
+        if let Some(fee) = fee_tiers.get(index) {
+            path.push(((fee >> 16) & 0xff) as u8);
+            path.push(((fee >> 8) & 0xff) as u8);
+            path.push((fee & 0xff) as u8);
+        }
+    }
+    Bytes::from(path)
 }
 
 impl Default for UniswapV3Adapter {
@@ -173,15 +263,35 @@ impl ProtocolAdapter for UniswapV3Adapter {
 
         match params.action {
             Action::Swap => {
-                let calldata = self.encode_exact_input_single(ExactInputSingleArgs {
-                    token_in: params.token_in,
-                    token_out: params.token_out,
-                    amount_in: params.amount,
-                    amount_out_min: params.min_output,
-                    fee_tier,
-                    recipient: params.vault_address,
-                    deadline,
-                });
+                let calldata = if let Some(tokens) = route_tokens(&params.extra) {
+                    if tokens.first() != Some(&params.token_in)
+                        || tokens.last() != Some(&params.token_out)
+                    {
+                        return Err(TradingError::AdapterError {
+                            protocol: "uniswap_v3".into(),
+                            message: "route_tokens must start with token_in and end with token_out"
+                                .into(),
+                        });
+                    }
+                    let fee_tiers = route_fee_tiers(&params.extra, tokens.len() - 1)?;
+                    self.encode_exact_input(ExactInputArgs {
+                        path: encode_uniswap_path(&tokens, &fee_tiers),
+                        amount_in: params.amount,
+                        amount_out_min: params.min_output,
+                        recipient: params.vault_address,
+                        deadline,
+                    })
+                } else {
+                    self.encode_exact_input_single(ExactInputSingleArgs {
+                        token_in: params.token_in,
+                        token_out: params.token_out,
+                        amount_in: params.amount,
+                        amount_out_min: params.min_output,
+                        fee_tier,
+                        recipient: params.vault_address,
+                        deadline,
+                    })
+                };
                 Ok(EncodedAction {
                     target: self.router_address,
                     calldata,
@@ -234,6 +344,7 @@ mod tests {
 
     const TOKEN_A: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_B: &str = "0x0000000000000000000000000000000000000002";
+    const TOKEN_C: &str = "0x0000000000000000000000000000000000000003";
     const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
@@ -311,6 +422,89 @@ mod tests {
         };
         let result = adapter.encode_action(&params);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_missing_fee_tiers() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
+    }
+
+    #[test]
+    fn test_explicit_route_accepts_matching_fee_tiers() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500, 3000],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params).unwrap();
+
+        assert!(result.calldata.len() > 4);
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_wrong_fee_tier_count() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_non_numeric_fee_tier() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500, "3000"],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
     }
 
     #[test]

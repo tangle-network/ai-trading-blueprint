@@ -11,7 +11,7 @@ import type {
 import { protocolToVenue } from '~/lib/types/trade';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
-import { parseTradeDisplayAmount, resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
+import { parseTradeDisplayAmount, resolveAssetDisplay, type TokenMetadata } from '~/lib/tradeTokenMetadata';
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
@@ -247,14 +247,19 @@ function mapPredictionMetadata(trade: ApiTrade): PredictionTradeMetadata | undef
   };
 }
 
-export function mapApiTrade(trade: ApiTrade, botName: string, fallbackChainId?: number): Trade {
+export function mapApiTrade(
+  trade: ApiTrade,
+  botName: string,
+  fallbackChainId?: number,
+  assetMetadata: TokenMetadata[] = [],
+): Trade {
   const validation = mapApiValidation(trade);
   const execution = mapExecutionDetails(trade);
   const predictionMetadata = mapPredictionMetadata(trade);
   const amountOut = deriveTradeAmountOut(trade);
   const chainId = trade.validation?.responses?.[0]?.chain_id ?? fallbackChainId;
-  const assetIn = resolveAssetDisplay(trade.token_in, chainId);
-  const assetOut = resolveAssetDisplay(trade.token_out, chainId);
+  const assetIn = resolveAssetDisplay(trade.token_in, chainId, assetMetadata);
+  const assetOut = resolveAssetDisplay(trade.token_out, chainId, assetMetadata);
 
   return {
     id: trade.id,
@@ -267,7 +272,7 @@ export function mapApiTrade(trade: ApiTrade, botName: string, fallbackChainId?: 
     tokenOut: assetOut.symbol,
     rawTokenIn: trade.token_in,
     rawTokenOut: trade.token_out,
-    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in, chainId),
+    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in, chainId, assetMetadata),
     amountOut,
     priceUsd: getTradePriceUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
@@ -311,6 +316,7 @@ interface BotApiQueryOptions {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   chainId?: number;
+  assetMetadata?: TokenMetadata[];
 }
 
 export function useBotTrades(
@@ -325,14 +331,14 @@ export function useBotTrades(
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, auth.authCacheKey],
+    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
-      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId, options.assetMetadata));
     },
     staleTime: 15_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });
@@ -349,15 +355,15 @@ export function useBotRecentValidations(
   const enabled = options.enabled ?? true;
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, options.chainId, auth.authCacheKey],
+    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=5`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
-      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId));
+      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId, options.assetMetadata));
     },
     refetchInterval: options.refetchInterval ?? 5_000,
     staleTime: 3_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     retry: 1,
     retryDelay: 3_000,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
@@ -371,11 +377,11 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
   const enabled = options.enabled ?? true;
 
   return useQuery<Portfolio | null>({
-    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, options.chainId, auth.authCacheKey],
+    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/portfolio/state');
       const data = await fetchOperatorBotApi<RawPortfolioState>(apiUrl, auth, path);
-      return mapApiPortfolioState(data, botId, options.chainId);
+      return mapApiPortfolioState(data, botId, options.chainId, options.assetMetadata);
     },
     staleTime: 10_000,
     gcTime: 60_000,

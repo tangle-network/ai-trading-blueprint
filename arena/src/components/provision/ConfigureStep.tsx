@@ -1,6 +1,9 @@
 import { Button, Card, CardContent, Input } from '@tangle-network/blueprint-ui/components';
+import { Plus, X } from 'lucide-react';
 import type { Address } from 'viem';
+import type { DexAssetSelection } from '~/lib/assetUniverse';
 import { strategyPacks, type StrategyPackDef } from '~/lib/blueprints';
+import { truncateAddress } from '~/lib/format';
 import type { ServiceInfo } from '~/routes/provision/types';
 
 const CLOB_COLLATERAL_STRATEGY_IDS = new Set(['volatility', 'mm', 'multi']);
@@ -31,6 +34,16 @@ interface ConfigureStepProps {
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
   strategyExecutionNotice?: string | null;
+  assetOptions?: DexAssetSelection[];
+  baseAssetAddress?: Address;
+  setBaseAssetAddress?: (v: Address) => void;
+  selectedAssetAddresses?: Address[];
+  addAssetToUniverse?: (value: string) => boolean | Promise<boolean>;
+  removeAssetFromUniverse?: (address: Address) => void;
+  manualAssetInput?: string;
+  setManualAssetInput?: (v: string) => void;
+  customAssetChecking?: boolean;
+  customAssetError?: string | null;
   collateralCapPct: string;
   setCollateralCapPct: (v: string) => void;
   canNext: boolean;
@@ -51,12 +64,42 @@ export function ConfigureStep({
   selectedOperators,
   setShowAdvanced,
   strategyExecutionNotice,
+  assetOptions = [],
+  baseAssetAddress,
+  setBaseAssetAddress = () => {},
+  selectedAssetAddresses = [],
+  addAssetToUniverse = () => false,
+  removeAssetFromUniverse = () => {},
+  manualAssetInput = '',
+  setManualAssetInput = () => {},
+  customAssetChecking = false,
+  customAssetError = null,
   collateralCapPct,
   setCollateralCapPct,
   canNext,
   goNext,
 }: ConfigureStepProps) {
   const supportsClobCollateral = strategySupportsClobCollateral(strategyType, selectedPack);
+  const isDexStrategy = strategyType === 'dex';
+  const effectiveBaseAssetAddress =
+    baseAssetAddress ?? selectedAssetAddresses[0] ?? assetOptions[0]?.address;
+  const selectedAssetSet = new Set(
+    selectedAssetAddresses.map((address) => address.toLowerCase()),
+  );
+  const selectedAssets = selectedAssetAddresses
+    .map((address) => {
+      const option = assetOptions.find(
+        (asset) => asset.address.toLowerCase() === address.toLowerCase(),
+      );
+      return option ?? {
+        address,
+        symbol: truncateAddress(address),
+        name: 'Custom asset',
+        decimals: 18,
+        known: false,
+      };
+    });
+  const baseAssetChoices = selectedAssets;
   return (
     <>
       <Card>
@@ -72,6 +115,153 @@ export function ConfigureStep({
           />
         </CardContent>
       </Card>
+
+      {isDexStrategy && (
+        <Card>
+          <CardContent className="pt-5 pb-5 space-y-4">
+            <div>
+              <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
+                Asset Universe
+              </span>
+              <p className="text-xs text-arena-elements-textTertiary mt-1">
+                The bot can swap and hold only these selected Uniswap assets. Custom assets must pass ERC20 and valuation checks.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block">
+                Allowed Assets
+              </span>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {assetOptions.map((asset) => {
+                  const selected = selectedAssetSet.has(asset.address.toLowerCase());
+                  const isBase =
+                    effectiveBaseAssetAddress != null &&
+                    asset.address.toLowerCase() === effectiveBaseAssetAddress.toLowerCase();
+                  return (
+                    <button
+                      key={asset.address}
+                      type="button"
+                      onClick={() => {
+                        if (selected) {
+                          removeAssetFromUniverse(asset.address);
+                        } else {
+                          addAssetToUniverse(asset.address);
+                        }
+                      }}
+                      className={`text-left rounded-md border px-3 py-2 transition-colors ${
+                        selected
+                          ? 'border-violet-500/50 bg-violet-500/10'
+                          : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 hover:border-arena-elements-borderColorActive/40'
+                      }`}
+                    >
+                      <span className="block text-sm font-medium text-arena-elements-textPrimary">
+                        {asset.symbol}
+                      </span>
+                      <span className="block truncate text-xs text-arena-elements-textTertiary">
+                        {isBase ? 'Base asset' : asset.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {selectedAssets.map((asset) => {
+                  const isBase =
+                    effectiveBaseAssetAddress != null &&
+                    asset.address.toLowerCase() === effectiveBaseAssetAddress.toLowerCase();
+                  return (
+                    <span
+                      key={asset.address}
+                      className="inline-flex items-center gap-2 rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-2.5 py-1.5 text-sm"
+                    >
+                      <span className="font-medium text-arena-elements-textPrimary">
+                        {asset.symbol}
+                      </span>
+                      <span
+                        className={
+                          asset.valuationSource === 'uniswap_v3_twap'
+                            ? 'text-xs text-amber-600 dark:text-amber-400'
+                            : 'text-xs text-arena-elements-textTertiary'
+                        }
+                        title={
+                          asset.valuationSource === 'uniswap_v3_twap'
+                            ? 'No Chainlink feed: priced from a Uniswap V3 TWAP. Higher oracle-manipulation risk than Chainlink-priced assets — small custom-asset positions only.'
+                            : undefined
+                        }
+                      >
+                        {asset.known || asset.valuationSource === 'chainlink'
+                          ? 'Chainlink ready'
+                          : asset.valuationSource === 'uniswap_v3_twap'
+                            ? '⚠ TWAP only (higher risk)'
+                            : 'Needs V3 TWAP check'}
+                      </span>
+                      {!isBase && (
+                        <button
+                          type="button"
+                          onClick={() => removeAssetFromUniverse(asset.address)}
+                          className="text-arena-elements-textTertiary hover:text-arena-elements-textPrimary"
+                          aria-label={`Remove ${asset.symbol}`}
+                          title={`Remove ${asset.symbol}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input
+                  placeholder="Paste full token address"
+                  value={manualAssetInput}
+                  onChange={(event) => setManualAssetInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void addAssetToUniverse(manualAssetInput);
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={customAssetChecking}
+                  onClick={() => void addAssetToUniverse(manualAssetInput)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  {customAssetChecking ? 'Checking' : 'Add Custom'}
+                </Button>
+              </div>
+              {customAssetError && (
+                <p className="text-xs text-red-500">{customAssetError}</p>
+              )}
+            </div>
+
+            <label className="block">
+              <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary block mb-1.5">
+                Base Asset
+              </span>
+              <select
+                value={effectiveBaseAssetAddress ?? ''}
+                onChange={(event) => setBaseAssetAddress(event.target.value as Address)}
+                disabled={baseAssetChoices.length === 0}
+                className="w-full rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 px-3 py-2 text-sm text-arena-elements-textPrimary disabled:opacity-60"
+              >
+                {baseAssetChoices.map((asset) => (
+                  <option key={asset.address} value={asset.address}>
+                    {asset.symbol} - {asset.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-arena-elements-textTertiary mt-1.5 block">
+                Choose the vault/deposit asset from the selected allowed assets.
+              </span>
+            </label>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="pt-5 pb-5 space-y-4">
