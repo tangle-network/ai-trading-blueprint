@@ -39,7 +39,7 @@ describe('resolveBotId', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await resolveBotId('http://operator.test', {
-      callId: 0,
+      callId: 7,
       serviceId: 1,
     });
 
@@ -189,31 +189,20 @@ describe('resolveBotId', () => {
     expect(result).toEqual({ botId: 'fresh-bot' });
   });
 
-  it('trusts provision metadata when a local reset reuses call id with a new sandbox', async () => {
+  it('does not trust provision metadata for non-unique zero call ids', async () => {
     const fetchMock = vi.fn(async (input: string) => {
-      if (input === 'http://operator.test/api/provisions/0') {
+      if (input === 'http://operator.test/api/bots?limit=200') {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            sandbox_id: 'sandbox-fresh',
-            metadata: {
-              bot_id: 'fresh-bot',
+            bots: [{
+              id: 'fresh-bot',
+              sandbox_id: 'sandbox-fresh',
+              sandbox_exists: true,
+              call_id: 0,
               service_id: 1,
-            },
-          }),
-        };
-      }
-      if (input === 'http://operator.test/api/bots/fresh-bot') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            id: 'fresh-bot',
-            sandbox_id: 'sandbox-fresh',
-            sandbox_exists: true,
-            call_id: 0,
-            service_id: 1,
+            }],
           }),
         };
       }
@@ -224,10 +213,17 @@ describe('resolveBotId', () => {
     const result = await resolveBotId('http://operator.test', {
       callId: 0,
       serviceId: 1,
-      sandboxId: 'sandbox-from-before-reset',
     });
 
-    expect(result).toEqual({ botId: 'fresh-bot' });
+    expect(result).toEqual({
+      error: 'Bot not found on operator. It may still be registering.',
+      code: 'not_found',
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://operator.test/api/provisions/0',
+      expect.anything(),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces backend conflict responses from service/call lookup', async () => {
@@ -266,28 +262,6 @@ describe('resolveBotId', () => {
 
   it('does not return a service/call fallback bot when the sandbox hint differs', async () => {
     const fetchMock = vi.fn(async (input: string) => {
-      if (input === 'http://operator.test/api/provisions/0') {
-        return {
-          ok: false,
-          status: 404,
-          text: async () => 'missing',
-        };
-      }
-      if (input === 'http://operator.test/api/bots?call_id=0&service_id=1') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            bots: [{
-              id: 'old-yield-bot',
-              sandbox_id: 'sandbox-old',
-              sandbox_exists: true,
-              call_id: 0,
-              service_id: 1,
-            }],
-          }),
-        };
-      }
       if (input === 'http://operator.test/api/bots?limit=200') {
         return {
           ok: true,
@@ -314,5 +288,9 @@ describe('resolveBotId', () => {
     });
 
     expect(result).toEqual({ botId: 'new-dex-bot' });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://operator.test/api/bots?call_id=0&service_id=1',
+      expect.anything(),
+    );
   });
 });

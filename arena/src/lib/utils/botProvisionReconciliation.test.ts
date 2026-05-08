@@ -90,6 +90,15 @@ describe('bot/provision reconciliation', () => {
     ).toBe(true);
   });
 
+  it('does not match fleet bots by non-unique zero call ids', () => {
+    expect(
+      doesProvisionMatchBot(
+        makeProvision({ botId: undefined, sandboxId: undefined, serviceId: 7, callId: 0 }),
+        makeBot({ id: 'bot-3', serviceId: 7, callId: 0 }),
+      ),
+    ).toBe(false);
+  });
+
   it('partitions matched provisions away from unresolved provisioning work', () => {
     const matchedProvision = makeProvision({
       id: 'prov-matched',
