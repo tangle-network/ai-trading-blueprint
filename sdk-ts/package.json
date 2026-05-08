@@ -1,0 +1,39 @@
+{
+  "name": "@ai-trading-blueprint/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed TypeScript SDK that collapses the TradingVault envelope-v3 surface (13 execute*Envelope variants) into a single ergonomic vault API: swap / lend / borrow / repay / withdraw.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.46.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}
