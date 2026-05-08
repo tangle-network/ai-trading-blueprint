@@ -155,6 +155,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event MaxCollateralBpsUpdated(uint256 bps);
     event ValuationAdapterUpdated(address indexed token, address indexed adapter);
     event InKindRedeemed(address indexed caller, address indexed receiver, address indexed owner, uint256 shares);
+    /// @notice Emitted when `_assertSlippageCap` skipped enforcement because a valuator
+    ///         reverted transiently (e.g. TWAP deviation guard tripped). The
+    ///         validator-signed minOutput remains the gate — this signals operators
+    ///         that the per-vault `maxSlippageBps` cap is temporarily bypassed.
+    ///      Off-chain NAV-staleness signal lives in `isNavSafe()` (no event from
+    ///      `positionsValue` because that path is `view` per ERC-4626).
+    event SlippageCheckSkipped(address indexed token, string reason);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -682,11 +689,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     ///      and reverts when the implied slippage exceeds the policy cap. Skips when
     ///      the cap is 0 (disabled) — slippage is then enforced solely by the
     ///      validator-signed minOutputPerInput rate baked into the envelope.
-    ///      Reverts on missing valuators so a slippage-capped vault cannot trade
-    ///      tokens it cannot price.
+    ///      Reverts on missing valuator config (genuine bug, fail loud). On
+    ///      transient adapter reverts (e.g. TWAP `SpotTwapDeviation` during
+    ///      volatility) the cap is SKIPPED with a `SlippageCheckSkipped` event —
+    ///      the validator-signed minOutput remains the authoritative gate so a
+    ///      single misbehaving oracle pair cannot lock unrelated swaps. Pair
+    ///      this with `setMaxSlippage(vault, 0)` if a strict cap is required.
     function _assertSlippageCap(address tokenIn, uint256 amountIn, address tokenOut, uint256 signedMinOutput)
         internal
-        view
     {
         // unused-return: only `maxSlippageBps` matters here; the other policy
         // fields are inspected on their own dedicated paths (leverageCap in the
@@ -697,8 +707,16 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (amountIn == 0 || signedMinOutput == 0) return;
 
         address depAsset = asset();
-        uint256 inputValue = _valueInDepositAsset(tokenIn, amountIn, depAsset);
-        uint256 outputValue = _valueInDepositAsset(tokenOut, signedMinOutput, depAsset);
+        (uint256 inputValue, bool inPriced) = _tryValueInDepositAsset(tokenIn, amountIn, depAsset);
+        if (!inPriced) {
+            emit SlippageCheckSkipped(tokenIn, "input valuator transient failure");
+            return;
+        }
+        (uint256 outputValue, bool outPriced) = _tryValueInDepositAsset(tokenOut, signedMinOutput, depAsset);
+        if (!outPriced) {
+            emit SlippageCheckSkipped(tokenOut, "output valuator transient failure");
+            return;
+        }
 
         // Slippage cap: outputValue >= inputValue * (10000 - maxSlippageBps) / 10000
         if (outputValue * 10000 < inputValue * (10000 - maxSlippageBps)) {
@@ -707,10 +725,31 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @dev Helper for `_assertSlippageCap`. Returns `amount` of `token` denominated
-    ///      in the vault's deposit asset. Reverts when no valuator is configured for
-    ///      a non-deposit-asset token — H-3 requires both sides of a slippage-capped
-    ///      trade to be priceable.
+    /// @dev Soft-priced helper. Returns `(value, priced)`. `priced=false` indicates
+    ///      a transient adapter failure (e.g. TWAP deviation guard, low liquidity).
+    ///      Missing-config / unsupported-pair still reverts loudly — those are
+    ///      permanent setup errors and should never be silently skipped.
+    ///      Used by `_assertSlippageCap` (skip-with-event on transient) and
+    ///      `positionsValue` (conservative-NAV-skip on transient).
+    function _tryValueInDepositAsset(address token, uint256 amount, address depAsset)
+        internal
+        view
+        returns (uint256 value, bool priced)
+    {
+        if (token == depAsset) return (amount, true);
+        IAssetValuator adapter = valuationAdapters[token];
+        if (address(adapter) == address(0) || !adapter.isSupported(token, depAsset)) {
+            revert UnsupportedValuationAsset(token, depAsset);
+        }
+        try adapter.valueInAsset(token, amount, depAsset) returns (uint256 v) {
+            return (v, true);
+        } catch {
+            return (0, false);
+        }
+    }
+
+    /// @dev Strict variant. Reverts on transient adapter failures. Reserved for
+    ///      callers where graceful degradation is unsafe (none on the H-3 path).
     function _valueInDepositAsset(address token, uint256 amount, address depAsset) internal view returns (uint256) {
         if (token == depAsset) return amount;
         IAssetValuator adapter = valuationAdapters[token];
@@ -1349,12 +1388,24 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             uint256 bal = IERC20(token).balanceOf(address(this));
             if (bal == 0) continue;
             IAssetValuator adapter = valuationAdapters[token];
+            // Missing-config / unsupported-pair is a permanent setup error;
+            // fail loud so admins notice. (Greenfield: no live vaults today.)
             // slither-disable-next-line calls-loop
             if (address(adapter) == address(0) || !adapter.isSupported(token, depositAsset)) {
                 revert UnsupportedValuationAsset(token, depositAsset);
             }
+            // Transient adapter reverts (TWAP deviation guard, low liquidity)
+            // are tolerated — the position contributes 0 to NAV until the pricing
+            // recovers. This produces a CONSERVATIVE share price (depositors and
+            // withdrawers get the lower bound) and is safer than reverting every
+            // ERC-4626 op until the pool stabilizes. Off-chain monitors should
+            // poll `isNavSafe()` to catch sustained mispricing.
             // slither-disable-next-line calls-loop
-            total += adapter.valueInAsset(token, bal, depositAsset);
+            try adapter.valueInAsset(token, bal, depositAsset) returns (uint256 v) {
+                total += v;
+            } catch {
+                // skip — `_isNavSafe()` will return false for off-chain alerting.
+            }
         }
     }
 
