@@ -260,17 +260,22 @@ contract PolicyEngineTest is Setup {
     // LEVERAGE CAP TESTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_leverageCap_storedButNotEnforcedOnChain() public {
+    /// @notice H-3: leverageCap stored in policy and enforced on-chain by
+    ///         TradingVault._executeHealthFactor at the post-borrow / post-withdraw
+    ///         site. PolicyEngine itself only stores the value; the trading vault
+    ///         is responsible for asserting against Aave health data.
+    function test_leverageCap_storedAndExposed() public {
         _initVault(testVault);
         _setupWhitelists(testVault);
 
         pe.setLeverageCap(testVault, 30000);
         (, uint256 leverageCap,,,) = pe.policies(testVault);
-        assertEq(leverageCap, 30000, "Leverage cap should be stored for off-chain use");
+        assertEq(leverageCap, 30000, "Leverage cap should be stored");
 
-        // Leverage parameter is ignored on-chain — enforced by AI validators off-chain
+        // checkTrade itself does not gate on leverage — the cap binds at the
+        // health-factor executor in TradingVault.
         bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
-        assertTrue(valid, "On-chain validation should pass regardless of leverage value");
+        assertTrue(valid, "checkTrade ignores leverageCap; the vault enforces it");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

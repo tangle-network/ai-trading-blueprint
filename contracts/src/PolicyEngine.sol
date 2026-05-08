@@ -221,8 +221,12 @@ contract PolicyEngine is Ownable2Step {
         emit PolicyUpdated(vault, POLICY_POSITION_LIMIT);
     }
 
-    /// @notice Set the maximum leverage for a vault (advisory — enforced off-chain by AI validators)
-    /// @dev Stored for off-chain tooling and UI display. Not enforced in validateTrade().
+    /// @notice Set the maximum leverage cap for a vault, in BPS (10000 = 1x).
+    /// @dev H-3: enforced on-chain in TradingVault._executeHealthFactor. Computed as
+    ///      totalCollateralBase * 10000 / (totalCollateralBase - totalDebtBase) from the
+    ///      Aave health-factor reading, the cap is checked post-borrow / post-withdraw
+    ///      so any leverage-increasing action that breaks the cap reverts the trade.
+    ///      A 0 cap disables the on-chain check (off-chain validators may still gate).
     function setLeverageCap(address vault, uint256 maxLeverage)
         external
         vaultInitialized(vault)
@@ -248,8 +252,13 @@ contract PolicyEngine is Ownable2Step {
         emit PolicyUpdated(vault, POLICY_RATE_LIMIT);
     }
 
-    /// @notice Set the maximum allowed slippage for a vault (advisory — enforced by TradingVault.minOutput)
-    /// @dev Stored for off-chain tooling. On-chain slippage is enforced by the minOutput check in execute().
+    /// @notice Set the maximum allowed slippage for a vault, in BPS (e.g. 50 = 0.5%).
+    /// @dev H-3: enforced on-chain in TradingVault swap-envelope entry points via
+    ///      `_assertSlippageCap`. The validator-signed minOutput must price out (in
+    ///      deposit-asset units) within `maxSlippageBps` of the input value, where
+    ///      both sides are valued by the vault's per-token IAssetValuator adapters.
+    ///      A 0 cap disables the on-chain check (validator-signed minOutputPerInput
+    ///      remains the only gate).
     function setMaxSlippage(address vault, uint256 bps) external vaultInitialized(vault) onlyVaultAdminOrOwner(vault) {
         policies[vault].maxSlippageBps = bps;
         emit PolicyUpdated(vault, POLICY_MAX_SLIPPAGE);

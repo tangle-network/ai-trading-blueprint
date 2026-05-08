@@ -120,6 +120,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     error DebtDecreaseNotMet(uint256 actual, uint256 required);
     error HealthFactorTooLow(uint256 actual, uint256 required);
     error PositionLimitExceeded(address token, uint256 actual, uint256 limit);
+    error LeverageCapExceeded(uint256 actualBps, uint256 capBps);
+    error SlippageCapExceeded(uint256 actualBps, uint256 capBps);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -674,6 +676,46 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         policyEngine.recordTrade(address(this));
     }
 
+    /// @dev H-3: enforce maxSlippageBps on the validator-signed minOutput. Compares the
+    ///      input value (amountIn of tokenIn, priced in the deposit asset) against the
+    ///      output value (signedMinOutput of tokenOut, priced in the deposit asset)
+    ///      and reverts when the implied slippage exceeds the policy cap. Skips when
+    ///      the cap is 0 (disabled) — slippage is then enforced solely by the
+    ///      validator-signed minOutputPerInput rate baked into the envelope.
+    ///      Reverts on missing valuators so a slippage-capped vault cannot trade
+    ///      tokens it cannot price.
+    function _assertSlippageCap(address tokenIn, uint256 amountIn, address tokenOut, uint256 signedMinOutput)
+        internal
+        view
+    {
+        (,,, uint256 maxSlippageBps,) = policyEngine.policies(address(this));
+        if (maxSlippageBps == 0) return;
+        if (amountIn == 0 || signedMinOutput == 0) return;
+
+        address depAsset = asset();
+        uint256 inputValue = _valueInDepositAsset(tokenIn, amountIn, depAsset);
+        uint256 outputValue = _valueInDepositAsset(tokenOut, signedMinOutput, depAsset);
+
+        // Slippage cap: outputValue >= inputValue * (10000 - maxSlippageBps) / 10000
+        if (outputValue * 10000 < inputValue * (10000 - maxSlippageBps)) {
+            uint256 actualBps = inputValue > outputValue ? (inputValue - outputValue) * 10000 / inputValue : 0;
+            revert SlippageCapExceeded(actualBps, maxSlippageBps);
+        }
+    }
+
+    /// @dev Helper for `_assertSlippageCap`. Returns `amount` of `token` denominated
+    ///      in the vault's deposit asset. Reverts when no valuator is configured for
+    ///      a non-deposit-asset token — H-3 requires both sides of a slippage-capped
+    ///      trade to be priceable.
+    function _valueInDepositAsset(address token, uint256 amount, address depAsset) internal view returns (uint256) {
+        if (token == depAsset) return amount;
+        IAssetValuator adapter = valuationAdapters[token];
+        if (address(adapter) == address(0) || !adapter.isSupported(token, depAsset)) {
+            revert UnsupportedValuationAsset(token, depAsset);
+        }
+        return adapter.valueInAsset(token, amount, depAsset);
+    }
+
     function _checkValidators(
         bytes32 intentHash,
         bytes32 executionHash,
@@ -898,12 +940,31 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkFinalPositionLimit(params.outputToken);
 
         // Aave returns (totalCollateralBase, totalDebtBase, availableBorrowsBase,
-        // currentLiquidationThreshold, ltv, healthFactor); only healthFactor
-        // gates the post-borrow / post-withdraw safety check.
-        // slither-disable-next-line unused-return
-        (,,,,, uint256 healthFactor) = IAavePoolHealth(params.pool).getUserAccountData(params.account);
+        // currentLiquidationThreshold, ltv, healthFactor). healthFactor gates the
+        // post-borrow / post-withdraw safety check; collateral + debt gate the
+        // H-3 leverage-cap enforcement below.
+        (uint256 totalCollateralBase, uint256 totalDebtBase,,,, uint256 healthFactor) =
+            IAavePoolHealth(params.pool).getUserAccountData(params.account);
         if (healthFactor < params.minHealthFactor) {
             revert HealthFactorTooLow(healthFactor, params.minHealthFactor);
+        }
+
+        // H-3: enforce leverageCap on-chain. Leverage is defined as
+        //     totalCollateralBase / equity, where equity = collateral - debt,
+        // expressed in BPS so it lines up with PolicyEngine.leverageCap (10000 = 1x).
+        // A 0 cap disables the check (off-chain validators may still gate).
+        (, uint256 leverageCap,,,) = policyEngine.policies(address(this));
+        if (leverageCap > 0 && totalCollateralBase > 0) {
+            if (totalDebtBase >= totalCollateralBase) {
+                // Debt at or above collateral — undefined / liquidation-imminent;
+                // treat as cap-exceeded with sentinel value.
+                revert LeverageCapExceeded(type(uint256).max, leverageCap);
+            }
+            uint256 equity = totalCollateralBase - totalDebtBase;
+            uint256 leverageBps = totalCollateralBase * 10000 / equity;
+            if (leverageBps > leverageCap) {
+                revert LeverageCapExceeded(leverageBps, leverageCap);
+            }
         }
 
         if (depositAssetReserveBps > 0) {
@@ -1809,6 +1870,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1851,6 +1914,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(uint256(s.amountOutMinimum), reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(tokenIn, uint256(s.amountIn), params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV4SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1890,6 +1955,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAerodromeSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1931,6 +1998,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(s.tokenIn, s.amountIn, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validatePancakeswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
@@ -1970,6 +2039,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (minDy < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(minDy, reqMinOut);
         }
+        // H-3: enforce policy.maxSlippageBps against the signed minOutput.
+        _assertSlippageCap(enf.tokenIn, dx, params.outputToken, params.minOutput);
         // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateCurveStableSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
