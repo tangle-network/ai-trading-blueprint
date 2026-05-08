@@ -7,7 +7,7 @@ description = "Shared trading runtime library — intents, validation, portfolio
 license.workspace = true
 
 [dependencies]
-alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
+alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest", "node-bindings"] }
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
@@ -69,3 +69,6 @@ default = []
 # Exposes test-only helpers (e.g. SecretsBackedKeyProvider::write_bot_file)
 # so sibling crates can seed encrypted-secrets fixtures in their own tests.
 test-utils = []
+# Enables fork-based preflight integration tests that hit a real Ethereum
+# RPC. Off by default; requires `RPC_URL` env var when on.
+preflight-fork-tests = []

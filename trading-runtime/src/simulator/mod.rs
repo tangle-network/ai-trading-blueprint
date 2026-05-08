@@ -6,6 +6,7 @@
 //! - `TenderlySimulator` — rich traces via Tenderly API (when configured)
 
 pub mod eth_call;
+pub mod preflight;
 pub mod risk_analyzer;
 pub mod tenderly;
 

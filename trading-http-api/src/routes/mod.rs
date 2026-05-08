@@ -15,6 +15,7 @@ pub mod learning;
 pub mod market_data;
 pub mod metrics;
 pub mod portfolio;
+pub mod preflight;
 pub mod prometheus;
 pub mod session;
 pub mod solana;
