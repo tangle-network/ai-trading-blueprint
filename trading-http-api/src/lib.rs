@@ -57,11 +57,10 @@ pub struct TradingApiState {
     pub chain_id: Option<u64>,
     /// Polymarket CLOB client (None if not configured).
     pub clob_client: Option<Arc<ClobClient>>,
-    /// Strategy config carried for asset-universe resolution. Default `Null`
-    /// means the supported_assets endpoint falls back to the default-asset
-    /// registry — same behavior as before. The bin should populate this from
-    /// the bot's persisted strategy config so the endpoint reports the actual
-    /// configured universe (audit FIX-6 single-bot/multi-bot parity).
+    /// Strategy config used by the supported-assets endpoint to resolve the
+    /// configured asset universe. Default `Null` falls back to the default
+    /// registry. The bin should populate this from the bot's persisted
+    /// strategy config so the endpoint reports the actual configured universe.
     pub strategy_config: serde_json::Value,
 }
 

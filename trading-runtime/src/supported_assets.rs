@@ -8,10 +8,9 @@ use tracing::warn;
 use crate::aave_v3_registry::market_for_chain;
 use crate::token_metadata::token_metadata_for_chain;
 
-/// Audit FIX-6: per-entry parse error. Surfaces the reason an entry was
-/// rejected so operators can see misconfigs in logs (and a future Prometheus
-/// counter can tag them by `kind`). Replaces the silent `filter_map` that
-/// turned typos into empty universes.
+/// Per-entry parse error. Surfaces the reason an entry was rejected so
+/// operators see misconfigs in logs (and a future Prometheus counter can
+/// tag them by `kind`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupportedAssetParseError {
     MissingAddress,
@@ -129,11 +128,10 @@ fn configured_assets_from_value(
         .or_else(|| asset_universe.and_then(|universe| universe.get("assets")))
         .or_else(|| config.get("supported_assets"))?;
 
-    // Audit FIX-6: track parse rejections so a malformed entry doesn't silently
-    // shrink the universe. If EVERY entry fails to parse we bail with `None`
-    // so callers fall back to the default-asset registry rather than running
-    // a bot with zero supported assets. Each rejection logs a warning naming
-    // the reason — operators see misconfigs in stderr / structured logs.
+    // Track parse rejections so a malformed entry doesn't silently shrink
+    // the universe. If EVERY entry fails, bail with `None` so callers fall
+    // back to the default-asset registry rather than running a bot with
+    // zero supported assets. Each rejection logs a warning with the reason.
     let total_entries = configured.as_array()?.len();
     let mut assets = Vec::new();
     let mut rejected = 0usize;
@@ -171,10 +169,9 @@ fn configured_assets_from_value(
 }
 
 /// Parse a single configured asset entry. Returns a typed error on rejection
-/// rather than `None`, so the caller can log/metric per-entry reasons.
-/// Audit FIX-6: stop silent fallbacks — unknown valuation_adapter strings
-/// are a hard error (was: silent default to ChainlinkUsd, which let a typo
-/// quietly route a custom token through Chainlink and miss the TWAP path).
+/// so the caller can log/metric per-entry reasons. Unknown valuation_adapter
+/// strings are a hard error rather than a silent default — a typo must not
+/// quietly route a custom token through the wrong pricing path.
 pub fn parse_supported_asset(
     value: &Value,
     strategy_type: &str,
@@ -187,10 +184,9 @@ pub fn parse_supported_asset(
         .map(str::trim)
         .ok_or(SupportedAssetParseError::MissingAddress)?;
 
-    // Audit FIX-6: hex-prefix check is not address validation. Anything
-    // starting with `0x` would pass. Use Address::from_str so a malformed
-    // address surfaces here (with the bad input echoed back) instead of
-    // poisoning the universe with a "valid-shaped" garbage entry.
+    // Full address validation, not just a hex-prefix sniff — anything
+    // starting with `0x` would otherwise pass and poison the universe with
+    // a "valid-shaped" garbage entry.
     Address::from_str(address)
         .map_err(|_| SupportedAssetParseError::InvalidAddress(address.to_string()))?;
 
@@ -259,9 +255,8 @@ pub fn parse_supported_asset(
         .or_else(|| token_metadata_for_chain(Some(chain_id), address).map(|token| token.decimals))
         .unwrap_or(18);
 
-    // Audit FIX-6: unknown adapter strings are a hard error. Was: silent
-    // ChainlinkUsd default. Now a typo like "chinlink_usd" surfaces in the
-    // log with the offending string instead of misrouting the token.
+    // Unknown adapter strings are a hard error — a typo like "chinlink_usd"
+    // surfaces here instead of being silently routed through ChainlinkUsd.
     let valuation_adapter =
         if let Some(raw) = value.get("valuation_adapter").and_then(Value::as_str) {
             parse_valuation_adapter_kind(raw)
@@ -525,7 +520,7 @@ mod tests {
             && asset.roles.contains(&TradeAssetRole::Debt)));
     }
 
-    // ── audit FIX-6 tests: parse-error surface + fallback behavior ──────────
+    // ── parse-error surface + fallback behavior ─────────────────────────────
 
     /// Parse error surfaces a typed reason for malformed addresses (was: silent None).
     #[test]

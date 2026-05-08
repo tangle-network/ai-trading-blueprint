@@ -1113,14 +1113,14 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
     let bot = seed_bot_with_workflow("runs-bot", "dex", true, Some(9_100_001));
     let auth = test_auth_header(SUBMITTER);
 
-    trading_blueprint_bin::workflow_compat::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "run-success".to_string(),
-            trading_blueprint_bin::workflow_compat::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "run-success".to_string(),
                 workflow_id: 9_100_002,
-                status: trading_blueprint_bin::workflow_compat::WorkflowRunStatus::Completed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
                 started_at: 1_775_823_700,
                 completed_at: Some(1_775_823_760),
                 session_id: Some("research-runs-bot-1775823700".to_string()),
@@ -1133,14 +1133,14 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
             },
         )
         .expect("insert successful run");
-    trading_blueprint_bin::workflow_compat::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "run-failed".to_string(),
-            trading_blueprint_bin::workflow_compat::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "run-failed".to_string(),
                 workflow_id: bot.workflow_id.expect("workflow id"),
-                status: trading_blueprint_bin::workflow_compat::WorkflowRunStatus::Failed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Failed,
                 started_at: 1_775_823_900,
                 completed_at: Some(1_775_823_901),
                 session_id: None,
@@ -1153,8 +1153,8 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
             },
         )
         .expect("insert failed run");
-    trading_blueprint_bin::workflow_compat::insert_workflow_run_transcript_for_testing(
-        trading_blueprint_bin::workflow_compat::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "run-success".to_string(),
             session_id: "research-runs-bot-1775823700".to_string(),
             captured_at: 1_775_823_760,
@@ -1260,14 +1260,14 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
             .await;
     set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
 
-    trading_blueprint_bin::workflow_compat::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "run-live-error".to_string(),
-            trading_blueprint_bin::workflow_compat::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "run-live-error".to_string(),
                 workflow_id: bot.workflow_id.expect("workflow id"),
-                status: trading_blueprint_bin::workflow_compat::WorkflowRunStatus::Running,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Running,
                 started_at: 1_775_823_950,
                 completed_at: None,
                 session_id: Some("research-runs-live-error-bot".to_string()),
@@ -1280,8 +1280,8 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
             },
         )
         .expect("insert running run");
-    trading_blueprint_bin::workflow_compat::insert_workflow_run_transcript_for_testing(
-        trading_blueprint_bin::workflow_compat::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "run-live-error".to_string(),
             session_id: "research-runs-live-error-bot".to_string(),
             captured_at: 1_775_823_955,
@@ -1324,14 +1324,14 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
         spawn_mock_chat_sidecar_with_message_status(&bot.id, StatusCode::NOT_FOUND).await;
     set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
 
-    trading_blueprint_bin::workflow_compat::workflow_runs()
+    trading_blueprint_lib::workflow_compat::workflow_runs()
         .expect("workflow runs store")
         .insert(
             "run-paged".to_string(),
-            trading_blueprint_bin::workflow_compat::WorkflowRunRecord {
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
                 run_id: "run-paged".to_string(),
                 workflow_id: bot.workflow_id.expect("workflow id"),
-                status: trading_blueprint_bin::workflow_compat::WorkflowRunStatus::Completed,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
                 started_at: 1_775_824_000,
                 completed_at: Some(1_775_824_060),
                 session_id: Some("research-runs-paged-bot".to_string()),
@@ -1344,8 +1344,8 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
             },
         )
         .expect("insert completed run");
-    trading_blueprint_bin::workflow_compat::insert_workflow_run_transcript_for_testing(
-        trading_blueprint_bin::workflow_compat::WorkflowRunTranscriptRecord {
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
             run_id: "run-paged".to_string(),
             session_id: "research-runs-paged-bot".to_string(),
             captured_at: 1_775_824_060,
@@ -1592,12 +1592,10 @@ async fn test_get_bot_metrics() {
 }
 
 #[tokio::test]
-// TODO(audit-followup): pre-existing logic mismatch — the metrics handler
-// reads `account_value_usd` (10123.45) instead of the mocked remote
-// portfolio's `total_value_usd` (1050.0). Surfaced when the bin compile
-// gates were lifted in the workflow_compat shim; not introduced by either
-// PR #69 or PR #70. Investigating + fix tracked separately.
-#[ignore = "pre-existing metrics-source mismatch — see TODO above"]
+// TODO: metrics handler reads `account_value_usd` (10123.45) instead of the
+// mocked remote portfolio's `total_value_usd` (1050.0). Surfaced once the
+// bin re-entered CI; not yet root-caused.
+#[ignore = "metrics-source mismatch: reads account_value_usd, expects total_value_usd"]
 async fn test_get_bot_metrics_prefers_remote_portfolio_and_history_summary() {
     let _dir = init_test_env();
 
@@ -2699,12 +2697,12 @@ async fn test_configure_secrets_missing_sandbox_returns_stale_state_error() {
     );
 }
 
-// ── Audit FIX-5: preflight rate-limit + structured error mapping ─────────
+// ── /api/dex/assets/preflight: rate-limit + status-code mapping ──────────
 
-/// Audit FIX-5: a session bursting more than `PREFLIGHT_RATE_LIMIT_PER_MINUTE`
-/// requests gets `429 Too Many Requests` from the preflight endpoint. We
-/// can't easily set the env var inside an async test (other tests share the
-/// process), so we set the limit before initializing the static limiter.
+/// A session bursting more than `PREFLIGHT_RATE_LIMIT_PER_MINUTE` requests
+/// gets `429 Too Many Requests`. Set the env var before any other preflight
+/// test touches the limiter — `preflight_limiter()` is a `OnceLock` and
+/// freezes its budget on first read.
 #[tokio::test]
 async fn test_preflight_rate_limit_returns_429_after_burst() {
     let _dir = init_test_env();
@@ -2785,9 +2783,8 @@ async fn test_preflight_rate_limit_returns_429_after_burst() {
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
-/// Audit FIX-5: the bare BAD_REQUEST mapping is gone — RPC-side failures
-/// surface as 5xx, not 4xx, so the UI can distinguish "your input is bad"
-/// from "our infra is down".
+/// RPC-side failures surface as 5xx (not the legacy blanket 400) so the UI
+/// can distinguish caller-input errors from upstream/infra failures.
 #[tokio::test]
 async fn test_preflight_classifies_rpc_unreachable_as_5xx() {
     let _dir = init_test_env();

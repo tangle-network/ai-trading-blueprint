@@ -6,10 +6,10 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../src/UniswapV3TwapValuator.sol";
 
 /// @title UniswapV3TwapValuator Fork Tests
-/// @notice Audit FIX-8: exercises the valuator against real Ethereum mainnet pool
-///         state so the fixed-point arithmetic in `_consult` and `_quoteAtTick`
-///         is validated on actual non-linear cumulative growth — not the
-///         single-observation linear mocks.
+/// @notice Exercises the valuator against real Ethereum mainnet pool state so
+///         the fixed-point arithmetic in `_consult` and `_quoteAtTick` is
+///         validated against actual non-linear cumulative growth — not the
+///         single-observation linear mocks in the unit test.
 /// @dev    Requires ETHEREUM_RPC_URL env var (or override via --fork-url).
 ///         Run: forge test --mc UniswapV3TwapValuatorForkTest --fork-url $ETHEREUM_RPC_URL
 ///         Tests no-op when not running on chain id 1 (mainnet).
@@ -68,7 +68,7 @@ contract UniswapV3TwapValuatorForkTest is Test {
         assertLt(quote, 50_000e6, "1 WETH > $50k -- quote logic is broken");
     }
 
-    /// @notice Factory-provenance gate (FIX-2) rejects a deployed-but-not-from-factory
+    /// @notice Factory-provenance gate rejects a deployed-but-not-from-factory
     ///         pool address even when the token shape matches.
     function test_fork_rejects_non_factory_pool() public {
         if (block.chainid != 1) return;

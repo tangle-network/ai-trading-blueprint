@@ -219,9 +219,9 @@ interface DexAssetPreflightResponse {
   symbol?: string | null;
   name?: string | null;
   decimals?: number | null;
-  // Audit FIX-7: the trailing `| string` defeats the discriminated-union
-  // narrowing. Drop it; a future backend change that adds a new tag will be
-  // a TypeScript error here, which is the desired loud failure.
+  // The discriminated union has no `| string` escape hatch — a future
+  // backend change that adds a new tag must surface as a TypeScript error
+  // here so the FE narrows are forced to widen consciously.
   valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | null;
   valuation_adapter?: string | null;
   selected_fee_tier?: number | null;
@@ -1393,19 +1393,14 @@ export default function ProvisionPage() {
     setManualAssetInput('');
   }, [assetUniverseChainId]);
 
-  // Audit FIX-7: this effect previously depended on `assetOptions`, which
-  // recomputes on every customAssetSelections change. As a result, adding a
-  // custom asset re-fired the effect and (a) unconditionally clobbered the
-  // user's chosen base asset back to USDC/target and (b) force-re-injected
-  // WETH after the user removed it. Both are silent overrides of explicit
-  // user intent.
-  //
-  // Fix:
-  //   1. Depend ONLY on stable prerequisites (chain / strategy / execution
-  //      target). Adding a custom asset no longer reseeds the universe.
-  //   2. Only set `baseAssetAddress` when it isn't already a valid choice.
-  //   3. WETH-as-default seed only on first run — if the user later removes
-  //      it, that decision sticks.
+  // Seed defaults from the static `defaultAssetOptions` list, not the live
+  // `assetOptions` (which includes user-added custom assets and re-renders
+  // on each add). Triggering on the live list would clobber user choices:
+  //   1. `baseAssetAddress` would reset to USDC/target on every custom add.
+  //   2. WETH would re-inject after the user explicitly removed it.
+  // Strategy: depend only on stable prerequisites, preserve the user's
+  // current base when it remains valid, seed WETH only when the selection
+  // is otherwise empty (first run for this chain/strategy/target combo).
   useEffect(() => {
     if (strategyType !== 'dex') return;
     const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;

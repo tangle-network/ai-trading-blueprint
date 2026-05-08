@@ -1061,3 +1061,231 @@ async fn run_baseline_backtest_for_bot(bot_id: &str, strategy_type: String) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pin the arena → provision → on-chain wiring. The arena emits a
+    //! strategy_config with a particular shape (see
+    //! `arena/src/lib/assetUniverse.ts::buildDexAssetUniverse`); the
+    //! provision flow consumes it to build `VaultSupportedAssetConfig` per
+    //! asset, and `crate::on_chain::resolve_asset_valuation_adapter` then
+    //! resolves each adapter address from env.
+    //!
+    //! These tests are unit-level (no chain). They lock the resolution
+    //! invariants so a future arena rename or env-var rename surfaces here
+    //! instead of bricking provision in production.
+    use super::*;
+    use trading_runtime::supported_assets::ValuationAdapterKind;
+    // Mutex serializes env-var mutations across parallel tests; this whole
+    // module pokes at process env, which is shared.
+    use std::sync::Mutex;
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Sample admin address used as a stand-in for both the deposit asset
+    /// and the configured valuator addresses in these tests.
+    const DEPOSIT_USDC: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const TWAP_VALUATOR: &str = "0x0000000000000000000000000000000000000111";
+    const CHAINLINK_VALUATOR: &str = "0x0000000000000000000000000000000000000222";
+    const CUSTOM_TOKEN: &str = "0x0000000000000000000000000000000000000333";
+    const KNOWN_TOKEN_WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+    fn set_env(unlock: &std::sync::MutexGuard<'_, ()>, vars: &[(&str, Option<&str>)]) {
+        let _ = unlock; // tie env mutation to the lock guard's lifetime
+        for (k, v) in vars {
+            // SAFETY: serialized by ENV_LOCK against other env-touching tests.
+            unsafe {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// Arena emits `valuation_adapter: "chainlink_or_uniswap_v3_twap"` for a
+    /// custom (non-Chainlink-bundled) asset. Provision must resolve that to
+    /// a `VaultSupportedAssetConfig` whose `adapter_address` is the
+    /// Chainlink primary (when env-set) and `fallback_adapter_address` is
+    /// the TWAP valuator. This is the canonical shape consumed by
+    /// `resolve_asset_valuation_adapter`.
+    #[test]
+    fn arena_custom_asset_resolves_to_chainlink_or_twap_config() {
+        let lock = ENV_LOCK.lock().expect("env lock");
+        set_env(
+            &lock,
+            &[
+                ("CHAINLINK_USD_VALUATOR_ADDRESS", Some(CHAINLINK_VALUATOR)),
+                ("UNISWAP_V3_TWAP_VALUATOR_ADDRESS", Some(TWAP_VALUATOR)),
+            ],
+        );
+
+        let strategy_config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [
+                    {
+                        "address": CUSTOM_TOKEN,
+                        "symbol": "CUSTOM",
+                        "valuation_adapter": "chainlink_or_uniswap_v3_twap",
+                    }
+                ]
+            }
+        });
+
+        let deposit: Address = DEPOSIT_USDC.parse().unwrap();
+        let configs = vault_supported_asset_configs("dex", 1, deposit, &strategy_config)
+            .expect("resolve configs");
+
+        assert_eq!(configs.len(), 1, "one custom asset → one config");
+        let cfg = &configs[0];
+        assert_eq!(cfg.symbol, "CUSTOM");
+        assert_eq!(
+            cfg.valuation_adapter,
+            ValuationAdapterKind::ChainlinkOrUniswapV3Twap,
+        );
+        assert_eq!(
+            cfg.adapter_address.unwrap(),
+            CHAINLINK_VALUATOR.parse::<Address>().unwrap(),
+            "primary adapter must be the Chainlink valuator",
+        );
+        assert_eq!(
+            cfg.fallback_adapter_address.unwrap(),
+            TWAP_VALUATOR.parse::<Address>().unwrap(),
+            "fallback adapter must be the TWAP valuator",
+        );
+        assert!(
+            cfg.twap_config.is_some(),
+            "TWAP config must be wired so the on-chain step can call setPairFromFactory*",
+        );
+    }
+
+    /// A `chainlink_or_uniswap_v3_twap` asset still resolves cleanly when
+    /// only the TWAP valuator env is set — primary is left None and the
+    /// on-chain resolver falls through to the TWAP adapter. Catches the
+    /// path where Chainlink is unavailable on a chain.
+    #[test]
+    fn arena_custom_asset_with_no_chainlink_env_resolves_to_twap_only() {
+        let lock = ENV_LOCK.lock().expect("env lock");
+        set_env(
+            &lock,
+            &[
+                ("CHAINLINK_USD_VALUATOR_ADDRESS", None),
+                ("EXECUTION_CHAINLINK_USD_VALUATOR", None),
+                ("CHAINLINK_VALUATOR_ADDRESS", None),
+                ("DEPLOY_CHAINLINK_USD_VALUATOR", None),
+                ("UNISWAP_V3_TWAP_VALUATOR_ADDRESS", Some(TWAP_VALUATOR)),
+            ],
+        );
+
+        let strategy_config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [
+                    {
+                        "address": CUSTOM_TOKEN,
+                        "symbol": "CUSTOM",
+                        "valuation_adapter": "chainlink_or_uniswap_v3_twap",
+                    }
+                ]
+            }
+        });
+
+        let deposit: Address = DEPOSIT_USDC.parse().unwrap();
+        let configs = vault_supported_asset_configs("dex", 1, deposit, &strategy_config)
+            .expect("resolve configs");
+
+        let cfg = &configs[0];
+        assert!(
+            cfg.adapter_address.is_none(),
+            "no Chainlink env → primary adapter is None",
+        );
+        assert_eq!(
+            cfg.fallback_adapter_address.unwrap(),
+            TWAP_VALUATOR.parse::<Address>().unwrap(),
+            "TWAP valuator is the fallback",
+        );
+    }
+
+    /// Arena marks a Chainlink-bundled asset with
+    /// `valuation_adapter: "chainlink_usd"`. Provision must resolve the
+    /// primary to the Chainlink valuator and leave the TWAP fallback empty.
+    #[test]
+    fn arena_known_chainlink_asset_resolves_to_chainlink_only() {
+        let lock = ENV_LOCK.lock().expect("env lock");
+        set_env(
+            &lock,
+            &[
+                ("CHAINLINK_USD_VALUATOR_ADDRESS", Some(CHAINLINK_VALUATOR)),
+                ("UNISWAP_V3_TWAP_VALUATOR_ADDRESS", Some(TWAP_VALUATOR)),
+            ],
+        );
+
+        let strategy_config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [
+                    {
+                        "address": KNOWN_TOKEN_WETH,
+                        "symbol": "WETH",
+                        "valuation_adapter": "chainlink_usd",
+                    }
+                ]
+            }
+        });
+
+        let deposit: Address = DEPOSIT_USDC.parse().unwrap();
+        let configs = vault_supported_asset_configs("dex", 1, deposit, &strategy_config)
+            .expect("resolve configs");
+
+        let cfg = &configs[0];
+        assert_eq!(cfg.valuation_adapter, ValuationAdapterKind::ChainlinkUsd);
+        assert_eq!(
+            cfg.adapter_address.unwrap(),
+            CHAINLINK_VALUATOR.parse::<Address>().unwrap(),
+        );
+        assert!(
+            cfg.fallback_adapter_address.is_none(),
+            "Chainlink-only mode: no TWAP fallback expected",
+        );
+        assert!(
+            cfg.twap_config.is_none(),
+            "Chainlink-only mode does not need TWAP pair config",
+        );
+    }
+
+    /// Hard error path: a `chainlink_usd` asset with NO Chainlink env set
+    /// fails fast with a message naming the symbol — the operator runbook
+    /// step that wires `CHAINLINK_USD_VALUATOR_ADDRESS` was skipped.
+    #[test]
+    fn missing_chainlink_env_fails_provision_with_actionable_message() {
+        let lock = ENV_LOCK.lock().expect("env lock");
+        set_env(
+            &lock,
+            &[
+                ("CHAINLINK_USD_VALUATOR_ADDRESS", None),
+                ("EXECUTION_CHAINLINK_USD_VALUATOR", None),
+                ("CHAINLINK_VALUATOR_ADDRESS", None),
+                ("DEPLOY_CHAINLINK_USD_VALUATOR", None),
+                ("UNISWAP_V3_TWAP_VALUATOR_ADDRESS", Some(TWAP_VALUATOR)),
+            ],
+        );
+
+        let strategy_config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [
+                    {
+                        "address": KNOWN_TOKEN_WETH,
+                        "symbol": "WETH",
+                        "valuation_adapter": "chainlink_usd",
+                    }
+                ]
+            }
+        });
+
+        let deposit: Address = DEPOSIT_USDC.parse().unwrap();
+        let err = vault_supported_asset_configs("dex", 1, deposit, &strategy_config)
+            .expect_err("must fail without Chainlink env");
+
+        assert!(
+            err.contains("WETH") && err.contains("ChainlinkUsd"),
+            "error must name the symbol + adapter kind so the operator can fix it; got: {err}",
+        );
+    }
+}

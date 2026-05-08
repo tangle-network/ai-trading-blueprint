@@ -14,10 +14,10 @@
 //! Behavior identical to the sibling's old impl from the API caller's
 //! perspective; persistence is per-process (was: persistent on disk).
 //!
-//! Long-term plan: promote these stores to disk-backed persistence (the
-//! sibling's `PersistentStore` flavor) so runs survive restarts. For the
-//! audit-followup PR we accept process-local storage so the bin compiles
-//! and the rest of the audit fixes can land.
+//! Long-term: promote these stores to disk-backed persistence (the
+//! sibling's `PersistentStore` flavor) so runs survive restarts. The
+//! current process-local storage matches the sibling's old behavior from
+//! the API caller's perspective but loses runs on restart.
 
 // Several items in this module are only consumed by the integration tests
 // (`tests/operator_api_tests.rs`). They're public-API for the test crate

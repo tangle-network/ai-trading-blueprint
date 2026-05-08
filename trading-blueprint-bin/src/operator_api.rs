@@ -1,6 +1,5 @@
 // Compat layer for the sibling repo's removed per-run history surface. See
 // crate::workflow_compat for the rationale + long-term path.
-use crate::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -14,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
+use trading_blueprint_lib::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
 
@@ -720,9 +720,9 @@ async fn preflight_dex_asset_route(
     SessionAuth(caller): SessionAuth,
     Json(request): Json<DexAssetPreflightRequest>,
 ) -> ApiResult<DexAssetPreflightResponse> {
-    // Audit FIX-5: rate-limit per session caller. The preflight endpoint
-    // dispatches 1-3 RPC calls per fee tier, so an unrate-limited session
-    // can drive a relay loop against any allowlisted RPC. 30/min default.
+    // Per-session rate limit. The endpoint dispatches 1-3 RPC calls per fee
+    // tier, so an unrate-limited session can drive a relay loop against any
+    // allowlisted RPC. 30/min default; env-tunable.
     if let Err(retry_after) = crate::preflight_limiter::preflight_limiter().check(&caller) {
         let secs = retry_after.as_secs().max(1);
         return Err(ApiError::message(
@@ -731,25 +731,17 @@ async fn preflight_dex_asset_route(
         ));
     }
 
-    // Audit FIX-5: structured status mapping. The legacy version mapped
-    // every error to BAD_REQUEST, hiding the 4xx-vs-5xx distinction so the
-    // UI couldn't distinguish "your address is bad" from "our infra is
-    // down". `preflight_dex_asset` returns `String` errors; classify by
-    // substring until the upstream lib exposes a typed error.
     preflight_dex_asset(request).await.map(Json).map_err(|err| {
         let status = classify_preflight_error(&err);
         ApiError::message(status, err)
     })
 }
 
-/// Audit FIX-5: best-effort 4xx/5xx mapping for `preflight_dex_asset`
-/// string errors. Conservative — anything we don't recognize defaults to
-/// BAD_REQUEST so a caller-supplied bad input doesn't masquerade as a
-/// server fault. RPC-side / infra failures map to 5xx so the UI can show
-/// "service degraded" instead of "your input is bad".
+/// Map `preflight_dex_asset` string errors to status codes. RPC-side /
+/// infra failures → 5xx; everything else stays 400 so a caller-supplied
+/// bad input doesn't masquerade as a server fault.
 fn classify_preflight_error(err: &str) -> StatusCode {
     let lower = err.to_ascii_lowercase();
-    // Infra / upstream — 5xx
     if lower.contains("rpc unreachable")
         || lower.contains("rpc error")
         || lower.contains("connection")
@@ -762,7 +754,6 @@ fn classify_preflight_error(err: &str) -> StatusCode {
     if lower.contains("no allowlisted rpc") || lower.contains("rpc is not configured") {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
-    // Caller input — 4xx (default).
     StatusCode::BAD_REQUEST
 }
 
@@ -1272,10 +1263,11 @@ fn replayable_run_for_session(
         return Ok(None);
     }
 
-    let run = crate::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .into_iter()
-        .find(|run| run.session_id.as_deref() == Some(session_id));
+    let run =
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .into_iter()
+            .find(|run| run.session_id.as_deref() == Some(session_id));
 
     let Some(run) = run else {
         return Ok(None);
@@ -1326,8 +1318,9 @@ fn run_transcript_fallback_response(
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
 ) -> Result<Response, (StatusCode, String)> {
-    let transcript = crate::workflow_compat::get_workflow_run_transcript(&run.run_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let transcript =
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let messages = match transcript {
         Some(record) => record.messages,
         None => synthesize_run_transcript_messages(run),
@@ -1384,8 +1377,9 @@ async fn list_bot_runs(
     let limit = params.limit.unwrap_or(100).clamp(1, 500);
     let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
 
-    let mut runs = crate::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut runs =
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -1413,7 +1407,7 @@ async fn get_bot_run(
     let workflow_ids = workflow_ids_for_bot(&bot)
         .into_iter()
         .collect::<HashSet<_>>();
-    let run = crate::workflow_compat::get_workflow_run(&run_id)
+    let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
@@ -1696,7 +1690,9 @@ async fn run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                crate::workflow_compat::apply_workflow_failure(e, failed_at);
+                                trading_blueprint_lib::workflow_compat::apply_workflow_failure(
+                                    e, failed_at,
+                                );
                             })
                             .ok()
                     });
@@ -3855,7 +3851,9 @@ async fn debug_run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                crate::workflow_compat::apply_workflow_failure(e, failed_at);
+                                trading_blueprint_lib::workflow_compat::apply_workflow_failure(
+                                    e, failed_at,
+                                );
                             })
                             .ok()
                     });

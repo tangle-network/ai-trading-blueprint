@@ -19,6 +19,7 @@ pub mod registration;
 pub mod session_auth;
 pub mod state;
 pub mod wind_down;
+pub mod workflow_compat;
 
 pub use providers::{EventContext, ProviderRegistry, TradingProvider, registry};
 

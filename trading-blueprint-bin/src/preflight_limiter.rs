@@ -1,18 +1,14 @@
-//! Audit FIX-5: per-session rate limiter for `/api/dex/assets/preflight`.
+//! Per-session rate limiter for `/api/dex/assets/preflight`.
 //!
-//! The preflight endpoint dispatches up to three sequential RPC calls per
-//! fee tier (`asset_preflight::preflight_dex_asset`). An authenticated
-//! session can drive this in a tight loop without throttling, turning the
-//! endpoint into a relay against any allowlisted RPC. Cap each session at
-//! 30 requests per minute (configurable via env). RPC URL allowlisting in
-//! `select_preflight_rpc_url` already prevents arbitrary upstream choice;
-//! this caps volume.
+//! The endpoint dispatches up to three sequential RPC calls per fee tier
+//! (`asset_preflight::preflight_dex_asset`). RPC URL allowlisting in
+//! `select_preflight_rpc_url` prevents arbitrary upstream choice; this caps
+//! volume so an authenticated session can't drive a tight relay loop.
 //!
-//! The bin already pulls `governor` + `dashmap` via the dep graph (used by
-//! `trading-http-api::rate_limit::PerBotRateLimiter`); we reuse the same
-//! primitives for a session-keyed bucket. Per-session limiter is tiny
-//! (one record per active caller, evicted with the DashMap entry when no
-//! token paths drop the limiter — acceptable in practice).
+//! Default 30 req/min, env-tunable via `PREFLIGHT_RATE_LIMIT_PER_MINUTE`.
+//! Keyed on the session caller address (validated by `SessionAuth` before
+//! the handler runs). Process-scoped singleton so the bucket survives
+//! reconnection.
 
 use std::num::NonZeroU32;
 use std::sync::{Arc, OnceLock};
@@ -25,8 +21,7 @@ use governor::{Quota, RateLimiter};
 
 type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
-/// Per-session governor bucket. Lookup keyed on the session caller address
-/// (already validated by `SessionAuth` before the handler runs).
+/// Per-session governor bucket. Lookup keyed on the session caller address.
 pub struct PreflightLimiter {
     quotas: DashMap<String, Arc<DirectLimiter>>,
     per_minute: u32,
@@ -70,8 +65,6 @@ impl PreflightLimiter {
     }
 }
 
-/// Process-scoped singleton. The limiter holds state across requests so a
-/// caller can't reset their bucket by reconnecting.
 pub fn preflight_limiter() -> &'static PreflightLimiter {
     static LIMITER: OnceLock<PreflightLimiter> = OnceLock::new();
     LIMITER.get_or_init(PreflightLimiter::new)

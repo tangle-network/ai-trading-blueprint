@@ -163,7 +163,7 @@ contract UniswapV3TwapValuatorTest is Test {
         assertFalse(valuator.isSupported(TOKEN, ASSET));
     }
 
-    // ── audit FIX-2 hardening tests ──────────────────────────────────────────
+    // ── manipulation-cost-floor tests ────────────────────────────────────────
 
     /// @notice Constructor refuses a TWAP window below MIN_TWAP_WINDOW.
     function test_constructor_rejects_short_twap_window() public {
@@ -226,7 +226,7 @@ contract UniswapV3TwapValuatorTest is Test {
         valuator.setPairFromFactory(TOKEN, ASSET, FEE);
     }
 
-    // ── audit FIX-8 edge-case unit tests ──────────────────────────────────────
+    // ── edge-case unit tests ──────────────────────────────────────────────────
 
     /// @notice Negative-tick arithmeticMeanTick must round toward negative
     ///         infinity (Uniswap-canonical behavior). Asymmetric rounding

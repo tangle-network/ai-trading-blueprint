@@ -12,6 +12,7 @@ import "../src/FeeDistributor.sol";
 import "../src/StrategyRegistry.sol";
 import "../src/TradingVault.sol";
 import "../src/UniswapV3TwapValuator.sol";
+import "../src/ChainlinkUsdValuator.sol";
 import "../test/helpers/Setup.sol"; // MockERC20 (only used when ASSET_TOKEN is unset)
 
 /**
@@ -78,11 +79,13 @@ contract DeployEnvelopeV3 is Script {
         uint256 minScoreThreshold;
         address[] sampleSigners;
         uint256 sampleRequiredSignatures;
-        // Audit FIX-3: TWAP valuator deployed alongside the rest of the stack so
-        // chainlink_or_uniswap_v3_twap and uniswap_v3_twap valuation modes can
-        // resolve to a real address. Zero when UNISWAP_V3_FACTORY env var is
-        // unset (chains without Uniswap V3 deployment).
+        // TWAP valuator. Zero when UNISWAP_V3_FACTORY is unset (chains
+        // without a Uniswap V3 deployment).
         address uniswapV3TwapValuator;
+        // Chainlink USD valuator. Owner is `cfg.admin`. Always deployed; the
+        // owner is responsible for seeding per-token feeds via
+        // `setFeed(token, feed, maxStaleness)` after deploy.
+        address chainlinkUsdValuator;
     }
 
     /// @notice Resolved deploy configuration. Either populated from env vars by
@@ -100,7 +103,7 @@ contract DeployEnvelopeV3 is Script {
         string vaultName;
         string vaultSymbol;
         bool writeJson;
-        // Audit FIX-3: TWAP valuator config. Zero factory disables deployment.
+        // TWAP valuator config. Zero factory disables deployment.
         address uniswapV3Factory;
         uint32 twapWindowSecs;
         uint128 twapMinHarmonicLiquidity;
@@ -170,11 +173,17 @@ contract DeployEnvelopeV3 is Script {
 
         StrategyRegistry strategyRegistry = new StrategyRegistry(deployer);
 
-        // ── Audit FIX-3: Uniswap V3 TWAP valuator ──
-        // Deployed iff the chain has a known Uniswap V3 factory address. Off-chain
-        // configuration writes the address into deployments/{chainId}/v3.json so
-        // the operator API and Arena can resolve `chainlink_or_uniswap_v3_twap`
-        // and `uniswap_v3_twap` valuation modes against a real contract.
+        // ── Valuators ──
+        // ChainlinkUsdValuator: always deployed. Owner = cfg.admin. Per-token
+        // feeds must be seeded post-deploy via setFeed; the deploy JSON
+        // exposes the address so the operator runbook can wire feeds.
+        ChainlinkUsdValuator chainlinkUsd = new ChainlinkUsdValuator(cfg.admin);
+        address chainlinkUsdValuator = address(chainlinkUsd);
+        console.log("ChainlinkUsdValuator:", chainlinkUsdValuator);
+
+        // UniswapV3TwapValuator: deployed iff the chain has a known Uniswap V3
+        // factory. Operator runbook seeds per-pair config post-deploy via
+        // setPairFromFactory[WithConfig]; the deploy JSON exposes the address.
         address uniswapV3TwapValuator;
         if (cfg.uniswapV3Factory != address(0)) {
             UniswapV3TwapValuator twap = new UniswapV3TwapValuator(
@@ -247,7 +256,8 @@ contract DeployEnvelopeV3 is Script {
             minScoreThreshold: cfg.minScoreThreshold,
             sampleSigners: signers,
             sampleRequiredSignatures: cfg.requiredSigs,
-            uniswapV3TwapValuator: uniswapV3TwapValuator
+            uniswapV3TwapValuator: uniswapV3TwapValuator,
+            chainlinkUsdValuator: chainlinkUsdValuator
         });
 
         // ── Persist deployment JSON for arena consumption ──
@@ -296,10 +306,9 @@ contract DeployEnvelopeV3 is Script {
         cfg.assetTokenOverride = vm.envOr("ASSET_TOKEN", address(0));
         cfg.writeJson = _strEq(vm.envOr("WRITE_DEPLOYMENT_JSON", string("true")), "true");
 
-        // Audit FIX-3: TWAP valuator config. UNISWAP_V3_FACTORY unset → skip
-        // valuator deploy (chains without Uniswap V3). Defaults match the
-        // contract-level floors: 1800s window, 1e6 harmonic-liquidity, 200 BPS
-        // deviation cap (tighter than the previous 500 BPS per audit FIX-2).
+        // TWAP valuator config. UNISWAP_V3_FACTORY unset → skip valuator
+        // deploy (chains without Uniswap V3). Defaults: 1800s window, 1e6
+        // harmonic-liquidity, 200 BPS spot/TWAP deviation cap.
         cfg.uniswapV3Factory = vm.envOr("UNISWAP_V3_FACTORY", address(0));
         cfg.twapWindowSecs = uint32(vm.envOr("UNISWAP_V3_TWAP_WINDOW_SECS", uint256(1800)));
         cfg.twapMinHarmonicLiquidity = uint128(vm.envOr("UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY", uint256(1_000_000)));
@@ -324,6 +333,7 @@ contract DeployEnvelopeV3 is Script {
         vm.serializeAddress(key, "vaultShareDeployer", r.vaultShareDeployer);
         vm.serializeAddress(key, "strategyRegistry", r.strategyRegistry);
         vm.serializeAddress(key, "uniswapV3TwapValuator", r.uniswapV3TwapValuator);
+        vm.serializeAddress(key, "chainlinkUsdValuator", r.chainlinkUsdValuator);
         vm.serializeAddress(key, "assetToken", r.assetToken);
         vm.serializeAddress(key, "sampleVault", r.sampleVault);
         vm.serializeAddress(key, "sampleShare", r.sampleShare);

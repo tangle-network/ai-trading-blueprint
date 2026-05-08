@@ -9,7 +9,6 @@
 
 mod operator_api;
 mod preflight_limiter;
-mod workflow_compat;
 
 use blueprint_producers_extra::cron::CronJob;
 use blueprint_sdk::contexts::tangle::TangleClientContext;

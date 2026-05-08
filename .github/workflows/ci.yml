@@ -66,10 +66,9 @@ jobs:
       # Check our crates (not --workspace: bin crates pull in heavier
       # deployment-only dependencies).
       #
-      # `trading-blueprint-bin` is checked + tested here as of audit FIX-4.
-      # Previously skipped due to sibling-repo drift on
-      # `ai_agent_sandbox_blueprint_lib::workflows::*`; resolved via the
-      # `crate::workflow_compat` shim that re-implements the removed
+      # `trading-blueprint-bin` is checked + tested here. Sibling-repo drift
+      # on `ai_agent_sandbox_blueprint_lib::workflows::*` is bridged by the
+      # `crate::workflow_compat` shim, which re-implements the removed
       # per-run history surface as bin-local in-memory storage.
       - name: Check
         run: |
@@ -92,9 +91,6 @@ jobs:
         run: cargo test -p trading-blueprint-lib --lib
 
       - name: Test (trading-blueprint-bin operator_api)
-        # Audit FIX-5: exercises the new preflight rate-limit + structured
-        # error mapping integration tests, plus the workflow_compat-backed
-        # /api/bots/:id/runs endpoints.
         run: cargo test -p trading-blueprint-bin --test operator_api_tests
 
   clippy:

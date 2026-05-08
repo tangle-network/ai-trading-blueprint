@@ -35,15 +35,15 @@ interface IUniswapV3Pool {
 /// @notice Values custom ERC-20s against a vault asset using direct Uniswap V3 TWAP pools.
 /// @dev Intended as a fallback when Chainlink is unavailable. The pair config is checked on every NAV read.
 ///
-///      Hardening (audit FIX-2):
-///      - Ownable2Step + a minimum-config floor enforced at constructor + setPair*
-///        time so single-tx ownership change can't immediately point a token at
-///        a hostile spot oracle.
-///      - MIN_TWAP_WINDOW = 600s (10 minutes); MIN_HARMONIC_LIQUIDITY_FLOOR = 1000;
-///        MIN_OBSERVATION_CARDINALITY = 32. These prevent a token of "spot price"
-///        masquerading as TWAP and rule out pools too thin to manipulate cheaply.
-///      - Factory provenance: setPairWithConfig refuses any pool the canonical
-///        factory does not return for the (token0, token1, pool.fee()) triple.
+///      Manipulation-cost floor enforced at constructor + setPair* time so a
+///      one-tx ownership change can't immediately point a token at a hostile
+///      spot oracle:
+///        - Ownable2Step (transfer requires acceptOwnership)
+///        - MIN_TWAP_WINDOW = 600s, MIN_HARMONIC_LIQUIDITY_FLOOR = 1000,
+///          MIN_OBSERVATION_CARDINALITY = 32 — rule out spot-masquerading-as-TWAP
+///          and pools too thin to manipulate cheaply
+///        - Factory provenance: `setPairWithConfig` re-derives the pool via
+///          `factory.getPool(token0, token1, pool.fee())` and rejects mismatches
 contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
     error ZeroAddress();
     error InvalidConfig();
@@ -152,18 +152,17 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
         uint32 maxSpotTwapDeviationBps
     ) public onlyOwner {
         _validatePairShape(token, asset, pool);
-        // Audit FIX-2: factory-provenance gate. The pool MUST be the one the
-        // canonical factory returns for (token0, token1, pool.fee()) — refuses
-        // any contract that passes the token-shape check but isn't a real
-        // Uniswap V3 pool. Closes the "owner registers a fake pool that returns
-        // hand-picked tickCumulatives" attack.
+        // Factory-provenance gate: refuse any pool the canonical factory does
+        // not return for (token0, token1, pool.fee()). Defends against a
+        // contract that passes the token-shape check but isn't a real Uniswap
+        // V3 pool (e.g. a mimic that returns hand-picked tickCumulatives).
         uint24 poolFee = IUniswapV3Pool(pool).fee();
         address derivedPool = factory.getPool(token, asset, poolFee);
         if (derivedPool != pool) revert PoolNotFromFactory(pool, derivedPool);
 
-        // Audit FIX-2: enforce minimum-config floors. Reverts on window too
-        // short, harmonic-liquidity below the tripwire, or zero/over-100%
-        // deviation cap.
+        // Enforce minimum-config floors: window >= MIN_TWAP_WINDOW,
+        // harmonic-liquidity >= MIN_HARMONIC_LIQUIDITY_FLOOR, deviation cap
+        // strictly between 0 and 10000 BPS.
         if (twapWindow < MIN_TWAP_WINDOW) revert TwapWindowTooShort(twapWindow, MIN_TWAP_WINDOW);
         if (minHarmonicLiquidity < MIN_HARMONIC_LIQUIDITY_FLOOR) {
             revert MinHarmonicLiquidityTooLow(minHarmonicLiquidity, MIN_HARMONIC_LIQUIDITY_FLOOR);
@@ -248,10 +247,9 @@ contract UniswapV3TwapValuator is IAssetValuator, Ownable2Step {
     ) internal view returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity, int24 spotTick) {
         if (twapWindow == 0 || maxSpotTwapDeviationBps > 10_000) revert InvalidConfig();
 
-        // Audit FIX-2: cardinality check. A pool whose observation buffer is
-        // too shallow cannot serve the window — `observe()` reverts "OLD". By
-        // gating registration here we surface that misconfig at config time
-        // instead of silently breaking NAV reads later.
+        // Cardinality check: a shallow observation buffer can't serve the
+        // window — `observe()` reverts "OLD". Gate registration here so the
+        // misconfig surfaces at config time, not at first NAV read.
         // unused-return: only `spotTick` and `cardinality` matter; the rest
         // of the slot0 tuple is irrelevant to this gate.
         uint16 cardinality;

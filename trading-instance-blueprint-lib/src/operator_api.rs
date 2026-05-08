@@ -1,4 +1,3 @@
-use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -11,6 +10,7 @@ use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::Duration;
+use trading_blueprint_lib::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 
 use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
 use trading_blueprint_lib::asset_preflight::{
@@ -2057,7 +2057,7 @@ fn replayable_run_for_session(
     }
 
     let run =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
             .into_iter()
             .find(|run| run.session_id.as_deref() == Some(session_id));
@@ -2112,7 +2112,7 @@ fn run_transcript_fallback_response(
     query: &TranscriptMessageQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
-        ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run_transcript(&run.run_id)
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let messages = match transcript {
         Some(record) => record.messages,
@@ -2170,7 +2170,7 @@ async fn list_bot_runs(
     let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
 
     let mut runs =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
+        trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Some(cursor) = cursor.as_ref() {
@@ -2199,7 +2199,7 @@ async fn get_bot_run(
     let workflow_ids = workflow_ids_for_bot(&bot)
         .into_iter()
         .collect::<HashSet<_>>();
-    let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
+    let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 

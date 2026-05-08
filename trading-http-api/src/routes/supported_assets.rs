@@ -46,10 +46,10 @@ async fn supported_assets(
             )
         })?;
 
-    // Audit FIX-6: pass the bot's strategy_config through so a configured asset
-    // universe (when populated by the bin) is honored. Falls back to default
-    // registry when strategy_config is Value::Null. Closes the single-bot /
-    // multi-bot parity gap the audit flagged.
+    // Pass the bot's strategy_config through so a configured asset universe
+    // (when populated by the bin) is honored. Falls back to the default-asset
+    // registry when strategy_config is Value::Null — same semantics as the
+    // multi-bot endpoint.
     Ok(Json(serde_json::json!({
         "strategy_type": strategy_type,
         "chain_id": chain_id,
