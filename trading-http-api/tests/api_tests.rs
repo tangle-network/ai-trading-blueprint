@@ -2385,6 +2385,69 @@ async fn test_multi_bot_market_data_prices() {
 }
 
 #[tokio::test]
+async fn test_multi_bot_market_data_prices_uses_configured_asset_address_fallback() {
+    let mock = MockServer::start().await;
+    let uni_address = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984";
+
+    Mock::given(method("GET"))
+        .and(path(format!("/price/{uni_address}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "price": 3.45,
+            "symbol": "UNI"
+        })))
+        .mount(&mock)
+        .await;
+
+    let state = multi_bot_state_with_strategy_config(
+        &mock.uri(),
+        serde_json::json!({
+            "strategy_type": "dex",
+            "protocol_chain_id": 1,
+            "asset_universe": {
+                "allowed_assets": [
+                    {
+                        "symbol": "UNI",
+                        "address": uni_address,
+                        "chain_id": 1,
+                        "decimals": 18,
+                        "protocol": "uniswap_v3",
+                        "roles": ["input", "output"],
+                        "valuation_adapter": "chainlink_or_uniswap_v3_twap"
+                    }
+                ]
+            }
+        }),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/prices")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "tokens": ["UNI"]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let prices = json["prices"].as_array().unwrap();
+    assert_eq!(prices.len(), 1);
+    assert_eq!(prices[0]["token"], "UNI");
+    assert_eq!(prices[0]["price_usd"], "3.45");
+}
+
+#[tokio::test]
 async fn test_multi_bot_circuit_breaker_accepts_numeric_payload() {
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
