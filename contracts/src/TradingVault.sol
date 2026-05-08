@@ -746,17 +746,6 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @dev Strict variant. Reverts on transient adapter failures. Reserved for
-    ///      callers where graceful degradation is unsafe (none on the H-3 path).
-    function _valueInDepositAsset(address token, uint256 amount, address depAsset) internal view returns (uint256) {
-        if (token == depAsset) return amount;
-        IAssetValuator adapter = valuationAdapters[token];
-        if (address(adapter) == address(0) || !adapter.isSupported(token, depAsset)) {
-            revert UnsupportedValuationAsset(token, depAsset);
-        }
-        return adapter.valueInAsset(token, amount, depAsset);
-    }
-
     function _checkValidators(
         bytes32 intentHash,
         bytes32 executionHash,
