@@ -81,9 +81,9 @@ contract VaultShareTest is Setup {
         bytes32 adminRole = fresh.DEFAULT_ADMIN_ROLE();
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         fresh.linkVault(makeAddr("vault"));
     }
 
@@ -94,18 +94,18 @@ contract VaultShareTest is Setup {
     function test_mint_onlyMinterRole() public {
         bytes32 minterRole = shareToken.MINTER_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, minterRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, minterRole)
+        );
         shareToken.mint(user, 100 ether);
     }
 
     function test_burn_onlyMinterRole() public {
         bytes32 minterRole = shareToken.MINTER_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, minterRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, minterRole)
+        );
         shareToken.burn(user, 100 ether);
     }
 
@@ -233,9 +233,9 @@ contract VaultShareTest is Setup {
     function test_setOracle_onlyAdmin() public {
         bytes32 adminRole = shareToken.DEFAULT_ADMIN_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, adminRole)
+        );
         shareToken.setOracle(address(1));
     }
 

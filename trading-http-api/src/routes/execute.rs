@@ -1881,6 +1881,116 @@ async fn execute_real_envelope_trade(
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
     intent_hash: B256,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = action_label(&intent.action);
+    let metrics_bot = bot_id.to_string();
+
+    let result = execute_real_envelope_trade_inner(
+        bot_id,
+        executor,
+        intent,
+        signed_envelope,
+        req,
+        stored_validation,
+        valuation,
+        intent_hash,
+    )
+    .await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+/// Stable, dashboard-facing label for each `trading_runtime::Action` variant.
+fn action_label(action: &trading_runtime::Action) -> &'static str {
+    use trading_runtime::Action;
+    match action {
+        Action::Swap => "swap",
+        Action::Supply => "supply",
+        Action::Withdraw => "withdraw",
+        Action::Borrow => "borrow",
+        Action::Repay => "repay",
+        Action::OpenLong => "open_long",
+        Action::OpenShort => "open_short",
+        Action::CloseLong => "close_long",
+        Action::CloseShort => "close_short",
+        Action::Buy => "buy",
+        Action::Sell => "sell",
+        Action::Redeem => "redeem",
+        Action::CollateralRelease => "collateral_release",
+    }
+}
+
+/// Determine whether a `(StatusCode, _)` failure represents a chain-side
+/// revert (5xx) or a precondition rejection (4xx).
+fn execution_status_for_error(status: StatusCode) -> crate::routes::prometheus::ExecutionStatus {
+    if status.is_client_error() {
+        crate::routes::prometheus::ExecutionStatus::Rejected
+    } else {
+        crate::routes::prometheus::ExecutionStatus::Reverted
+    }
+}
+
+/// Common metrics + alert hook for both real-trade execution paths.
+async fn record_execute_outcome(
+    bot_id: &str,
+    protocol: &str,
+    action: &str,
+    started_at: std::time::Instant,
+    result: &Result<Json<ExecuteResponse>, (StatusCode, String)>,
+    alert_sink: &crate::alerts::AlertSink,
+) {
+    match result {
+        Ok(_) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                crate::routes::prometheus::ExecutionStatus::Success,
+                started_at,
+            );
+        }
+        Err((status, reason)) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                execution_status_for_error(*status),
+                started_at,
+            );
+            alert_sink
+                .fire(crate::alerts::Alert::TradeReverted {
+                    bot_id: bot_id.to_string(),
+                    protocol: protocol.to_string(),
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_real_envelope_trade_inner(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    signed_envelope: &SignedEnvelope,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    intent_hash: B256,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::adapters::ActionParams;
     use trading_runtime::envelope::params_builder::build_envelope_shape;
@@ -2021,6 +2131,36 @@ fn u256_to_f64(value: U256) -> f64 {
 }
 
 async fn execute_real_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = action_label(&intent.action);
+    let metrics_bot = bot_id.to_string();
+
+    let result =
+        execute_real_trade_inner(bot_id, executor, intent, req, stored_validation, valuation).await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+async fn execute_real_trade_inner(
     bot_id: &str,
     executor: &TradeExecutor,
     intent: &TradeIntent,
@@ -2590,11 +2730,19 @@ async fn execute(
         &normalized_request,
         stored_validation,
         &valuation,
+        &noop_alert_sink(),
     )
     .await?;
 
     update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
     Ok(result)
+}
+
+/// Single-bot execute path has no shared alert sink in `TradingApiState`; use
+/// a no-op sink so metrics still record while alerting stays opt-in via the
+/// multi-bot configuration.
+fn noop_alert_sink() -> crate::alerts::AlertSink {
+    crate::alerts::AlertSink::new(None, None)
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -2945,6 +3093,7 @@ async fn execute_multi_bot(
                 stored_validation,
                 &valuation,
                 intent_hash_b256,
+                &state.alert_sink,
             )
             .await?;
             if let Err(error) =
@@ -2963,6 +3112,7 @@ async fn execute_multi_bot(
         &normalized_req,
         stored_validation,
         &valuation,
+        &state.alert_sink,
     )
     .await?;
     if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {

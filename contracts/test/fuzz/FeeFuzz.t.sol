@@ -45,9 +45,7 @@ contract FeeFuzzTest is Setup {
         feeDistributor.setVaultFeeConfig(
             address(vault),
             FeeDistributor.FeeConfig({
-                performanceFeeBps: perfBps,
-                managementFeeBps: mgmtBps,
-                validatorFeeShareBps: valShareBps
+                performanceFeeBps: perfBps, managementFeeBps: mgmtBps, validatorFeeShareBps: valShareBps
             })
         );
 
@@ -72,9 +70,7 @@ contract FeeFuzzTest is Setup {
         // Verify fee distributor received exactly totalFee
         if (totalFee > 0) {
             assertEq(
-                tokenA.balanceOf(address(feeDistributor)),
-                totalFee,
-                "Fee distributor should hold exactly totalFee"
+                tokenA.balanceOf(address(feeDistributor)), totalFee, "Fee distributor should hold exactly totalFee"
             );
         }
     }
@@ -135,9 +131,7 @@ contract FeeFuzzTest is Setup {
         feeDistributor.setVaultFeeConfig(
             address(vault),
             FeeDistributor.FeeConfig({
-                performanceFeeBps: perfBps,
-                managementFeeBps: 0,
-                validatorFeeShareBps: valShareBps
+                performanceFeeBps: perfBps, managementFeeBps: 0, validatorFeeShareBps: valShareBps
             })
         );
 

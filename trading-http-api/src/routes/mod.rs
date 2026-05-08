@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod backtest;
 pub mod candles;
+pub mod cex;
 pub mod circuit;
 pub mod clob;
 pub mod collateral;
@@ -14,7 +15,9 @@ pub mod learning;
 pub mod market_data;
 pub mod metrics;
 pub mod portfolio;
+pub mod prometheus;
 pub mod session;
+pub mod solana;
 pub mod strategy;
 pub mod supported_assets;
 pub mod trades;

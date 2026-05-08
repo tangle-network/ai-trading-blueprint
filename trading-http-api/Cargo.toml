@@ -22,11 +22,15 @@ rust_decimal = { version = "1", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 alloy = { version = "1", default-features = false, features = ["signers"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+solana-sdk = "2"
 dashmap = "6"
 rand = "0.8"
 hex = "0.4"
 futures-util = "0.3"
 bytes = "1"
+prometheus = "0.13"
+governor = { version = "0.6", default-features = false, features = ["std", "jitter", "quanta"] }
+nonzero_ext = "0.3"
 
 [features]
 default = []

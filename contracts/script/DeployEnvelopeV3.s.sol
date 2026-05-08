@@ -53,8 +53,7 @@ contract DeployEnvelopeV3 is Script {
     using stdJson for string;
 
     // Anvil's default deployer key (account 0). Used only when PRIVATE_KEY is unset.
-    uint256 internal constant ANVIL_DEPLOYER_KEY =
-        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 internal constant ANVIL_DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal constant ANVIL_SIGNER_ONE = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address internal constant ANVIL_SIGNER_TWO = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
 
@@ -132,9 +131,8 @@ contract DeployEnvelopeV3 is Script {
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer = new VaultDeployer(
-            address(vaultFactory), policyEngine, tradeValidator, feeDistributor
-        );
+        VaultDeployer vaultDeployer =
+            new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
@@ -158,9 +156,7 @@ contract DeployEnvelopeV3 is Script {
         signers[0] = cfg.signerOne;
         signers[1] = cfg.signerTwo;
 
-        bytes32 salt = keccak256(abi.encodePacked(
-            "envelope-v3", uint256(block.chainid), cfg.serviceId, deployer
-        ));
+        bytes32 salt = keccak256(abi.encodePacked("envelope-v3", uint256(block.chainid), cfg.serviceId, deployer));
 
         (address sampleVault, address sampleShare) = vaultFactory.createBotVault(
             cfg.serviceId,
@@ -173,11 +169,7 @@ contract DeployEnvelopeV3 is Script {
             cfg.vaultSymbol,
             salt,
             PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500}),
-            FeeDistributor.FeeConfig({
-                performanceFeeBps: 2000,
-                managementFeeBps: 200,
-                validatorFeeShareBps: 3000
-            })
+            FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
         );
 
         // NOTE on min_score_threshold:

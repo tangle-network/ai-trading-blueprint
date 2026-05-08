@@ -104,10 +104,12 @@ sol! {
             uint256 feeTier;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address router;
             address tokenIn;
             address tokenOut;
+            uint160 sqrtPriceLimitX96;
         }
 
         struct UniswapV4SwapEnforcement {
@@ -119,16 +121,44 @@ sol! {
             bool zeroForOne;
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address universalRouter;
+            bytes32 hookDataHash;
         }
 
         struct AerodromeSwapEnforcement {
             uint256 maxSingleAmountIn;
             uint256 maxTotalAmountIn;
+            uint256 maxValue;
             uint256 minOutputPerInput;
             address router;
             int256 tickSpacing;
+            address tokenIn;
+            address tokenOut;
+            uint160 sqrtPriceLimitX96;
+        }
+
+        struct PancakeswapV3SwapEnforcement {
+            uint256 feeTier;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address router;
+            address tokenIn;
+            address tokenOut;
+            uint160 sqrtPriceLimitX96;
+        }
+
+        struct CurveStableSwapEnforcement {
+            int128 i;
+            int128 j;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address pool;
             address tokenIn;
             address tokenOut;
         }
@@ -137,6 +167,7 @@ sol! {
             address asset;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             address pool;
         }
 
@@ -144,6 +175,7 @@ sol! {
             address asset;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             uint256 minHealthFactor;
             address pool;
         }
@@ -153,6 +185,7 @@ sol! {
             uint256 interestRateMode;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             uint256 minHealthFactor;
             address pool;
         }
@@ -163,12 +196,14 @@ sol! {
             uint256 interestRateMode;
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             address pool;
         }
 
         struct MorphoSupplyEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             address morpho;
         }
@@ -176,6 +211,7 @@ sol! {
         struct MorphoWithdrawEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             uint256 minCollateralRatio;
             address morpho;
@@ -184,6 +220,7 @@ sol! {
         struct MorphoBorrowEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             uint256 minCollateralRatio;
             address morpho;
@@ -192,6 +229,7 @@ sol! {
         struct MorphoRepayEnforcement {
             uint256 maxSingleAmount;
             uint256 maxTotalAmount;
+            uint256 maxValue;
             bytes32 marketId;
             address morpho;
         }
@@ -199,6 +237,8 @@ sol! {
         function executeUniswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeUniswapV4SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV4SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAerodromeSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, AerodromeSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executePancakeswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, PancakeswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeCurveStableSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, CurveStableSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, AaveSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeAaveBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
@@ -449,6 +489,26 @@ sol! {
         }
         function market(bytes32 id) external view returns (MarketState memory);
         function idToMarketParams(bytes32 id) external view returns (MarketParams memory);
+    }
+
+    /// Canonical Multicall3 contract — used to batch read-only `eth_call`s
+    /// across many bots in a single RPC. The same address
+    /// `0xcA11bde05977b3631167028862bE2a173976CA11` is deployed on every
+    /// major EVM chain (mainnet, all major L2s and testnets); operators can
+    /// override per-chain via the `MULTICALL3_<chain_id>` env var.
+    /// See [https://www.multicall3.com] for the canonical deployment list.
+    #[sol(rpc)]
+    interface IMulticall3 {
+        struct Call3 {
+            address target;
+            bool allowFailure;
+            bytes callData;
+        }
+        struct Result {
+            bool success;
+            bytes returnData;
+        }
+        function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory);
     }
 
     #[sol(rpc)]

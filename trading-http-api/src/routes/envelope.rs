@@ -10,14 +10,22 @@ use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use once_cell::sync::Lazy;
 use trading_runtime::{EnvelopeBinding, SignedEnvelope};
 
 use crate::{BotContext, MultiBotTradingState};
 
 // ── On-disk storage ─────────────────────────────────────────────────────────
+
+/// Coarse process-wide write lock for envelope persistence. Guards
+/// read-modify-write races between the renewal cron, the envelope watcher,
+/// and `PUT /envelope`. Writes are infrequent (≤1 per bot per renewal window)
+/// so a single mutex is sufficient and avoids the complexity of a per-bot
+/// dashmap. See `audits/http-api-concurrency-audit.md` finding #1.
+static ENVELOPE_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 fn envelope_dir() -> PathBuf {
     sandbox_runtime::store::state_dir().join("trading-envelopes")
@@ -43,16 +51,79 @@ pub fn get_signed_envelope(bot_id: &str) -> Option<SignedEnvelope> {
         .and_then(|data| serde_json::from_str(&data).ok())
 }
 
-pub fn set_signed_envelope(bot_id: &str, env: &SignedEnvelope) -> Result<(), String> {
+/// Persist `env` for `bot_id` if its `nonce` is strictly greater than the
+/// current on-disk envelope's nonce (or the slot is empty). Returns
+/// `Err(NonceConflict { current })` when a higher-or-equal nonce is already
+/// stored — both the operator (`PUT /envelope`) and the renewal cron call
+/// this so a stale cron read cannot regress a freshly PUT envelope.
+///
+/// Writes are atomic: data is staged to `<path>.tmp.<pid>` and `rename`d
+/// into place so a crash mid-write cannot leave a truncated JSON blob that
+/// `get_signed_envelope` would silently treat as missing.
+pub fn set_signed_envelope(bot_id: &str, env: &SignedEnvelope) -> Result<(), SetEnvelopeError> {
+    let _guard = ENVELOPE_WRITE_LOCK
+        .lock()
+        .map_err(|_| SetEnvelopeError::Internal("envelope mutex poisoned".into()))?;
+
+    if let Some(current) = get_signed_envelope(bot_id) {
+        if env.nonce <= current.nonce {
+            return Err(SetEnvelopeError::NonceConflict {
+                current: current.nonce,
+                attempted: env.nonce,
+            });
+        }
+    }
+
     std::fs::create_dir_all(envelope_dir())
-        .map_err(|e| format!("Failed to create envelope directory: {e}"))?;
+        .map_err(|e| SetEnvelopeError::Internal(format!("create envelope dir: {e}")))?;
     let json = serde_json::to_string_pretty(env)
-        .map_err(|e| format!("Failed to serialize envelope: {e}"))?;
-    std::fs::write(envelope_path(bot_id), json)
-        .map_err(|e| format!("Failed to persist envelope: {e}"))
+        .map_err(|e| SetEnvelopeError::Internal(format!("serialize envelope: {e}")))?;
+    let target = envelope_path(bot_id);
+    atomic_write(&target, json.as_bytes())
+        .map_err(|e| SetEnvelopeError::Internal(format!("persist envelope: {e}")))
+}
+
+/// Outcome of a `set_signed_envelope` call. Distinguishes monotonicity
+/// violations from infrastructure errors so the operator path can return
+/// `409 Conflict` while the cron downgrades to a warn-level log.
+#[derive(Debug)]
+pub enum SetEnvelopeError {
+    NonceConflict { current: u64, attempted: u64 },
+    Internal(String),
+}
+
+impl std::fmt::Display for SetEnvelopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetEnvelopeError::NonceConflict { current, attempted } => write!(
+                f,
+                "Envelope nonce {attempted} must be greater than current nonce {current}",
+            ),
+            SetEnvelopeError::Internal(msg) => f.write_str(msg),
+        }
+    }
+}
+
+/// Stage `bytes` to a sibling tempfile and `rename` over `target`. POSIX
+/// guarantees rename is atomic on the same filesystem; on Windows we accept
+/// the filesystem's best-effort semantics (no on-prem Windows deployments
+/// today). Falls back to `std::fs::write` only if the tempfile path itself
+/// is uncreateable, which would equally have failed on the real path.
+fn atomic_write(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        // best-effort cleanup; rename failed is the load-bearing error.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 pub fn clear_signed_envelope(bot_id: &str) -> Result<(), String> {
+    let _guard = ENVELOPE_WRITE_LOCK
+        .lock()
+        .map_err(|_| "envelope mutex poisoned".to_string())?;
     let p = envelope_path(bot_id);
     if p.exists() {
         std::fs::remove_file(&p).map_err(|e| format!("Failed to clear envelope: {e}"))?;
@@ -81,18 +152,18 @@ async fn put_envelope_handler(
     };
     env.verify(&binding, &state.trusted_envelope_signers())
         .map_err(<(StatusCode, String)>::from)?;
-    if let Some(current) = get_signed_envelope(&bot.bot_id) {
-        if env.nonce <= current.nonce {
-            return Err((
-                StatusCode::CONFLICT,
-                format!(
-                    "Envelope nonce {} must be greater than current nonce {}",
-                    env.nonce, current.nonce
-                ),
-            ));
+    // `set_signed_envelope` enforces nonce monotonicity under the same
+    // lock as the renewal cron's writer, so the operator path and cron
+    // path agree on the highest-nonce envelope at all times.
+    match set_signed_envelope(&bot.bot_id, &env) {
+        Ok(()) => {}
+        Err(err @ SetEnvelopeError::NonceConflict { .. }) => {
+            return Err((StatusCode::CONFLICT, err.to_string()));
+        }
+        Err(SetEnvelopeError::Internal(msg)) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, msg));
         }
     }
-    set_signed_envelope(&bot.bot_id, &env).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     tracing::info!(
         bot_id = %bot.bot_id,
         protocol = %env.protocol,
@@ -141,6 +212,10 @@ async fn envelope_status_handler(
         Ok(v) => v,
         Err(_) => alloy::primitives::U256::ZERO, // best-effort; chain unavailable → unknown, report 0
     };
+    // `consumed_pct` is human-facing only. The `to_string().parse::<f64>()`
+    // round-trip is lossy for values > 2^53 (≈ 9e15), but that maps to the
+    // mantissa precision of *both* numerator and denominator so the ratio
+    // remains accurate to ~15 significant digits. See audit finding #9.
     let consumed_pct = if max_total.is_zero() {
         0.0
     } else {
@@ -172,7 +247,9 @@ pub fn max_total_for_enforcement(
     match enforcement {
         Some(UniswapV3Swap(e)) => e.max_total_amount_in,
         Some(UniswapV4Swap(e)) => e.max_total_amount_in,
+        Some(PancakeswapV3Swap(e)) => e.max_total_amount_in,
         Some(AerodromeSwap(e)) => e.max_total_amount_in,
+        Some(CurveStableSwap(e)) => e.max_total_amount_in,
         Some(AaveSupply(e)) => e.max_total_amount,
         Some(AaveWithdraw(e)) => e.max_total_amount,
         Some(AaveBorrow(e)) => e.max_total_amount,
@@ -194,11 +271,17 @@ pub async fn envelope_consumed_amount(
     use trading_runtime::contracts::ITradingVault;
     use trading_runtime::envelope::abi_bridge::to_sol_envelope;
 
-    let provider = ProviderBuilder::new().connect_http(
-        bot.rpc_url
-            .parse()
-            .map_err(|e| format!("invalid bot rpc_url '{}': {e}", bot.rpc_url))?,
-    );
+    // SECURITY: RPC URLs commonly embed an API key in the path or query.
+    // Log the failure server-side and surface a generic, non-leaking error
+    // string to the caller. See `audits/http-api-concurrency-audit.md` #6.
+    let provider = ProviderBuilder::new().connect_http(bot.rpc_url.parse().map_err(|e| {
+        tracing::warn!(
+            bot_id = %bot.bot_id,
+            error = %e,
+            "envelope consumption check: bot rpc_url failed to parse"
+        );
+        "bot rpc_url is invalid; check operator configuration".to_string()
+    })?);
     let vault: alloy::primitives::Address = envelope
         .vault_address
         .parse()

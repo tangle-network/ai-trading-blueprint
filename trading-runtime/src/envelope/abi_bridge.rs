@@ -11,10 +11,20 @@ use alloy::sol_types::SolCall;
 use crate::contracts::ITradingVault;
 use crate::envelope::{
     AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement, AaveWithdrawEnforcement,
-    AerodromeSwapEnforcement, EnvelopeEnforcement, EnvelopeError, MorphoBorrowEnforcement,
-    MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement, SignedEnvelope,
+    AerodromeSwapEnforcement, CurveStableSwapEnforcement, EnvelopeEnforcement, EnvelopeError,
+    MorphoBorrowEnforcement, MorphoRepayEnforcement, MorphoSupplyEnforcement,
+    MorphoWithdrawEnforcement, PancakeswapV3SwapEnforcement, SignedEnvelope,
     UniswapV3SwapEnforcement, UniswapV4SwapEnforcement,
 };
+
+/// Truncate a U256 to a uint160 (alloy `Uint<160, 3>`). Used for `sqrtPriceLimitX96`
+/// fields; off-chain we store as U256 for simplicity, on-chain it's uint160.
+fn u256_to_uint160(v: U256) -> alloy::primitives::Uint<160, 3> {
+    let bytes = v.to_le_bytes::<32>();
+    let mut le160 = [0u8; 20];
+    le160.copy_from_slice(&bytes[..20]);
+    alloy::primitives::Uint::<160, 3>::from_le_bytes(le160)
+}
 
 /// Convert a SignedEnvelope into the Solidity `Envelope` struct expected on-chain.
 /// `policyHash` and `enforcementHash` are computed from the off-chain authoritative
@@ -51,6 +61,42 @@ pub fn to_sol_envelope(signed: &SignedEnvelope) -> Result<ITradingVault::Envelop
         signersHash: signers_hash,
         minSignatures: signed.min_signatures as u64,
     })
+}
+
+/// Struct hash of an `ITradingVault::Envelope` matching the on-chain
+/// `TradeValidator.hashEnvelope` pure function (and `_hashEnvelope` internally).
+///
+/// On-chain `vault.envelopeConsumedAmount(bytes32)` is keyed by exactly this
+/// hash, so the off-chain agent can precompute it and skip the validator
+/// round-trip — this is what lets the envelope watcher batch consumed-amount
+/// reads across N bots into a single Multicall3 RPC.
+///
+/// SECURITY: a divergence between this function and on-chain `_hashEnvelope`
+/// would silently flag bots as "unconsumed" forever (key miss = 0 returned).
+/// The cross-domain proptest in `envelope::abi_bridge::tests` exercises that
+/// the digest (which transitively wraps this struct hash) matches Solidity
+/// — the proptest covers each of the 13 enforcement variants.
+pub fn envelope_struct_hash(env: &ITradingVault::Envelope) -> FixedBytes<32> {
+    use alloy::sol_types::SolValue;
+    let envelope_typehash = keccak256(
+        "Envelope(uint64 version,bytes32 botIdHash,address vault,uint64 chainId,bytes32 protocolHash,bytes32 policyHash,bytes32 enforcementHash,uint64 issuedAt,uint64 expiresAt,uint64 nonce,bytes32 signersHash,uint64 minSignatures)"
+            .as_bytes(),
+    );
+    keccak256(SolValue::abi_encode(&(
+        envelope_typehash,
+        U256::from(env.version),
+        env.botIdHash,
+        env.vault,
+        U256::from(env.chainId),
+        env.protocolHash,
+        env.policyHash,
+        env.enforcementHash,
+        U256::from(env.issuedAt),
+        U256::from(env.expiresAt),
+        U256::from(env.nonce),
+        env.signersHash,
+        U256::from(env.minSignatures),
+    )))
 }
 
 /// Sorted-address hash matching `_hashApprovalSigners` in TradeValidator.sol.
@@ -121,10 +167,12 @@ impl UniswapV3SwapEnforcement {
             feeTier: U256::from(self.fee_tier),
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             router: self.router,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
         }
     }
 }
@@ -141,8 +189,10 @@ impl UniswapV4SwapEnforcement {
             zeroForOne: self.zero_for_one,
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             universalRouter: self.universal_router,
+            hookDataHash: self.hook_data_hash,
         }
     }
 }
@@ -153,9 +203,44 @@ impl AerodromeSwapEnforcement {
         ITradingVault::AerodromeSwapEnforcement {
             maxSingleAmountIn: self.max_single_amount_in,
             maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
             minOutputPerInput: self.min_output_per_input,
             router: self.router,
             tickSpacing: tick,
+            tokenIn: self.token_in,
+            tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
+        }
+    }
+}
+
+impl PancakeswapV3SwapEnforcement {
+    pub fn to_sol(&self) -> ITradingVault::PancakeswapV3SwapEnforcement {
+        ITradingVault::PancakeswapV3SwapEnforcement {
+            feeTier: U256::from(self.fee_tier),
+            maxSingleAmountIn: self.max_single_amount_in,
+            maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
+            minOutputPerInput: self.min_output_per_input,
+            router: self.router,
+            tokenIn: self.token_in,
+            tokenOut: self.token_out,
+            sqrtPriceLimitX96: u256_to_uint160(self.sqrt_price_limit_x96),
+        }
+    }
+}
+
+impl CurveStableSwapEnforcement {
+    pub fn to_sol(&self) -> ITradingVault::CurveStableSwapEnforcement {
+        // alloy renders `int128` fields as the native Rust `i128`.
+        ITradingVault::CurveStableSwapEnforcement {
+            i: self.i,
+            j: self.j,
+            maxSingleAmountIn: self.max_single_amount_in,
+            maxTotalAmountIn: self.max_total_amount_in,
+            maxValue: self.max_value,
+            minOutputPerInput: self.min_output_per_input,
+            pool: self.pool,
             tokenIn: self.token_in,
             tokenOut: self.token_out,
         }
@@ -168,6 +253,7 @@ impl AaveSupplyEnforcement {
             asset: self.asset,
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             pool: self.pool,
         }
     }
@@ -179,6 +265,7 @@ impl AaveWithdrawEnforcement {
             asset: self.asset,
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             minHealthFactor: self.min_health_factor,
             pool: self.pool,
         }
@@ -192,6 +279,7 @@ impl AaveBorrowEnforcement {
             interestRateMode: U256::from(self.interest_rate_mode),
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             minHealthFactor: self.min_health_factor,
             pool: self.pool,
         }
@@ -206,6 +294,7 @@ impl AaveRepayEnforcement {
             interestRateMode: U256::from(self.interest_rate_mode),
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             pool: self.pool,
         }
     }
@@ -216,6 +305,7 @@ impl MorphoSupplyEnforcement {
         ITradingVault::MorphoSupplyEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             morpho: self.morpho,
         }
@@ -227,6 +317,7 @@ impl MorphoWithdrawEnforcement {
         ITradingVault::MorphoWithdrawEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             minCollateralRatio: self.min_collateral_ratio,
             morpho: self.morpho,
@@ -239,6 +330,7 @@ impl MorphoBorrowEnforcement {
         ITradingVault::MorphoBorrowEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             minCollateralRatio: self.min_collateral_ratio,
             morpho: self.morpho,
@@ -251,6 +343,7 @@ impl MorphoRepayEnforcement {
         ITradingVault::MorphoRepayEnforcement {
             maxSingleAmount: self.max_single_amount,
             maxTotalAmount: self.max_total_amount,
+            maxValue: self.max_value,
             marketId: self.market_id,
             morpho: self.morpho,
         }
@@ -305,6 +398,28 @@ pub fn encode_swap_or_supply(
             scores,
         }
         .abi_encode(),
+        EnvelopeEnforcement::PancakeswapV3Swap(e) => {
+            ITradingVault::executePancakeswapV3SwapEnvelopeCall {
+                params,
+                env,
+                enf: e.to_sol(),
+                approvalSigners: signers,
+                signatures: sigs,
+                scores,
+            }
+            .abi_encode()
+        }
+        EnvelopeEnforcement::CurveStableSwap(e) => {
+            ITradingVault::executeCurveStableSwapEnvelopeCall {
+                params,
+                env,
+                enf: e.to_sol(),
+                approvalSigners: signers,
+                signatures: sigs,
+                scores,
+            }
+            .abi_encode()
+        }
         EnvelopeEnforcement::AaveSupply(e) => ITradingVault::executeAaveSupplyEnvelopeCall {
             params,
             env,
@@ -434,30 +549,13 @@ mod tests {
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
-    /// Reimplements the Solidity `_hashEnvelope` calculation in Rust by ABI-encoding
-    /// the converted Solidity Envelope struct directly. If this matches the off-chain
-    /// `SignedEnvelope::digest()`, off-chain signatures will verify on-chain.
+    /// Reimplements the Solidity `_hashEnvelope` calculation in Rust. Now a thin
+    /// wrapper around the public [`envelope_struct_hash`] so we have a single
+    /// source of truth — the cross-domain proptest below still asserts that
+    /// the digest path (which transitively uses this struct hash) matches the
+    /// on-chain digest for every protocol variant.
     fn solidity_compatible_envelope_struct_hash(env: &ITradingVault::Envelope) -> FixedBytes<32> {
-        use alloy::sol_types::SolValue;
-        let envelope_typehash = keccak256(
-            "Envelope(uint64 version,bytes32 botIdHash,address vault,uint64 chainId,bytes32 protocolHash,bytes32 policyHash,bytes32 enforcementHash,uint64 issuedAt,uint64 expiresAt,uint64 nonce,bytes32 signersHash,uint64 minSignatures)"
-                .as_bytes(),
-        );
-        keccak256(SolValue::abi_encode(&(
-            envelope_typehash,
-            U256::from(env.version),
-            env.botIdHash,
-            env.vault,
-            U256::from(env.chainId),
-            env.protocolHash,
-            env.policyHash,
-            env.enforcementHash,
-            U256::from(env.issuedAt),
-            U256::from(env.expiresAt),
-            U256::from(env.nonce),
-            env.signersHash,
-            U256::from(env.minSignatures),
-        )))
+        envelope_struct_hash(env)
     }
 
     fn solidity_compatible_envelope_digest(env: &ITradingVault::Envelope) -> FixedBytes<32> {
@@ -530,7 +628,9 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1_000_000_000_000_000_000u128),
                     max_total_amount_in: U256::from(10_000_000_000_000_000_000u128),
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(2_900_000_000u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: vec![],
@@ -551,12 +651,12 @@ mod tests {
     /// for that variant. We test each by swapping in a different enforcement
     /// and re-computing both digests.
     #[test]
-    fn cross_domain_digest_equivalence_holds_for_all_eleven_variants() {
+    fn cross_domain_digest_equivalence_holds_for_all_thirteen_variants() {
         use crate::envelope::{
             AaveBorrowEnforcement, AaveRepayEnforcement, AaveSupplyEnforcement,
-            AaveWithdrawEnforcement, AerodromeSwapEnforcement, MorphoBorrowEnforcement,
-            MorphoRepayEnforcement, MorphoSupplyEnforcement, MorphoWithdrawEnforcement,
-            UniswapV4SwapEnforcement,
+            AaveWithdrawEnforcement, AerodromeSwapEnforcement, CurveStableSwapEnforcement,
+            MorphoBorrowEnforcement, MorphoRepayEnforcement, MorphoSupplyEnforcement,
+            MorphoWithdrawEnforcement, PancakeswapV3SwapEnforcement, UniswapV4SwapEnforcement,
         };
         let p = Address::from_str("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2").unwrap();
         let asset = Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
@@ -577,7 +677,9 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
                 }),
             ),
             (
@@ -591,11 +693,13 @@ mod tests {
                     zero_for_one: true,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                     universal_router: Address::from_str(
                         "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
                     )
                     .unwrap(),
+                    hook_data_hash: FixedBytes::ZERO,
                 }),
             ),
             (
@@ -608,6 +712,37 @@ mod tests {
                     tick_spacing: 60,
                     max_single_amount_in: amt_one,
                     max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
+                    min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
+                }),
+            ),
+            (
+                "pancakeswap_v3",
+                EnvelopeEnforcement::PancakeswapV3Swap(PancakeswapV3SwapEnforcement {
+                    router: Address::from_str("0x13f4EA83D0bd40E75C8222255bc855a974568Dd4")
+                        .unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    fee_tier: 500,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
+                    min_output_per_input: amt_one,
+                    sqrt_price_limit_x96: U256::ZERO,
+                }),
+            ),
+            (
+                "curve",
+                EnvelopeEnforcement::CurveStableSwap(CurveStableSwapEnforcement {
+                    pool: Address::from_str("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7").unwrap(),
+                    token_in: weth,
+                    token_out: asset,
+                    i: 0,
+                    j: 1,
+                    max_single_amount_in: amt_one,
+                    max_total_amount_in: amt_two,
+                    max_value: U256::ZERO,
                     min_output_per_input: amt_one,
                 }),
             ),
@@ -618,6 +753,7 @@ mod tests {
                     asset,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -627,6 +763,7 @@ mod tests {
                     asset,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_health_factor: hf,
                 }),
             ),
@@ -638,6 +775,7 @@ mod tests {
                     interest_rate_mode: 2,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_health_factor: hf,
                 }),
             ),
@@ -651,6 +789,7 @@ mod tests {
                     interest_rate_mode: 2,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -660,6 +799,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
             (
@@ -669,6 +809,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_collateral_ratio: hf,
                 }),
             ),
@@ -679,6 +820,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                     min_collateral_ratio: hf,
                 }),
             ),
@@ -689,6 +831,7 @@ mod tests {
                     market_id: FixedBytes::ZERO,
                     max_single_amount: amt_one,
                     max_total_amount: amt_two,
+                    max_value: U256::ZERO,
                 }),
             ),
         ];
@@ -767,7 +910,9 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1u128),
                     max_total_amount_in: U256::from(2u128),
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(1u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: vec![],

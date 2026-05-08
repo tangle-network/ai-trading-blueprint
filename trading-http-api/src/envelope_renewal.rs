@@ -41,7 +41,8 @@ use serde::Serialize;
 use trading_runtime::{EnvelopeBinding, EnvelopeError, SignedEnvelope};
 
 use crate::routes::envelope::{
-    envelope_consumed_amount, get_signed_envelope, max_total_for_enforcement, set_signed_envelope,
+    SetEnvelopeError, envelope_consumed_amount, get_signed_envelope, max_total_for_enforcement,
+    set_signed_envelope,
 };
 use crate::{BotContext, EnvelopeBotInfo, MultiBotTradingState};
 
@@ -125,9 +126,48 @@ pub async fn renewal_cron_tick(state: &MultiBotTradingState) -> Vec<(String, Ren
         if !matches!(action, RenewalAction::Healthy | RenewalAction::NoEnvelope) {
             tracing::info!(bot_id = %bot_id, ?action, "envelope renewal action");
         }
+
+        // Record per-action counter for Prometheus dashboarding.
+        crate::routes::prometheus::record_renewal_action(&bot_id, renewal_action_label(&action));
+
+        // Fire alerts for the failure-shaped variants. Fire-and-log; the cron
+        // never blocks on webhook delivery.
+        if let Some(failure_alert) = renewal_failure_alert(&bot_id, &action) {
+            state.alert_sink.fire(failure_alert).await;
+        }
+
         results.push((bot_id, action));
     }
     results
+}
+
+/// Stable, dashboard-facing label for each `RenewalAction` variant. Kept
+/// separately from `Debug` so refactors of the enum don't accidentally rename
+/// metric labels.
+pub fn renewal_action_label(action: &RenewalAction) -> &'static str {
+    match action {
+        RenewalAction::NoEnvelope => "NoEnvelope",
+        RenewalAction::Healthy => "Healthy",
+        RenewalAction::AutoRenewed { .. } => "AutoRenewed",
+        RenewalAction::WebhookFired => "WebhookFired",
+        RenewalAction::MultisigNeedsRenewalNoWebhook => "MultisigNeedsRenewalNoWebhook",
+        RenewalAction::SingleSigOperatorKeyMismatch { .. } => "SingleSigOperatorKeyMismatch",
+        RenewalAction::ChainConsumptionUnavailable { .. } => "ChainConsumptionUnavailable",
+    }
+}
+
+fn renewal_failure_alert(bot_id: &str, action: &RenewalAction) -> Option<crate::alerts::Alert> {
+    match action {
+        RenewalAction::MultisigNeedsRenewalNoWebhook
+        | RenewalAction::SingleSigOperatorKeyMismatch { .. }
+        | RenewalAction::ChainConsumptionUnavailable { .. } => {
+            Some(crate::alerts::Alert::EnvelopeRenewalFailed {
+                bot_id: bot_id.to_string(),
+                action: action.clone(),
+            })
+        }
+        _ => None,
+    }
 }
 
 async fn evaluate_and_act(state: &MultiBotTradingState, bot: EnvelopeBotInfo) -> RenewalAction {
@@ -311,12 +351,28 @@ async fn handle_single_sig(
         };
     }
 
-    if let Err(e) = set_signed_envelope(&bot.bot_id, &renewed) {
-        tracing::warn!(bot_id = %bot.bot_id, "failed to persist renewed envelope: {e}");
-        return RenewalAction::SingleSigOperatorKeyMismatch {
-            approval_signer,
-            operator_address,
-        };
+    match set_signed_envelope(&bot.bot_id, &renewed) {
+        Ok(()) => {}
+        Err(SetEnvelopeError::NonceConflict { current, attempted }) => {
+            // Race with PUT /envelope: the operator landed a higher-nonce
+            // envelope between our consumption read and the persist step.
+            // Drop our renewal — the operator's choice wins. The next cron
+            // tick will re-evaluate against whatever the operator wrote.
+            tracing::info!(
+                bot_id = %bot.bot_id,
+                current_nonce = current,
+                attempted_nonce = attempted,
+                "envelope renewal lost race to operator PUT — skipping"
+            );
+            return RenewalAction::Healthy;
+        }
+        Err(SetEnvelopeError::Internal(e)) => {
+            tracing::warn!(bot_id = %bot.bot_id, "failed to persist renewed envelope: {e}");
+            return RenewalAction::SingleSigOperatorKeyMismatch {
+                approval_signer,
+                operator_address,
+            };
+        }
     }
 
     tracing::info!(
@@ -426,6 +482,12 @@ pub fn spawn_renewal_cron(state: Arc<MultiBotTradingState>) {
     }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(RENEWAL_CRON_INTERVAL);
+        // SECURITY/correctness: tokio's default `Burst` behaviour fires every
+        // missed tick back-to-back when a slow tick (e.g. RPC stall) finishes,
+        // which can stampede the cron and emit duplicate alerts. `Delay`
+        // realigns the schedule and skips at most the still-running tick.
+        // See audit finding #7.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the immediate-fire tick on startup so booting an operator
         // doesn't generate a renewal storm if envelope state was just imported.
         interval.tick().await;
@@ -521,7 +583,9 @@ mod tests {
                     fee_tier: 3000,
                     max_single_amount_in: U256::from(1_000_000u128),
                     max_total_amount_in: max_total_amount,
+                    max_value: U256::ZERO,
                     min_output_per_input: U256::from(1u128),
+                    sqrt_price_limit_x96: U256::ZERO,
                 },
             )),
             signatures: Vec::new(),
@@ -535,15 +599,8 @@ mod tests {
     fn build_state(operator_key: &str, bots: Vec<EnvelopeBotInfo>) -> Arc<MultiBotTradingState> {
         Arc::new(MultiBotTradingState {
             operator_private_key: operator_key.into(),
-            market_data_base_url: String::new(),
-            validation_deadline_secs: 30,
-            min_validator_score: 0,
-            resolve_bot: Box::new(|_| None),
             list_envelope_bots: Some(Box::new(move || bots.clone())),
-            clob_client: None,
-            chain_client: None,
-            chain_client_rpc_url: None,
-            chain_client_chain_id: None,
+            ..MultiBotTradingState::default()
         })
     }
 

@@ -32,11 +32,7 @@ contract StrategyRegistry is Ownable2Step {
     // ═══════════════════════════════════════════════════════════════════════════
 
     event StrategyRegistered(
-        uint256 indexed strategyId,
-        uint64 indexed serviceId,
-        address indexed owner,
-        address linkedVault,
-        string name
+        uint256 indexed strategyId, uint64 indexed serviceId, address indexed owner, address linkedVault, string name
     );
     event StrategyUpdated(uint256 indexed strategyId, string ipfsHash);
     event StrategyDeactivated(uint256 indexed strategyId);

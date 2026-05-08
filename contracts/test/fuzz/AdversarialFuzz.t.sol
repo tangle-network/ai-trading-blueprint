@@ -107,11 +107,7 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice Large deposit before settleFees should not suppress performance fees
     /// that were earned on pre-existing capital.
-    function testFuzz_flashDepositHWMInflation(
-        uint256 existingDeposit,
-        uint256 gain,
-        uint256 flashDeposit
-    ) public {
+    function testFuzz_flashDepositHWMInflation(uint256 existingDeposit, uint256 gain, uint256 flashDeposit) public {
         existingDeposit = bound(existingDeposit, 1 ether, 1_000_000 ether);
         gain = bound(gain, 1 ether, 1_000_000 ether);
         flashDeposit = bound(flashDeposit, existingDeposit, 10_000_000 ether);
@@ -158,10 +154,7 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice Frequent settlements should collect roughly the same total fees
     /// as a single settlement over the same period.
-    function testFuzz_frequentVsSingleSettlement(
-        uint256 gains,
-        uint256 numSettlements
-    ) public {
+    function testFuzz_frequentVsSingleSettlement(uint256 gains, uint256 numSettlements) public {
         gains = bound(gains, 1 ether, 100_000 ether);
         numSettlements = bound(numSettlements, 2, 20);
 
@@ -193,10 +186,7 @@ contract AdversarialFuzzTest is Setup {
         if (gains > 100) {
             // Performance fee should be collected at least once across all settlements
             // (may be zero on individual settlements due to HWM, but total should reflect gains)
-            assertTrue(
-                totalPerfFee > 0 || totalMgmtFee > 0,
-                "Non-trivial gains should produce non-zero fees"
-            );
+            assertTrue(totalPerfFee > 0 || totalMgmtFee > 0, "Non-trivial gains should produce non-zero fees");
         }
     }
 
@@ -206,11 +196,9 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice After collateral release + writedown, loss should be shared
     /// proportionally, not dumped on late depositors.
-    function testFuzz_collateralWritedownDilution(
-        uint256 earlyDeposit,
-        uint256 collateralAmount,
-        uint256 lateDeposit
-    ) public {
+    function testFuzz_collateralWritedownDilution(uint256 earlyDeposit, uint256 collateralAmount, uint256 lateDeposit)
+        public
+    {
         earlyDeposit = bound(earlyDeposit, 10 ether, 1_000_000 ether);
         collateralAmount = bound(collateralAmount, 1 ether, earlyDeposit / 2);
         lateDeposit = bound(lateDeposit, 1 ether, 1_000_000 ether);
@@ -246,10 +234,7 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice Third-party deposits (msg.sender != receiver) don't reset lockup timer.
     /// This tests that self-deposits DO enforce the lockup.
-    function testFuzz_selfDepositLockupEnforced(
-        uint256 depositAmount,
-        uint256 lockupDuration
-    ) public {
+    function testFuzz_selfDepositLockupEnforced(uint256 depositAmount, uint256 lockupDuration) public {
         depositAmount = bound(depositAmount, 1 ether, 100_000 ether);
         lockupDuration = bound(lockupDuration, 1 hours, 30 days);
 
@@ -326,11 +311,7 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice Fuzz multi-validator score combinations and verify the averaging
     /// behavior matches manual computation with integer truncation.
-    function testFuzz_scoreAveragingTruncation(
-        uint256 score1,
-        uint256 score2,
-        uint256 threshold
-    ) public {
+    function testFuzz_scoreAveragingTruncation(uint256 score1, uint256 score2, uint256 threshold) public {
         score1 = bound(score1, 0, 100);
         score2 = bound(score2, 0, 100);
         threshold = bound(threshold, 1, 100);
@@ -361,9 +342,8 @@ contract AdversarialFuzzTest is Setup {
         (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(validator2Key, d2);
         sigs[1] = abi.encodePacked(r2, s2, v2);
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(
-            intentHash, fuzzVault, sigs, scores, deadline, 0
-        );
+        (bool approved, uint256 validCount) =
+            tv.validateWithSignatures(intentHash, fuzzVault, sigs, scores, deadline, 0);
 
         // Manual computation
         uint256 expectedAvg = (score1 + score2) / 2;
@@ -405,10 +385,7 @@ contract AdversarialFuzzTest is Setup {
 
     /// @notice Held tokens with different decimals should not allow extraction
     /// of more assets than deposited.
-    function testFuzz_depositRedeemRoundtripWithMixedDecimals(
-        uint256 depositAmount,
-        uint256 heldBalance
-    ) public {
+    function testFuzz_depositRedeemRoundtripWithMixedDecimals(uint256 depositAmount, uint256 heldBalance) public {
         depositAmount = bound(depositAmount, 1 ether, 100_000 ether);
         heldBalance = bound(heldBalance, 0, 1_000_000 ether);
 

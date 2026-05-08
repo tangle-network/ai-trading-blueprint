@@ -27,6 +27,12 @@ contract TradeValidator is EIP712, Ownable2Step {
         "TradeValidation(bytes32 intentHash,bytes32 executionHash,address vault,uint256 score,uint256 deadline,uint256 actionKind)"
     );
 
+    /// @notice Audit L-4: cap on the number of approval signers / signatures the envelope
+    ///         validator will accept in a single call. Prevents an O(N²) signer-dedup loop
+    ///         from being weaponised for self-griefing gas waste. 16 is comfortably above
+    ///         every observed validator-set size.
+    uint256 public constant MAX_APPROVAL_SIGNERS = 16;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -42,6 +48,10 @@ contract TradeValidator is EIP712, Ownable2Step {
     error SignerNotInSet(address signer);
     error InvalidScoreThreshold();
     error NotVaultConfigOwnerOrOwner();
+
+    /// @dev Audit L-4: signer/signature length cap. Reverts when either array exceeds
+    ///      MAX_APPROVAL_SIGNERS so the O(N²) dedup loop stays bounded.
+    error TooManyApprovalSigners(uint256 got, uint256 max);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -102,6 +112,9 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 len = config.signers.length();
         for (uint256 i = len; i > 0; i--) {
             address old = config.signers.at(i - 1);
+            // OZ EnumerableSet.remove returns bool; safe to ignore here because
+            // `old` was just retrieved via `at()` so membership is guaranteed.
+            // slither-disable-next-line unused-return
             config.signers.remove(old);
             emit SignerRemoved(vault, old);
         }
@@ -267,6 +280,10 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 deadline,
         uint256 actionKind
     ) external view returns (bool approved, uint256 validCount) {
+        // Backward-compat shim — the return value IS used (it's `return`-ed
+        // directly), but slither's external-self-call heuristic spuriously
+        // flags it as ignored.
+        // slither-disable-next-line unused-return
         return this.validateWithSignatures(intentHash, bytes32(0), vault, signatures, scores, deadline, actionKind);
     }
 
@@ -303,20 +320,19 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 deadline,
         uint256 actionKind
     ) external view returns (bytes32) {
-        bytes32 structHash =
-            keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, executionHash, vault, score, deadline, actionKind));
+        bytes32 structHash = keccak256(
+            abi.encode(VALIDATION_TYPEHASH, intentHash, executionHash, vault, score, deadline, actionKind)
+        );
         return _hashTypedDataV4(structHash);
     }
 
     /// @notice Backward-compatible digest helper for non-execution tests/tools.
     /// @dev Production vault execution signs a non-zero executionHash.
-    function computeDigest(
-        bytes32 intentHash,
-        address vault,
-        uint256 score,
-        uint256 deadline,
-        uint256 actionKind
-    ) external view returns (bytes32) {
+    function computeDigest(bytes32 intentHash, address vault, uint256 score, uint256 deadline, uint256 actionKind)
+        external
+        view
+        returns (bytes32)
+    {
         bytes32 structHash =
             keccak256(abi.encode(VALIDATION_TYPEHASH, intentHash, bytes32(0), vault, score, deadline, actionKind));
         return _hashTypedDataV4(structHash);
@@ -339,37 +355,43 @@ contract TradeValidator is EIP712, Ownable2Step {
     );
 
     bytes32 public constant UNISWAP_V3_SWAP_TYPEHASH = keccak256(
-        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut)"
+        "UniswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
     );
     bytes32 public constant UNISWAP_V4_SWAP_TYPEHASH = keccak256(
-        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address universalRouter)"
+        "UniswapV4SwapEnforcement(address currency0,address currency1,uint256 fee,int256 tickSpacing,address hooks,bool zeroForOne,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address universalRouter,bytes32 hookDataHash)"
     );
     bytes32 public constant AERODROME_SWAP_TYPEHASH = keccak256(
-        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut)"
+        "AerodromeSwapEnforcement(uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,int256 tickSpacing,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+    );
+    bytes32 public constant PANCAKESWAP_V3_SWAP_TYPEHASH = keccak256(
+        "PancakeswapV3SwapEnforcement(uint256 feeTier,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address router,address tokenIn,address tokenOut,uint160 sqrtPriceLimitX96)"
+    );
+    bytes32 public constant CURVE_STABLE_SWAP_TYPEHASH = keccak256(
+        "CurveStableSwapEnforcement(int128 i,int128 j,uint256 maxSingleAmountIn,uint256 maxTotalAmountIn,uint256 maxValue,uint256 minOutputPerInput,address pool,address tokenIn,address tokenOut)"
     );
     bytes32 public constant AAVE_SUPPLY_TYPEHASH = keccak256(
-        "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+        "AaveSupplyEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
     );
     bytes32 public constant AAVE_WITHDRAW_TYPEHASH = keccak256(
-        "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+        "AaveWithdrawEnforcement(address asset,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
     );
     bytes32 public constant AAVE_BORROW_TYPEHASH = keccak256(
-        "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 minHealthFactor,address pool)"
+        "AaveBorrowEnforcement(address asset,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,uint256 minHealthFactor,address pool)"
     );
     bytes32 public constant AAVE_REPAY_TYPEHASH = keccak256(
-        "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,address pool)"
+        "AaveRepayEnforcement(address asset,address debtToken,uint256 interestRateMode,uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,address pool)"
     );
     bytes32 public constant MORPHO_SUPPLY_TYPEHASH = keccak256(
-        "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+        "MorphoSupplyEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
     );
     bytes32 public constant MORPHO_WITHDRAW_TYPEHASH = keccak256(
-        "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+        "MorphoWithdrawEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
     );
     bytes32 public constant MORPHO_BORROW_TYPEHASH = keccak256(
-        "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
+        "MorphoBorrowEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,uint256 minCollateralRatio,address morpho)"
     );
     bytes32 public constant MORPHO_REPAY_TYPEHASH = keccak256(
-        "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,bytes32 marketId,address morpho)"
+        "MorphoRepayEnforcement(uint256 maxSingleAmount,uint256 maxTotalAmount,uint256 maxValue,bytes32 marketId,address morpho)"
     );
 
     error InvalidEnvelope();
@@ -394,10 +416,15 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 feeTier;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address router;
         address tokenIn;
         address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 so an operator cannot grief by submitting
+        // a tight price-limit. 0 disables the price-limit (default) on-chain.
+        uint160 sqrtPriceLimitX96;
     }
 
     struct UniswapV4SwapEnforcement {
@@ -409,16 +436,56 @@ contract TradeValidator is EIP712, Ownable2Step {
         bool zeroForOne;
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address universalRouter;
+        // Audit M-2: pin keccak256(hookData) so an operator cannot push arbitrary
+        // hook callback bytes through the V4 swap action.
+        bytes32 hookDataHash;
     }
 
     struct AerodromeSwapEnforcement {
         uint256 maxSingleAmountIn;
         uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minOutputPerInput;
         address router;
         int256 tickSpacing;
+        address tokenIn;
+        address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 (Aerodrome Slipstream uses the same V3-style limit).
+        uint160 sqrtPriceLimitX96;
+    }
+
+    struct PancakeswapV3SwapEnforcement {
+        uint256 feeTier;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
+        uint256 minOutputPerInput;
+        address router;
+        address tokenIn;
+        address tokenOut;
+        // Audit M-2: pin sqrtPriceLimitX96 (Pancake reuses the V3 calldata layout).
+        uint160 sqrtPriceLimitX96;
+    }
+
+    /// @dev Curve StableSwap is index-based: caller passes signed int128 i (token-in)
+    ///      and int128 j (token-out) to `exchange(int128,int128,uint256,uint256)`.
+    ///      We pin the pool, indices, and resolved asset addresses so the on-chain
+    ///      executor can verify all four parameters without an external `coins(i)` call.
+    struct CurveStableSwapEnforcement {
+        int128 i;
+        int128 j;
+        uint256 maxSingleAmountIn;
+        uint256 maxTotalAmountIn;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
+        uint256 minOutputPerInput;
+        address pool;
         address tokenIn;
         address tokenOut;
     }
@@ -427,6 +494,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         address asset;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         address pool;
     }
 
@@ -434,6 +503,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         address asset;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minHealthFactor;
         address pool;
     }
@@ -443,6 +514,8 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 interestRateMode;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         uint256 minHealthFactor;
         address pool;
     }
@@ -453,12 +526,16 @@ contract TradeValidator is EIP712, Ownable2Step {
         uint256 interestRateMode;
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         address pool;
     }
 
     struct MorphoSupplyEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         address morpho;
     }
@@ -466,6 +543,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoWithdrawEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         uint256 minCollateralRatio;
         address morpho;
@@ -474,6 +553,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoBorrowEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         uint256 minCollateralRatio;
         address morpho;
@@ -482,6 +563,8 @@ contract TradeValidator is EIP712, Ownable2Step {
     struct MorphoRepayEnforcement {
         uint256 maxSingleAmount;
         uint256 maxTotalAmount;
+        // Audit M-3: bound params.value (native ETH) — default 0 disables ETH spend.
+        uint256 maxValue;
         bytes32 marketId;
         address morpho;
     }
@@ -536,7 +619,9 @@ contract TradeValidator is EIP712, Ownable2Step {
             if (signers[i] == address(0)) revert ZeroAddress();
             if (i > 0 && uint160(signers[i]) <= uint160(signers[i - 1])) revert InvalidEnvelope();
         }
-        bytes memory packed;
+        // Explicit empty initialization (silences slither uninitialized-local).
+        // Pre-sized buffer avoids quadratic bytes.concat reallocs (gas saving for max-16 signers).
+        bytes memory packed = new bytes(0);
         for (uint256 i = 0; i < signers.length; ++i) {
             packed = bytes.concat(packed, abi.encodePacked(signers[i]));
         }
@@ -558,12 +643,35 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) internal view returns (bool approved, uint256 validCount) {
-        if (env.enforcementHash != expectedEnforcementHash) revert EnvelopeEnforcementMismatch();
+        if (env.enforcementHash != expectedEnforcementHash) {
+            revert EnvelopeEnforcementMismatch();
+        }
         if (
             env.version != 2 || env.vault == address(0) || env.chainId == 0 || env.expiresAt < block.timestamp
                 || env.minSignatures == 0 || approvalSigners.length < env.minSignatures
                 || signatures.length != scores.length || signatures.length == 0
         ) revert InvalidEnvelope();
+        // Audit L-4: cap signer/signature counts so the O(N²) dedup loop below stays
+        // bounded. With OPERATOR_ROLE-gated submission this is self-griefing only, but
+        // a tighter bound is cheap defense-in-depth.
+        if (signatures.length > MAX_APPROVAL_SIGNERS) {
+            revert TooManyApprovalSigners(signatures.length, MAX_APPROVAL_SIGNERS);
+        }
+        if (approvalSigners.length > MAX_APPROVAL_SIGNERS) {
+            revert TooManyApprovalSigners(approvalSigners.length, MAX_APPROVAL_SIGNERS);
+        }
+        // Audit fix L-1: enforce strict chainId equality with the executing
+        // chain. The EIP-712 domain separator already binds the digest, but
+        // a `view` call to `validateXxxEnvelope` would silently approve a
+        // wrong-chain envelope on a fork — surprising for off-chain
+        // simulators. Failing fast here matches the executor's
+        // `_checkEnvelopeBasics`.
+        if (env.chainId != block.chainid) revert InvalidEnvelope();
+        // Audit fix L-2: future-dated envelopes must not validate. The
+        // executor's `_checkEnvelopeBasics` already rejects them, but the
+        // validator's `view`-only path otherwise returned `(true, ...)`,
+        // which a UI/simulator could misinterpret as "ready to execute now".
+        if (env.issuedAt > block.timestamp) revert InvalidEnvelope();
         if (_hashApprovalSigners(approvalSigners) != env.signersHash) revert InvalidEnvelope();
 
         VaultConfig storage config = _vaultConfigs[env.vault];
@@ -592,8 +700,7 @@ contract TradeValidator is EIP712, Ownable2Step {
             scoreSum += scores[i];
         }
 
-        uint256 required =
-            config.requiredSignatures > env.minSignatures ? config.requiredSignatures : env.minSignatures;
+        uint256 required = config.requiredSignatures > env.minSignatures ? config.requiredSignatures : env.minSignatures;
         approved = validCount >= required;
         if (approved && validCount > 0) {
             uint256 avgScore = scoreSum / validCount;
@@ -611,10 +718,12 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.feeTier,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.router,
                 e.tokenIn,
-                e.tokenOut
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
             )
         );
     }
@@ -631,8 +740,10 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.zeroForOne,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
-                e.universalRouter
+                e.universalRouter,
+                e.hookDataHash
             )
         );
     }
@@ -643,9 +754,47 @@ contract TradeValidator is EIP712, Ownable2Step {
                 AERODROME_SWAP_TYPEHASH,
                 e.maxSingleAmountIn,
                 e.maxTotalAmountIn,
+                e.maxValue,
                 e.minOutputPerInput,
                 e.router,
                 e.tickSpacing,
+                e.tokenIn,
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
+            )
+        );
+    }
+
+    function _hashPancakeswapV3Swap(PancakeswapV3SwapEnforcement calldata e) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                PANCAKESWAP_V3_SWAP_TYPEHASH,
+                e.feeTier,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.maxValue,
+                e.minOutputPerInput,
+                e.router,
+                e.tokenIn,
+                e.tokenOut,
+                uint256(e.sqrtPriceLimitX96)
+            )
+        );
+    }
+
+    function _hashCurveStableSwap(CurveStableSwapEnforcement calldata e) internal pure returns (bytes32) {
+        // Off-chain Rust ABI-encodes int128 as int256 sign-extended to 32 bytes; Solidity does
+        // the same automatically when we abi.encode int128 fields, so the hashes line up.
+        return keccak256(
+            abi.encode(
+                CURVE_STABLE_SWAP_TYPEHASH,
+                e.i,
+                e.j,
+                e.maxSingleAmountIn,
+                e.maxTotalAmountIn,
+                e.maxValue,
+                e.minOutputPerInput,
+                e.pool,
                 e.tokenIn,
                 e.tokenOut
             )
@@ -653,12 +802,23 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashAaveSupply(AaveSupplyEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.pool));
+        return
+            keccak256(
+                abi.encode(AAVE_SUPPLY_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.pool)
+            );
     }
 
     function _hashAaveWithdraw(AaveWithdrawEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
-            abi.encode(AAVE_WITHDRAW_TYPEHASH, e.asset, e.maxSingleAmount, e.maxTotalAmount, e.minHealthFactor, e.pool)
+            abi.encode(
+                AAVE_WITHDRAW_TYPEHASH,
+                e.asset,
+                e.maxSingleAmount,
+                e.maxTotalAmount,
+                e.maxValue,
+                e.minHealthFactor,
+                e.pool
+            )
         );
     }
 
@@ -670,6 +830,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.interestRateMode,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.minHealthFactor,
                 e.pool
             )
@@ -685,6 +846,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 e.interestRateMode,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.pool
             )
         );
@@ -692,7 +854,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     function _hashMorphoSupply(MorphoSupplyEnforcement calldata e) internal pure returns (bytes32) {
         return keccak256(
-            abi.encode(MORPHO_SUPPLY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho)
+            abi.encode(MORPHO_SUPPLY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho)
         );
     }
 
@@ -702,6 +864,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 MORPHO_WITHDRAW_TYPEHASH,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.marketId,
                 e.minCollateralRatio,
                 e.morpho
@@ -715,6 +878,7 @@ contract TradeValidator is EIP712, Ownable2Step {
                 MORPHO_BORROW_TYPEHASH,
                 e.maxSingleAmount,
                 e.maxTotalAmount,
+                e.maxValue,
                 e.marketId,
                 e.minCollateralRatio,
                 e.morpho
@@ -723,7 +887,9 @@ contract TradeValidator is EIP712, Ownable2Step {
     }
 
     function _hashMorphoRepay(MorphoRepayEnforcement calldata e) internal pure returns (bytes32) {
-        return keccak256(abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.marketId, e.morpho));
+        return keccak256(
+            abi.encode(MORPHO_REPAY_TYPEHASH, e.maxSingleAmount, e.maxTotalAmount, e.maxValue, e.marketId, e.morpho)
+        );
     }
 
     // ── Public validate*Envelope (one per protocol-action) ──
@@ -735,9 +901,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool approved, uint256 validCount) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashUniswapV3Swap(enf), approvalSigners, signatures, scores);
     }
 
     function validateUniswapV4SwapEnvelope(
@@ -747,9 +911,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashUniswapV4Swap(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashUniswapV4Swap(enf), approvalSigners, signatures, scores);
     }
 
     function validateAerodromeSwapEnvelope(
@@ -759,9 +921,29 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashAerodromeSwap(enf), approvalSigners, signatures, scores);
+    }
+
+    function validatePancakeswapV3SwapEnvelope(
+        Envelope calldata env,
+        PancakeswapV3SwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
         return _validateEnvelopeWithEnforcementHash(
-            env, _hashAerodromeSwap(enf), approvalSigners, signatures, scores
+            env, _hashPancakeswapV3Swap(enf), approvalSigners, signatures, scores
         );
+    }
+
+    function validateCurveStableSwapEnvelope(
+        Envelope calldata env,
+        CurveStableSwapEnforcement calldata enf,
+        address[] calldata approvalSigners,
+        bytes[] calldata signatures,
+        uint256[] calldata scores
+    ) external view returns (bool, uint256) {
+        return _validateEnvelopeWithEnforcementHash(env, _hashCurveStableSwap(enf), approvalSigners, signatures, scores);
     }
 
     function validateAaveSupplyEnvelope(
@@ -821,9 +1003,7 @@ contract TradeValidator is EIP712, Ownable2Step {
         bytes[] calldata signatures,
         uint256[] calldata scores
     ) external view returns (bool, uint256) {
-        return _validateEnvelopeWithEnforcementHash(
-            env, _hashMorphoWithdraw(enf), approvalSigners, signatures, scores
-        );
+        return _validateEnvelopeWithEnforcementHash(env, _hashMorphoWithdraw(enf), approvalSigners, signatures, scores);
     }
 
     function validateMorphoBorrowEnvelope(
@@ -866,6 +1046,14 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     function hashAerodromeSwap(AerodromeSwapEnforcement calldata e) external pure returns (bytes32) {
         return _hashAerodromeSwap(e);
+    }
+
+    function hashPancakeswapV3Swap(PancakeswapV3SwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashPancakeswapV3Swap(e);
+    }
+
+    function hashCurveStableSwap(CurveStableSwapEnforcement calldata e) external pure returns (bytes32) {
+        return _hashCurveStableSwap(e);
     }
 
     function hashAaveSupply(AaveSupplyEnforcement calldata e) external pure returns (bytes32) {

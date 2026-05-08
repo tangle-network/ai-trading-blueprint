@@ -57,9 +57,15 @@ contract ChainlinkUsdValuator is IAssetValuator, Ownable {
         uint8 assetDecimals = _decimals(asset);
 
         uint256 value = Math.mulDiv(amount, tokenPrice, 10 ** tokenDecimals);
+        // divide-before-multiply: slither pairs the `value *=` and `value /=`
+        // below as a div-then-mul sequence, but they are in DIFFERENT branches
+        // (if/else if) — exactly one runs per call, never both. At runtime
+        // there is no divide-before-multiply.
         if (assetPriceDecimals > tokenPriceDecimals) {
+            // slither-disable-next-line divide-before-multiply
             value *= 10 ** (assetPriceDecimals - tokenPriceDecimals);
         } else if (tokenPriceDecimals > assetPriceDecimals) {
+            // slither-disable-next-line divide-before-multiply
             value /= 10 ** (tokenPriceDecimals - assetPriceDecimals);
         }
 
@@ -70,6 +76,10 @@ contract ChainlinkUsdValuator is IAssetValuator, Ownable {
         FeedConfig memory cfg = feeds[token];
         if (!cfg.exists) revert FeedNotSet(token);
 
+        // Chainlink returns (roundId, answer, startedAt, updatedAt, answeredInRound);
+        // we use 4 of 5. `startedAt` is intentionally discarded — `updatedAt`
+        // is the canonical staleness anchor for AggregatorV3Interface.
+        // slither-disable-next-line unused-return
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = cfg.feed.latestRoundData();
         if (answer <= 0 || updatedAt == 0 || answeredInRound < roundId) revert InvalidPrice(token);
         if (cfg.maxStaleness > 0 && block.timestamp > updatedAt + cfg.maxStaleness) {

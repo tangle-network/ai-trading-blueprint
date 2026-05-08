@@ -1952,10 +1952,15 @@ fn multi_bot_state_with_strategy_config_and_bot(
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -1976,10 +1981,15 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -3703,10 +3713,15 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
     let app = build_multi_bot_router(state);
 
@@ -4393,10 +4408,15 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -5055,10 +5075,15 @@ async fn test_multi_bot_clob_execute() {
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -5179,10 +5204,15 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
     let app = build_multi_bot_router(state);
 
@@ -5265,10 +5295,15 @@ async fn test_multi_bot_clob_execute_not_configured() {
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None, // not configured
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -5357,10 +5392,15 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
             }
         }),
         list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -6533,4 +6573,485 @@ async fn test_multi_bot_learning_slippage_rejects_invalid_token_address() {
         .unwrap();
 
     assert_eq!(resp.status(), 400);
+}
+
+// ── CEX route tests ─────────────────────────────────────────────────────────
+//
+// These run the live router with a wiremock-backed venue. We set per-venue
+// env vars (BINANCE_BASE_URL / COINBASE_BASE_URL) to point at the mock server.
+
+/// Test EC P-256 PKCS#8 PEM — generated via:
+///   openssl ecparam -name prime256v1 -genkey -noout |
+///   openssl pkcs8 -topk8 -nocrypt
+const CEX_TEST_COINBASE_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgQSFkfB4L5EN45Zm8\nCN/zU4PTqMFDNOlNeiZuVDZ8QNyhRANCAATYsJm0lw3OdvU4tsOyAtl6VIvz7VaP\nGsmTzm980uKpRWCq3Ubxeaz8PaAetQJEWwT98YNTxe5FXR5+QwgW9RzW\n-----END PRIVATE KEY-----\n";
+
+/// Set CEX env vars so client builders pick up the mock server. Synchronized
+/// across tests via a global mutex; restored after each test.
+struct CexEnvGuard {
+    keys: Vec<&'static str>,
+    prior: Vec<(String, Option<String>)>,
+}
+
+impl CexEnvGuard {
+    fn set(values: &[(&'static str, &str)]) -> Self {
+        // SAFETY: env var mutations are synchronized via cex_env_lock.
+        let prior: Vec<_> = values
+            .iter()
+            .map(|(k, _)| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        for (k, v) in values {
+            unsafe {
+                std::env::set_var(k, v);
+            }
+        }
+        let keys = values.iter().map(|(k, _)| *k).collect();
+        Self { keys, prior }
+    }
+}
+
+impl Drop for CexEnvGuard {
+    fn drop(&mut self) {
+        for (k, prior) in self.prior.drain(..) {
+            unsafe {
+                match prior {
+                    Some(v) => std::env::set_var(&k, v),
+                    None => std::env::remove_var(&k),
+                }
+            }
+        }
+        // Make sure all keys are removed if the prior was None.
+        for k in &self.keys {
+            if !self.prior.iter().any(|(p, _)| p == *k) {
+                unsafe { std::env::remove_var(k) };
+            }
+        }
+    }
+}
+
+fn cex_env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[tokio::test]
+async fn test_cex_unknown_venue_returns_404() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/kraken/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn test_cex_live_direct_route_rejected_for_live_bot() {
+    let _guard = cex_env_lock().lock().unwrap();
+    ensure_state_dir();
+    let bot_id = format!("bot-direct-cex-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-token-cex-direct", bot);
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-cex-direct")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_cex_binance_paper_order_through_mock() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/order"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "orderId": 12345,
+            "clientOrderId": "test-1",
+            "transactTime": 1700000000000_i64,
+            "price": "0",
+            "origQty": "0.001",
+            "executedQty": "0.001",
+            "cummulativeQuoteQty": "30.0",
+            "status": "FILLED",
+            "timeInForce": "IOC",
+            "type": "MARKET",
+            "side": "BUY",
+            "fills": [
+                { "price": "30000", "qty": "0.001",
+                  "commission": "0.03", "commissionAsset": "USDT",
+                  "tradeId": 1 }
+            ]
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "binance");
+    assert_eq!(json["venue_order_id"], "12345");
+    assert_eq!(json["status"], "filled");
+    assert_eq!(json["filled_quantity"], "0.001");
+}
+
+#[tokio::test]
+async fn test_cex_binance_account_endpoint() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "makerCommission": 10,
+            "takerCommission": 10,
+            "balances": [
+                { "asset": "BTC", "free": "0.5", "locked": "0.0" },
+                { "asset": "USDT", "free": "1000.0", "locked": "50.0" },
+                { "asset": "ZRX", "free": "0", "locked": "0" }
+            ]
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/binance/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "binance");
+    let balances = json["balances"].as_array().unwrap();
+    assert_eq!(balances.len(), 2, "zero-balance entries should be filtered");
+}
+
+#[tokio::test]
+async fn test_cex_binance_translates_insufficient_balance_to_402() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/order"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "code": -2010,
+            "msg": "Account has insufficient balance for requested action."
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "10000"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 402);
+}
+
+#[tokio::test]
+async fn test_cex_coinbase_paper_order_through_mock() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/brokerage/orders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "success_response": {
+                "order_id": "abc-123",
+                "product_id": "BTC-USD",
+                "side": "BUY",
+                "client_order_id": "test-1"
+            }
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("COINBASE_BASE_URL", &mock.uri()),
+        (
+            "COINBASE_API_KEY_NAME",
+            "organizations/test-org/apiKeys/test-key",
+        ),
+        ("COINBASE_API_PRIVATE_KEY", CEX_TEST_COINBASE_PEM),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/coinbase/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTC-USD",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "coinbase");
+    assert_eq!(json["venue_order_id"], "abc-123");
+    assert_eq!(json["status"], "pending");
+}
+
+#[tokio::test]
+async fn test_cex_coinbase_misconfigured_key_returns_503() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let _env = CexEnvGuard::set(&[
+        ("COINBASE_BASE_URL", "http://127.0.0.1:1"),
+        (
+            "COINBASE_API_KEY_NAME",
+            "organizations/test-org/apiKeys/test-key",
+        ),
+        ("COINBASE_API_PRIVATE_KEY", "not-a-valid-pem"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/coinbase/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 503);
+}
+
+// ── Audit: concurrent envelope writes ───────────────────────────────────────
+
+/// Stress test for `audits/http-api-concurrency-audit.md` finding #1/#2.
+///
+/// Spawns 10 tokio tasks, each PUTting an envelope at a distinct nonce.
+/// After the join, the on-disk envelope must
+///   1. Deserialize cleanly (atomic write — no truncated JSON).
+///   2. Carry a nonce equal to the highest one that successfully landed
+///      (monotonicity — no stale write clobbers a higher one).
+/// The router enforces nonce monotonicity, so concurrent PUTs at the same
+/// nonce should produce exactly one 200 + nine 409s; the file content
+/// must match the single accepted envelope.
+#[tokio::test]
+async fn test_concurrent_put_envelope_is_atomic_and_monotonic() {
+    ensure_state_dir();
+    let bot_id = format!("bot-concurrent-put-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("concurrent-put-token", bot.clone());
+    let app = build_multi_bot_router(state);
+
+    // Pre-seed nonce=0 so the first concurrent batch is the contested one.
+    {
+        let mut seed = signed_envelope_for_bot(&bot);
+        seed.nonce = 0;
+        resign_envelope(&mut seed);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/envelope")
+                    .header("authorization", "Bearer concurrent-put-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&seed).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "seed PUT must succeed");
+    }
+
+    // Fire 10 concurrent PUTs. Each task picks a unique nonce in [1..=10]
+    // so we can compute the expected highest-accepted nonce.
+    let mut handles = Vec::new();
+    for nonce in 1u64..=10 {
+        let app = app.clone();
+        let bot = bot.clone();
+        handles.push(tokio::spawn(async move {
+            let mut env = signed_envelope_for_bot(&bot);
+            env.nonce = nonce;
+            resign_envelope(&mut env);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/envelope")
+                        .header("authorization", "Bearer concurrent-put-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&env).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (nonce, resp.status())
+        }));
+    }
+
+    let mut accepted_nonces: Vec<u64> = Vec::new();
+    for h in handles {
+        let (nonce, status) = h.await.unwrap();
+        // 200 (accepted) or 409 (rejected because a higher nonce already
+        // landed). Anything else (5xx, 400, etc.) means the route bricked
+        // under contention — that's the failure this test is hunting.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "unexpected status {status} for nonce={nonce}"
+        );
+        if status == StatusCode::OK {
+            accepted_nonces.push(nonce);
+        }
+    }
+
+    // At least one PUT must have landed (10 was tried last in the natural
+    // ordering — but the actual happy-path count depends on scheduling).
+    assert!(!accepted_nonces.is_empty(), "no PUTs landed");
+
+    // GET the envelope back; it must deserialize cleanly and its nonce must
+    // be the largest one we observed in the accepted set.
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer concurrent-put-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 200);
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    // The atomic-write check: parse must succeed, never see a truncated blob.
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).expect("envelope JSON must round-trip");
+
+    let stored_nonce = value["nonce"].as_u64().expect("nonce field");
+    let max_accepted = *accepted_nonces.iter().max().unwrap();
+    assert_eq!(
+        stored_nonce, max_accepted,
+        "stored nonce must equal max accepted nonce; accepted={accepted_nonces:?}"
+    );
 }

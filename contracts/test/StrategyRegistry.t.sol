@@ -20,7 +20,8 @@ contract StrategyRegistryTest is Setup {
 
     function test_registerStrategy_unlinked() public {
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, address(0), "My Yield Strategy", "defi-yield", "QmHash123");
+        uint256 strategyId =
+            strategyRegistry.registerStrategy(1, address(0), "My Yield Strategy", "defi-yield", "QmHash123");
 
         assertEq(strategyId, 1);
 
@@ -40,7 +41,8 @@ contract StrategyRegistryTest is Setup {
     function test_registerStrategy_linked_vaultAdmin() public {
         // owner has DEFAULT_ADMIN_ROLE on the vault
         vm.prank(owner);
-        uint256 strategyId = strategyRegistry.registerStrategy(1, address(vault), "Linked Strategy", "defi-yield", "QmHash");
+        uint256 strategyId =
+            strategyRegistry.registerStrategy(1, address(vault), "Linked Strategy", "defi-yield", "QmHash");
 
         StrategyRegistry.StrategyInfo memory info = strategyRegistry.getStrategy(strategyId);
         assertEq(info.linkedVault, address(vault));

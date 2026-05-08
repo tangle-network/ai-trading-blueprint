@@ -20,8 +20,17 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test Shares", "tSHR", bytes32("salt1"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Test Shares",
+            "tSHR",
+            bytes32("salt1"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         assertTrue(vault != address(0));
@@ -77,8 +86,17 @@ contract VaultFactoryTest is Setup {
             FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 100, validatorFeeShareBps: 5000});
 
         (address vault,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Custom Vault", "cVAULT", bytes32("custom-salt"),
-            customPolicy, customFee
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Custom Vault",
+            "cVAULT",
+            bytes32("custom-salt"),
+            customPolicy,
+            customFee
         );
 
         // Verify custom policy config
@@ -103,12 +121,30 @@ contract VaultFactoryTest is Setup {
 
         // Bot vaults don't set serviceShares — multiple per service allowed
         (address vault1, address share1) = vaultFactory.createBotVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Bot 1", "BOT1", bytes32("bot-salt1"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Bot 1",
+            "BOT1",
+            bytes32("bot-salt1"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
         (address vault2, address share2) = vaultFactory.createBotVault(
-            serviceId, address(tokenB), owner, operator, signers, 2, "Bot 2", "BOT2", bytes32("bot-salt2"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenB),
+            owner,
+            operator,
+            signers,
+            2,
+            "Bot 2",
+            "BOT2",
+            bytes32("bot-salt2"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         // Each bot vault gets its own share token
@@ -131,14 +167,32 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Test",
+            "TST",
+            bytes32("salt1"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         vm.expectRevert(abi.encodeWithSelector(VaultFactory.ServiceAlreadyInitialized.selector, serviceId));
         vaultFactory.createVault(
-            serviceId, address(tokenA), user, operator, signers, 2, "Test2", "TST2", bytes32("salt2"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            user,
+            operator,
+            signers,
+            2,
+            "Test2",
+            "TST2",
+            bytes32("salt2"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -150,14 +204,32 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address vault1,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", bytes32("salt1"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Test",
+            "TST",
+            bytes32("salt1"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         // Use createBotVault for a second vault under same service
         (address vault2,) = vaultFactory.createBotVault(
-            serviceId, address(tokenB), owner, operator, signers, 2, "Bot", "BOT", bytes32("salt2"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenB),
+            owner,
+            operator,
+            signers,
+            2,
+            "Bot",
+            "BOT",
+            bytes32("salt2"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         address[] memory vaults = vaultFactory.getServiceVaults(serviceId);
@@ -175,8 +247,17 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address actual,) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Test", "TST", salt,
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Test",
+            "TST",
+            salt,
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         // After creation, we can verify the service is mapped
@@ -200,8 +281,17 @@ contract VaultFactoryTest is Setup {
         emit VaultFactory.VaultCreated(serviceId, address(0), address(0), address(tokenA), owner, operator);
 
         vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Event Test", "EVT", bytes32("event-salt"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Event Test",
+            "EVT",
+            bytes32("event-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
     }
 
@@ -214,8 +304,17 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test", "oTST", bytes32("oracle-salt"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Oracle Test",
+            "oTST",
+            bytes32("oracle-salt"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         // Deploy oracle and set it on the share token
@@ -248,8 +347,17 @@ contract VaultFactoryTest is Setup {
         signers[2] = validator3;
 
         (address usdcVault, address shareAddr) = vaultFactory.createVault(
-            serviceId, address(tokenA), owner, operator, signers, 2, "Oracle Test2", "oTST2", bytes32("oracle-salt2"),
-            _defaultPolicyConfig(), _defaultFeeConfig()
+            serviceId,
+            address(tokenA),
+            owner,
+            operator,
+            signers,
+            2,
+            "Oracle Test2",
+            "oTST2",
+            bytes32("oracle-salt2"),
+            _defaultPolicyConfig(),
+            _defaultFeeConfig()
         );
 
         MockOracle orc = new MockOracle();
