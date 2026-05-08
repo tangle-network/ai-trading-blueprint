@@ -11,6 +11,7 @@ import "../src/TradeValidator.sol";
 import "../src/FeeDistributor.sol";
 import "../src/StrategyRegistry.sol";
 import "../src/TradingVault.sol";
+import "../src/UniswapV3TwapValuator.sol";
 import "../test/helpers/Setup.sol"; // MockERC20 (only used when ASSET_TOKEN is unset)
 
 /**
@@ -77,6 +78,11 @@ contract DeployEnvelopeV3 is Script {
         uint256 minScoreThreshold;
         address[] sampleSigners;
         uint256 sampleRequiredSignatures;
+        // Audit FIX-3: TWAP valuator deployed alongside the rest of the stack so
+        // chainlink_or_uniswap_v3_twap and uniswap_v3_twap valuation modes can
+        // resolve to a real address. Zero when UNISWAP_V3_FACTORY env var is
+        // unset (chains without Uniswap V3 deployment).
+        address uniswapV3TwapValuator;
     }
 
     /// @notice Resolved deploy configuration. Either populated from env vars by
@@ -94,6 +100,11 @@ contract DeployEnvelopeV3 is Script {
         string vaultName;
         string vaultSymbol;
         bool writeJson;
+        // Audit FIX-3: TWAP valuator config. Zero factory disables deployment.
+        address uniswapV3Factory;
+        uint32 twapWindowSecs;
+        uint128 twapMinHarmonicLiquidity;
+        uint32 twapMaxSpotDeviationBps;
     }
 
     function run() external returns (DeploymentResult memory result) {
@@ -159,6 +170,26 @@ contract DeployEnvelopeV3 is Script {
 
         StrategyRegistry strategyRegistry = new StrategyRegistry(deployer);
 
+        // ── Audit FIX-3: Uniswap V3 TWAP valuator ──
+        // Deployed iff the chain has a known Uniswap V3 factory address. Off-chain
+        // configuration writes the address into deployments/{chainId}/v3.json so
+        // the operator API and Arena can resolve `chainlink_or_uniswap_v3_twap`
+        // and `uniswap_v3_twap` valuation modes against a real contract.
+        address uniswapV3TwapValuator;
+        if (cfg.uniswapV3Factory != address(0)) {
+            UniswapV3TwapValuator twap = new UniswapV3TwapValuator(
+                cfg.admin,
+                cfg.uniswapV3Factory,
+                cfg.twapWindowSecs,
+                cfg.twapMinHarmonicLiquidity,
+                cfg.twapMaxSpotDeviationBps
+            );
+            uniswapV3TwapValuator = address(twap);
+            console.log("UniswapV3TwapValuator:", uniswapV3TwapValuator);
+        } else {
+            console.log("UniswapV3TwapValuator: SKIPPED (UNISWAP_V3_FACTORY unset)");
+        }
+
         console.log("PolicyEngine:        ", address(policyEngine));
         console.log("TradeValidator:      ", address(tradeValidator));
         console.log("FeeDistributor:      ", address(feeDistributor));
@@ -215,7 +246,8 @@ contract DeployEnvelopeV3 is Script {
             sampleServiceId: cfg.serviceId,
             minScoreThreshold: cfg.minScoreThreshold,
             sampleSigners: signers,
-            sampleRequiredSignatures: cfg.requiredSigs
+            sampleRequiredSignatures: cfg.requiredSigs,
+            uniswapV3TwapValuator: uniswapV3TwapValuator
         });
 
         // ── Persist deployment JSON for arena consumption ──
@@ -263,6 +295,16 @@ contract DeployEnvelopeV3 is Script {
 
         cfg.assetTokenOverride = vm.envOr("ASSET_TOKEN", address(0));
         cfg.writeJson = _strEq(vm.envOr("WRITE_DEPLOYMENT_JSON", string("true")), "true");
+
+        // Audit FIX-3: TWAP valuator config. UNISWAP_V3_FACTORY unset → skip
+        // valuator deploy (chains without Uniswap V3). Defaults match the
+        // contract-level floors: 1800s window, 1e6 harmonic-liquidity, 200 BPS
+        // deviation cap (tighter than the previous 500 BPS per audit FIX-2).
+        cfg.uniswapV3Factory = vm.envOr("UNISWAP_V3_FACTORY", address(0));
+        cfg.twapWindowSecs = uint32(vm.envOr("UNISWAP_V3_TWAP_WINDOW_SECS", uint256(1800)));
+        cfg.twapMinHarmonicLiquidity =
+            uint128(vm.envOr("UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY", uint256(1_000_000)));
+        cfg.twapMaxSpotDeviationBps = uint32(vm.envOr("UNISWAP_V3_TWAP_MAX_SPOT_DEVIATION_BPS", uint256(200)));
     }
 
     function _writeDeploymentJson(DeploymentResult memory r) internal {
@@ -282,6 +324,7 @@ contract DeployEnvelopeV3 is Script {
         vm.serializeAddress(key, "vaultDeployer", r.vaultDeployer);
         vm.serializeAddress(key, "vaultShareDeployer", r.vaultShareDeployer);
         vm.serializeAddress(key, "strategyRegistry", r.strategyRegistry);
+        vm.serializeAddress(key, "uniswapV3TwapValuator", r.uniswapV3TwapValuator);
         vm.serializeAddress(key, "assetToken", r.assetToken);
         vm.serializeAddress(key, "sampleVault", r.sampleVault);
         vm.serializeAddress(key, "sampleShare", r.sampleShare);
