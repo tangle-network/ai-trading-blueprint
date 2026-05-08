@@ -119,6 +119,11 @@ message QuoteDetails {
   repeated ResourcePricing resources = 6;
   // Security commitments for assets
   repeated AssetSecurityCommitment security_commitments = 7;
+  // EVM address (20 bytes) of the requester this quote is bound to.
+  // Mirrors tnt-core v0.13.0 `Types.QuoteDetails.requester`. The on-chain
+  // verifier rejects wildcard `address(0)` and enforces equality with
+  // `msg.sender` (or `requester == address(0)` open quotes are NOT supported).
+  bytes requester = 8;
 }
 
 // Pricing for a specific resource type
@@ -205,4 +210,8 @@ message JobQuoteDetails {
   // Bound into the EIP-712 signature to prevent replay of
   // a non-TEE quote for a TEE-required service.
   uint32 confidentiality = 6;
+  // EVM address (20 bytes) of the requester this job quote is bound to.
+  // Mirrors tnt-core v0.13.0 `Types.JobQuoteDetails.requester`. Wildcard
+  // `address(0)` is rejected on-chain.
+  bytes requester = 7;
 }
