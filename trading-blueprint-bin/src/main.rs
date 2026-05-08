@@ -8,6 +8,8 @@
 //! The operator binary focuses on sidecar management and trading loop execution.
 
 mod operator_api;
+mod preflight_limiter;
+mod workflow_compat;
 
 use blueprint_producers_extra::cron::CronJob;
 use blueprint_sdk::contexts::tangle::TangleClientContext;
@@ -410,6 +412,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             rate_limiter: std::sync::Arc::new(
                 trading_http_api::rate_limit::PerBotRateLimiter::default(),
             ),
+            // NAV WebSocket disabled in this binary path; the multi-bot
+            // wrapper that consumes the field defaults to no NAV stream when
+            // None. Wire later when the trading-bin needs to stream NAV.
+            nav_stream_config: None,
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

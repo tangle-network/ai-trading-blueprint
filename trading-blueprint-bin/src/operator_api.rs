@@ -1,4 +1,6 @@
-use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowRunRecord, WorkflowRunStatus};
+// Compat layer for the sibling repo's removed per-run history surface. See
+// crate::workflow_compat for the rationale + long-term path.
+use crate::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 use axum::extract::{Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -715,13 +717,53 @@ async fn create_session(
 }
 
 async fn preflight_dex_asset_route(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Json(request): Json<DexAssetPreflightRequest>,
 ) -> ApiResult<DexAssetPreflightResponse> {
-    preflight_dex_asset(request)
-        .await
-        .map(Json)
-        .map_err(|err| ApiError::message(StatusCode::BAD_REQUEST, err))
+    // Audit FIX-5: rate-limit per session caller. The preflight endpoint
+    // dispatches 1-3 RPC calls per fee tier, so an unrate-limited session
+    // can drive a relay loop against any allowlisted RPC. 30/min default.
+    if let Err(retry_after) = crate::preflight_limiter::preflight_limiter().check(&caller) {
+        let secs = retry_after.as_secs().max(1);
+        return Err(ApiError::message(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("preflight rate limit exceeded; retry after {secs}s"),
+        ));
+    }
+
+    // Audit FIX-5: structured status mapping. The legacy version mapped
+    // every error to BAD_REQUEST, hiding the 4xx-vs-5xx distinction so the
+    // UI couldn't distinguish "your address is bad" from "our infra is
+    // down". `preflight_dex_asset` returns `String` errors; classify by
+    // substring until the upstream lib exposes a typed error.
+    preflight_dex_asset(request).await.map(Json).map_err(|err| {
+        let status = classify_preflight_error(&err);
+        ApiError::message(status, err)
+    })
+}
+
+/// Audit FIX-5: best-effort 4xx/5xx mapping for `preflight_dex_asset`
+/// string errors. Conservative — anything we don't recognize defaults to
+/// BAD_REQUEST so a caller-supplied bad input doesn't masquerade as a
+/// server fault. RPC-side / infra failures map to 5xx so the UI can show
+/// "service degraded" instead of "your input is bad".
+fn classify_preflight_error(err: &str) -> StatusCode {
+    let lower = err.to_ascii_lowercase();
+    // Infra / upstream — 5xx
+    if lower.contains("rpc unreachable")
+        || lower.contains("rpc error")
+        || lower.contains("connection")
+        || lower.contains("timeout")
+        || lower.contains("decode")
+        || lower.contains("network")
+    {
+        return StatusCode::BAD_GATEWAY;
+    }
+    if lower.contains("no allowlisted rpc") || lower.contains("rpc is not configured") {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    // Caller input — 4xx (default).
+    StatusCode::BAD_REQUEST
 }
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
@@ -1230,11 +1272,10 @@ fn replayable_run_for_session(
         return Ok(None);
     }
 
-    let run =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-            .into_iter()
-            .find(|run| run.session_id.as_deref() == Some(session_id));
+    let run = crate::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .into_iter()
+        .find(|run| run.session_id.as_deref() == Some(session_id));
 
     let Some(run) = run else {
         return Ok(None);
@@ -1285,9 +1326,8 @@ fn run_transcript_fallback_response(
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
 ) -> Result<Response, (StatusCode, String)> {
-    let transcript =
-        ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run_transcript(&run.run_id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let transcript = crate::workflow_compat::get_workflow_run_transcript(&run.run_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let messages = match transcript {
         Some(record) => record.messages,
         None => synthesize_run_transcript_messages(run),
@@ -1344,9 +1384,8 @@ async fn list_bot_runs(
     let limit = params.limit.unwrap_or(100).clamp(1, 500);
     let cursor = params.cursor.as_deref().and_then(parse_run_cursor);
 
-    let mut runs =
-        ai_agent_sandbox_blueprint_lib::workflows::list_workflow_runs_for_workflows(&workflow_ids)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut runs = crate::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -1374,7 +1413,7 @@ async fn get_bot_run(
     let workflow_ids = workflow_ids_for_bot(&bot)
         .into_iter()
         .collect::<HashSet<_>>();
-    let run = ai_agent_sandbox_blueprint_lib::workflows::get_workflow_run(&run_id)
+    let run = crate::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
@@ -1609,11 +1648,8 @@ async fn run_now(
             )
         })?;
 
-    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
-        workflow_id,
-        Some(entry.target_sandbox_id.as_str()),
-    )
-    .map_err(map_run_now_error)?;
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
+        .map_err(map_run_now_error)?;
 
     let accepted_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1660,9 +1696,7 @@ async fn run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
-                                    e, failed_at,
-                                );
+                                crate::workflow_compat::apply_workflow_failure(e, failed_at);
                             })
                             .ok()
                     });
@@ -2034,18 +2068,17 @@ async fn send_chat_message(
             // Safe: conv_file and toc_entry are server-generated slugs, not user input.
             let toc_update_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
                 sidecar_url: sandbox.sidecar_url.clone(),
-                command: format!(
-                    r#"node -e "
+                command: r#"node -e "
 const fs=require('fs'),p='/home/agent/memory/toc.md';
-try{{
+try{
   let t=fs.readFileSync(p,'utf8');
-  if(!t.includes(process.env.CONV_FILE)){{
+  if(!t.includes(process.env.CONV_FILE)){
     t=t.replace('## Conversations','## Conversations\n'+process.env.TOC_ENTRY);
     fs.writeFileSync(p,t);
-  }}
-}}catch(e){{/* toc.md not yet created, skip */}}"
-"#,
-                ),
+  }
+}catch(e){/* toc.md not yet created, skip */}"
+"#
+                .to_string(),
                 cwd: String::new(),
                 env_json: serde_json::json!({"CONV_FILE": conv_file, "TOC_ENTRY": toc_entry})
                     .to_string(),
@@ -3776,11 +3809,8 @@ async fn debug_run_now(
             )
         })?;
 
-    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(
-        workflow_id,
-        Some(entry.target_sandbox_id.as_str()),
-    )
-    .map_err(map_run_now_error)?;
+    let _run_guard = ai_agent_sandbox_blueprint_lib::workflows::acquire_workflow_run(workflow_id)
+        .map_err(map_run_now_error)?;
 
     let accepted_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3825,9 +3855,7 @@ async fn debug_run_now(
                     .and_then(|store| {
                         store
                             .update(&wf_key_bg, |e| {
-                                ai_agent_sandbox_blueprint_lib::workflows::apply_workflow_failure(
-                                    e, failed_at,
-                                );
+                                crate::workflow_compat::apply_workflow_failure(e, failed_at);
                             })
                             .ok()
                     });
@@ -4468,6 +4496,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
         let _ = store.insert(state::bot_key("wd-bot"), bot);
 
@@ -4556,6 +4586,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::json!(null),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
         let _ = state::bots()
             .expect("bots store")
@@ -5212,7 +5244,7 @@ mod tests {
         let portfolio = map_trading_api_portfolio(payload).expect("portfolio should parse");
 
         assert_eq!(portfolio.total_value_usd, Some(2220.1));
-        assert_eq!(portfolio.has_unpriced_positions, false);
+        assert!(!portfolio.has_unpriced_positions);
         assert_eq!(
             portfolio.positions[0].valuation_status,
             trading_runtime::types::ValuationStatus::Priced

@@ -41,6 +41,9 @@ toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Audit FIX-5: per-session rate-limit on /api/dex/assets/preflight.
+governor = { version = "0.6", default-features = false, features = ["std", "jitter", "quanta"] }
+dashmap = "6"
 
 [dev-dependencies]
 chrono = "0.4"

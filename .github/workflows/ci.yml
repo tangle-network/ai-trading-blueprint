@@ -66,23 +66,18 @@ jobs:
       # Check our crates (not --workspace: bin crates pull in heavier
       # deployment-only dependencies).
       #
-      # NOTE: trading-blueprint-bin is NOT checked here. The crate currently
-      # has pre-existing compile errors from sibling-repo drift on
-      # `ai_agent_sandbox_blueprint_lib::workflows::*` (missing types
-      # WorkflowRunRecord/WorkflowRunStatus and functions
-      # list_workflow_runs_for_workflows / get_workflow_run /
-      # get_workflow_run_transcript / apply_workflow_failure) plus internal
-      # struct-field mismatches (TradingBotRecord missing baseline_backtest
-      # and renewal_webhook_url). These are pre-existing on origin/main and
-      # need a sibling-repo bump + struct-construction sweep to resolve.
-      # See https://github.com/tangle-network/ai-trading-blueprint/issues
-      # for the tracking issue (audit FIX-4 follow-up).
+      # `trading-blueprint-bin` is checked + tested here as of audit FIX-4.
+      # Previously skipped due to sibling-repo drift on
+      # `ai_agent_sandbox_blueprint_lib::workflows::*`; resolved via the
+      # `crate::workflow_compat` shim that re-implements the removed
+      # per-run history surface as bin-local in-memory storage.
       - name: Check
         run: |
           cargo check -p trading-runtime
           cargo check -p trading-http-api
           cargo check -p trading-validator-lib
           cargo check -p trading-blueprint-lib
+          cargo check -p trading-blueprint-bin --tests
 
       - name: Test (trading-validator-lib)
         run: cargo test -p trading-validator-lib --lib
@@ -95,6 +90,12 @@ jobs:
 
       - name: Test (trading-blueprint-lib)
         run: cargo test -p trading-blueprint-lib --lib
+
+      - name: Test (trading-blueprint-bin operator_api)
+        # Audit FIX-5: exercises the new preflight rate-limit + structured
+        # error mapping integration tests, plus the workflow_compat-backed
+        # /api/bots/:id/runs endpoints.
+        run: cargo test -p trading-blueprint-bin --test operator_api_tests
 
   clippy:
     name: Clippy
@@ -120,7 +121,7 @@ jobs:
           cargo clippy -p trading-http-api -- -D warnings -A clippy::collapsible-if
           cargo clippy -p trading-validator-lib -- -D warnings
           cargo clippy -p trading-blueprint-lib -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments
-          # trading-blueprint-bin: skipped, pre-existing compile errors. See `Check` step note above.
+          cargo clippy -p trading-blueprint-bin --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments
 
   fmt:
     name: Rustfmt
