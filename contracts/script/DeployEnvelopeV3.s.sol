@@ -302,8 +302,7 @@ contract DeployEnvelopeV3 is Script {
         // deviation cap (tighter than the previous 500 BPS per audit FIX-2).
         cfg.uniswapV3Factory = vm.envOr("UNISWAP_V3_FACTORY", address(0));
         cfg.twapWindowSecs = uint32(vm.envOr("UNISWAP_V3_TWAP_WINDOW_SECS", uint256(1800)));
-        cfg.twapMinHarmonicLiquidity =
-            uint128(vm.envOr("UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY", uint256(1_000_000)));
+        cfg.twapMinHarmonicLiquidity = uint128(vm.envOr("UNISWAP_V3_TWAP_MIN_HARMONIC_LIQUIDITY", uint256(1_000_000)));
         cfg.twapMaxSpotDeviationBps = uint32(vm.envOr("UNISWAP_V3_TWAP_MAX_SPOT_DEVIATION_BPS", uint256(200)));
     }
 

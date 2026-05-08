@@ -695,9 +695,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     ///      the validator-signed minOutput remains the authoritative gate so a
     ///      single misbehaving oracle pair cannot lock unrelated swaps. Pair
     ///      this with `setMaxSlippage(vault, 0)` if a strict cap is required.
-    function _assertSlippageCap(address tokenIn, uint256 amountIn, address tokenOut, uint256 signedMinOutput)
-        internal
-    {
+    function _assertSlippageCap(address tokenIn, uint256 amountIn, address tokenOut, uint256 signedMinOutput) internal {
         // unused-return: only `maxSlippageBps` matters here; the other policy
         // fields are inspected on their own dedicated paths (leverageCap in the
         // health-factor executor, maxTradesPerHour via PolicyEngine.recordTrade).
