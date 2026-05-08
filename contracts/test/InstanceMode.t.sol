@@ -51,21 +51,21 @@ contract InstanceModeTest is Setup {
 
         return abi.encode(
             "Instance Vault", // name
-            "",               // strategyType
-            "",               // strategyConfigJson
-            "",               // riskParamsJson
-            address(0),       // factoryAddress (unused)
-            address(tokenA),  // assetToken
-            signers,          // signers
-            uint256(1),       // requiredSignatures
-            uint256(0),       // chainId
-            "",               // rpcUrl
-            "",               // cron
-            uint64(0),        // cpuCores
-            uint64(0),        // memoryMb
-            uint64(0),        // maxLifetimeDays
-            validatorIds,     // validatorServiceIds
-            uint256(0)        // maxCollateralBps
+            "", // strategyType
+            "", // strategyConfigJson
+            "", // riskParamsJson
+            address(0), // factoryAddress (unused)
+            address(tokenA), // assetToken
+            signers, // signers
+            uint256(1), // requiredSignatures
+            uint256(0), // chainId
+            "", // rpcUrl
+            "", // cron
+            uint64(0), // cpuCores
+            uint64(0), // memoryMb
+            uint64(0), // maxLifetimeDays
+            validatorIds, // validatorServiceIds
+            uint256(0) // maxCollateralBps
         );
     }
 
@@ -75,22 +75,22 @@ contract InstanceModeTest is Setup {
         uint64[] memory validatorIds = new uint64[](0);
 
         return abi.encode(
-            "",          // name
-            "",          // strategyType
-            "",          // strategyConfigJson
-            "",          // riskParamsJson
-            address(0),  // factoryAddress (unused)
-            address(0),  // assetToken = zero
-            signers,     // signers
-            uint256(0),  // requiredSignatures
-            uint256(0),  // chainId
-            "",          // rpcUrl
-            "",          // cron
-            uint64(0),   // cpuCores
-            uint64(0),   // memoryMb
-            uint64(0),   // maxLifetimeDays
+            "", // name
+            "", // strategyType
+            "", // strategyConfigJson
+            "", // riskParamsJson
+            address(0), // factoryAddress (unused)
+            address(0), // assetToken = zero
+            signers, // signers
+            uint256(0), // requiredSignatures
+            uint256(0), // chainId
+            "", // rpcUrl
+            "", // cron
+            uint64(0), // cpuCores
+            uint64(0), // memoryMb
+            uint64(0), // maxLifetimeDays
             validatorIds, // validatorServiceIds
-            uint256(0)   // maxCollateralBps
+            uint256(0) // maxCollateralBps
         );
     }
 
@@ -139,9 +139,11 @@ contract InstanceModeTest is Setup {
     }
 
     function test_instanceMode_onlyFromTangle() public {
-        vm.expectRevert(abi.encodeWithSelector(
-            BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BlueprintServiceManagerBase.OnlyTangleAllowed.selector, address(this), blueprint.tangleCore()
+            )
+        );
         blueprint.setInstanceMode(true);
     }
 
@@ -245,8 +247,22 @@ contract InstanceModeTest is Setup {
         address[] memory signers = new address[](0);
         uint64[] memory validatorIds = new uint64[](0);
         bytes memory inputs = abi.encode(
-            "Test", "", "", "", address(0), address(tokenA), signers, uint256(0),
-            uint256(0), "", "", uint64(0), uint64(0), uint64(0), validatorIds, uint256(0)
+            "Test",
+            "",
+            "",
+            "",
+            address(0),
+            address(tokenA),
+            signers,
+            uint256(0),
+            uint256(0),
+            "",
+            "",
+            uint64(0),
+            uint64(0),
+            uint64(0),
+            validatorIds,
+            uint256(0)
         );
 
         vm.prank(tangleCore);
@@ -268,8 +284,22 @@ contract InstanceModeTest is Setup {
         address[] memory signers = new address[](0);
         uint64[] memory validatorIds = new uint64[](0);
         bytes memory inputs = abi.encode(
-            "Op Vault", "", "", "", address(0), address(tokenA), signers, uint256(0),
-            uint256(0), "", "", uint64(0), uint64(0), uint64(0), validatorIds, uint256(0)
+            "Op Vault",
+            "",
+            "",
+            "",
+            address(0),
+            address(tokenA),
+            signers,
+            uint256(0),
+            uint256(0),
+            "",
+            "",
+            uint64(0),
+            uint64(0),
+            uint64(0),
+            validatorIds,
+            uint256(0)
         );
 
         vm.prank(tangleCore);
@@ -314,12 +344,7 @@ contract InstanceModeTest is Setup {
         blueprint.setInstanceMode(true);
         uint8 jobId = blueprint.JOB_PROVISION();
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TradingBlueprint.InstanceLifecycleIsNotAJob.selector,
-                jobId
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.InstanceLifecycleIsNotAJob.selector, jobId));
         vm.prank(tangleCore);
         blueprint.onJobCall(serviceId, jobId, 1, "");
     }
@@ -329,12 +354,7 @@ contract InstanceModeTest is Setup {
         blueprint.setInstanceMode(true);
         uint8 jobId = blueprint.JOB_DEPROVISION();
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TradingBlueprint.InstanceLifecycleIsNotAJob.selector,
-                jobId
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.InstanceLifecycleIsNotAJob.selector, jobId));
         vm.prank(tangleCore);
         blueprint.onJobCall(serviceId, jobId, 1, "");
     }

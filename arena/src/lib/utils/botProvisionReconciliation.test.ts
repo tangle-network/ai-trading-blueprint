@@ -90,11 +90,11 @@ describe('bot/provision reconciliation', () => {
     ).toBe(true);
   });
 
-  it('does not match fleet bots by non-unique zero call ids', () => {
+  it('does not match by service/call pair when call id is the non-unique zero sentinel', () => {
     expect(
       doesProvisionMatchBot(
-        makeProvision({ botId: undefined, sandboxId: undefined, serviceId: 7, callId: 0 }),
-        makeBot({ id: 'bot-3', serviceId: 7, callId: 0 }),
+        makeProvision({ botId: undefined, sandboxId: undefined, serviceId: 1, callId: 0 }),
+        makeBot({ id: 'old-bot', serviceId: 1, callId: 0, sandboxId: 'old-sandbox' }),
       ),
     ).toBe(false);
   });

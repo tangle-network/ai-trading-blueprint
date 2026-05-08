@@ -76,7 +76,7 @@ binary_needs_rebuild() {
       continue
     fi
     if [[ -d "$dep" ]]; then
-      if find "$dep" -type f -newer "$binary_path" -print -quit | grep -q .; then
+      if [[ -n "$(find "$dep" -type f -newer "$binary_path" -print -quit)" ]]; then
         return 0
       fi
     elif [[ "$dep" -nt "$binary_path" ]]; then
@@ -238,6 +238,8 @@ ensure_release_binaries() {
       -p trading-tee-instance-blueprint-bin \
       -p trading-validator-bin
   fi
+
+  return 0
 }
 
 BLUEPRINT_ROOT="$(resolve_blueprint_root || true)"

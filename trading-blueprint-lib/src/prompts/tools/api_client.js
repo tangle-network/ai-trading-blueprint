@@ -181,6 +181,36 @@ async function execute(intent, validation) {
   });
 }
 
+// Envelope-mode execute: server uses the on-file SignedEnvelope to authorize.
+// Do NOT call api.validate(intent) when running in envelope mode.
+async function executeWithEnvelope(intent) {
+  return apiCall('POST', '/execute', {
+    intent: normalizeIntent(intent),
+  });
+}
+
+// Envelope endpoints — only meaningful for envelope-mode bots.
+async function getEnvelope() {
+  return apiCall('GET', '/envelope');
+}
+
+// Returns:
+// {
+//   is_active, consumed_amount, max_total_amount, consumed_pct,
+//   expires_at, expires_in_seconds, signature_count, min_signatures
+// }
+async function envelopeStatus() {
+  return apiCall('GET', '/envelope/status');
+}
+
+// Operator-side log + webhook trigger that asks the depositor for a fresh envelope.
+// The agent does NOT mint a new envelope — it just signals "I need one".
+async function requestEnvelopeRenewal(reason) {
+  return apiCall('POST', '/envelope/renewal-request', {
+    reason: reason || 'envelope-renewal-needed',
+  });
+}
+
 async function checkCircuitBreaker(maxDrawdownPct) {
   return apiCall('POST', '/circuit-breaker/check', {
     max_drawdown_pct: maxDrawdownPct || 10.0,
@@ -193,6 +223,81 @@ async function getPortfolio() {
 
 async function getPrices(tokens) {
   return apiCall('POST', '/market-data/prices', { tokens });
+}
+
+async function quoteUniswapSwap({ token_in, tokenIn, token_out, tokenOut, amount_in, amountIn, fee_tier, feeTier, chain_id, chainId, slippage_bps, slippageBps }) {
+  const body = {
+    token_in: resolveTokenAddress(token_in || tokenIn),
+    token_out: resolveTokenAddress(token_out || tokenOut),
+    amount_in: String(amount_in || amountIn || '0'),
+    fee_tier: fee_tier || feeTier || 3000,
+    chain_id: chain_id || chainId,
+  };
+  const slip = slippage_bps !== undefined ? slippage_bps : slippageBps;
+  if (slip !== undefined && slip !== null) {
+    body.slippage_bps = Number(slip);
+  }
+  return apiCall('POST', '/envelope/quote/uniswap_v3', body);
+}
+
+// ── Learning loop endpoints ──────────────────────────────────────────────────
+//
+// The slippage learner (EWMA) tracks observed slippage per (token_in, token_out)
+// pair. It ratchets the recommended `max_slippage_bps` tighter when fills are
+// clean and looser after failures — trust its recommendation over a static
+// value when constructing `min_amount_out`.
+//
+// The strategy bandit (UCB1) tracks reward per `variant_id`. Record outcomes
+// after every iteration (positive reward = profit, negative = loss).
+
+// GET /learning/slippage?token_in=&token_out=&fallback=
+// Returns { recommended_max_bps, observation_count, failure_count, ... }.
+async function recommendSlippageBps({
+  token_in,
+  tokenIn,
+  token_out,
+  tokenOut,
+  fallback_bps,
+  fallbackBps,
+}) {
+  const fallback = fallback_bps !== undefined ? fallback_bps : fallbackBps;
+  const params = new URLSearchParams({
+    token_in: resolveTokenAddress(token_in || tokenIn),
+    token_out: resolveTokenAddress(token_out || tokenOut),
+  });
+  if (fallback !== undefined && fallback !== null) {
+    params.set('fallback', String(fallback));
+  }
+  return apiCall('GET', `/learning/slippage?${params.toString()}`);
+}
+
+// POST /learning/strategy-outcome  { variant_id, reward, iteration_id? }
+// `variant_id` matches the strategy's `id` field on `StrategyDefinition`.
+// `reward` is realized P&L over the iteration window in USD (positive = profit).
+// `iteration_id` (optional) is the agent's per-phase counter from `phase.json`;
+// when present, the route deduplicates by (bot_id, variant_id, iteration_id)
+// so a retried POST after a network glitch doesn't double-count the arm pull.
+async function recordStrategyOutcome({
+  variant_id,
+  variantId,
+  reward,
+  iteration_id,
+  iterationId,
+}) {
+  const body = {
+    variant_id: variant_id || variantId,
+    reward: Number(reward),
+  };
+  const itId = iteration_id || iterationId;
+  if (itId !== undefined && itId !== null && String(itId).length > 0) {
+    body.iteration_id = String(itId);
+  }
+  return apiCall('POST', '/learning/strategy-outcome', body);
+}
+
+// GET /learning/bandit-status — arms + best-arm summary. Informational.
+async function getBanditStatus() {
+  return apiCall('GET', '/learning/bandit-status');
 }
 
 async function getAdapters() {
@@ -216,9 +321,17 @@ module.exports = {
   normalizeIntent,
   validate,
   execute,
+  executeWithEnvelope,
+  getEnvelope,
+  envelopeStatus,
+  requestEnvelopeRenewal,
   checkCircuitBreaker,
   getPortfolio,
   getPrices,
+  quoteUniswapSwap,
+  recommendSlippageBps,
+  recordStrategyOutcome,
+  getBanditStatus,
   getAdapters,
   getSupportedAssets,
   getMetrics,

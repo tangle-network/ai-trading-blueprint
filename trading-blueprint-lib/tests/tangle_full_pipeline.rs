@@ -344,6 +344,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
             max_lifetime_days: 30,
             validator_service_ids: vec![],
             max_collateral_bps: U256::from(0),
+            validation_trust: 0,
         }
         .abi_encode();
 

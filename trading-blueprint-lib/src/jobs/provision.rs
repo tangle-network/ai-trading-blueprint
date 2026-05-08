@@ -93,6 +93,28 @@ fn parse_paper_trade_from_strategy_config(
     }
 }
 
+fn parse_renewal_webhook_url(strategy_config: Option<&Map<String, Value>>) -> Option<String> {
+    let obj = strategy_config?;
+    let raw = obj.get("renewal_webhook_url").and_then(Value::as_str)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Accept https URLs only — webhooks reach humans/secrets infra and should
+    // not be allowed to leak over plaintext. Local dev (http://) is allowed
+    // when explicitly opted in via env var.
+    let allow_plain_http = std::env::var("ALLOW_PLAIN_HTTP_RENEWAL_WEBHOOK")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let lower = trimmed.to_ascii_lowercase();
+    let scheme_ok =
+        lower.starts_with("https://") || (allow_plain_http && lower.starts_with("http://"));
+    if !scheme_ok {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 fn parse_vault_binding(
     strategy_config: &Map<String, Value>,
     request: &TradingProvisionRequest,
@@ -476,6 +498,7 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
 ///
 /// Any `env_json` in the on-chain request is **ignored** to prevent secrets
 /// from leaking into on-chain calldata.
+#[allow(clippy::too_many_arguments)]
 pub async fn provision_core(
     request: TradingProvisionRequest,
     mock_sandbox: Option<SandboxRecord>,
@@ -483,6 +506,7 @@ pub async fn provision_core(
     service_id: u64,
     caller: String,
     tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
+    validation_trust: Option<trading_runtime::ValidationTrust>,
 ) -> Result<TradingProvisionOutput, String> {
     // 0. Dedup check — if a bot already exists for this (service_id, call_id),
     // return it instead of creating a duplicate. This handles operator restarts
@@ -855,6 +879,9 @@ pub async fn provision_core(
         request.max_lifetime_days
     };
 
+    let renewal_webhook_url = parse_renewal_webhook_url(parsed_strategy_config.as_ref());
+    let strategy_type_for_baseline = request.strategy_type.clone();
+
     let bot_record = TradingBotRecord {
         id: bot_id.clone(),
         name: request.name.clone(),
@@ -885,7 +912,9 @@ pub async fn provision_core(
         service_id,
         harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
             .unwrap_or_default(),
-        validation_trust: trading_runtime::ValidationTrust::default(),
+        validation_trust: validation_trust.unwrap_or_default(),
+        baseline_backtest: None,
+        renewal_webhook_url,
     };
 
     // 8. Store bot record
@@ -920,6 +949,20 @@ pub async fn provision_core(
         })?;
 
     // InflightGuard (_inflight_guard) auto-clears PROVISION_INFLIGHT on drop.
+
+    // Baseline backtest — best-effort. Strategies that have historical kline
+    // data (dex/yield/perps) get a 30-day backtest using the default harness
+    // so dashboards can compare live performance against an offline baseline.
+    // Failures (kline source unreachable, network, etc.) are logged and skipped.
+    if trading_runtime::backtest::strategy_supports_baseline(&strategy_type_for_baseline) {
+        run_baseline_backtest_for_bot(&bot_id, strategy_type_for_baseline.clone()).await;
+    } else {
+        tracing::debug!(
+            bot_id = %bot_id,
+            strategy_type = %strategy_type_for_baseline,
+            "Skipping baseline backtest: strategy has no kline source"
+        );
+    }
 
     if let Err(e) = provision_progress::update_provision(
         call_id,
@@ -959,7 +1002,62 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
+    let validation_trust = match request.validation_trust {
+        0 => None, // default → PerTrade
+        1 => Some(trading_runtime::ValidationTrust::Envelope),
+        2 => Some(trading_runtime::ValidationTrust::SelfOperated),
+        other => return Err(format!("Invalid validation_trust discriminant {other}")),
+    };
     Ok(TangleResult(
-        provision_core(request, None, call_id, service_id, caller_str, None).await?,
+        provision_core(
+            request,
+            None,
+            call_id,
+            service_id,
+            caller_str,
+            None,
+            validation_trust,
+        )
+        .await?,
     ))
+}
+
+/// Best-effort baseline backtest — fetches the last 30 days of klines and
+/// persists a `BacktestSummary` into the bot record. Failures are logged and
+/// swallowed; provisioning never fails because of a baseline backtest issue.
+async fn run_baseline_backtest_for_bot(bot_id: &str, strategy_type: String) {
+    let lookback = std::env::var("BASELINE_BACKTEST_LOOKBACK_DAYS")
+        .ok()
+        .and_then(|raw| raw.parse::<u32>().ok())
+        .filter(|days| *days > 0)
+        .unwrap_or(trading_runtime::backtest::DEFAULT_BASELINE_LOOKBACK_DAYS);
+
+    let harness = trading_runtime::backtest::HarnessConfig::default();
+    match trading_runtime::backtest::run_baseline_backtest(&strategy_type, harness, lookback).await
+    {
+        Ok(summary) => {
+            tracing::info!(
+                bot_id = %bot_id,
+                strategy_type = %strategy_type,
+                lookback_days = lookback,
+                total_trades = summary.total_trades,
+                win_rate = summary.win_rate,
+                sharpe = summary.sharpe_ratio,
+                "baseline backtest completed"
+            );
+            if let Err(e) = crate::state::set_baseline_backtest(bot_id, summary) {
+                tracing::warn!(
+                    bot_id = %bot_id,
+                    "failed to persist baseline backtest summary: {e}"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                bot_id = %bot_id,
+                strategy_type = %strategy_type,
+                "baseline backtest skipped (kline source unavailable): {e}"
+            );
+        }
+    }
 }

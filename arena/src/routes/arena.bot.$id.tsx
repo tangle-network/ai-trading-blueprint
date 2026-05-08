@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams, Link } from "react-router";
 import type { MetaFunction } from "react-router";
 import { useStore } from "@nanostores/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -24,12 +24,14 @@ import { ChatTab } from "~/components/bot-detail/ChatTab";
 import { RunsTab } from "~/components/bot-detail/RunsTab";
 import { ControlsTab } from "~/components/bot-detail/ControlsTab";
 import { SecretsTab } from "~/components/bot-detail/SecretsTab";
+import { EnvelopeTab } from "~/components/bot-detail/EnvelopeTab";
 import { TerminalTab } from "~/components/bot-detail/TerminalTab";
 import {
   SecretsModal,
   type SecretsTarget,
 } from "~/components/home/SecretsModal";
 import { ErrorBoundary } from "~/components/ErrorBoundary";
+import { EnvelopeNeededBanner } from "~/components/bot-detail/EnvelopeNeededBanner";
 import { useAccount } from "wagmi";
 import { useBotDetail } from "~/lib/hooks/useBotDetail";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -58,8 +60,60 @@ import { tokenMetadataFromStrategyConfig } from "~/lib/assetUniverse";
 
 export const meta: MetaFunction = () => [{ title: "Bot — AI Trading Arena" }];
 
+const VALID_BOT_TABS = [
+  "performance",
+  "positions",
+  "trades",
+  "reasoning",
+  "runs",
+  "chat",
+  "terminal",
+  "secrets",
+  "envelope",
+  "controls",
+] as const;
+type BotTabValue = (typeof VALID_BOT_TABS)[number];
+
+function isBotTabValue(value: string | null | undefined): value is BotTabValue {
+  return !!value && (VALID_BOT_TABS as readonly string[]).includes(value);
+}
+
 export default function BotDetailPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const initialTab: BotTabValue = isBotTabValue(tabParam)
+    ? tabParam
+    : "performance";
+  const [activeTab, setActiveTab] = useState<BotTabValue>(initialTab);
+
+  // Keep tab state in sync with `?tab=` so navigations (e.g. post-provision
+  // redirect to the Envelope tab) work and tab clicks are shareable.
+  useEffect(() => {
+    if (isBotTabValue(tabParam) && tabParam !== activeTab) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam, activeTab]);
+
+  const handleTabChange = useCallback(
+    (next: string) => {
+      if (!isBotTabValue(next)) return;
+      setActiveTab(next);
+      setSearchParams(
+        (prev) => {
+          const updated = new URLSearchParams(prev);
+          if (next === "performance") {
+            updated.delete("tab");
+          } else {
+            updated.set("tab", next);
+          }
+          return updated;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const { address, isConnected } = useAccount();
   const { bots, isLoading } = useBots();
   const queryClient = useQueryClient();
@@ -166,6 +220,7 @@ export default function BotDetailPage() {
       maxLifetimeDays: detail.max_lifetime_days,
       windDownStartedAt: detail.wind_down_started_at ?? undefined,
       workflowId: detail.workflow_id ?? storeBot.workflowId,
+      validationTrust: detail.validation_trust ?? storeBot.validationTrust,
     };
   }, [fallbackBot, routeFallbackBot, storeBot, storeBotDetail.data]);
   const displayBotName = bot
@@ -274,7 +329,12 @@ export default function BotDetailPage() {
 
         <BotHeader bot={bot} />
 
-        <Tabs defaultValue="performance">
+        <EnvelopeNeededBanner
+          bot={bot}
+          onSignEnvelope={() => handleTabChange("envelope")}
+        />
+
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
             <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="positions">Positions</TabsTrigger>
@@ -295,6 +355,7 @@ export default function BotDetailPage() {
               <TabsTrigger value="terminal">Terminal</TabsTrigger>
             )}
             <TabsTrigger value="secrets">Secrets</TabsTrigger>
+            <TabsTrigger value="envelope">Envelope</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
           </TabsList>
 
@@ -403,6 +464,12 @@ export default function BotDetailPage() {
           <TabsContent value="secrets" className="mt-6">
             <ErrorBoundary>
               <SecretsTab bot={bot} />
+            </ErrorBoundary>
+          </TabsContent>
+
+          <TabsContent value="envelope" className="mt-6">
+            <ErrorBoundary>
+              <EnvelopeTab bot={bot} />
             </ErrorBoundary>
           </TabsContent>
 

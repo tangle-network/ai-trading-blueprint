@@ -337,6 +337,7 @@ struct InstanceProvisionRequest {
     paper_trade: Option<bool>,
     trading_loop_cron: Option<String>,
     validator_service_ids: Option<Vec<u64>>,
+    validation_trust: Option<trading_runtime::ValidationTrust>,
 }
 
 #[derive(Serialize)]
@@ -1877,6 +1878,7 @@ async fn provision_bot(
         max_lifetime_days: 30,
         validator_service_ids: body.validator_service_ids.unwrap_or_default(),
         max_collateral_bps: U256::ZERO,
+        validation_trust: 0,
     };
 
     // Auto-detect TEE backend (None for plain instance, Some for TEE instance)
@@ -1893,6 +1895,7 @@ async fn provision_bot(
         service_id,
         caller.clone(),
         tee_backend,
+        body.validation_trust,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;

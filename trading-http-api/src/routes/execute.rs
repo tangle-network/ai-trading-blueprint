@@ -26,6 +26,10 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::envelope::{
+    ClobContext, EnvelopeBinding, PerpsContext, SignedEnvelope, UniversalContext, VaultContext,
+    check_clob, check_perps, check_universal, check_vault,
+};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
@@ -35,7 +39,6 @@ use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
-use trading_runtime::signed_envelope::{EnvelopeBinding, SignedTradingEnvelope};
 use trading_runtime::supported_assets::supported_assets_for_config;
 use trading_runtime::token_metadata::{
     address_chain_mismatch, chain_display_name, known_token_decimals,
@@ -1230,6 +1233,113 @@ fn current_hyperliquid_exposure_usd(
     Ok(total.abs())
 }
 
+fn effective_max_drawdown(
+    envelope: Option<&SignedEnvelope>,
+    strategy_config: &serde_json::Value,
+) -> Decimal {
+    let config = max_drawdown_from_strategy_config(strategy_config);
+    match envelope {
+        Some(env) => config.min(env.policy.max_drawdown_pct),
+        None => config,
+    }
+}
+
+fn is_open_action(action: &str) -> bool {
+    matches!(
+        action.to_ascii_lowercase().as_str(),
+        "open_long" | "open_short" | "buy"
+    )
+}
+
+fn apply_envelope_checks(
+    env: &SignedEnvelope,
+    intent: &IntentPayload,
+    size_usd: Decimal,
+    current_exposure_usd: Decimal,
+    is_open: bool,
+) -> Result<(), (StatusCode, String)> {
+    let universal_ctx = UniversalContext {
+        trade_size_usd: size_usd,
+        current_total_exposure_usd: current_exposure_usd,
+        is_open,
+    };
+    check_universal(&env.policy, &universal_ctx).map_err(<(StatusCode, String)>::from)?;
+
+    if !is_open {
+        return Ok(());
+    }
+
+    let protocol = intent.target_protocol.as_str();
+    match protocol {
+        "hyperliquid" | "gmx_v2" | "vertex" => {
+            let asset = intent
+                .metadata
+                .get("asset")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&intent.token_out);
+            let leverage: u32 = intent
+                .metadata
+                .get("leverage")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as u32;
+            let stop_loss_distance = extract_stop_loss_distance(&intent.metadata)
+                .and_then(|f| Decimal::try_from(f).ok());
+            check_perps(
+                &env.policy,
+                &PerpsContext {
+                    asset,
+                    leverage,
+                    stop_loss_distance,
+                },
+            )
+            .map_err(<(StatusCode, String)>::from)?;
+            // If the perps policy requires stop-loss but it parsed as None, surface
+            // a clearer 400 error if the metadata couldn't be parsed.
+            if env
+                .policy
+                .perps
+                .as_ref()
+                .is_some_and(|p| p.require_stop_loss)
+                && stop_loss_distance.is_none()
+                && extract_stop_loss_distance(&intent.metadata).is_some()
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "stop_loss metadata could not be parsed as Decimal".to_string(),
+                ));
+            }
+        }
+        "polymarket_clob" => {
+            let market_id = intent
+                .metadata
+                .get("token_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            check_clob(&env.policy, &ClobContext { market_id })
+                .map_err(<(StatusCode, String)>::from)?;
+        }
+        _ => {
+            // Vault-backed DeFi: uniswap_v3, aave_v3, morpho, aerodrome, etc.
+            let slippage_bps: u32 = intent
+                .metadata
+                .get("max_slippage_bps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            check_vault(
+                &env.policy,
+                &VaultContext {
+                    protocol,
+                    token_in: &intent.token_in,
+                    token_out: &intent.token_out,
+                    slippage_bps,
+                },
+            )
+            .map_err(<(StatusCode, String)>::from)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct PaperClobFill {
     filled_size: Decimal,
@@ -1806,7 +1916,308 @@ async fn execute_paper_clob_trade(
 /// This is the shared core for real trade execution used by both single-bot
 /// and multi-bot handlers. Includes intent hash deduplication (409 Conflict
 /// for replayed intents).
+/// Execute a trade authorized by a SignedEnvelope on a vault-routed protocol.
+/// Builds the adapter-encoded action and routes through the on-chain
+/// `executeXxxEnvelope` matching the envelope's enforcement variant.
+#[allow(clippy::too_many_arguments)]
+async fn execute_real_envelope_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    signed_envelope: &SignedEnvelope,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    intent_hash: B256,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = action_label(&intent.action);
+    let metrics_bot = bot_id.to_string();
+
+    let result = execute_real_envelope_trade_inner(
+        bot_id,
+        executor,
+        intent,
+        signed_envelope,
+        req,
+        stored_validation,
+        valuation,
+        intent_hash,
+    )
+    .await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+/// Stable, dashboard-facing label for each `trading_runtime::Action` variant.
+fn action_label(action: &trading_runtime::Action) -> &'static str {
+    use trading_runtime::Action;
+    match action {
+        Action::Swap => "swap",
+        Action::Supply => "supply",
+        Action::Withdraw => "withdraw",
+        Action::Borrow => "borrow",
+        Action::Repay => "repay",
+        Action::OpenLong => "open_long",
+        Action::OpenShort => "open_short",
+        Action::CloseLong => "close_long",
+        Action::CloseShort => "close_short",
+        Action::Buy => "buy",
+        Action::Sell => "sell",
+        Action::Redeem => "redeem",
+        Action::CollateralRelease => "collateral_release",
+    }
+}
+
+/// Determine whether a `(StatusCode, _)` failure represents a chain-side
+/// revert (5xx) or a precondition rejection (4xx).
+fn execution_status_for_error(status: StatusCode) -> crate::routes::prometheus::ExecutionStatus {
+    if status.is_client_error() {
+        crate::routes::prometheus::ExecutionStatus::Rejected
+    } else {
+        crate::routes::prometheus::ExecutionStatus::Reverted
+    }
+}
+
+/// Common metrics + alert hook for both real-trade execution paths.
+async fn record_execute_outcome(
+    bot_id: &str,
+    protocol: &str,
+    action: &str,
+    started_at: std::time::Instant,
+    result: &Result<Json<ExecuteResponse>, (StatusCode, String)>,
+    alert_sink: &crate::alerts::AlertSink,
+) {
+    match result {
+        Ok(_) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                crate::routes::prometheus::ExecutionStatus::Success,
+                started_at,
+            );
+        }
+        Err((status, reason)) => {
+            crate::routes::prometheus::record_execution(
+                bot_id,
+                protocol,
+                action,
+                execution_status_for_error(*status),
+                started_at,
+            );
+            alert_sink
+                .fire(crate::alerts::Alert::TradeReverted {
+                    bot_id: bot_id.to_string(),
+                    protocol: protocol.to_string(),
+                    reason: reason.clone(),
+                })
+                .await;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_real_envelope_trade_inner(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    signed_envelope: &SignedEnvelope,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    intent_hash: B256,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    use trading_runtime::adapters::ActionParams;
+    use trading_runtime::envelope::params_builder::build_envelope_shape;
+    use trading_runtime::executor::{decimal_to_u256, get_adapter};
+
+    let adapter = get_adapter(
+        &intent.target_protocol,
+        Some(executor.chain_client().chain_id),
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let token_in: alloy::primitives::Address =
+        intent
+            .token_in
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("token_in: {e}"))
+            })?;
+    let token_out: alloy::primitives::Address =
+        intent
+            .token_out
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("token_out: {e}"))
+            })?;
+    let vault_address: alloy::primitives::Address =
+        signed_envelope
+            .vault_address
+            .parse()
+            .map_err(|e: alloy::hex::FromHexError| {
+                (StatusCode::BAD_REQUEST, format!("vault_address: {e}"))
+            })?;
+    let amount =
+        decimal_to_u256(&intent.amount_in).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let min_output = decimal_to_u256(&intent.min_amount_out)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let params = ActionParams {
+        action: intent.action.clone(),
+        token_in,
+        token_out,
+        amount,
+        min_output,
+        extra: intent.metadata.clone(),
+        vault_address,
+    };
+    let encoded = adapter
+        .encode_action(&params)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let deadline = U256::from(intent.deadline.timestamp().max(0) as u64);
+    let shape = build_envelope_shape(&encoded, intent_hash, deadline)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let outcome = match executor
+        .execute_envelope_trade(signed_envelope, shape)
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            // Treat any execution error as a slippage-learner "failure" for this
+            // pair so the recommender widens its cap on persistent fill failures.
+            crate::learning_store::record_failure(bot_id, token_in, token_out);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+    };
+
+    let confirmed_output_token = outcome
+        .output_token
+        .map(|token| format!("{token}"))
+        .unwrap_or_else(|| req.intent.token_out.clone());
+    let confirmed_amount_out = outcome.output_gained.map(|value| value.to_string());
+
+    // Slippage-learner hook: observed bps = (min_out - actual_out) / min_out.
+    if let Some(actual) = outcome.output_gained {
+        let min_out_f = u256_to_f64(min_output);
+        let actual_f = u256_to_f64(actual);
+        if let Some(bps) = crate::learning_store::observed_slippage_bps(min_out_f, actual_f) {
+            crate::learning_store::record_fill(bot_id, token_in, token_out, bps);
+        }
+    }
+
+    let record = TradeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        bot_id: bot_id.to_string(),
+        timestamp: Utc::now(),
+        action: req.intent.action.clone(),
+        token_in: req.intent.token_in.clone(),
+        token_out: confirmed_output_token,
+        amount_in: req.intent.amount_in.clone(),
+        min_amount_out: req.intent.min_amount_out.clone(),
+        target_protocol: req.intent.target_protocol.clone(),
+        tx_hash: outcome.tx_hash.clone(),
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        execution_status: Some(TradeExecutionStatus::Confirmed),
+        clob_order_id: None,
+        amount_out: confirmed_amount_out
+            .clone()
+            .or_else(|| valuation.amount_out.map(|v| v.to_string())),
+        entry_price_usd: valuation.entry_price_usd.map(|v| v.to_string()),
+        notional_usd: valuation.notional_usd.map(|v| v.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: confirmed_amount_out,
+        slippage_bps: None,
+        execution_reason: Some("Confirmed via envelope-mode execution".into()),
+        prediction_metadata: extract_prediction_metadata(&req.intent),
+        valuation_status: valuation.valuation_status,
+        validation: stored_validation,
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+    };
+    if let Err(e) = trade_store::record_trade(record).await {
+        tracing::error!(error = %e, "envelope-mode trade submitted but persistence failed");
+    }
+
+    Ok(Json(ExecuteResponse {
+        tx_hash: outcome.tx_hash,
+        block_number: outcome.block_number,
+        gas_used: outcome.gas_used.map(|g| g.to_string()),
+        paper_trade: false,
+        clob_order_id: None,
+    }))
+}
+
+/// Convert an alloy U256 to f64 with saturation. The slippage-learner only
+/// needs ratio precision so a few ULP at the top of u256 don't matter.
+fn u256_to_f64(value: U256) -> f64 {
+    // U256 doesn't impl Into<f64>; go through string for simplicity. The
+    // worst-case path here is post-trade observability, never the hot path.
+    value.to_string().parse::<f64>().unwrap_or(0.0)
+}
+
 async fn execute_real_trade(
+    bot_id: &str,
+    executor: &TradeExecutor,
+    intent: &TradeIntent,
+    req: &ExecuteRequest,
+    stored_validation: StoredValidation,
+    valuation: &TradeValuationSnapshot,
+    strategy_config: Option<&serde_json::Value>,
+    alert_sink: &crate::alerts::AlertSink,
+) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
+    let started_at = std::time::Instant::now();
+    let metrics_protocol = intent.target_protocol.clone();
+    let metrics_action = action_label(&intent.action);
+    let metrics_bot = bot_id.to_string();
+
+    let result = execute_real_trade_inner(
+        bot_id,
+        executor,
+        intent,
+        req,
+        stored_validation,
+        valuation,
+        strategy_config,
+    )
+    .await;
+
+    record_execute_outcome(
+        &metrics_bot,
+        &metrics_protocol,
+        metrics_action,
+        started_at,
+        &result,
+        alert_sink,
+    )
+    .await;
+
+    result
+}
+
+async fn execute_real_trade_inner(
     bot_id: &str,
     executor: &TradeExecutor,
     intent: &TradeIntent,
@@ -1827,14 +2238,41 @@ async fn execute_real_trade(
         })
         .filter(|assets| !assets.is_empty());
 
-    let outcome = executor
+    // Parse token addresses up-front so the post-trade slippage-learner hook
+    // can attribute fills/failures to a stable pair key.
+    let token_in_addr = intent.token_in.parse::<alloy::primitives::Address>().ok();
+    let token_out_addr = intent.token_out.parse::<alloy::primitives::Address>().ok();
+    let min_out_u256 = trading_runtime::executor::decimal_to_u256(&intent.min_amount_out).ok();
+
+    let outcome = match executor
         .execute_validated_trade_with_supported_assets(
             intent,
             &validation,
             configured_assets.as_deref(),
         )
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            if let (Some(tin), Some(tout)) = (token_in_addr, token_out_addr) {
+                crate::learning_store::record_failure(bot_id, tin, tout);
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+    };
+
+    if let (Some(tin), Some(tout), Some(min_out), Some(actual)) = (
+        token_in_addr,
+        token_out_addr,
+        min_out_u256,
+        outcome.output_gained,
+    ) {
+        if let Some(bps) =
+            crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
+        {
+            crate::learning_store::record_fill(bot_id, tin, tout, bps);
+        }
+    }
 
     let trade_id = uuid::Uuid::new_v4().to_string();
     let confirmed_output_token = outcome
@@ -2007,7 +2445,7 @@ async fn execute_hyperliquid_trade(
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
-    signed_envelope: Option<&SignedTradingEnvelope>,
+    signed_envelope: Option<&SignedEnvelope>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
@@ -2024,61 +2462,24 @@ async fn execute_hyperliquid_trade(
             | trading_runtime::types::Action::OpenShort
             | trading_runtime::types::Action::Buy
     );
-    if is_open && let Some(signed_envelope) = signed_envelope {
-        let envelope = &signed_envelope.envelope;
-        let asset = req
-            .intent
-            .metadata
-            .get("asset")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&req.intent.token_out);
-        let size_usd = valuation
-            .notional_usd
-            .unwrap_or(rust_decimal::Decimal::ZERO);
-        let leverage: u32 = req
-            .intent
-            .metadata
-            .get("leverage")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
-        let stop_loss_distance = extract_stop_loss_distance(&req.intent.metadata).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "Signed Envelope execution requires stop_loss_distance or stop_loss_pct metadata".to_string(),
-            )
-        })?;
-        let stop_loss_check = envelope.check_stop_loss(stop_loss_distance);
-        if !stop_loss_check.allowed {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Trade rejected by envelope stop-loss bounds: {}",
-                    stop_loss_check.reason.unwrap_or_default()
-                ),
-            ));
-        }
-        let account = hl_client.get_account().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("HL account lookup failed: {e}"),
-            )
-        })?;
-        let current_exposure = current_hyperliquid_exposure_usd(&account)?;
-        let check = envelope.check_trade(
-            asset,
-            size_usd.try_into().unwrap_or(0.0),
-            leverage,
-            true,
-            current_exposure,
-        );
-        if !check.allowed {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Trade rejected by envelope: {}",
-                    check.reason.unwrap_or_default()
-                ),
-            ));
+    if is_open {
+        if let Some(signed_envelope) = signed_envelope {
+            let account = hl_client.get_account().await.map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("HL account lookup failed: {e}"),
+                )
+            })?;
+            let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
+            let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
+            let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+            apply_envelope_checks(
+                signed_envelope,
+                &req.intent,
+                size_usd,
+                current_exposure,
+                true,
+            )?;
         }
     }
     let is_buy = matches!(
@@ -2406,6 +2807,7 @@ async fn execute(
         return Ok(result);
     }
 
+    let alert_sink = noop_alert_sink();
     let result = execute_real_trade(
         &state.bot_id,
         &state.executor,
@@ -2414,11 +2816,19 @@ async fn execute(
         stored_validation,
         &valuation,
         None,
+        &alert_sink,
     )
     .await?;
 
     update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
     Ok(result)
+}
+
+/// Single-bot execute path has no shared alert sink in `TradingApiState`; use
+/// a no-op sink so metrics still record while alerting stays opt-in via the
+/// multi-bot configuration.
+fn noop_alert_sink() -> crate::alerts::AlertSink {
+    crate::alerts::AlertSink::new(None, None)
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -2515,13 +2925,31 @@ async fn execute_multi_bot(
     let is_clob_trade = normalized_req.intent.target_protocol == "polymarket_clob";
     let action_kind = action_kind_for_protocol(&normalized_req.intent.target_protocol);
 
-    // Validation trust level determines which authorization path fires:
-    // - PerTrade: every trade needs validator EIP-712 signatures (5-30s)
-    // - Envelope: trades within approved bounds skip validators (instant)
-    // - SelfOperated: no external validation, local policy only (instant)
     use trading_runtime::ValidationTrust;
-    let mut signed_envelope = None;
+    let mut signed_envelope: Option<SignedEnvelope> = None;
     let mut live_pricing_input = None;
+
+    // Envelope loading and verification applies to both paper and live modes:
+    // paper bots respect envelope bounds for testing fidelity; live bots for production safety.
+    if bot.validation_trust == ValidationTrust::Envelope {
+        let envelope = super::envelope::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                "Envelope trust mode requires a signed per-bot envelope approval".to_string(),
+            )
+        })?;
+        let binding = EnvelopeBinding {
+            bot_id: &bot.bot_id,
+            vault_address: &bot.vault_address,
+            chain_id: bot.chain_id,
+            protocol: &normalized_req.intent.target_protocol,
+        };
+        envelope
+            .verify(&binding, &state.trusted_envelope_signers())
+            .map_err(<(StatusCode, String)>::from)?;
+        signed_envelope = Some(envelope);
+    }
+
     if !bot.paper_trade {
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
@@ -2544,30 +2972,7 @@ async fn execute_multi_bot(
                 }
             }
             ValidationTrust::Envelope => {
-                if normalized_req.intent.target_protocol != "hyperliquid" {
-                    return Err((
-                        StatusCode::FORBIDDEN,
-                        "Live Envelope trust mode is only implemented for Hyperliquid; non-Hyperliquid live trades require PerTrade validation".into(),
-                    ));
-                }
-                let envelope =
-                    super::hyperliquid::get_signed_envelope(&bot.bot_id).ok_or_else(|| {
-                        (
-                            StatusCode::FORBIDDEN,
-                            "Live Envelope trust mode requires a signed per-bot envelope approval"
-                                .to_string(),
-                        )
-                    })?;
-                let binding = EnvelopeBinding {
-                    bot_id: &bot.bot_id,
-                    vault_address: &bot.vault_address,
-                    chain_id: bot.chain_id,
-                    protocol: "hyperliquid",
-                };
-                envelope
-                    .verify(&binding, &state.trusted_envelope_signers())
-                    .map_err(|e| (StatusCode::FORBIDDEN, e.to_string()))?;
-                signed_envelope = Some(envelope);
+                // Loaded and verified above; signed_envelope is already set.
             }
             ValidationTrust::SelfOperated => {
                 return Err((
@@ -2584,7 +2989,7 @@ async fn execute_multi_bot(
             ));
         }
 
-        let max_drawdown = max_drawdown_from_strategy_config(&bot.strategy_config);
+        let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
@@ -2615,6 +3020,22 @@ async fn execute_multi_bot(
         live_pricing_input.as_ref(),
     )
     .await?;
+
+    // For paper envelope trades, enforce constraints now (no live HL account data available).
+    // Live HL trades re-check with real account exposure inside execute_hyperliquid_trade.
+    if bot.paper_trade {
+        if let Some(ref env) = signed_envelope {
+            let is_open = is_open_action(&normalized_req.intent.action);
+            let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+            apply_envelope_checks(
+                env,
+                &normalized_req.intent,
+                size_usd,
+                Decimal::ZERO,
+                is_open,
+            )?;
+        }
+    }
 
     if bot.paper_trade && is_clob_trade {
         let clob = state.clob_client.as_ref().ok_or_else(|| {
@@ -2750,6 +3171,31 @@ async fn execute_multi_bot(
         })?
     };
 
+    // Envelope-mode dispatch for vault-routed protocols.
+    if let Some(ref env) = signed_envelope {
+        if env.enforcement.is_some() {
+            let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
+            let response = execute_real_envelope_trade(
+                &bot.bot_id,
+                &executor,
+                &intent,
+                env,
+                &normalized_req,
+                stored_validation,
+                &valuation,
+                intent_hash_b256,
+                &state.alert_sink,
+            )
+            .await?;
+            if let Err(error) =
+                capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+            {
+                tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
+            }
+            return Ok(response);
+        }
+    }
+
     let response = execute_real_trade(
         &bot.bot_id,
         &executor,
@@ -2758,6 +3204,7 @@ async fn execute_multi_bot(
         stored_validation,
         &valuation,
         Some(&bot.strategy_config),
+        &state.alert_sink,
     )
     .await?;
     if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
@@ -2769,6 +3216,21 @@ async fn execute_multi_bot(
     }
 
     Ok(response)
+}
+
+fn parse_intent_hash_bytes(s: &str) -> Result<[u8; 32], (StatusCode, String)> {
+    let raw = s.strip_prefix("0x").unwrap_or(s);
+    let bytes =
+        hex::decode(raw).map_err(|e| (StatusCode::BAD_REQUEST, format!("intent_hash hex: {e}")))?;
+    if bytes.len() != 32 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("intent_hash must be 32 bytes, got {}", bytes.len()),
+        ));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 #[cfg(test)]

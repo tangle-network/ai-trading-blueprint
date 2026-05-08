@@ -2,6 +2,11 @@ export type BotLifecycleStatus = 'unknown' | 'awaiting_secrets' | 'active' | 'st
 export type BotStatus = 'active' | 'paused' | 'stopped' | 'needs_config' | 'winding_down' | 'archived' | 'unknown';
 export type BotVerificationState = 'authoritative' | 'unverified';
 export type BotOperatorKind = 'cloud' | 'instance' | 'tee' | null;
+/**
+ * Validation trust level — mirrors `trading_runtime::ValidationTrust` (snake-case
+ * variants: `per_trade`, `envelope`, `self_operated`). Set at provision time.
+ */
+export type ValidationTrust = 'per_trade' | 'envelope' | 'self_operated';
 export type StrategyType =
   | 'prediction' | 'prediction_politics' | 'prediction_crypto'
   | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
@@ -59,4 +64,11 @@ export interface Bot {
   operatorApiUrl?: string | null;
   lastVerifiedAt?: number | null;
   isUnverified?: boolean;
+
+  /**
+   * Trust mode the bot was provisioned with. When `envelope`, the bot's trade
+   * authorization comes from a signed envelope (see EnvelopeTab); when absent
+   * or `per_trade`, every trade requires fresh validator signatures.
+   */
+  validationTrust?: ValidationTrust;
 }

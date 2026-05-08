@@ -48,7 +48,11 @@ function botMatchesHints(
   if (opts.sandboxId && bot.sandbox_id && bot.sandbox_id !== opts.sandboxId) {
     return false;
   }
-  if (isUniqueCallId(opts.callId) && typeof bot.call_id === 'number' && bot.call_id !== opts.callId) {
+  if (
+    isUniqueCallId(opts.callId)
+    && typeof bot.call_id === 'number'
+    && bot.call_id !== opts.callId
+  ) {
     return false;
   }
   if (

@@ -304,7 +304,9 @@ contract TradingVaultTest is Setup {
         vault.executeWithApprovals(params, approvals, sigs, scores);
 
         assertEq(vault.getBalance(address(tokenB)), expectedOutput);
-        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 123 ether);
+        // Audit M-1: per-call router allowance is reset to 0 after every execute path
+        // so a misbehaving / upgraded router can't pull the residue post-trade.
+        assertEq(tokenA.allowance(address(vault), address(mockTarget)), 0);
     }
 
     function test_executeRevertsWithoutPolicy() public {

@@ -6,6 +6,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { Info } from 'lucide-react';
 import type { StrategyPackDef } from '~/lib/blueprints';
 import { cronToHuman } from '~/routes/provision/types';
+import type { ValidationTrust } from '~/lib/types/bot';
 
 interface ExecutionTargetOption {
   id: string;
@@ -44,6 +45,8 @@ interface AdvancedSettingsDialogProps {
   setValidatorMode: (v: 'default' | 'custom') => void;
   customValidatorIds: string;
   setCustomValidatorIds: (v: string) => void;
+  validationTrust: ValidationTrust;
+  setValidationTrust: (v: ValidationTrust) => void;
   runtimeBackend: 'docker' | 'firecracker' | 'tee';
   setRuntimeBackend: (v: 'docker' | 'firecracker' | 'tee') => void;
   firecrackerSupported: boolean;
@@ -82,6 +85,8 @@ export function AdvancedSettingsDialog({
   setValidatorMode,
   customValidatorIds,
   setCustomValidatorIds,
+  validationTrust,
+  setValidationTrust,
   runtimeBackend,
   setRuntimeBackend,
   firecrackerSupported,
@@ -109,6 +114,7 @@ export function AdvancedSettingsDialog({
     !conversationEnabled ||
     !researchEnabled ||
     validatorMode === 'custom' ||
+    validationTrust !== 'per_trade' ||
     canResetRuntime
   );
 
@@ -545,6 +551,110 @@ export function AdvancedSettingsDialog({
                 </div>
               </div>
 
+              {/* Validation Trust */}
+              <div className="pt-4 border-t border-arena-elements-dividerColor">
+                <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-3 block">
+                  Validation Trust
+                </span>
+                <p className="text-xs text-arena-elements-textTertiary mb-2.5">
+                  Choose how trade authorization flows. The default is safest;
+                  Envelope mode is faster for trusted operators with M-of-N
+                  off-chain approvals.
+                </p>
+                <div className="space-y-2" role="radiogroup" aria-label="Validation trust">
+                  <label className="flex items-start gap-3 cursor-pointer rounded-lg p-2.5 hover:bg-arena-elements-background-depth-2 transition-colors">
+                    <input
+                      type="radio"
+                      name="validation-trust"
+                      value="per_trade"
+                      checked={validationTrust === 'per_trade'}
+                      onChange={() => setValidationTrust('per_trade')}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-arena-elements-textPrimary">
+                        Per-trade
+                      </span>
+                      <span className="ml-1.5 text-xs text-arena-elements-textTertiary">(default)</span>
+                      <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                        Every trade requires fresh validator signatures. Safest
+                        for untrusted or public operators.
+                      </p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer rounded-lg p-2.5 hover:bg-arena-elements-background-depth-2 transition-colors">
+                    <input
+                      type="radio"
+                      name="validation-trust"
+                      value="envelope"
+                      checked={validationTrust === 'envelope'}
+                      onChange={() => setValidationTrust('envelope')}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-arena-elements-textPrimary">
+                        Envelope
+                      </span>
+                      <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                        Trade authorization comes from a signed envelope (M-of-N
+                        off-chain approvals). Trades within the envelope execute
+                        instantly.
+                      </p>
+                      {validationTrust === 'envelope' && (
+                        <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                          After provisioning, you'll be redirected to the
+                          Envelope tab to sign the first envelope. The bot won't
+                          trade until an envelope is on file.
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                  <Tooltip.Provider delayDuration={150}>
+                    <Tooltip.Root>
+                      <Tooltip.Trigger asChild>
+                        <label
+                          aria-disabled="true"
+                          className="flex items-start gap-3 rounded-lg p-2.5 cursor-not-allowed opacity-60"
+                        >
+                          <input
+                            type="radio"
+                            name="validation-trust"
+                            value="self_operated"
+                            checked={false}
+                            disabled
+                            readOnly
+                            className="mt-0.5 accent-violet-600"
+                          />
+                          <div>
+                            <span className="text-sm font-medium text-arena-elements-textPrimary">
+                              Self-operated
+                            </span>
+                            <span className="ml-1.5 text-xs text-arena-elements-textTertiary">
+                              (unavailable)
+                            </span>
+                            <p className="text-xs text-arena-elements-textTertiary mt-0.5">
+                              Local policy only. Not yet exposed in the dApp.
+                            </p>
+                          </div>
+                        </label>
+                      </Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content
+                          side="top"
+                          sideOffset={8}
+                          className="z-[100] max-w-xs rounded-md border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-2 text-xs text-arena-elements-textSecondary shadow-lg"
+                        >
+                          Self-operated mode is reserved for trusted operators
+                          running their own infrastructure and is not yet
+                          provisionable from the dApp.
+                          <Tooltip.Arrow className="fill-[var(--arena-elements-background-depth-2)]" />
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip.Root>
+                  </Tooltip.Provider>
+                </div>
+              </div>
+
               {canResetSettings && (
                 <Button
                   type="button"
@@ -558,6 +668,7 @@ export function AdvancedSettingsDialog({
                     setResearchEnabled(true);
                     setValidatorMode('default');
                     setCustomValidatorIds('');
+                    setValidationTrust('per_trade');
                     if (!isTeeBlueprint) setRuntimeBackend('docker');
                   }}
                   className="text-xs"

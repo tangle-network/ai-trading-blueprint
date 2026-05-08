@@ -1,0 +1,232 @@
+{
+  "name": "AI Trading Blueprint",
+  "description": "Autonomous AI trading agents with sandboxed execution, validator committee checks, EIP-712 approvals, and on-chain policy enforcement.",
+  "author": "Tangle Network",
+  "category": "Trading",
+  "image": null,
+  "website": "https://tangle.tools",
+  "codeRepository": "https://github.com/tangle-network/ai-trading-blueprint",
+  "docs": "https://github.com/tangle-network/ai-trading-blueprint#readme",
+  "integrity": null,
+  "blueprintUi": {
+    "displayName": "AI Trading Desk",
+    "description": "Operate sandboxed trading bots with strategy packs, validator status, vault controls, and execution history rendered by the secure shared host.",
+    "requestedSlug": "ai-trading",
+    "publisher": {
+      "name": "Tangle Network",
+      "namespace": "tangle",
+      "verified": false
+    },
+    "resources": {
+      "serviceLabel": "Trading fleet",
+      "itemLabel": "Bot",
+      "itemRoute": "bots"
+    },
+    "surfaces": [
+      "generic-overview",
+      "service-explorer",
+      "actions-panel",
+      "resources",
+      "vaults",
+      "metrics",
+      "permissions"
+    ],
+    "theme": {
+      "badgeLabel": "Validator-gated trading",
+      "accentColor": "#16A34A",
+      "secondaryColor": "#052E16",
+      "icon": "graph"
+    },
+    "overviewCards": [
+      {
+        "id": "risk-gate",
+        "kind": "callout",
+        "title": "Three-layer risk gate",
+        "description": "AI reasoning, validator committee signatures, and on-chain policy enforcement must align before capital can move.",
+        "tone": "success"
+      },
+      {
+        "id": "strategy-packs",
+        "kind": "checklist",
+        "title": "Strategy packs",
+        "items": [
+          "Prediction markets",
+          "DEX execution",
+          "Yield strategies",
+          "Perpetuals",
+          "Multi-protocol mode"
+        ],
+        "tone": "info"
+      },
+      {
+        "id": "protocol-coverage",
+        "kind": "stat",
+        "title": "Protocol adapters",
+        "description": "DeFi venues supported by the trading runtime.",
+        "value": "8",
+        "tone": "neutral"
+      }
+    ],
+    "actions": [
+      {
+        "id": "provision-bot",
+        "label": "Provision bot",
+        "description": "Create a sandboxed trading bot with explicit strategy and runtime backend.",
+        "target": "service",
+        "submitLabel": "Provision bot",
+        "fields": [
+          {
+            "key": "bot_name",
+            "label": "Bot name",
+            "input": "text",
+            "required": true,
+            "placeholder": "eth-yield-sentinel"
+          },
+          {
+            "key": "strategy_pack",
+            "label": "Strategy pack",
+            "input": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Prediction",
+                "value": "prediction"
+              },
+              {
+                "label": "DEX",
+                "value": "dex"
+              },
+              {
+                "label": "Yield",
+                "value": "yield"
+              },
+              {
+                "label": "Perpetuals",
+                "value": "perp"
+              },
+              {
+                "label": "Multi",
+                "value": "multi"
+              }
+            ]
+          },
+          {
+            "key": "max_position_usd",
+            "label": "Max position USD",
+            "input": "number",
+            "required": true,
+            "placeholder": "1000"
+          }
+        ]
+      },
+      {
+        "id": "pause-bot",
+        "label": "Pause bot",
+        "description": "Stop autonomous execution while preserving bot state and vault bindings.",
+        "target": "resource",
+        "submitLabel": "Pause",
+        "fields": [
+          {
+            "key": "bot_id",
+            "label": "Bot ID",
+            "input": "text",
+            "required": true,
+            "placeholder": "bot_..."
+          },
+          {
+            "key": "reason",
+            "label": "Reason",
+            "input": "textarea",
+            "required": false,
+            "placeholder": "Manual risk review"
+          }
+        ]
+      }
+    ],
+    "resourceViews": [
+      {
+        "id": "bot-ledger",
+        "title": "Bot ledger",
+        "kind": "table",
+        "target": "resource",
+        "defaultSort": "updated_at:desc",
+        "columns": [
+          {
+            "key": "bot",
+            "label": "Bot",
+            "emphasis": true
+          },
+          {
+            "key": "strategy",
+            "label": "Strategy"
+          },
+          {
+            "key": "validator_state",
+            "label": "Validator state"
+          },
+          {
+            "key": "vault",
+            "label": "Vault"
+          },
+          {
+            "key": "updated_at",
+            "label": "Updated"
+          }
+        ]
+      }
+    ],
+    "modules": [
+      {
+        "module": "metrics-overview",
+        "slot": "overview",
+        "metricKeys": [
+          "approved_intents",
+          "blocked_intents",
+          "realized_pnl"
+        ]
+      },
+      {
+        "module": "permissions-matrix",
+        "slot": "sidebar",
+        "eventKinds": [
+          "vault_bound",
+          "validator_signed",
+          "policy_blocked"
+        ]
+      },
+      {
+        "module": "resource-events",
+        "slot": "resources",
+        "eventKinds": [
+          "provisioned",
+          "configured",
+          "trade_executed",
+          "paused"
+        ]
+      }
+    ],
+    "externalApp": {
+      "url": "https://trading-arena.blueprint.tangle.tools/",
+      "mode": "iframe",
+      "label": "Open Trading Arena",
+      "iframe": {
+        "appId": "trading-arena",
+        "allowedChainIds": [31337, 84532],
+        "contracts": [
+          {
+            "chainId": 31337,
+            "address": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9"
+          },
+          {
+            "chainId": 84532,
+            "address": "0x1be58d12620ecc8ba9d780feec2596510d75a933"
+          }
+        ],
+        "messages": [],
+        "allowReadAccount": true,
+        "allowChainSwitch": true,
+        "allowPopups": false
+      }
+    }
+  }
+}

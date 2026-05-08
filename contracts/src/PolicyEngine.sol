@@ -26,7 +26,11 @@ contract PolicyEngine is Ownable2Step {
     // ═══════════════════════════════════════════════════════════════════════════
 
     event VaultInitialized(
-        address indexed vault, address indexed admin, uint256 leverageCap, uint256 maxTradesPerHour, uint256 maxSlippageBps
+        address indexed vault,
+        address indexed admin,
+        uint256 leverageCap,
+        uint256 maxTradesPerHour,
+        uint256 maxSlippageBps
     );
     event VaultAdminUpdated(address indexed vault, address indexed newAdmin);
     event PolicyUpdated(address indexed vault, uint8 indexed policyType);
@@ -253,11 +257,7 @@ contract PolicyEngine is Ownable2Step {
 
     /// @notice Set the maximum allowed slippage for a vault (advisory — enforced by TradingVault.minOutput)
     /// @dev Stored for off-chain tooling. On-chain slippage is enforced by the minOutput check in execute().
-    function setMaxSlippage(address vault, uint256 bps)
-        external
-        vaultInitialized(vault)
-        onlyVaultAdminOrOwner(vault)
-    {
+    function setMaxSlippage(address vault, uint256 bps) external vaultInitialized(vault) onlyVaultAdminOrOwner(vault) {
         policies[vault].maxSlippageBps = bps;
         emit PolicyUpdated(vault, POLICY_MAX_SLIPPAGE);
     }
@@ -273,7 +273,13 @@ contract PolicyEngine is Ownable2Step {
     /// @dev NOTE: Rate-limit slot is consumed on successful validation even if the trade later
     ///      fails validator checks. This is by design — splitting validate/record would require
     ///      a callback pattern. The practical impact is limited since only OPERATOR_ROLE can call.
-    function validateTrade(address vault, address token, uint256 amount, address target, uint256 /* leverage */)
+    function validateTrade(
+        address vault,
+        address token,
+        uint256 amount,
+        address target,
+        uint256 /* leverage */
+    )
         external
         onlyAuthorizedOrOwner
         returns (bool valid)

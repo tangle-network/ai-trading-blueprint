@@ -608,6 +608,10 @@ pub fn build_operator_router() -> Router {
             get(get_bot_metrics_history),
         )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
+        .route(
+            "/api/bots/{bot_id}/baseline-backtest",
+            get(get_bot_baseline_backtest),
+        )
         .route("/api/bots/{bot_id}/portfolio/state", get(get_bot_portfolio))
         .route(
             "/api/bots/{bot_id}/activation-progress",
@@ -911,6 +915,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         max_lifetime_days: 30,
         validator_service_ids: Vec::new(),
         max_collateral_bps: alloy_primitives::U256::ZERO,
+        validation_trust: 0,
     };
 
     // 1. Provision
@@ -934,6 +939,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         call_id,
         service_id,
         caller.clone(),
+        None,
         None,
     )
     .await
@@ -3538,6 +3544,14 @@ async fn get_bot_trades(
             Ok(Json(fallback_trade_history(&bot)))
         }
     }
+}
+
+async fn get_bot_baseline_backtest(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<Option<trading_runtime::backtest::BacktestSummary>>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    Ok(Json(bot.baseline_backtest))
 }
 
 async fn get_bot_portfolio(

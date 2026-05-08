@@ -1,3 +1,5 @@
+pub mod learning_store;
+
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +67,18 @@ pub struct TradingBotRecord {
     /// signatures, envelope-only checks, or no external validation.
     #[serde(default)]
     pub validation_trust: ValidationTrust,
+    /// Optional baseline backtest summary computed at provision time. Captures
+    /// the bot's strategy P&L over the last N days of historical klines so
+    /// dashboards can compare live performance against an offline baseline.
+    /// `None` for strategies without a kline source (e.g. prediction markets)
+    /// or when the kline source was unreachable during provisioning.
+    #[serde(default)]
+    pub baseline_backtest: Option<trading_runtime::backtest::BacktestSummary>,
+    /// Optional webhook URL invoked when a multi-sig envelope cannot be
+    /// auto-renewed. The renewal cron POSTs an envelope-renewal-needed
+    /// payload to this URL so human signers can rotate the envelope.
+    #[serde(default)]
+    pub renewal_webhook_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -495,6 +509,35 @@ pub fn resolve_bot(id: &str) -> Result<Option<TradingBotRecord>, String> {
     find_bot_by_vault_address(id)
 }
 
+/// Persist a baseline backtest summary for a bot.
+///
+/// Idempotent — overwrites any existing baseline. Used by the provision flow
+/// after the bot record is created so the summary lands once historical
+/// candles are fetched.
+pub fn set_baseline_backtest(
+    bot_id: &str,
+    summary: trading_runtime::backtest::BacktestSummary,
+) -> Result<(), String> {
+    let key = bot_key(bot_id);
+    bots()?
+        .update(&key, |bot| {
+            bot.baseline_backtest = Some(summary.clone());
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Set or clear the renewal webhook URL on a bot record. `None` clears it.
+pub fn set_renewal_webhook_url(bot_id: &str, url: Option<String>) -> Result<(), String> {
+    let key = bot_key(bot_id);
+    bots()?
+        .update(&key, |bot| {
+            bot.renewal_webhook_url = url.clone();
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Update the harness config for a bot. Validates the JSON before persisting.
 pub fn update_harness(bot_id: &str, harness: serde_json::Value) -> Result<(), String> {
     // Validate it deserializes as a HarnessConfig
@@ -586,6 +629,8 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         }
     }
 

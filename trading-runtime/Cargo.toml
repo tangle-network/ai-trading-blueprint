@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
 async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 futures = "0.3"
 hex = "0.4"
@@ -26,12 +27,45 @@ tracing = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# Solana venues — Jupiter (DEX aggregator) and Drift v2 (perps).
+# `drift-rs` only publishes a 1.0.0-alpha that pulls a heavy anchor
+# toolchain; we hand-build the place_perp_order instruction with
+# solana-sdk + borsh to keep the dep footprint reasonable
+# (see solana::drift for details).
+solana-sdk = "2"
+solana-client = "2"
+solana-transaction-status = "2"
+spl-token = "8"
+spl-associated-token-account = "8"
+ed25519-dalek = "2"
+borsh = { version = "1", features = ["derive"] }
+base64 = "0.22"
+bincode = "1"
+
+# CEX integrations — Binance Spot (HMAC-SHA256) and Coinbase Advanced Trade (ES256 JWT).
+hmac = "0.12"
+sha2 = "0.10"
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+
+# Security primitives — sourcing CSPRNG nonces (Coinbase JWT) and zeroizing
+# keypair-adjacent buffers on drop (Solana operator key loader).
+getrandom = "0.2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
 [dev-dependencies]
 alloy = { version = "1", features = ["node-bindings"] }
 axum = "0.8"
 dotenv = "0.15"
 hex = "0.4"
+proptest = "1"
 rust_decimal = "1"
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 trading-validator-lib = { path = "../trading-validator-lib" }
 wiremock = "0.6"
+
+[features]
+default = []
+# Exposes test-only helpers (e.g. SecretsBackedKeyProvider::write_bot_file)
+# so sibling crates can seed encrypted-secrets fixtures in their own tests.
+test-utils = []

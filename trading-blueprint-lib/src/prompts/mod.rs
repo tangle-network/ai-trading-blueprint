@@ -2,6 +2,7 @@ pub mod packs;
 
 pub use packs::PROFILE_INSTRUCTIONS_PATH;
 pub use packs::build_generic_agent_profile;
+pub use trading_runtime::ValidationTrust;
 
 /// Build a full sidecar agent profile from a strategy pack.
 pub fn build_pack_agent_profile(
@@ -30,6 +31,7 @@ pub fn render_agent_instructions(
 pub fn build_pack_loop_prompt(
     pack: &packs::StrategyPack,
     config: &crate::state::TradingBotRecord,
+    validation_trust: ValidationTrust,
 ) -> String {
     match pack.strategy_type.as_str() {
         "dex" => {
@@ -51,6 +53,11 @@ pub fn build_pack_loop_prompt(
                     max_turns = pack.max_turns,
                 )
             } else {
+                let preflight_step = dex_loop_envelope_preflight_step(validation_trust);
+                let execute_snippet = dex_loop_execute_snippet(validation_trust);
+                let trade_step_index = if preflight_step.is_empty() { 4 } else { 5 };
+                let log_step_index = trade_step_index + 1;
+                let metrics_step_index = log_step_index + 1;
                 format!(
                     "Trading tick ({name}). Run these steps:\n\n\
                      1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
@@ -61,41 +68,59 @@ pub fn build_pack_loop_prompt(
                         Cross-check with CoinGecko or DexScreener when you need a second reference before trading.\n\
                      3. Check the circuit breaker before any trade:\n\
                         `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-                     4. If the setup is actionable, build a `swap` intent for `uniswap_v3`, then call `api.validate(intent)` and `api.execute(intent, validation)`.\n\
+                     {preflight}\
+                     {trade_idx}. If the setup is actionable, choose `token_in` from an available spot balance and `token_out` from the configured asset universe, ask the slippage learner first: `const {{ data: slip }} = await api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}});` then quote the exact Uniswap route with `api.quoteUniswapSwap({{token_in, token_out, amount_in, slippage_bps: slip.recommended_max_bps}})`, use the returned `min_amount_out`, then build a `swap` intent for `uniswap_v3`. The slippage learner ratchets tighter when fills are clean and looser after failures — trust its recommendation over a static value.\n\
                         Use `api.resolveTokenAddress('<configured-symbol>')` or configured token addresses instead of hardcoding addresses, and send raw base units (for example `\"1000000\"` means 1 unit of a 6-decimal token, while `\"1000000000000000000\"` means 1 unit of an 18-decimal token).\n\
-                        Include `amount_format:'base_units'` and a realistic `min_amount_out`, not a placeholder floor.\n\
+                        Include `amount_format:'base_units'` and never compute `min_amount_out` from CoinGecko alone; use the executable route quote.\n\
                         Required intent shape: `{{strategy_id, action:'swap', token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol:'uniswap_v3'}}`.\n\
-                        Do not manually rebuild the validation payload or validator signatures.\n\
-                        Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
-                     5. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
-                     6. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+                        {execute_snippet}\n\
+                     {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>, iteration_id: <iteration from phase.json>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
+                     {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
                      Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this DEX loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
                     name = pack.name,
                     max_turns = pack.max_turns,
+                    preflight = preflight_step,
+                    execute_snippet = execute_snippet,
+                    trade_idx = trade_step_index,
+                    log_idx = log_step_index,
+                    metrics_idx = metrics_step_index,
                 )
             }
         }
-        "yield" => format!(
-            "Trading tick ({name}). Run these steps:\n\n\
-             1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
-             2. `node /home/agent/tools/aave-reserve-status.js` — inspect live Aave reserve availability on the execution RPC. Only consider Aave assets where `available_for_supply` is true.\n\
-             3. Fetch market context and reference pricing with the Trading API client:\n\
-                `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-             4. Check the circuit breaker before any action:\n\
-                `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
-             5. If there is a clear yield action, build an intent with `action:'supply'`, `action:'withdraw'`, `action:'borrow'`, or `action:'repay'` for `aave_v3`, or `action:'supply'`/`action:'withdraw'` for allowlisted `morpho_vault`, validate it, then execute it with `api-client.js`.\n\
-                For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, use raw base-unit amounts (for example `\"3000000000000000000\"` for 3 WETH), do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
-                Required intent shape: `{{strategy_id, action, token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol}}`; use `action`, not `intent_type`.\n\
-                For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
-                Safe pattern: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`\n\
-                Do not manually rebuild the validation payload or validator signatures.\n\
-                Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
-             6. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`\n\
-             7. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
-             Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
-            name = pack.name,
-            max_turns = pack.max_turns,
-        ),
+        "yield" => {
+            let preflight_step = yield_loop_envelope_preflight_step(validation_trust);
+            let execute_snippet = yield_loop_execute_snippet(validation_trust);
+            let trade_step_index = if preflight_step.is_empty() { 5 } else { 6 };
+            let log_step_index = trade_step_index + 1;
+            let metrics_step_index = log_step_index + 1;
+            format!(
+                "Trading tick ({name}). Run these steps:\n\n\
+                 1. `node /home/agent/tools/get-portfolio.js` — inspect current positions, recent trades, and iteration state\n\
+                 2. `node /home/agent/tools/aave-reserve-status.js` — inspect live Aave reserve availability on the execution RPC. Only consider Aave assets where `available_for_supply` is true.\n\
+                 3. Fetch market context and reference pricing with the Trading API client:\n\
+                    `node -e \"const api=require('/home/agent/tools/api-client'); api.getPrices(['WETH','USDC']).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                 4. Check the circuit breaker before any action:\n\
+                    `node -e \"const api=require('/home/agent/tools/api-client'); api.checkCircuitBreaker(10).then(r=>console.log(JSON.stringify(r,null,2)))\"`\n\
+                 {preflight}\
+                 {trade_idx}. If there is a clear yield action, build an intent with `action:'supply'`, `action:'withdraw'`, `action:'borrow'`, or `action:'repay'` for `aave_v3`, or `action:'supply'`/`action:'withdraw'` for allowlisted `morpho_vault`.\n\
+                    For any swap leg involved in rebalancing, first call `api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}})` and pass `recommended_max_bps` into `api.quoteUniswapSwap` as `slippage_bps` — the slippage learner ratchets tighter on clean fills and looser after failures, so trust its recommendation over a static default.\n\
+                    For Aave, use the reserve status tool output as a hard gate: use the chain-specific addresses it returns, set `amount_format:'base_units'`, use raw base-unit amounts (for example `\"3000000000000000000\"` for 3 WETH), do not attempt assets that are frozen or unavailable on the current fork, and for repay include `metadata.debt_token` from the matching variable debt token in that output.\n\
+                    Required intent shape: `{{strategy_id, action, token_in, token_out, amount_in, min_amount_out, amount_format:'base_units', target_protocol}}`; use `action`, not `intent_type`.\n\
+                    For MetaMorpho, only use `target_protocol: \"morpho_vault\"` with `metadata.vault_address` from the configured allowlist.\n\
+                    {execute_snippet}\n\
+                    Prefer simple conservative Aave supply/withdraw decisions unless the portfolio state justifies something more complex.\n\
+                 {log_idx}. Log the decision with `node /home/agent/tools/log-decision.js '{{\"action\":\"yield-trade-or-skip\",\"reason\":\"<your reasoning>\"}}'`. If this bot is running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id: <strategy_id>, reward: <realized_pnl_usd>, iteration_id: <iteration from phase.json>}})` (positive = profit, negative = loss) so the UCB1 bandit updates its arm statistics.\n\
+                 {metrics_idx}. `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`\n\n\
+                 Do not use `analyze-opportunities.js`, `manage-collateral.js`, `check-orders.js`, or `submit-trade.js` for this yield loop — those are prediction-market tools. Be decisive — you have {max_turns} turns.",
+                name = pack.name,
+                max_turns = pack.max_turns,
+                preflight = preflight_step,
+                execute_snippet = execute_snippet,
+                trade_idx = trade_step_index,
+                log_idx = log_step_index,
+                metrics_idx = metrics_step_index,
+            )
+        }
         _ => format!(
             "Trading tick ({name}). Run these steps:\n\n\
              1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
@@ -114,6 +139,56 @@ pub fn build_pack_loop_prompt(
             name = pack.name,
             max_turns = pack.max_turns,
         ),
+    }
+}
+
+/// Envelope-mode preflight step (DEX). Empty for non-envelope modes.
+fn dex_loop_envelope_preflight_step(validation_trust: ValidationTrust) -> String {
+    match validation_trust {
+        ValidationTrust::Envelope => "4. Envelope preflight (REQUIRED): `node -e \"const api=require('/home/agent/tools/api-client'); api.envelopeStatus().then(r=>console.log(JSON.stringify(r,null,2)))\"`.\n   \
+                  Read `is_active`, `consumed_pct`, and `expires_in_seconds`. SKIP this tick and request renewal if any of:\n   \
+                  - `is_active === false`\n   \
+                  - `consumed_pct > 95`\n   \
+                  - `expires_in_seconds < 3600`\n   \
+                  When you SKIP for envelope health, call `node -e \"require('/home/agent/tools/api-client').requestEnvelopeRenewal('envelope_unhealthy').then(r=>console.log(JSON.stringify(r)))\"` and log a `log-decision.js` entry with `action:'skip', reason:'envelope-renewal-needed'`.\n             "
+            .to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Envelope-mode preflight step (yield). Empty for non-envelope modes.
+fn yield_loop_envelope_preflight_step(validation_trust: ValidationTrust) -> String {
+    match validation_trust {
+        ValidationTrust::Envelope => "5. Envelope preflight (REQUIRED): `node -e \"const api=require('/home/agent/tools/api-client'); api.envelopeStatus().then(r=>console.log(JSON.stringify(r,null,2)))\"`.\n   \
+                  Read `is_active`, `consumed_pct`, and `expires_in_seconds`. SKIP this tick and request renewal if any of:\n   \
+                  - `is_active === false`\n   \
+                  - `consumed_pct > 95`\n   \
+                  - `expires_in_seconds < 3600`\n   \
+                  When you SKIP for envelope health, call `api.requestEnvelopeRenewal('envelope_unhealthy')` and log a `log-decision.js` entry with `action:'skip', reason:'envelope-renewal-needed'`.\n             "
+            .to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Execute snippet for the DEX loop. Branches on validation_trust.
+fn dex_loop_execute_snippet(validation_trust: ValidationTrust) -> String {
+    match validation_trust {
+        ValidationTrust::Envelope => "Envelope authorization mode: do NOT submit the intent to the per-trade validator pipeline — the on-file SignedEnvelope already authorizes the trade. Run `await api.executeWithEnvelope(intent)` directly. \
+                  If the response status is 403 and the body contains any of `EnvelopeAmountExceeded`, `EnvelopeTotalExceeded`, `EnvelopeRateTooLow`, or `EnvelopeExpired`: SKIP, call `api.requestEnvelopeRenewal(<error>)`, and log the decision."
+            .to_string(),
+        _ => "Per-trade mode: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not manually rebuild the validation payload or validator signatures."
+            .to_string(),
+    }
+}
+
+/// Execute snippet for the yield loop. Branches on validation_trust.
+fn yield_loop_execute_snippet(validation_trust: ValidationTrust) -> String {
+    match validation_trust {
+        ValidationTrust::Envelope => "Envelope authorization mode: do NOT submit the intent to the per-trade validator pipeline. Run `await api.executeWithEnvelope(intent)` directly — the on-file SignedEnvelope authorizes the action. \
+                  If the response status is 403 and the body contains `EnvelopeAmountExceeded`, `EnvelopeTotalExceeded`, `EnvelopeRateTooLow`, or `EnvelopeExpired`: SKIP, call `api.requestEnvelopeRenewal(<error>)`, and log the decision."
+            .to_string(),
+        _ => "Per-trade mode: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`. Do not manually rebuild the validation payload or validator signatures."
+            .to_string(),
     }
 }
 
@@ -308,14 +383,28 @@ Updated: 2026-04-19T19:00Z | Iteration: 58
 ```"#;
 
 /// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
-pub fn build_fast_tick_prompt(strategy_type: &str) -> String {
+pub fn build_fast_tick_prompt(strategy_type: &str, validation_trust: ValidationTrust) -> String {
+    let envelope_check = match validation_trust {
+        ValidationTrust::Envelope => {
+            "3a. Run `await api.envelopeStatus()`. If `is_active === false`, `consumed_pct > 95`, or `expires_in_seconds < 3600`: SKIP and call `api.requestEnvelopeRenewal('envelope_unhealthy')`, then log via `log-decision.js`.\n             "
+        }
+        _ => "",
+    };
+    let execute_pattern = match validation_trust {
+        ValidationTrust::Envelope => {
+            "build a swap intent with the quoted `min_amount_out`, set `amount_format:'base_units'`, then run `api.executeWithEnvelope(intent)` directly (the on-file SignedEnvelope authorizes — do not invoke the per-trade validator pipeline). On a 403 response containing `EnvelopeAmountExceeded`, `EnvelopeTotalExceeded`, `EnvelopeRateTooLow`, or `EnvelopeExpired`: SKIP, call `api.requestEnvelopeRenewal(<error>)`, and log via `log-decision.js`."
+        }
+        _ => {
+            "build a swap intent with the quoted `min_amount_out`, set `amount_format:'base_units'`, then run `api.validate(intent)` and `api.execute(intent, validation)`."
+        }
+    };
     format!(
         "FAST TICK ({strategy_type}). You have 3 turns. Be decisive.\n\n\
          1. Run `node /home/agent/tools/get-portfolio.js`. A spot position with `protocol:\"vault\"` is a vault-held balance available for vault-backed swaps, not a locked protocol position.\n\
          2. Fetch `/supported-assets`, then fetch prices for the configured symbols only.\n\
          3. Check regime + circuit breaker. If bearish regime or circuit breaker triggered → SKIP.\n\
-         4. If actionable setup exists → choose `token_in` from an available spot balance and `token_out` from the configured asset universe, build a swap intent with `api.resolveTokenAddress('<configured-symbol>')` or configured token addresses, set `amount_format:'base_units'`, use a realistic `min_amount_out`, then run `api.validate(intent)` and `api.execute(intent, validation)`. Otherwise → SKIP.\n\n\
-         Record the candle and log your decision. Report: price, action, reason (one line)."
+         {envelope_check}4. If actionable setup exists → choose `token_in` from an available spot balance and `token_out` from the configured asset universe, ask the slippage learner first via `api.recommendSlippageBps({{token_in, token_out, fallback_bps: 100}})`, then call `api.quoteUniswapSwap({{token_in, token_out, amount_in, slippage_bps: <recommended_max_bps>}})` (trust the learner over a static value), {execute_pattern} Otherwise → SKIP.\n\n\
+         Record the candle and log your decision. If running a bandit-tracked variant, also call `api.recordStrategyOutcome({{variant_id, reward, iteration_id: <iteration from phase.json>}})`. Report: price, action, reason (one line)."
     )
 }
 
@@ -340,7 +429,8 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
     format!(
         "RESEARCH TICK. You have 15 turns. No trading — focus on self-improvement.\n\n\
          ## 1. Review performance\n\
-         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\n\
+         Read /home/agent/logs/decisions.jsonl (last 20 entries). Calculate win rate, signal accuracy.\n\
+         Optional: `node -e \"require('/home/agent/tools/api-client').getBanditStatus().then(r=>console.log(JSON.stringify(r,null,2)))\"` to surface the currently best-performing variant and its mean reward — informational signal that may inform (but does not override) your strategy choice.\n\n\
          ## 2. Stay strategy-specific\n\
          {strategy_focus}\n\n\
          ## 3. Identify ONE structural improvement\n\
@@ -387,7 +477,15 @@ pub fn build_conversation_tick_prompt() -> String {
 }
 
 /// Build the legacy combined loop prompt (kept for backward compat).
-pub fn build_loop_prompt(strategy_type: &str) -> String {
+pub fn build_loop_prompt(strategy_type: &str, validation_trust: ValidationTrust) -> String {
+    let trust_note = match validation_trust {
+        ValidationTrust::Envelope => {
+            "\n## Authorization Mode: Envelope\n\nThis bot has an on-file SignedEnvelope. Do NOT submit the intent to the per-trade validator pipeline — use `api.executeWithEnvelope(intent)` directly. Before trading, run `api.envelopeStatus()` and SKIP if `is_active === false`, `consumed_pct > 95`, or `expires_in_seconds < 3600`. On 403 with `EnvelopeAmountExceeded`/`EnvelopeTotalExceeded`/`EnvelopeRateTooLow`/`EnvelopeExpired`, SKIP and call `api.requestEnvelopeRenewal(<error>)`.\n"
+        }
+        _ => {
+            "\n## Authorization Mode: Per-Trade\n\nEvery trade goes through `api.validate(intent)` → `api.execute(intent, validation)`.\n"
+        }
+    };
     format!(
         "Execute one trading loop iteration for your {strategy_type} strategy.\n\n\
          {MEMORY_CHECK_BLOCK}\n\n\
@@ -396,7 +494,8 @@ pub fn build_loop_prompt(strategy_type: &str) -> String {
          3. Check portfolio and circuit breaker\n\
          4. Analyze market conditions\n\
          5. Trade or skip\n\
-         6. Log decision and write metrics\n\n\
+         6. Log decision and write metrics\n\
+         {trust_note}\n\
          {EVOLUTION_BLOCK}"
     )
 }
@@ -586,13 +685,15 @@ mod tests {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         }
     }
 
     #[test]
     fn test_prediction_loop_prompt_references_smart_tools() {
         let pack = packs::get_pack("prediction").unwrap();
-        let prompt = build_pack_loop_prompt(&pack, &test_config());
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("analyze-opportunities.js"),
@@ -631,7 +732,7 @@ mod tests {
     #[test]
     fn test_dex_loop_prompt_uses_swap_workflow_not_prediction_tools() {
         let pack = packs::get_pack("dex").unwrap();
-        let prompt = build_pack_loop_prompt(&pack, &test_config());
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("api-client"),
@@ -673,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
-        let prompt = build_fast_tick_prompt("dex");
+        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("get-portfolio.js"),
@@ -702,7 +803,7 @@ mod tests {
             },
             "qa_allowed_directions": ["buy", "sell"]
         });
-        let prompt = build_pack_loop_prompt(&pack, &config);
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("qa-stochastic-dex.js"),
@@ -794,6 +895,236 @@ mod tests {
         assert!(
             prompt.contains("Execution RPC"),
             "yield system prompt should surface execution RPC context"
+        );
+    }
+
+    // ----- Validation-trust branching -----
+
+    #[test]
+    fn test_dex_loop_prompt_envelope_mode_uses_execute_with_envelope_no_validate() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::Envelope);
+
+        assert!(
+            prompt.contains("envelopeStatus"),
+            "envelope-mode dex loop must check envelopeStatus before trading"
+        );
+        assert!(
+            prompt.contains("executeWithEnvelope"),
+            "envelope-mode dex loop must call executeWithEnvelope"
+        );
+        assert!(
+            !prompt.contains("api.validate("),
+            "envelope-mode dex loop must NOT call api.validate(...)"
+        );
+        assert!(
+            prompt.contains("EnvelopeAmountExceeded")
+                && prompt.contains("EnvelopeTotalExceeded")
+                && prompt.contains("EnvelopeRateTooLow")
+                && prompt.contains("EnvelopeExpired"),
+            "envelope-mode dex loop must enumerate the renewal-trigger error codes"
+        );
+        assert!(
+            prompt.contains("requestEnvelopeRenewal"),
+            "envelope-mode dex loop must request renewal on unhealthy/expired envelope"
+        );
+    }
+
+    #[test]
+    fn test_dex_loop_prompt_per_trade_mode_keeps_validate_execute_pattern() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
+
+        assert!(
+            prompt.contains("api.validate(intent)"),
+            "per-trade dex loop must call api.validate(intent)"
+        );
+        assert!(
+            prompt.contains("api.execute(intent, validation)"),
+            "per-trade dex loop must call api.execute(intent, validation)"
+        );
+        assert!(
+            !prompt.contains("executeWithEnvelope"),
+            "per-trade dex loop must NOT mention executeWithEnvelope"
+        );
+        assert!(
+            !prompt.contains("envelopeStatus"),
+            "per-trade dex loop must NOT mention envelopeStatus"
+        );
+    }
+
+    #[test]
+    fn test_dex_loop_prompt_self_operated_falls_back_to_per_trade() {
+        // SelfOperated is still disabled in code — prompt must treat it as PerTrade.
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::SelfOperated);
+
+        assert!(
+            prompt.contains("api.validate(intent)"),
+            "self-operated dex loop must currently fall back to per-trade validate"
+        );
+        assert!(
+            !prompt.contains("executeWithEnvelope"),
+            "self-operated dex loop must NOT use executeWithEnvelope yet"
+        );
+    }
+
+    #[test]
+    fn test_yield_loop_prompt_envelope_mode_uses_execute_with_envelope_no_validate() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::Envelope);
+
+        assert!(prompt.contains("envelopeStatus"));
+        assert!(prompt.contains("executeWithEnvelope"));
+        assert!(
+            !prompt.contains("api.validate("),
+            "envelope-mode yield loop must NOT call api.validate(...)"
+        );
+    }
+
+    #[test]
+    fn test_fast_tick_prompt_envelope_mode_skips_validate() {
+        let prompt = build_fast_tick_prompt("dex", ValidationTrust::Envelope);
+
+        assert!(prompt.contains("envelopeStatus"));
+        assert!(prompt.contains("executeWithEnvelope"));
+        assert!(
+            !prompt.contains("api.validate("),
+            "envelope-mode fast tick must NOT call api.validate(...)"
+        );
+    }
+
+    #[test]
+    fn test_fast_tick_prompt_per_trade_keeps_validate() {
+        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        assert!(prompt.contains("api.validate(intent)"));
+        assert!(prompt.contains("api.execute(intent, validation)"));
+        assert!(!prompt.contains("executeWithEnvelope"));
+    }
+
+    #[test]
+    fn test_build_loop_prompt_branches_on_validation_trust() {
+        let envelope = build_loop_prompt("dex", ValidationTrust::Envelope);
+        assert!(envelope.contains("Envelope"));
+        assert!(envelope.contains("executeWithEnvelope"));
+        assert!(!envelope.contains("api.validate(intent)"));
+
+        let per_trade = build_loop_prompt("dex", ValidationTrust::PerTrade);
+        assert!(per_trade.contains("Per-Trade"));
+        assert!(!per_trade.contains("executeWithEnvelope"));
+    }
+
+    // ----- Learning-loop wiring (slippage learner + strategy bandit) -----
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_dex_envelope_mode() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::Envelope);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "envelope-mode dex loop must call the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("slippage_bps"),
+            "envelope-mode dex loop must thread slippage_bps into the quote"
+        );
+        assert!(
+            prompt.contains("ratchets tighter"),
+            "envelope-mode dex loop must explain why the learner is preferred over a static bps"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_dex_per_trade_mode() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "per-trade dex loop must call the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("slippage_bps"),
+            "per-trade dex loop must thread slippage_bps into the quote"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_yield_envelope_mode() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::Envelope);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "envelope-mode yield loop must reference the slippage learner for swap legs"
+        );
+    }
+
+    #[test]
+    fn test_slippage_recommendation_is_referenced_in_yield_per_trade_mode() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "per-trade yield loop must reference the slippage learner for swap legs"
+        );
+    }
+
+    #[test]
+    fn test_strategy_outcome_recording_is_referenced_in_dex_loop() {
+        let pack = packs::get_pack("dex").unwrap();
+        let prompt = build_pack_loop_prompt(&pack, &test_config(), ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "dex loop must record bandit outcomes after each iteration"
+        );
+        assert!(
+            prompt.contains("variant_id"),
+            "dex loop must mention variant_id semantics for the bandit"
+        );
+    }
+
+    #[test]
+    fn test_strategy_outcome_recording_is_referenced_in_yield_loop() {
+        let pack = packs::get_pack("yield").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "yield".to_string();
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "yield loop must record bandit outcomes after each iteration"
+        );
+    }
+
+    #[test]
+    fn test_fast_tick_references_slippage_learner_and_bandit() {
+        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        assert!(
+            prompt.contains("recommendSlippageBps"),
+            "fast tick must consult the slippage learner before quoting"
+        );
+        assert!(
+            prompt.contains("recordStrategyOutcome"),
+            "fast tick must mention recordStrategyOutcome for bandit-tracked variants"
+        );
+    }
+
+    #[test]
+    fn test_research_tick_references_bandit_status_as_informational() {
+        let prompt = build_research_tick_prompt(&test_config());
+        assert!(
+            prompt.contains("getBanditStatus"),
+            "research tick must surface bandit status as an informational signal"
+        );
+        assert!(
+            prompt.contains("informational")
+                || prompt.contains("inform")
+                || prompt.contains("does not override"),
+            "research tick must frame bandit status as informational, not directive"
         );
     }
 }

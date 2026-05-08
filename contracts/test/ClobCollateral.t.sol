@@ -65,13 +65,9 @@ contract ClobCollateralTest is Setup {
             _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline, 1);
     }
 
-    function _releaseCollateral(uint256 amount, bytes32 intentHash)
-        internal
-        returns (uint256 deadline)
-    {
+    function _releaseCollateral(uint256 amount, bytes32 intentHash) internal returns (uint256 deadline) {
         deadline = block.timestamp + 1 hours;
-        (bytes[] memory sigs, uint256[] memory scores) =
-            _createCollateralSigs(amount, operator, intentHash, deadline);
+        (bytes[] memory sigs, uint256[] memory scores) = _createCollateralSigs(amount, operator, intentHash, deadline);
         vm.prank(operator);
         vault.releaseCollateral(amount, operator, intentHash, deadline, sigs, scores);
     }
@@ -114,9 +110,9 @@ contract ClobCollateralTest is Setup {
 
         bytes32 operatorRole = vault.OPERATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, operatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, operatorRole)
+        );
         vault.releaseCollateral(1000 ether, operator, intentHash, deadline, sigs, scores);
     }
 
@@ -131,8 +127,7 @@ contract ClobCollateralTest is Setup {
         uint256[] memory scores = new uint256[](1);
         scores[0] = 80;
         bytes32 executionHash = vault.computeCollateralReleaseHash(1000 ether, operator, intentHash, deadline);
-        sigs[0] =
-            _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline, 1);
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline, 1);
 
         vm.prank(operator);
         vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
@@ -152,9 +147,7 @@ contract ClobCollateralTest is Setup {
 
         // Try to release 2000 (exceeds 10% of 10000)
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(
-            TradingVault.ExceedsCollateralLimit.selector, 2000 ether, 1000 ether
-        ));
+        vm.expectRevert(abi.encodeWithSelector(TradingVault.ExceedsCollateralLimit.selector, 2000 ether, 1000 ether));
         vault.releaseCollateral(2000 ether, operator, intentHash, deadline, sigs, scores);
     }
 
@@ -446,8 +439,7 @@ contract ClobCollateralTest is Setup {
         // Operator 2 releases 500
         bytes32 hash2 = keccak256("op2-release");
         uint256 deadline2 = block.timestamp + 1 hours;
-        (bytes[] memory sigs2, uint256[] memory scores2) =
-            _createCollateralSigs(500 ether, operator2, hash2, deadline2);
+        (bytes[] memory sigs2, uint256[] memory scores2) = _createCollateralSigs(500 ether, operator2, hash2, deadline2);
         vm.prank(operator2);
         vault.releaseCollateral(500 ether, operator2, hash2, deadline2, sigs2, scores2);
 

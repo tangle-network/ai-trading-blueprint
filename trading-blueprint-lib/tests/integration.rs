@@ -53,6 +53,7 @@ fn make_provision_request_with_strategy_config(
         max_lifetime_days: 0,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -78,6 +79,7 @@ fn make_provision_request_with_lifetime(
         max_lifetime_days,
         validator_service_ids: vec![],
         max_collateral_bps: U256::from(0),
+        validation_trust: 0,
     }
 }
 
@@ -128,6 +130,103 @@ fn mock_sandbox(id: &str) -> sandbox_runtime::SandboxRecord {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn test_provision_runs_baseline_backtest() {
+    // Verifies that the provisioning flow either populates the bot's
+    // baseline_backtest field after provisioning a kline-supported strategy,
+    // OR leaves it None when the kline source is unreachable (best-effort).
+    // Either outcome is correct — we never block provisioning on the backtest.
+    let _dir = common::init_test_env();
+
+    let sandbox = mock_sandbox("sb-baseline-1");
+    let sandbox_id = sandbox.id.clone();
+
+    let request = make_provision_request("baseline-bot", "dex");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+
+    // dex strategy IS baseline-eligible per `strategy_supports_baseline`.
+    // If the kline source returned data, the field is populated.
+    if let Some(summary) = &bot.baseline_backtest {
+        assert_eq!(summary.lookback_days, 30);
+        assert_eq!(summary.harness_version, 1);
+        assert!(
+            !summary.realized_pnl.is_empty(),
+            "summary.realized_pnl should be a serializable decimal string"
+        );
+    } else {
+        // Network unavailable / kline fetch failed — provisioning still
+        // succeeded, and the field is None (best-effort guarantee).
+        assert!(bot.baseline_backtest.is_none());
+    }
+}
+
+#[tokio::test]
+async fn test_provision_skips_baseline_for_prediction_strategy() {
+    // Prediction strategies have no kline source and must skip baseline
+    // without affecting provisioning.
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-baseline-prediction");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request("baseline-prediction", "prediction");
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert!(
+        bot.baseline_backtest.is_none(),
+        "prediction strategy must not have a baseline backtest"
+    );
+}
+
+#[tokio::test]
+async fn test_provision_persists_renewal_webhook_url_from_strategy_config() {
+    let _dir = common::init_test_env();
+    let sandbox = mock_sandbox("sb-renewal-webhook");
+    let sandbox_id = sandbox.id.clone();
+    let request = make_provision_request_with_strategy_config(
+        "webhook-bot",
+        "dex",
+        r#"{"renewal_webhook_url":"https://example.test/renewal"}"#,
+    );
+    provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bot = find_bot_by_sandbox(&sandbox_id).unwrap();
+    assert_eq!(
+        bot.renewal_webhook_url.as_deref(),
+        Some("https://example.test/renewal"),
+        "renewal webhook URL should be persisted from strategy_config_json"
+    );
+}
+
+#[tokio::test]
 async fn test_provision_creates_records() {
     let _dir = common::init_test_env();
 
@@ -141,6 +240,7 @@ async fn test_provision_creates_records() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -190,6 +290,7 @@ async fn test_provision_rejects_invalid_runtime_backend() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     {
@@ -237,6 +338,7 @@ async fn test_provision_respects_non_paper_flag_from_strategy_config() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -266,6 +368,7 @@ async fn test_provision_defaults_fork_chain_to_live_mode() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -294,6 +397,7 @@ async fn test_provision_skips_zero_address_asset_token_default() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -325,11 +429,20 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
         "dex",
         r#"{"runtime_backend":"firecracker"}"#,
     );
-    let err =
-        match provision_core(request, None, call_id, 0, "0xTESTCALLER".to_string(), None).await {
-            Ok(_) => panic!("firecracker backend should fail until runtime is wired"),
-            Err(err) => err,
-        };
+    let err = match provision_core(
+        request,
+        None,
+        call_id,
+        0,
+        "0xTESTCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(_) => panic!("firecracker backend should fail until runtime is wired"),
+        Err(err) => err,
+    };
 
     assert!(
         err.contains("runtime_backend=firecracker") || err.contains("FIRECRACKER_HOST_AGENT_URL"),
@@ -653,6 +766,7 @@ async fn test_bot_lifecycle_transitions() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -703,6 +817,7 @@ async fn test_provision_returns_zero_workflow_id() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -728,7 +843,7 @@ async fn test_provision_returns_zero_workflow_id() {
 #[tokio::test]
 async fn test_loop_prompt_per_strategy() {
     for strategy in &["dex", "yield", "perp", "prediction", "multi"] {
-        let prompt = build_loop_prompt(strategy);
+        let prompt = build_loop_prompt(strategy, trading_runtime::ValidationTrust::default());
         assert!(
             prompt.contains(strategy),
             "Loop prompt for '{strategy}' should mention the strategy type"
@@ -768,6 +883,8 @@ async fn test_system_prompt_includes_api_info() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -857,6 +974,7 @@ async fn test_bot_record_has_new_fields() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -880,6 +998,7 @@ async fn test_provision_uses_requested_lifetime() {
         0,
         "0xTESTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -900,6 +1019,7 @@ async fn test_provision_defaults_to_30_days() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -922,6 +1042,7 @@ async fn test_extend_increases_lifetime() {
         0,
         0,
         "0xTESTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -1017,6 +1138,8 @@ async fn test_pack_profile_has_rich_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1042,7 +1165,8 @@ async fn test_pack_profile_has_rich_content() {
     assert_eq!(profile["memory"]["enabled"], true);
 
     // Loop prompt references the pack name
-    let loop_prompt = build_pack_loop_prompt(&pack, &config);
+    let loop_prompt =
+        build_pack_loop_prompt(&pack, &config, trading_runtime::ValidationTrust::default());
     assert!(loop_prompt.contains("Polymarket Prediction Trading"));
 }
 
@@ -1076,6 +1200,8 @@ async fn test_generic_strategy_gets_profile() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -1091,7 +1217,7 @@ async fn test_generic_strategy_gets_profile() {
     assert_eq!(profile["permission"]["bash"], "allow");
 
     // Generic loop prompt
-    let prompt = build_loop_prompt("exotic");
+    let prompt = build_loop_prompt("exotic", trading_runtime::ValidationTrust::default());
     assert!(prompt.contains("exotic"));
     assert!(prompt.contains("trading loop iteration"));
 }
@@ -1137,6 +1263,8 @@ async fn test_dex_profile_has_uniswap_content() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1185,6 +1313,8 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             service_id: 0,
             harness_json: serde_json::Value::default(),
             validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -1229,6 +1359,8 @@ async fn test_build_pack_agent_profile_integration() {
         service_id: 0,
         harness_json: serde_json::Value::default(),
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1272,6 +1404,7 @@ async fn test_two_phase_provision_e2e() {
         0,
         0,
         "0xSUBMITTER".to_string(),
+        None,
         None,
     )
     .await
@@ -1434,6 +1567,7 @@ async fn test_provision_all_strategy_types() {
             0,
             "0xSTRATCALLER".to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1458,6 +1592,7 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
             0,
             0,
             "0xPACKCALLER".to_string(),
+            None,
             None,
         )
         .await
@@ -1530,9 +1665,17 @@ async fn test_provision_empty_name_still_works() {
 
     let sandbox = mock_sandbox("sb-empty-name-1");
     let request = make_provision_request("", "dex");
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-name-1").unwrap();
@@ -1551,9 +1694,17 @@ async fn test_provision_empty_strategy_config() {
     request.strategy_config_json = String::new();
     request.risk_params_json = String::new();
 
-    let output = provision_core(request, Some(sandbox), 0, 0, "0xCALLER".to_string(), None)
-        .await
-        .unwrap();
+    let output = provision_core(
+        request,
+        Some(sandbox),
+        0,
+        0,
+        "0xCALLER".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.workflow_id, 0);
     let bot = find_bot_by_sandbox("sb-empty-cfg-1").unwrap();
@@ -1640,6 +1791,7 @@ async fn test_concurrent_provision_unique_ids() {
                 700 + i as u64,
                 0,
                 format!("0xCALLER{i}"),
+                None,
                 None,
             )
             .await

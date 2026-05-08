@@ -1,0 +1,259 @@
+# cargo-deny configuration for ai-trading-blueprints.
+#
+# Run locally:
+#   cargo deny check
+# Run a single section:
+#   cargo deny check advisories
+#   cargo deny check licenses
+#   cargo deny check bans
+#   cargo deny check sources
+#
+# CI gate is wired in `.github/workflows/static-analysis.yml`.
+#
+# Allowlist policy:
+# - `advisories.ignore`: only add IDs with a written rationale (see
+#   `docs/dependency-policy.md`); each entry should be re-evaluated
+#   quarterly or when a fix lands upstream.
+# - `licenses.allow`: OSI-approved permissive licences only. Copyleft
+#   (GPL/AGPL/LGPL) is intentionally not on the list — any new dep
+#   under those terms requires legal review before being added.
+# - `sources.allow-git`: only Tangle-org repos pinned by tag/commit.
+
+[graph]
+# Inspect the full feature surface so we don't miss a transitive
+# dep that's only pulled in under a specific feature.
+all-features = true
+
+# ── Advisories (RUSTSEC) ────────────────────────────────────────────────────
+[advisories]
+# Use cargo-deny's default db-path. Setting it explicitly to
+# `~/.cargo/advisory-db` breaks because cargo-deny manages a
+# versioned `advisory-db-<hash>` subdir under its own cache dir.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+# Each entry MUST carry an inline reason and a tracking link. Empty
+# default — add deliberately, remove on each upgrade pass.
+#
+# Triage cadence: re-evaluate every advisory in this list quarterly
+# (on the first Monday of each quarter) or when a fixed version of
+# the affected crate becomes consumable upstream — whichever comes
+# first. Owner: trading-runtime maintainers.
+ignore = [
+    # ── Vulnerabilities (RUSTSEC vuln class) ────────────────────────────────
+    # ed25519-dalek 1.x oracle attack — we depend on 2.x in workspace,
+    # but `solana-zk-sdk` and a few Solana toolchain crates still pin
+    # 1.x transitively. Mitigation: the affected `keypair_from_bytes`
+    # API is not on our call graph (we use ed25519-dalek 2.x's
+    # SigningKey directly).
+    # Tracking: https://github.com/solana-labs/solana/issues/33930
+    { id = "RUSTSEC-2022-0093", reason = "transitive via solana-zk-sdk; vulnerable API not on our call graph; tracked in dep-policy.md" },
+
+    # curve25519-dalek timing variability in Scalar29::sub / Scalar52::sub.
+    # Pulled in transitively via solana-sdk. We do not use scalar
+    # subtraction with secret values — operator key signing goes
+    # through ed25519-dalek's hardened path. Upstream fix landed in
+    # 4.1.3; solana-sdk 2.x will pick it up at the next refresh.
+    { id = "RUSTSEC-2024-0344", reason = "transitive via solana-sdk; non-applicable API path; tracked in dep-policy.md" },
+
+    # ring panic on AES overflow check — only triggers when overflow
+    # checks are enabled (debug builds). Production binaries ship with
+    # release profile (overflow checks off). Awaiting ring 0.18.x via
+    # rustls-webpki refresh.
+    { id = "RUSTSEC-2025-0009", reason = "release builds disable overflow checks; not a prod issue; tracked in dep-policy.md" },
+
+    # protobuf recursion DoS — pulled by tonic via Solana RPC. We
+    # never deserialize attacker-controlled protobuf; only Solana RPC
+    # responses, which are already trust-bounded by TLS + RPC URL
+    # allowlist. Awaiting protobuf 3.7.x.
+    { id = "RUSTSEC-2024-0437", reason = "no untrusted protobuf input; tracked in dep-policy.md" },
+
+    # rustls-webpki name-constraints / CRL parser — pulled transitively
+    # via reqwest's TLS stack. Mitigated upstream in rustls 0.23.x
+    # which is pinned by the Solana 2.x family; bump deferred to next
+    # solana-sdk minor.
+    { id = "RUSTSEC-2026-0098", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
+    { id = "RUSTSEC-2026-0099", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
+    { id = "RUSTSEC-2026-0104", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
+
+    # tokio-tar PAX header smuggling — only used by cargo build tooling,
+    # not at runtime.
+    { id = "RUSTSEC-2025-0111", reason = "build-time only; not in runtime call graph; tracked in dep-policy.md" },
+
+    # tracing-subscriber ANSI escape in user input — we structure logs
+    # via tracing macros, never pass attacker-controlled data into the
+    # subscriber's display path. Bump pending tracing 0.2 release.
+    { id = "RUSTSEC-2025-0055", reason = "no attacker-controlled data in subscriber path; tracked in dep-policy.md" },
+
+    # ── Unsound (RUSTSEC informational class) ───────────────────────────────
+    # `atty` unaligned read on Windows — Solana telemetry transitive,
+    # not in our call path. Tracking the Solana stack's atty -> is-terminal
+    # migration; will drop when solana-sdk 3.x lands.
+    { id = "RUSTSEC-2021-0145", reason = "transitive via solana-cli telemetry; not on call graph" },
+
+    # `lru` IterMut UB — we use `lru` directly for backtest caches but
+    # never via IterMut; Lru::iter() is not unsafe.
+    { id = "RUSTSEC-2026-0002", reason = "we never use IterMut; only iter() / get_or_insert" },
+
+    # `rand` 0.9 unsoundness when a custom logger calls rand::rng().
+    # We use rand only with explicit ChaCha20Rng / OsRng instances.
+    { id = "RUSTSEC-2026-0097", reason = "we use explicit Rng impls, not rand::rng()" },
+
+    # ── Unmaintained (RUSTSEC informational class) ──────────────────────────
+    # All of the below are deep transitive deps via Solana / Alloy /
+    # Tangle blueprint stacks. Replacing them requires upstream PRs;
+    # tracked in dep-policy.md "Unmaintained crate triage".
+    { id = "RUSTSEC-2024-0375", reason = "atty unmaintained — Solana CLI transitive; tracking solana-sdk migration" },
+    { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained — dev-dep only; tests use it for fixture loading" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained — Solana 2.x family pins 1.x; bincode 2 migration is part of solana-sdk 3.x" },
+    { id = "RUSTSEC-2024-0388", reason = "derivative unmaintained — transitive via Solana SPL; awaiting upstream Refresh" },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained — transitive via Solana ProgramTest; awaiting upstream replacement" },
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained — transitive via wasm-bindgen tree; not exercised at runtime" },
+    { id = "RUSTSEC-2025-0161", reason = "libsecp256k1 unmaintained — transitive via Solana crypto; we sign with ed25519, not secp256k1" },
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix unmaintained — transitive via indicatif (cargo build progress)" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained — pervasive transitive in Solana proc-macros; no exploitable runtime path" },
+    { id = "RUSTSEC-2025-0010", reason = "ring 0.16 unmaintained — transitive via rustls 0.21 in Solana stack; covered by RUSTSEC-2025-0009 mitigation note" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via webpki / reqwest; covered by rustls migration plan" },
+]
+
+# ── Licences ────────────────────────────────────────────────────────────────
+[licenses]
+# Confidence threshold for SPDX inference. 0.93 is the cargo-deny
+# default; lower it carefully, never raise blindly.
+confidence-threshold = 0.93
+
+# OSI-approved permissive set + a few mature exceptions. NO GPL/AGPL/LGPL.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "0BSD",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+    # `Unlicense` is OSI-equivalent public-domain dedication. Three
+    # transitive deps of `ws_stream_wasm` (Polymarket WS client) ship
+    # under it: pharos, async_io_stream, ws_stream_wasm itself. None
+    # are GPL/copyleft.
+    "Unlicense",
+]
+
+exceptions = []
+
+# Per-crate licence clarifications. Use this for crates whose
+# Cargo.toml omits `license` but ship a permissive LICENSE in their
+# repo. The `expression` is the SPDX we attest to after manual
+# inspection, and `license-files` lets cargo-deny fingerprint the
+# actual file so a renamed/changed LICENSE invalidates the clarify.
+#
+# How to add: clone the upstream repo at the pinned version, view
+# LICENSE, compute `sha256sum LICENSE` (the cargo-deny `[hash]` is a
+# lossy 32-bit fold but we keep the long hash in this comment for
+# audit). Re-validate any clarify on each version bump.
+
+[[licenses.clarify]]
+name = "ring"
+version = "0.16"
+expression = "ISC AND MIT AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.clarify]]
+name = "eigensdk"
+expression = "BSD-3-Clause"
+license-files = []
+
+[[licenses.clarify]]
+name = "eigen-crypto-bls"
+expression = "BSD-3-Clause"
+license-files = []
+
+[[licenses.clarify]]
+name = "eigen-crypto-bn254"
+expression = "BSD-3-Clause"
+license-files = []
+
+[[licenses.clarify]]
+name = "eigen-signer"
+expression = "BSD-3-Clause"
+license-files = []
+
+[[licenses.clarify]]
+name = "eigen-utils"
+expression = "BSD-3-Clause"
+license-files = []
+
+# Tangle workspace-hack patch crate is generated locally and we
+# license it under the workspace's own MIT-OR-Apache-2.0 terms.
+[[licenses.clarify]]
+name = "workspace-hack"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+# solana-config-program-client publishes the standard Solana Apache-2.0
+# header in source but omits the manifest field upstream.
+[[licenses.clarify]]
+name = "solana-config-program-client"
+expression = "Apache-2.0"
+license-files = []
+
+# ── Bans (multi-version + wildcard hygiene) ─────────────────────────────────
+[bans]
+# Solana / Alloy stacks frequently double up on common crates (e.g.
+# two versions of `getrandom`, `rand`, `windows-sys`). Treat as a
+# warning and surface in CI; resolution typically happens at the next
+# upstream refresh.
+multiple-versions = "warn"
+
+# `*` version specifiers in published manifests are a footgun. We
+# downgrade to `warn` because cargo-deny flags intra-workspace path
+# deps as wildcards on crates that don't set `publish = false`, and
+# the trading workspace ships path-deps for its in-tree libs without
+# that flag. The follow-up — set `publish = false` on every
+# trading-* member crate — is tracked in `docs/dependency-policy.md`
+# under "Pinning strategy"; once that's done, flip this back to
+# "deny".
+wildcards = "warn"
+
+# Path dependencies inside the workspace render as wildcards in
+# cargo-deny but are safe (they pin to the in-tree source). The
+# workspace member crates are not published so the published-crate
+# rule does not apply in practice.
+allow-wildcard-paths = true
+
+# Specific deny-list for crates we never want pulled in.
+deny = []
+
+# Crates we knowingly tolerate being duplicated. Empty for now —
+# warnings will surface on `cargo deny check bans` and we triage.
+skip = []
+
+# Subtrees where multi-version warnings are noise (e.g. proc-macro
+# trees). Empty for now.
+skip-tree = []
+
+# ── Source registries ───────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Only Tangle-org git deps. Each MUST be pinned by tag or commit (not
+# branch) — verified by `cargo tree --duplicates` + manual review.
+allow-git = [
+    "https://github.com/tangle-network/blueprint",
+    "https://github.com/tangle-network/blueprint.git",
+    "https://github.com/tangle-network/ai-agent-sandbox-blueprint",
+    "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git",
+    # tnt-core protocol bindings — pinned by tag in workspace Cargo.toml.
+    "https://github.com/tangle-network/tnt-core",
+    "https://github.com/tangle-network/tnt-core.git",
+]

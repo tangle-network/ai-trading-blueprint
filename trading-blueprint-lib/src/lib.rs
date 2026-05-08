@@ -72,6 +72,10 @@ sol! {
         uint64 max_lifetime_days;
         uint64[] validator_service_ids;
         uint256 max_collateral_bps;
+        // 0 = PerTrade (default), 1 = Envelope, 2 = SelfOperated.
+        // Greenfield deploy — older clients defaulting this to zero get
+        // PerTrade, which matches prior behavior.
+        uint8 validation_trust;
     }
 
     struct TradingExtendRequest {

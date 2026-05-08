@@ -52,7 +52,8 @@ contract ValidatorFuzzTest is Setup {
         scores[0] = submittedScore;
         scores[1] = submittedScore;
 
-        (bool approved, uint256 validCount) = tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
+        (bool approved, uint256 validCount) =
+            tv.validateWithSignatures(intentHash, testVault, sigs, scores, deadline, 0);
 
         // Should always be rejected because the recovered signers won't match
         assertFalse(approved, "Manipulated score should never pass");

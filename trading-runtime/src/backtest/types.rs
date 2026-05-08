@@ -467,6 +467,62 @@ pub struct BacktestResult {
     pub tokens_traded: Vec<String>,
 }
 
+/// Compact summary suitable for persisting alongside a bot record.
+///
+/// Captures the headline P&L / risk metrics from a baseline backtest so that
+/// dashboards and provisioning flows can read them without rehydrating the
+/// full equity curve.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BacktestSummary {
+    /// Unix seconds when the backtest was produced.
+    pub generated_at: i64,
+    /// How many days of history were fed into the engine.
+    pub lookback_days: u32,
+    /// Number of candles consumed.
+    pub candles_processed: usize,
+    /// Total trades simulated.
+    pub total_trades: u64,
+    /// Profitable trades.
+    pub profitable_trades: u64,
+    /// Win rate over the simulation (0.0 – 1.0).
+    pub win_rate: f64,
+    /// Total return percentage over the simulation.
+    pub total_return_pct: f64,
+    /// Annualized Sharpe ratio.
+    pub sharpe_ratio: f64,
+    /// Maximum drawdown percentage encountered.
+    pub max_drawdown_pct: f64,
+    /// Realized P&L expressed as a decimal string for portability across
+    /// environments that don't deserialize `Decimal` natively.
+    pub realized_pnl: String,
+    /// Tokens that produced trades during the simulation.
+    pub tokens_traded: Vec<String>,
+    /// Harness version that the backtest was run against.
+    pub harness_version: u32,
+}
+
+impl BacktestSummary {
+    /// Build a summary from a `BacktestResult` plus the lookback window used
+    /// to source the candles.
+    pub fn from_result(result: &BacktestResult, lookback_days: u32, harness_version: u32) -> Self {
+        let realized_pnl: Decimal = result.trades.iter().map(|t| t.pnl).sum();
+        Self {
+            generated_at: chrono::Utc::now().timestamp(),
+            lookback_days,
+            candles_processed: result.candles_processed,
+            total_trades: result.stats.total_trades,
+            profitable_trades: result.stats.profitable_trades,
+            win_rate: result.stats.win_rate,
+            total_return_pct: result.stats.total_return_pct,
+            sharpe_ratio: result.stats.sharpe_ratio,
+            max_drawdown_pct: result.stats.max_drawdown_pct,
+            realized_pnl: realized_pnl.to_string(),
+            tokens_traded: result.tokens_traded.clone(),
+            harness_version,
+        }
+    }
+}
+
 /// Side-by-side comparison of two strategy backtests on the same data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestComparison {

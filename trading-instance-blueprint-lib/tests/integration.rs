@@ -111,6 +111,7 @@ async fn test_instance_provision_creates_singleton() {
         0,
         "0xINSTCALLER".to_string(),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -151,6 +152,7 @@ async fn test_instance_singleton_vault_address_is_rewritten_to_raw_address() {
         101,
         0,
         "0xINSTCALLER".to_string(),
+        None,
         None,
     )
     .await
@@ -342,6 +344,7 @@ async fn test_instance_all_strategies() {
             0,
             "0xSTRATCALLER".to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -376,6 +379,7 @@ async fn test_instance_two_phase_provision_e2e() {
         300,
         0,
         "0xINST2PHASE".to_string(),
+        None,
         None,
     )
     .await

@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,7 +31,108 @@ env:
   BINARY_NAME: ${{ vars.BINARY_NAME || 'trading-blueprint' }}
 
 jobs:
+  # ── Gate: full workspace must pass tests before any release artifact is built. ──
+  gate:
+    name: Gate (build + test)
+    uses: ./.github/workflows/ci.yml
+
+  # ── Docker images → GHCR. ──────────────────────────────────────────────────
+  docker:
+    name: Build and push Docker image
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ env.BINARY_NAME }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Changelog generation. ─────────────────────────────────────────────────
+  changelog:
+    name: Generate changelog
+    needs: gate
+    runs-on: ubuntu-latest
+    outputs:
+      changelog: ${{ steps.gen.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog from commits since last tag
+        id: gen
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname \
+                       | grep -v "^${TAG}$" | head -n1 || true)
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE=""
+            HEADER="### Changes since first commit"
+          else
+            RANGE="${PREV_TAG}..${TAG}"
+            HEADER="### Changes since ${PREV_TAG}"
+          fi
+
+          {
+            echo "$HEADER"
+            echo
+            git log --pretty=format:'- %s (%h)' $RANGE
+          } > CHANGELOG_FRAGMENT.md
+
+          # Multi-line output for downstream jobs.
+          {
+            echo 'changelog<<__CHANGELOG_EOF__'
+            cat CHANGELOG_FRAGMENT.md
+            echo
+            echo '__CHANGELOG_EOF__'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload changelog fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-fragment
+          path: CHANGELOG_FRAGMENT.md
+
   build:
+    needs: gate
     strategy:
       fail-fast: false
       matrix:
@@ -108,7 +210,7 @@ jobs:
             ${{ env.SHA256_FILE }}
 
   release:
-    needs: build
+    needs: [build, docker, changelog]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,14 +223,15 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          CHANGELOG_BODY: ${{ needs.changelog.outputs.changelog }}
         run: |
           TAG="${GITHUB_REF_NAME}"
 
-          # Collect all archives and checksums
+          # Collect all archives and checksums (under artifacts/<name>/...).
           FILES=$(find artifacts/ -name "*.tar.xz" -o -name "*.sha256" | sort)
 
-          # Generate release notes from tag message or changelog
-          NOTES="## Binary Downloads
+          # Build platform-table notes inline for shell composition.
+          PLATFORM_TABLE="## Binary Downloads
 
           | Platform | Archive | SHA256 |
           |----------|---------|--------|"
@@ -137,21 +240,29 @@ jobs:
             BASENAME=$(basename "$f")
             SHA=$(cat "${f}.sha256" | awk '{print $1}')
             TARGET=$(echo "$BASENAME" | sed "s/${BINARY_NAME}-//" | sed 's/\.tar\.xz//')
-            NOTES="$NOTES
+            PLATFORM_TABLE="$PLATFORM_TABLE
           | \`$TARGET\` | \`$BASENAME\` | \`${SHA:0:16}...\` |"
           done
 
-          NOTES="$NOTES
+          # Compose the full release body: changelog → binaries → docker.
+          NOTES="$CHANGELOG_BODY
+
+          $PLATFORM_TABLE
 
           ### Verify checksums
           \`\`\`bash
           sha256sum -c *.sha256
           \`\`\`
 
-          ### Install
+          ### Install (binary)
           \`\`\`bash
           curl -sSL https://github.com/${{ github.repository }}/releases/download/$TAG/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.xz | tar xJ
           chmod +x ${BINARY_NAME}
+          \`\`\`
+
+          ### Install (Docker)
+          \`\`\`bash
+          docker pull ghcr.io/${{ github.repository }}/${BINARY_NAME}:${TAG#v}
           \`\`\`
           "
 

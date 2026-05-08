@@ -79,9 +79,9 @@ contract WindDownTest is Setup {
     function test_activateWindDown_onlyAdmin() public {
         bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole)
+        );
         vault.activateWindDown();
     }
 
@@ -111,9 +111,9 @@ contract WindDownTest is Setup {
 
         bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole)
+        );
         vault.deactivateWindDown();
     }
 
@@ -423,9 +423,9 @@ contract WindDownTest is Setup {
     function test_randomUser_cannotActivateWindDown() public {
         bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole)
+        );
         vault.activateWindDown();
     }
 
@@ -457,9 +457,9 @@ contract WindDownTest is Setup {
 
         bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, creatorRole)
+        );
         vault.adminUnwind(address(unwindTarget), "", 0);
     }
 
@@ -469,9 +469,9 @@ contract WindDownTest is Setup {
 
         bytes32 creatorRole = vault.CREATOR_ROLE();
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(
-            IAccessControl.AccessControlUnauthorizedAccount.selector, operator, creatorRole
-        ));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, operator, creatorRole)
+        );
         vault.adminUnwind(address(unwindTarget), "", 0);
     }
 

@@ -45,7 +45,8 @@ contract FeeDistributorTest is Setup {
     function test_vaultAdminCanUpdateFeeConfig() public {
         vm.prank(owner);
         feeDistributor.setVaultFeeConfig(
-            address(vault), FeeDistributor.FeeConfig({performanceFeeBps: 1500, managementFeeBps: 100, validatorFeeShareBps: 5000})
+            address(vault),
+            FeeDistributor.FeeConfig({performanceFeeBps: 1500, managementFeeBps: 100, validatorFeeShareBps: 5000})
         );
 
         (uint256 perfBps, uint256 mgmtBps, uint256 valShareBps) = feeDistributor.vaultFeeConfig(address(vault));
@@ -58,7 +59,8 @@ contract FeeDistributorTest is Setup {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.NotVaultFeeAdminOrOwner.selector));
         feeDistributor.setVaultFeeConfig(
-            address(vault), FeeDistributor.FeeConfig({performanceFeeBps: 1500, managementFeeBps: 100, validatorFeeShareBps: 5000})
+            address(vault),
+            FeeDistributor.FeeConfig({performanceFeeBps: 1500, managementFeeBps: 100, validatorFeeShareBps: 5000})
         );
     }
 
@@ -70,7 +72,8 @@ contract FeeDistributorTest is Setup {
         // New admin can update config
         vm.prank(user);
         feeDistributor.setVaultFeeConfig(
-            address(vault), FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 50, validatorFeeShareBps: 2000})
+            address(vault),
+            FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 50, validatorFeeShareBps: 2000})
         );
 
         (uint256 perfBps,,) = feeDistributor.vaultFeeConfig(address(vault));
@@ -80,7 +83,8 @@ contract FeeDistributorTest is Setup {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.NotVaultFeeAdminOrOwner.selector));
         feeDistributor.setVaultFeeConfig(
-            address(vault), FeeDistributor.FeeConfig({performanceFeeBps: 500, managementFeeBps: 50, validatorFeeShareBps: 2000})
+            address(vault),
+            FeeDistributor.FeeConfig({performanceFeeBps: 500, managementFeeBps: 50, validatorFeeShareBps: 2000})
         );
     }
 
@@ -102,7 +106,8 @@ contract FeeDistributorTest is Setup {
         // Test contract is not owner (VaultFactory is) and not vaultFeeAdmin (default zero)
         vm.expectRevert(abi.encodeWithSelector(FeeDistributor.NotVaultFeeAdminOrOwner.selector));
         feeDistributor.setVaultFeeConfig(
-            fakeVault, FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 50, validatorFeeShareBps: 2000})
+            fakeVault,
+            FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 50, validatorFeeShareBps: 2000})
         );
     }
 
@@ -253,7 +258,8 @@ contract FeeDistributorTest is Setup {
         // Admin sets lower fees
         vm.prank(owner);
         feeDistributor.setVaultFeeConfig(
-            address(vault), FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 100, validatorFeeShareBps: 2000})
+            address(vault),
+            FeeDistributor.FeeConfig({performanceFeeBps: 1000, managementFeeBps: 100, validatorFeeShareBps: 2000})
         );
 
         // First settlement sets HWM

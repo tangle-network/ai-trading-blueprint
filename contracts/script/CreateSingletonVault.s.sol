@@ -27,19 +27,20 @@ contract CreateSingletonVault is Script {
         signers[1] = signerTwo;
 
         vm.startBroadcast(deployerKey);
-        (address vault, address share) = VaultFactory(vaultFactoryAddress).createBotVault(
-            serviceId,
-            assetToken,
-            admin,
-            address(0),
-            signers,
-            2,
-            vaultName,
-            vaultSymbol,
-            keccak256(abi.encodePacked(serviceId, uint64(0), "manual-singleton")),
-            PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500}),
-            FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
-        );
+        (address vault, address share) = VaultFactory(vaultFactoryAddress)
+            .createBotVault(
+                serviceId,
+                assetToken,
+                admin,
+                address(0),
+                signers,
+                2,
+                vaultName,
+                vaultSymbol,
+                keccak256(abi.encodePacked(serviceId, uint64(0), "manual-singleton")),
+                PolicyEngine.PolicyConfig({leverageCap: 50000, maxTradesPerHour: 100, maxSlippageBps: 500}),
+                FeeDistributor.FeeConfig({performanceFeeBps: 2000, managementFeeBps: 200, validatorFeeShareBps: 3000})
+            );
         vm.stopBroadcast();
 
         emit log_string(string.concat("MANUAL_VAULT=", vm.toString(vault)));

@@ -83,6 +83,171 @@ sol! {
             bytes[] calldata signatures,
             uint256[] calldata scores
         ) external;
+        // ── Envelope mode (per-protocol on-chain authorization) ──
+
+        struct Envelope {
+            uint64 version;
+            bytes32 botIdHash;
+            address vault;
+            uint64 chainId;
+            bytes32 protocolHash;
+            bytes32 policyHash;
+            bytes32 enforcementHash;
+            uint64 issuedAt;
+            uint64 expiresAt;
+            uint64 nonce;
+            bytes32 signersHash;
+            uint64 minSignatures;
+        }
+
+        struct UniswapV3SwapEnforcement {
+            uint256 feeTier;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address router;
+            address tokenIn;
+            address tokenOut;
+            uint160 sqrtPriceLimitX96;
+        }
+
+        struct UniswapV4SwapEnforcement {
+            address currency0;
+            address currency1;
+            uint256 fee;
+            int256 tickSpacing;
+            address hooks;
+            bool zeroForOne;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address universalRouter;
+            bytes32 hookDataHash;
+        }
+
+        struct AerodromeSwapEnforcement {
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address router;
+            int256 tickSpacing;
+            address tokenIn;
+            address tokenOut;
+            uint160 sqrtPriceLimitX96;
+        }
+
+        struct PancakeswapV3SwapEnforcement {
+            uint256 feeTier;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address router;
+            address tokenIn;
+            address tokenOut;
+            uint160 sqrtPriceLimitX96;
+        }
+
+        struct CurveStableSwapEnforcement {
+            int128 i;
+            int128 j;
+            uint256 maxSingleAmountIn;
+            uint256 maxTotalAmountIn;
+            uint256 maxValue;
+            uint256 minOutputPerInput;
+            address pool;
+            address tokenIn;
+            address tokenOut;
+        }
+
+        struct AaveSupplyEnforcement {
+            address asset;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            address pool;
+        }
+
+        struct AaveWithdrawEnforcement {
+            address asset;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            uint256 minHealthFactor;
+            address pool;
+        }
+
+        struct AaveBorrowEnforcement {
+            address asset;
+            uint256 interestRateMode;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            uint256 minHealthFactor;
+            address pool;
+        }
+
+        struct AaveRepayEnforcement {
+            address asset;
+            address debtToken;
+            uint256 interestRateMode;
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            address pool;
+        }
+
+        struct MorphoSupplyEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            bytes32 marketId;
+            address morpho;
+        }
+
+        struct MorphoWithdrawEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            bytes32 marketId;
+            uint256 minCollateralRatio;
+            address morpho;
+        }
+
+        struct MorphoBorrowEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            bytes32 marketId;
+            uint256 minCollateralRatio;
+            address morpho;
+        }
+
+        struct MorphoRepayEnforcement {
+            uint256 maxSingleAmount;
+            uint256 maxTotalAmount;
+            uint256 maxValue;
+            bytes32 marketId;
+            address morpho;
+        }
+
+        function executeUniswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeUniswapV4SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, UniswapV4SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAerodromeSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, AerodromeSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executePancakeswapV3SwapEnvelope(ExecuteParams calldata params, Envelope calldata env, PancakeswapV3SwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeCurveStableSwapEnvelope(ExecuteParams calldata params, Envelope calldata env, CurveStableSwapEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, AaveSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, AaveBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeAaveRepayEnvelope(DebtReductionParams calldata params, Envelope calldata env, AaveRepayEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoSupplyEnvelope(ExecuteParams calldata params, Envelope calldata env, MorphoSupplyEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoWithdrawEnvelope(HealthFactorParams calldata params, Envelope calldata env, MorphoWithdrawEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, MorphoBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function executeMorphoRepayEnvelope(DebtReductionParams calldata params, Envelope calldata env, MorphoRepayEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
+        function envelopeConsumedAmount(bytes32 envelopeHash) external view returns (uint256);
         function emergencyWithdraw(address token, address to) external;
         function getBalance(address token) external view returns (uint256);
         function pause() external;
@@ -206,6 +371,9 @@ sol! {
         function computeDigest(bytes32 intentHash, bytes32 executionHash, address vault, uint256 score, uint256 deadline, uint256 actionKind) external view returns (bytes32);
         function getVaultSigners(address vault) external view returns (address[] memory);
         function getRequiredSignatures(address vault) external view returns (uint256);
+        // v3 envelope helpers (computed on-chain so off-chain tooling can read the canonical hash)
+        function hashEnvelope(ITradingVault.Envelope calldata env) external pure returns (bytes32);
+        function envelopeDigest(ITradingVault.Envelope calldata env) external view returns (bytes32);
     }
 
     #[sol(rpc)]
@@ -236,6 +404,138 @@ sol! {
         function billSubscriptionBatch(uint64[] calldata serviceIds) external returns (uint256 totalBilled, uint256 billedCount);
         function getBillableServices(uint64[] calldata serviceIds) external view returns (uint64[] memory billable);
         function getServiceEscrow(uint64 serviceId) external view returns (ServiceEscrow memory);
+    }
+
+    /// Uniswap V3 QuoterV2 — `quoteExactInputSingle` returns projected output for
+    /// a single-hop exact-input swap. `view`-only, callable via `eth_call`.
+    /// Canonical address `0x61fFE014bA17989E743c5F6cB21bF9697530B21e` on most
+    /// EVM chains where Uniswap V3 is deployed.
+    #[sol(rpc)]
+    interface IUniswapV3QuoterV2 {
+        struct QuoteExactInputSingleParams {
+            address tokenIn;
+            address tokenOut;
+            uint256 amountIn;
+            uint24 fee;
+            uint160 sqrtPriceLimitX96;
+        }
+        function quoteExactInputSingle(QuoteExactInputSingleParams calldata params)
+            external
+            returns (
+                uint256 amountOut,
+                uint160 sqrtPriceX96After,
+                uint32 initializedTicksCrossed,
+                uint256 gasEstimate
+            );
+    }
+
+    /// Uniswap V4 V4Quoter — `quoteExactInputSingle` over a (PoolKey, SwapParams)
+    /// shape. Returns the quoted output amount and gas estimate.
+    #[sol(rpc)]
+    interface IUniswapV4Quoter {
+        struct PoolKey {
+            address currency0;
+            address currency1;
+            uint24 fee;
+            int24 tickSpacing;
+            address hooks;
+        }
+        struct QuoteExactSingleParams {
+            PoolKey poolKey;
+            bool zeroForOne;
+            uint128 exactAmount;
+            bytes hookData;
+        }
+        function quoteExactInputSingle(QuoteExactSingleParams calldata params)
+            external
+            returns (uint256 amountOut, uint256 gasEstimate);
+    }
+
+    /// Aerodrome Slipstream MixedRouteQuoterV1 — Uni-V3-style quoter that uses
+    /// signed `int24 tickSpacing` instead of `uint24 fee`.
+    #[sol(rpc)]
+    interface IAerodromeSlipstreamQuoter {
+        struct QuoteExactInputSingleParams {
+            address tokenIn;
+            address tokenOut;
+            uint256 amountIn;
+            int24 tickSpacing;
+            uint160 sqrtPriceLimitX96;
+        }
+        function quoteExactInputSingle(QuoteExactInputSingleParams calldata params)
+            external
+            returns (
+                uint256 amountOut,
+                uint160 sqrtPriceX96After,
+                uint32 initializedTicksCrossed,
+                uint256 gasEstimate
+            );
+    }
+
+    /// Aave V3 PoolDataProvider — surfaces per-reserve APY and configuration
+    /// data used by the agent to size supply/borrow envelopes.
+    #[sol(rpc)]
+    interface IAaveV3DataProvider {
+        function getReserveData(address asset)
+            external
+            view
+            returns (
+                uint256 unbacked,
+                uint256 accruedToTreasuryScaled,
+                uint256 totalAToken,
+                uint256 totalStableDebt,
+                uint256 totalVariableDebt,
+                uint256 liquidityRate,
+                uint256 variableBorrowRate,
+                uint256 stableBorrowRate,
+                uint256 averageStableBorrowRate,
+                uint256 liquidityIndex,
+                uint256 variableBorrowIndex,
+                uint40 lastUpdateTimestamp
+            );
+    }
+
+    /// Morpho Blue — minimal read interface for market state and config.
+    /// `marketId = keccak256(abi.encode(MarketParams))`.
+    #[sol(rpc)]
+    interface IMorpho {
+        struct MarketState {
+            uint128 totalSupplyAssets;
+            uint128 totalSupplyShares;
+            uint128 totalBorrowAssets;
+            uint128 totalBorrowShares;
+            uint128 lastUpdate;
+            uint128 fee;
+        }
+        struct MarketParams {
+            address loanToken;
+            address collateralToken;
+            address oracle;
+            address irm;
+            uint256 lltv;
+        }
+        function market(bytes32 id) external view returns (MarketState memory);
+        function idToMarketParams(bytes32 id) external view returns (MarketParams memory);
+    }
+
+    /// Canonical Multicall3 contract — used to batch read-only `eth_call`s
+    /// across many bots in a single RPC. The same address
+    /// `0xcA11bde05977b3631167028862bE2a173976CA11` is deployed on every
+    /// major EVM chain (mainnet, all major L2s and testnets); operators can
+    /// override per-chain via the `MULTICALL3_<chain_id>` env var.
+    /// See [https://www.multicall3.com] for the canonical deployment list.
+    #[sol(rpc)]
+    interface IMulticall3 {
+        struct Call3 {
+            address target;
+            bool allowFailure;
+            bytes callData;
+        }
+        struct Result {
+            bool success;
+            bytes returnData;
+        }
+        function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory);
     }
 
     #[sol(rpc)]

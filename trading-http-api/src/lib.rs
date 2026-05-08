@@ -1,8 +1,13 @@
+pub mod alerts;
 pub mod amounts;
 pub mod auth;
 pub mod candle_store;
+pub mod envelope_renewal;
+pub mod envelope_watcher;
+pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
+pub mod rate_limit;
 pub mod routes;
 pub mod session_auth;
 pub mod trade_store;
@@ -79,6 +84,23 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .with_state(state)
 }
 
+/// Lightweight bot record summary used by the envelope renewal cron.
+///
+/// Mirrors the fields the cron needs without taking a hard dependency on
+/// `trading-blueprint-lib::TradingBotRecord`. The binary builds these from
+/// its persistent store and hands them to the cron once per tick.
+#[derive(Clone, Debug)]
+pub struct EnvelopeBotInfo {
+    pub bot_id: String,
+    pub vault_address: String,
+    pub chain_id: u64,
+    pub rpc_url: String,
+    pub strategy_config: serde_json::Value,
+    pub risk_params: serde_json::Value,
+    pub validation_trust: trading_runtime::ValidationTrust,
+    pub renewal_webhook_url: Option<String>,
+}
+
 /// Resolved bot context for per-request state in multi-bot mode.
 ///
 /// This is a lightweight struct that doesn't depend on `trading-blueprint-lib`.
@@ -118,6 +140,12 @@ pub struct MultiBotTradingState {
     /// Resolves a bearer token into a BotContext. Injected by the binary.
     #[allow(clippy::type_complexity)]
     pub resolve_bot: Box<dyn Fn(&str) -> Option<BotContext> + Send + Sync>,
+    /// Enumerates bots that have envelope-mode authorization enabled.
+    /// Used by the envelope renewal cron to scan for expiring/consumed
+    /// envelopes. `None` disables the cron (the binary opts in by setting
+    /// this; tests default to `None`).
+    #[allow(clippy::type_complexity)]
+    pub list_envelope_bots: Option<Box<dyn Fn() -> Vec<EnvelopeBotInfo> + Send + Sync>>,
     /// Polymarket CLOB client (None if not configured).
     pub clob_client: Option<Arc<ClobClient>>,
     /// Shared chain client for nonce serialization across concurrent requests.
@@ -131,6 +159,42 @@ pub struct MultiBotTradingState {
     pub chain_client_rpc_url: Option<String>,
     /// Chain ID that the shared chain client is bound to.
     pub chain_client_chain_id: Option<u64>,
+    /// Alert sink fed by the renewal cron + envelope watcher + execute path.
+    /// Cloneable + cheap; fire-and-log-on-failure semantics.
+    pub alert_sink: alerts::AlertSink,
+    /// Per-bot CEX/Solana key resolver. Defaults to
+    /// [`trading_runtime::cex::EnvKeyProvider`] which preserves the legacy
+    /// single-tenant env-var behaviour. Production multi-tenant deployments
+    /// inject [`trading_runtime::cex::SecretsBackedKeyProvider`] (or any
+    /// other [`trading_runtime::cex::CexKeyProvider`] impl) so each bot
+    /// signs with its own credentials.
+    pub key_provider: Arc<dyn trading_runtime::cex::CexKeyProvider>,
+    /// Per-bot route-class rate limiter. Defaults to
+    /// [`rate_limit::RateLimitConfig::default`] (60/240/120/120 per
+    /// minute). Operators can set `TRADING_RATE_LIMIT_ENABLED=false` to
+    /// short-circuit the middleware for tests; the limiter itself is
+    /// always present so the field never has to be optional.
+    pub rate_limiter: Arc<rate_limit::PerBotRateLimiter>,
+}
+
+impl Default for MultiBotTradingState {
+    fn default() -> Self {
+        Self {
+            operator_private_key: String::new(),
+            market_data_base_url: String::new(),
+            validation_deadline_secs: 30,
+            min_validator_score: 0,
+            resolve_bot: Box::new(|_| None),
+            list_envelope_bots: None,
+            clob_client: None,
+            chain_client: None,
+            chain_client_rpc_url: None,
+            chain_client_chain_id: None,
+            alert_sink: alerts::AlertSink::new(None, None),
+            rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
+            key_provider: trading_runtime::cex::default_provider(),
+        }
+    }
 }
 
 impl MultiBotTradingState {
@@ -514,9 +578,31 @@ mod tests {
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.
 /// The auth middleware resolves the calling bot from the bearer token and
 /// injects the bot record into request extensions.
+///
+/// Side effects: when `state.list_envelope_bots` is set, this also spawns the
+/// envelope renewal cron as a background task ticking every
+/// [`envelope_renewal::RENEWAL_CRON_INTERVAL`].
+/// Hard upper bound on request body size for the multi-bot HTTP API.
+///
+/// Axum's default is 2 MiB, applied per-extractor; we tighten to 256 KiB so
+/// a single envelope or learning-outcome POST cannot OOM the process.
+/// Envelopes themselves are < 8 KiB; quote responses < 4 KiB. 256 KiB gives
+/// a >32× safety margin while keeping the surface tight enough that a bad
+/// agent can't queue a 100 MiB JSON parse in tokio's worker pool. See
+/// `audits/http-api-concurrency-audit.md` finding #3.
+const MAX_BODY_BYTES: usize = 256 * 1024;
+
 pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
+    use axum::extract::DefaultBodyLimit;
     use axum::routing::get;
-    Router::new()
+    if state.list_envelope_bots.is_some() {
+        envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
+        envelope_watcher::spawn_envelope_watcher(Arc::clone(&state));
+    }
+    // Prometheus exporter is mounted on the *outer* router, ahead of the
+    // auth middleware below, so scrapers can hit it without a bearer token.
+    let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
+    let auth_router = Router::new()
         .route("/health", get(multi_bot_health))
         .route("/ready", get(multi_bot_ready))
         .merge(routes::market_data::multi_bot_router())
@@ -524,22 +610,39 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::validate::multi_bot_router())
         .merge(routes::execute::multi_bot_router())
         .merge(routes::collateral::multi_bot_router())
+        .merge(routes::envelope::multi_bot_router())
+        .merge(routes::envelope_quote::multi_bot_router())
         .merge(routes::circuit::multi_bot_router())
         .merge(routes::adapters::multi_bot_router())
         .merge(routes::metrics::multi_bot_router())
         .merge(routes::trades::multi_bot_router())
         .merge(routes::backtest::multi_bot_router())
         .merge(routes::candles::multi_bot_router())
+        .merge(routes::cex::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
+        .merge(routes::learning::multi_bot_router())
+        .merge(routes::solana::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())
         .merge(routes::supported_assets::multi_bot_router())
+        // Rate-limit middleware runs AFTER auth so it can read the
+        // resolved BotContext from request extensions. Axum applies
+        // `.layer` calls outermost-first, so the rate-limit layer is
+        // listed *before* the auth layer here even though it executes
+        // *after* auth in the request flow.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::per_bot_rate_limit,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::multi_bot_auth_middleware,
         ))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
-        .with_state(state)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .with_state(state);
+
+    Router::new().merge(prom_router).merge(auth_router)
 }
 
 fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./TradingVault.sol";
 import "./VaultShare.sol";
 import "./TradeValidator.sol";
@@ -14,7 +15,7 @@ import "./VaultShareDeployer.sol";
 /// @notice Deploys full ERC-7575 vault stacks via CREATE2
 /// @dev Creates VaultShare + TradingVault(s) + configures TradeValidator and PolicyEngine.
 ///      Vault/share deployment is delegated to deployer helpers to stay under the bytecode size limit.
-contract VaultFactory is Ownable2Step {
+contract VaultFactory is Ownable2Step, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -174,9 +175,18 @@ contract VaultFactory is Ownable2Step {
         bytes32 salt,
         PolicyEngine.PolicyConfig calldata policyConfig,
         FeeDistributor.FeeConfig calldata feeConfig
-    ) external onlyAuthorized returns (address vault, address shareAddr) {
+    ) external onlyAuthorized nonReentrant returns (address vault, address shareAddr) {
         if (serviceShares[serviceId] != address(0)) revert ServiceAlreadyInitialized(serviceId);
 
+        // reentrancy-no-eth: `_createVaultWithNewShare` performs external
+        // calls into our own deployer + registry contracts (vaultDeployer,
+        // vaultShareDeployer, tradeValidator, policyEngine, feeDistributor).
+        // The outer function is `onlyAuthorized + nonReentrant`, so a hostile
+        // contract cannot re-enter `createVault` while it executes. Slither's
+        // detector cannot prove that the deployer/registry contracts are
+        // non-malicious, but they are part of this codebase and audited
+        // alongside the factory.
+        // slither-disable-next-line reentrancy-no-eth
         (vault, shareAddr) = _createVaultWithNewShare(
             serviceId,
             assetToken,
@@ -209,7 +219,7 @@ contract VaultFactory is Ownable2Step {
         bytes32 salt,
         PolicyEngine.PolicyConfig calldata policyConfig,
         FeeDistributor.FeeConfig calldata feeConfig
-    ) external onlyAuthorized returns (address vault, address shareAddr) {
+    ) external onlyAuthorized nonReentrant returns (address vault, address shareAddr) {
         (vault, shareAddr) = _createVaultWithNewShare(
             serviceId,
             assetToken,
@@ -272,12 +282,23 @@ contract VaultFactory is Ownable2Step {
         bytes32 shareSalt = isBotVault
             ? keccak256(abi.encodePacked(serviceId, "bot-share", salt))
             : keccak256(abi.encodePacked(serviceId, "share", salt));
+        // reentrancy-{benign,events}: this function does external deployment
+        // calls (vaultShareDeployer / vaultDeployer) followed by registry
+        // writes. Both deployer contracts are owned by this factory and
+        // audited alongside it; the only callers of `_createVaultWithNewShare`
+        // are `createVault` and `createBotVault`, both of which are
+        // `nonReentrant + onlyAuthorized`, so re-entry from outside is
+        // impossible. The state writes (`serviceVaults.push`,
+        // `vaultServiceId`) are append-only registry updates keyed on a
+        // freshly-CREATE2'd address, so they cannot collide with prior state.
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         VaultShare shareToken = vaultShareDeployer.deployShare(shareSalt, name, symbol, address(this));
         shareAddr = address(shareToken);
         emit ShareTokenCreated(serviceId, shareAddr);
 
         // Deploy TradingVault via dedicated helper to keep deployment bytecode under the EVM limit.
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
+        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         TradingVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
         vault = address(v);
         serviceVaults[serviceId].push(vault);
@@ -290,16 +311,25 @@ contract VaultFactory is Ownable2Step {
         policyEngine.initializeVault(vault, admin, policyConfig);
         policyEngine.setAuthorizedCaller(vault, true);
         policyEngine.whitelistToken(vault, assetToken, true);
-        for (uint256 i = 0; i < defaultWhitelistedTokens.length; i++) {
+        // calls-loop: defaultWhitelistedTokens / defaultWhitelistedTargets are
+        // both admin-curated (only addable via owner-gated functions); per-iter
+        // calls into our own policyEngine are required to wire up the new vault.
+        // The factory entry points are nonReentrant + onlyAuthorized so re-entry
+        // into createVault from a hostile policyEngine cannot happen.
+        uint256 tokensLen = defaultWhitelistedTokens.length;
+        for (uint256 i = 0; i < tokensLen; i++) {
             address token = defaultWhitelistedTokens[i];
             if (isDefaultWhitelistedToken[token]) {
+                // slither-disable-next-line calls-loop
                 policyEngine.whitelistToken(vault, token, true);
             }
         }
         address[] memory target = new address[](1);
-        for (uint256 i = 0; i < defaultWhitelistedTargets.length; i++) {
+        uint256 targetsLen = defaultWhitelistedTargets.length;
+        for (uint256 i = 0; i < targetsLen; i++) {
             target[0] = defaultWhitelistedTargets[i];
             if (isDefaultWhitelistedTarget[target[0]]) {
+                // slither-disable-next-line calls-loop
                 policyEngine.setTargetWhitelist(vault, target, true);
             }
         }

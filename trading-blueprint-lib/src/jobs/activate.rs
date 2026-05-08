@@ -464,8 +464,8 @@ pub async fn activate_bot_with_secrets(
 
     // --- FAST trading tick (3 turns, every 5 min) ---
     let fast_prompt = match &pack {
-        Some(p) => crate::prompts::build_pack_loop_prompt(p, &sidecar_bot),
-        None => crate::prompts::build_fast_tick_prompt(&bot.strategy_type),
+        Some(p) => crate::prompts::build_pack_loop_prompt(p, &sidecar_bot, bot.validation_trust),
+        None => crate::prompts::build_fast_tick_prompt(&bot.strategy_type, bot.validation_trust),
     };
     let fast_cron = if !bot.trading_loop_cron.is_empty() {
         bot.trading_loop_cron.clone()

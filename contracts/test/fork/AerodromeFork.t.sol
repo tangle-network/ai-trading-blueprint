@@ -44,14 +44,14 @@ contract AerodromeForkTest is Test {
         // Build exactInputSingle call with tickSpacing=200 (most common volatile pair)
         bytes memory callData = abi.encodeWithSignature(
             "exactInputSingle((address,address,int24,address,uint256,uint256,uint256,uint160))",
-            USDC,        // tokenIn
-            WETH,        // tokenOut
-            int24(100),  // tickSpacing (100 = ~5bps for USDC/WETH)
-            vault,       // recipient
+            USDC, // tokenIn
+            WETH, // tokenOut
+            int24(100), // tickSpacing (100 = ~5bps for USDC/WETH)
+            vault, // recipient
             block.timestamp + 1800, // deadline
-            amountIn,    // amountIn
-            0,           // amountOutMinimum (0 for test, never in prod)
-            uint160(0)   // sqrtPriceLimitX96 (0 = no limit)
+            amountIn, // amountIn
+            0, // amountOutMinimum (0 for test, never in prod)
+            uint160(0) // sqrtPriceLimitX96 (0 = no limit)
         );
 
         (bool success,) = SLIPSTREAM_ROUTER.call(callData);
@@ -75,18 +75,15 @@ contract AerodromeForkTest is Test {
         address factory = 0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A;
 
         // getPool(tokenA, tokenB, tickSpacing)
-        (bool ok, bytes memory data) = factory.staticcall(
-            abi.encodeWithSignature("getPool(address,address,int24)", USDC, WETH, int24(100))
-        );
+        (bool ok, bytes memory data) =
+            factory.staticcall(abi.encodeWithSignature("getPool(address,address,int24)", USDC, WETH, int24(100)));
         assertTrue(ok, "Factory call should succeed");
 
         address pool = abi.decode(data, (address));
         assertTrue(pool != address(0), "USDC/WETH pool should exist");
 
         // Pool should have non-zero liquidity
-        (bool liqOk, bytes memory liqData) = pool.staticcall(
-            abi.encodeWithSignature("liquidity()")
-        );
+        (bool liqOk, bytes memory liqData) = pool.staticcall(abi.encodeWithSignature("liquidity()"));
         assertTrue(liqOk, "Liquidity call should succeed");
 
         uint128 liquidity = abi.decode(liqData, (uint128));

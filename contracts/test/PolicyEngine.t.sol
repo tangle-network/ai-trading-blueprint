@@ -52,9 +52,7 @@ contract PolicyEngineTest is Setup {
 
     function test_initializeVault() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         assertTrue(pe.isInitialized(testVault));
@@ -69,16 +67,12 @@ contract PolicyEngineTest is Setup {
 
     function test_doubleInitReverts() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         vm.expectRevert(abi.encodeWithSelector(PolicyEngine.VaultAlreadyInitialized.selector, testVault));
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
     }
 
@@ -88,9 +82,7 @@ contract PolicyEngineTest is Setup {
 
     function test_vaultAdminCanUpdatePolicy() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         // Vault admin (owner) can update leverage
@@ -109,9 +101,7 @@ contract PolicyEngineTest is Setup {
 
     function test_nonAdminCannotUpdatePolicy() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         // Random address cannot update leverage
@@ -122,9 +112,7 @@ contract PolicyEngineTest is Setup {
 
     function test_transferVaultAdmin() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         // Transfer admin to user
@@ -146,9 +134,7 @@ contract PolicyEngineTest is Setup {
 
     function test_contractOwnerCanAlwaysUpdate() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
 
         // Contract owner (this) can update even though admin is owner
@@ -339,9 +325,7 @@ contract PolicyEngineTest is Setup {
 
     function test_separateVaultPolicies() public {
         pe.initializeVault(
-            testVault,
-            owner,
-            PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
+            testVault, owner, PolicyEngine.PolicyConfig({leverageCap: 30000, maxTradesPerHour: 50, maxSlippageBps: 300})
         );
         pe.initializeVault(
             testVault2,

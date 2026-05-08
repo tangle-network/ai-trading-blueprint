@@ -21,14 +21,13 @@ use trading_http_api::{TradingApiState, build_router};
 use trading_runtime::PortfolioState;
 use trading_runtime::adapters::ActionParams;
 use trading_runtime::contracts::{ITradeValidator, ITradingVault};
+use trading_runtime::envelope::{PerpsPolicy, SignedEnvelope, TradingPolicy};
 use trading_runtime::execution_hash::{
     ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
 };
 use trading_runtime::executor::get_adapter;
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
-use trading_runtime::signed_envelope::SignedTradingEnvelope;
-use trading_runtime::trading_envelope::TradingEnvelope;
 
 /// Valid 65-byte hex signature (0x + 130 hex chars) for test mocks.
 const TEST_SIG: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1952,10 +1951,16 @@ fn multi_bot_state_with_strategy_config_and_bot(
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -1975,10 +1980,16 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -1999,50 +2010,54 @@ fn live_bot_with_trust(
     }
 }
 
-fn signed_envelope_for_bot(bot: &BotContext) -> SignedTradingEnvelope {
-    let mut signed = SignedTradingEnvelope {
-        version: 1,
+const TEST_ENVELOPE_KEY: &str =
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const TEST_ENVELOPE_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const TEST_ENVELOPE_SIGNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+
+fn signed_envelope_for_bot(bot: &BotContext) -> SignedEnvelope {
+    use rust_decimal::Decimal;
+    let mut signed = SignedEnvelope {
+        version: 2,
         bot_id: bot.bot_id.clone(),
         vault_address: bot.vault_address.clone(),
         chain_id: bot.chain_id,
         protocol: "hyperliquid".to_string(),
-        envelope: TradingEnvelope {
-            allowed_assets: vec!["ETH".to_string()],
-            max_position_usd: 1000.0,
-            max_total_exposure_usd: 3000.0,
-            max_leverage: 5,
-            max_drawdown_pct: 0.10,
-            max_stop_loss_distance: 0.05,
-            min_stop_loss_distance: 0.01,
+        policy: TradingPolicy {
+            max_trade_size_usd: Decimal::from(1000),
+            max_total_exposure_usd: Decimal::from(3000),
+            max_drawdown_pct: Decimal::from(10),
             can_open_positions: true,
-            expires_at: chrono::Utc::now().timestamp() + 3600,
-            approved_by: "operator".to_string(),
-            approved_at: chrono::Utc::now().timestamp(),
+            perps: Some(PerpsPolicy {
+                allowed_assets: vec!["ETH".to_string()],
+                max_leverage: 5,
+                max_stop_loss_distance: Decimal::new(5, 2),
+                min_stop_loss_distance: Decimal::new(1, 2),
+                require_stop_loss: false,
+            }),
+            vault: None,
+            clob: None,
         },
-        approval_signers: vec![],
+        approval_signers: vec![TEST_ENVELOPE_SIGNER.to_string()],
         min_signatures: 1,
-        issued_at: chrono::Utc::now().timestamp(),
-        expires_at: chrono::Utc::now().timestamp() + 3600,
+        issued_at: chrono::Utc::now().timestamp() as u64,
+        expires_at: chrono::Utc::now().timestamp() as u64 + 3600,
         nonce: 1,
+        verifying_contract: TEST_ENVELOPE_CONTRACT.to_string(),
+        enforcement: None,
         signatures: vec![],
     };
-    let signer = signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
+    signed
+        .sign_with_private_key(TEST_ENVELOPE_KEY, TEST_ENVELOPE_CONTRACT)
         .unwrap();
-    signed.approval_signers = vec![signer];
+    signed
+}
+
+fn resign_envelope(signed: &mut SignedEnvelope) {
     signed.signatures.clear();
     signed
-        .sign_with_private_key(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            31337,
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-        )
+        .sign_with_private_key(TEST_ENVELOPE_KEY, TEST_ENVELOPE_CONTRACT)
         .unwrap();
-    signed
 }
 
 fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
@@ -2072,6 +2087,149 @@ fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn test_universal_envelope_route_accepts_signed_envelope() {
+    ensure_state_dir();
+    let bot_id = format!("bot-universal-env-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-universal-token", bot.clone());
+    let app = build_multi_bot_router(state);
+    let signed = signed_envelope_for_bot(&bot);
+
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-universal-token")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 200);
+
+    let get = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-universal-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 200);
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["bot_id"].as_str().unwrap(), bot.bot_id);
+}
+
+#[tokio::test]
+async fn test_envelope_status_null_when_no_envelope_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-status-empty-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("status-empty-token", bot);
+    let app = build_multi_bot_router(state);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/envelope/status")
+                .header("authorization", "Bearer status-empty-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.is_null());
+}
+
+#[tokio::test]
+async fn test_envelope_status_reports_basics_when_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-status-stored-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("status-stored-token", bot.clone());
+    let signed = signed_envelope_for_bot(&bot);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "status-stored-token",
+        &signed,
+    )
+    .await;
+
+    let res = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .uri("/envelope/status")
+                .header("authorization", "Bearer status-stored-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.is_object());
+    assert_eq!(v["min_signatures"].as_u64().unwrap(), 1);
+    assert_eq!(v["signature_count"].as_u64().unwrap(), 1);
+    assert!(v["expires_in_seconds"].as_i64().unwrap() > 0);
+    assert_eq!(v["protocol"].as_str().unwrap(), "hyperliquid");
+}
+
+#[tokio::test]
+async fn test_universal_envelope_delete_clears_storage() {
+    ensure_state_dir();
+    let bot_id = format!("bot-env-delete-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-delete-token", bot.clone());
+    let signed = signed_envelope_for_bot(&bot);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "bot-delete-token",
+        &signed,
+    )
+    .await;
+
+    let del = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-delete-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), 204);
+
+    let get = build_multi_bot_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer bot-delete-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(value.is_null());
+}
+
+#[tokio::test]
 async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope() {
     ensure_state_dir();
     let bot_id = format!("bot-envelope-{}", uuid::Uuid::new_v4());
@@ -2084,7 +2242,7 @@ async fn test_signed_envelope_endpoint_accepts_operator_signed_per_bot_envelope(
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/hyperliquid/envelope")
+                .uri("/envelope")
                 .header("authorization", "Bearer bot-token-envelope")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&signed).unwrap()))
@@ -2216,6 +2374,486 @@ async fn test_live_self_operated_execute_rejects_by_default() {
         .unwrap();
 
     assert_eq!(response.status(), 403);
+}
+
+// ── Paper-mode envelope constraint tests ─────────────────────────────────────
+
+fn paper_bot_with_envelope_trust(bot_id: &str) -> BotContext {
+    let mut bot = live_bot_with_trust(bot_id, trading_runtime::ValidationTrust::Envelope);
+    bot.paper_trade = true;
+    bot
+}
+
+/// Like `hyperliquid_execute_body` but with the paper-mode bypass in
+/// `validator_responses` so that `ensure_paper_validation_consistency` passes,
+/// and with a zero execution_hash because paper trades skip payload binding.
+fn paper_hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "intent": {
+            "strategy_id": strategy_id,
+            "action": "open_long",
+            "token_in": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token_out": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "amount_in": "1.5",
+            "min_amount_out": "0",
+            "target_protocol": "hyperliquid",
+            "metadata": {
+                "asset": "ETH",
+                "leverage": 2,
+                "stop_loss_pct": 3.0
+            }
+        },
+        "validation": {
+            "approved": true,
+            "aggregate_score": 100,
+            "validator_responses": [
+                {
+                    "validator": "paper-mode",
+                    "score": 100,
+                    "reasoning": "Paper trade mode — validation bypassed",
+                    "signature": format!("0x{}", "00".repeat(65))
+                }
+            ]
+        }
+    });
+    // Compute the real intent_hash (needed for hash binding), but zero out
+    // execution_hash because paper trades use bind_execution_payload=false
+    // and the server therefore expects 0x000...000 for execution_hash.
+    attach_validation_hashes(&mut body, Some(31337));
+    body["validation"]["execution_hash"] = serde_json::json!(format!("0x{}", "00".repeat(32)));
+    body
+}
+
+/// Recompute validation hashes for a body after its metadata has been modified.
+/// Required when `paper_hyperliquid_execute_body` is used and then fields mutated.
+fn reattach_paper_validation_hashes(body: &mut serde_json::Value) {
+    attach_validation_hashes(body, Some(31337));
+    body["validation"]["execution_hash"] = serde_json::json!(format!("0x{}", "00".repeat(32)));
+}
+
+async fn put_signed_envelope(
+    app: axum::Router,
+    auth_token: &str,
+    signed: &SignedEnvelope,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("PUT")
+            .uri("/envelope")
+            .header("authorization", format!("Bearer {auth_token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(signed).unwrap()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+async fn execute_with_body(
+    app: axum::Router,
+    auth_token: &str,
+    body: serde_json::Value,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("authorization", format!("Bearer {auth_token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_when_no_envelope_stored() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-env-missing-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-env-missing-token", bot);
+    let app = build_multi_bot_router(state);
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = execute_with_body(app, "paper-env-missing-token", body).await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_disallowed_asset() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-env-asset-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-env-asset-token", bot.clone());
+
+    // Build envelope that only allows BTC (not ETH)
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.perps.as_mut().unwrap().allowed_assets = vec!["BTC".to_string()];
+    resign_envelope(&mut signed);
+
+    // Store the envelope
+    let put_response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-env-asset-token",
+        &signed,
+    )
+    .await;
+    assert_eq!(put_response.status(), 200, "PUT envelope should succeed");
+
+    // Execute with ETH (not in whitelist)
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-env-asset-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("whitelist")
+            || String::from_utf8_lossy(&bytes).contains("envelope"),
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_excessive_leverage() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-lev-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-lev-token", bot.clone());
+
+    // Build envelope with max_leverage = 2
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.perps.as_mut().unwrap().max_leverage = 2;
+    resign_envelope(&mut signed);
+
+    let put_response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-lev-token",
+        &signed,
+    )
+    .await;
+    assert_eq!(put_response.status(), 200);
+
+    // Execute with leverage=5 (exceeds max_leverage=2)
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["leverage"] = serde_json::json!(5);
+    reattach_paper_validation_hashes(&mut body);
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-lev-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_missing_stop_loss() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-sl-missing-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-sl-missing-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.perps.as_mut().unwrap().require_stop_loss = true;
+    resign_envelope(&mut signed);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-missing-token",
+        &signed,
+    )
+    .await;
+
+    // Request with no stop_loss metadata
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stop_loss_pct");
+    reattach_paper_validation_hashes(&mut body);
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-missing-token",
+        body,
+    )
+    .await;
+    // require_stop_loss=true rejects missing SL with 403 (FORBIDDEN, StopLossRequired)
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_stop_loss_out_of_bounds() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-sl-oob-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-sl-oob-token", bot.clone());
+
+    // Default envelope has max_stop_loss_distance: 0.05 (5%)
+    let signed = signed_envelope_for_bot(&bot);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-oob-token",
+        &signed,
+    )
+    .await;
+
+    // stop_loss_pct: 20% → distance 0.20 exceeds max 0.05
+    let mut body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["stop_loss_pct"] = serde_json::json!(20.0);
+    reattach_paper_validation_hashes(&mut body);
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-sl-oob-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&bytes));
+}
+
+// ── Nonce monotonicity tests ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_envelope_nonce_upgrade_accepted() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-up-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-up-token", bot.clone());
+
+    let mut signed1 = signed_envelope_for_bot(&bot);
+    signed1.nonce = 1;
+    resign_envelope(&mut signed1);
+
+    let r1 = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-up-token",
+        &signed1,
+    )
+    .await;
+    assert_eq!(r1.status(), 200, "first PUT should succeed");
+
+    let mut signed2 = signed_envelope_for_bot(&bot);
+    signed2.nonce = 2;
+    resign_envelope(&mut signed2);
+
+    let r2 = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-up-token",
+        &signed2,
+    )
+    .await;
+    assert_eq!(r2.status(), 200, "nonce upgrade should succeed");
+}
+
+#[tokio::test]
+async fn test_envelope_nonce_downgrade_rejected() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-down-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-down-token", bot.clone());
+
+    let mut signed5 = signed_envelope_for_bot(&bot);
+    signed5.nonce = 5;
+    resign_envelope(&mut signed5);
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-down-token",
+        &signed5,
+    )
+    .await;
+
+    let mut signed3 = signed_envelope_for_bot(&bot);
+    signed3.nonce = 3;
+    resign_envelope(&mut signed3);
+
+    let r_down = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-down-token",
+        &signed3,
+    )
+    .await;
+    let status = r_down.status();
+    let bytes = r_down.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        status,
+        409,
+        "nonce downgrade should be rejected: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn test_paper_envelope_execute_rejects_open_in_close_only_mode() {
+    ensure_state_dir();
+    let bot_id = format!("bot-paper-co-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("paper-co-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.policy.can_open_positions = false; // close-only
+    resign_envelope(&mut signed);
+
+    let put = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        &signed,
+    )
+    .await;
+    assert_eq!(put.status(), 200);
+
+    // open_long is an opening action; close-only mode must reject it.
+    let body = paper_hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    let response = execute_with_body(
+        build_multi_bot_router(Arc::clone(&state)),
+        "paper-co-token",
+        body,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("close-only") || msg.contains("close"), "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_corrupt_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-corrupt-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("corrupt-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    // truncate signature to invalid length — should map to BAD_REQUEST (400)
+    signed.signatures[0].signature = format!("0x{}", "aa".repeat(32));
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "corrupt-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_non_hex_signature_with_400() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hex-sig-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("hex-sig-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.signatures[0].signature = "totally-not-hex".into();
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "hex-sig-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 400, "{msg}");
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_expired_envelope_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-expired-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("expired-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.expires_at = 1_000; // long past
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "expired-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(
+        msg.contains("expired") || msg.contains("expires_at"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_signed_envelope_endpoint_rejects_wrong_version_with_403() {
+    ensure_state_dir();
+    let bot_id = format!("bot-version-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("version-token", bot.clone());
+
+    let mut signed = signed_envelope_for_bot(&bot);
+    signed.version = 1; // v1 is not supported
+    resign_envelope(&mut signed);
+
+    let response = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "version-token",
+        &signed,
+    )
+    .await;
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let msg = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, 403, "{msg}");
+    assert!(msg.contains("version"), "{msg}");
+}
+
+#[tokio::test]
+async fn test_envelope_same_nonce_rejected() {
+    ensure_state_dir();
+    let bot_id = format!("bot-nonce-same-{}", uuid::Uuid::new_v4());
+    let bot = paper_bot_with_envelope_trust(&bot_id);
+    let state = multi_bot_state_for_bot("nonce-same-token", bot.clone());
+
+    let make_envelope = |nonce: u64| {
+        let mut s = signed_envelope_for_bot(&bot);
+        s.nonce = nonce;
+        resign_envelope(&mut s);
+        s
+    };
+
+    put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-same-token",
+        &make_envelope(4),
+    )
+    .await;
+
+    let r_same = put_signed_envelope(
+        build_multi_bot_router(Arc::clone(&state)),
+        "nonce-same-token",
+        &make_envelope(4),
+    )
+    .await;
+    assert_eq!(r_same.status(), 409, "same nonce should be rejected");
 }
 
 #[tokio::test]
@@ -3137,10 +3775,16 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
                 }
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
     let app = build_multi_bot_router(state);
 
@@ -3826,10 +4470,16 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None,
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     })
 }
 
@@ -4487,10 +5137,16 @@ async fn test_multi_bot_clob_execute() {
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -4610,10 +5266,16 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
     let app = build_multi_bot_router(state);
 
@@ -4695,10 +5357,16 @@ async fn test_multi_bot_clob_execute_not_configured() {
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: None, // not configured
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -4786,10 +5454,16 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
                 None
             }
         }),
+        list_envelope_bots: None,
+        alert_sink: trading_http_api::alerts::AlertSink::new(None, None),
         clob_client: Some(Arc::new(clob_client)),
         chain_client: None,
         chain_client_rpc_url: None,
         chain_client_chain_id: None,
+        rate_limiter: std::sync::Arc::new(
+            trading_http_api::rate_limit::PerBotRateLimiter::default(),
+        ),
+        key_provider: trading_runtime::cex::default_provider(),
     });
 
     let app = build_multi_bot_router(state);
@@ -5780,4 +6454,667 @@ async fn test_backtest_run_multi_token() {
     let tokens = json["result"]["tokens_traded"].as_array().unwrap();
     assert!(tokens.contains(&serde_json::json!("ETH")));
     assert!(tokens.contains(&serde_json::json!("BTC")));
+}
+
+// ── /learning/* — strategy bandit + slippage learner ────────────────────────
+
+#[tokio::test]
+async fn test_multi_bot_learning_slippage_returns_fallback_when_unobserved() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/slippage?token_in=0x0000000000000000000000000000000000000111&token_out=0x0000000000000000000000000000000000000222&fallback=75")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["recommended_max_bps"], 75);
+    assert_eq!(json["observation_count"], 0);
+    assert_eq!(json["failure_count"], 0);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_strategy_outcome_records_arm_pull() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state.clone());
+
+    // Record one outcome for variant-x.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/learning/strategy-outcome")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "variant_id": "variant-x",
+                        "reward": 2.5,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["variant_id"], "variant-x");
+    assert_eq!(json["arm_pulls"], 1);
+    assert_eq!(json["total_pulls"], 1);
+    assert!((json["arm_mean_reward"].as_f64().unwrap() - 2.5).abs() < 1e-9);
+
+    // Second outcome stacks on the same arm.
+    let resp2 = build_multi_bot_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/learning/strategy-outcome")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "variant_id": "variant-x",
+                        "reward": 4.5,
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp2.status(), 200);
+    let body = resp2.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["arm_pulls"], 2);
+    assert!((json["arm_mean_reward"].as_f64().unwrap() - 3.5).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_bandit_status_reports_best_arm() {
+    // Use a fresh bot so prior tests don't leak state into the assertion.
+    let bot_id = format!("bandit-status-bot-{}", uuid::Uuid::new_v4());
+    let token = format!("bandit-status-token-{}", uuid::Uuid::new_v4());
+    let state =
+        multi_bot_state_with_market_and_bot("http://localhost:1234", &token, &bot_id, 31337);
+
+    // Seed two arms with different rewards.
+    for (variant, reward) in [("alpha", 1.0_f64), ("beta", 5.0_f64)] {
+        build_multi_bot_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/learning/strategy-outcome")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "variant_id": variant,
+                            "reward": reward,
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let resp = build_multi_bot_router(state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/bandit-status")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["bot_id"], bot_id);
+    assert_eq!(json["total_pulls"], 2);
+    let arms = json["arms"].as_array().unwrap();
+    assert_eq!(arms.len(), 2);
+    assert_eq!(json["best_arm"]["variant_id"], "beta");
+    assert!((json["best_arm"]["total_reward"].as_f64().unwrap() - 5.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_rejects_unauthenticated_request() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    // Bad bearer -> auth middleware rejects with 401, simulating the
+    // "missing/unresolvable bot" path before any handler logic runs.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/bandit-status")
+                .header("authorization", "Bearer nope-not-a-real-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_multi_bot_learning_slippage_rejects_invalid_token_address() {
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/learning/slippage?token_in=not-an-address&token_out=0x0000000000000000000000000000000000000222")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
+}
+
+// ── CEX route tests ─────────────────────────────────────────────────────────
+//
+// These run the live router with a wiremock-backed venue. We set per-venue
+// env vars (BINANCE_BASE_URL / COINBASE_BASE_URL) to point at the mock server.
+
+/// Test EC P-256 PKCS#8 PEM — generated via:
+///   openssl ecparam -name prime256v1 -genkey -noout |
+///   openssl pkcs8 -topk8 -nocrypt
+const CEX_TEST_COINBASE_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgQSFkfB4L5EN45Zm8\nCN/zU4PTqMFDNOlNeiZuVDZ8QNyhRANCAATYsJm0lw3OdvU4tsOyAtl6VIvz7VaP\nGsmTzm980uKpRWCq3Ubxeaz8PaAetQJEWwT98YNTxe5FXR5+QwgW9RzW\n-----END PRIVATE KEY-----\n";
+
+/// Set CEX env vars so client builders pick up the mock server. Synchronized
+/// across tests via a global mutex; restored after each test.
+struct CexEnvGuard {
+    keys: Vec<&'static str>,
+    prior: Vec<(String, Option<String>)>,
+}
+
+impl CexEnvGuard {
+    fn set(values: &[(&'static str, &str)]) -> Self {
+        // SAFETY: env var mutations are synchronized via cex_env_lock.
+        let prior: Vec<_> = values
+            .iter()
+            .map(|(k, _)| (k.to_string(), std::env::var(k).ok()))
+            .collect();
+        for (k, v) in values {
+            unsafe {
+                std::env::set_var(k, v);
+            }
+        }
+        let keys = values.iter().map(|(k, _)| *k).collect();
+        Self { keys, prior }
+    }
+}
+
+impl Drop for CexEnvGuard {
+    fn drop(&mut self) {
+        for (k, prior) in self.prior.drain(..) {
+            unsafe {
+                match prior {
+                    Some(v) => std::env::set_var(&k, v),
+                    None => std::env::remove_var(&k),
+                }
+            }
+        }
+        // Make sure all keys are removed if the prior was None.
+        for k in &self.keys {
+            if !self.prior.iter().any(|(p, _)| p == *k) {
+                unsafe { std::env::remove_var(k) };
+            }
+        }
+    }
+}
+
+fn cex_env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[tokio::test]
+async fn test_cex_unknown_venue_returns_404() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/kraken/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn test_cex_live_direct_route_rejected_for_live_bot() {
+    let _guard = cex_env_lock().lock().unwrap();
+    ensure_state_dir();
+    let bot_id = format!("bot-direct-cex-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("bot-token-cex-direct", bot);
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-cex-direct")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_cex_binance_paper_order_through_mock() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/order"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "symbol": "BTCUSDT",
+            "orderId": 12345,
+            "clientOrderId": "test-1",
+            "transactTime": 1700000000000_i64,
+            "price": "0",
+            "origQty": "0.001",
+            "executedQty": "0.001",
+            "cummulativeQuoteQty": "30.0",
+            "status": "FILLED",
+            "timeInForce": "IOC",
+            "type": "MARKET",
+            "side": "BUY",
+            "fills": [
+                { "price": "30000", "qty": "0.001",
+                  "commission": "0.03", "commissionAsset": "USDT",
+                  "tradeId": 1 }
+            ]
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "binance");
+    assert_eq!(json["venue_order_id"], "12345");
+    assert_eq!(json["status"], "filled");
+    assert_eq!(json["filled_quantity"], "0.001");
+}
+
+#[tokio::test]
+async fn test_cex_binance_account_endpoint() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v3/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "makerCommission": 10,
+            "takerCommission": 10,
+            "balances": [
+                { "asset": "BTC", "free": "0.5", "locked": "0.0" },
+                { "asset": "USDT", "free": "1000.0", "locked": "50.0" },
+                { "asset": "ZRX", "free": "0", "locked": "0" }
+            ]
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/binance/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "binance");
+    let balances = json["balances"].as_array().unwrap();
+    assert_eq!(balances.len(), 2, "zero-balance entries should be filtered");
+}
+
+#[tokio::test]
+async fn test_cex_binance_translates_insufficient_balance_to_402() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/order"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "code": -2010,
+            "msg": "Account has insufficient balance for requested action."
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("BINANCE_BASE_URL", &mock.uri()),
+        ("BINANCE_API_KEY", "test-key"),
+        ("BINANCE_API_SECRET", "test-secret"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/binance/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "10000"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 402);
+}
+
+#[tokio::test]
+async fn test_cex_coinbase_paper_order_through_mock() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let mock = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v3/brokerage/orders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "success_response": {
+                "order_id": "abc-123",
+                "product_id": "BTC-USD",
+                "side": "BUY",
+                "client_order_id": "test-1"
+            }
+        })))
+        .mount(&mock)
+        .await;
+
+    let _env = CexEnvGuard::set(&[
+        ("COINBASE_BASE_URL", &mock.uri()),
+        (
+            "COINBASE_API_KEY_NAME",
+            "organizations/test-org/apiKeys/test-key",
+        ),
+        ("COINBASE_API_PRIVATE_KEY", CEX_TEST_COINBASE_PEM),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/cex/coinbase/order")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "symbol": "BTC-USD",
+                        "side": "buy",
+                        "order_type": { "type": "market" },
+                        "quantity": "0.001"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["venue"], "coinbase");
+    assert_eq!(json["venue_order_id"], "abc-123");
+    assert_eq!(json["status"], "pending");
+}
+
+#[tokio::test]
+async fn test_cex_coinbase_misconfigured_key_returns_503() {
+    let _guard = cex_env_lock().lock().unwrap();
+    let _env = CexEnvGuard::set(&[
+        ("COINBASE_BASE_URL", "http://127.0.0.1:1"),
+        (
+            "COINBASE_API_KEY_NAME",
+            "organizations/test-org/apiKeys/test-key",
+        ),
+        ("COINBASE_API_PRIVATE_KEY", "not-a-valid-pem"),
+    ]);
+
+    let state = multi_bot_state();
+    let app = build_multi_bot_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/cex/coinbase/account")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 503);
+}
+
+// ── Audit: concurrent envelope writes ───────────────────────────────────────
+
+/// Stress test for `audits/http-api-concurrency-audit.md` finding #1/#2.
+///
+/// Spawns 10 tokio tasks, each PUTting an envelope at a distinct nonce.
+/// After the join, the on-disk envelope must
+///   1. Deserialize cleanly (atomic write — no truncated JSON).
+///   2. Carry a nonce equal to the highest one that successfully landed
+///      (monotonicity — no stale write clobbers a higher one).
+/// The router enforces nonce monotonicity, so concurrent PUTs at the same
+/// nonce should produce exactly one 200 + nine 409s; the file content
+/// must match the single accepted envelope.
+#[tokio::test]
+async fn test_concurrent_put_envelope_is_atomic_and_monotonic() {
+    ensure_state_dir();
+    let bot_id = format!("bot-concurrent-put-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    let state = multi_bot_state_for_bot("concurrent-put-token", bot.clone());
+    let app = build_multi_bot_router(state);
+
+    // Pre-seed nonce=0 so the first concurrent batch is the contested one.
+    {
+        let mut seed = signed_envelope_for_bot(&bot);
+        seed.nonce = 0;
+        resign_envelope(&mut seed);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/envelope")
+                    .header("authorization", "Bearer concurrent-put-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&seed).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "seed PUT must succeed");
+    }
+
+    // Fire 10 concurrent PUTs. Each task picks a unique nonce in [1..=10]
+    // so we can compute the expected highest-accepted nonce.
+    let mut handles = Vec::new();
+    for nonce in 1u64..=10 {
+        let app = app.clone();
+        let bot = bot.clone();
+        handles.push(tokio::spawn(async move {
+            let mut env = signed_envelope_for_bot(&bot);
+            env.nonce = nonce;
+            resign_envelope(&mut env);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/envelope")
+                        .header("authorization", "Bearer concurrent-put-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&env).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (nonce, resp.status())
+        }));
+    }
+
+    let mut accepted_nonces: Vec<u64> = Vec::new();
+    for h in handles {
+        let (nonce, status) = h.await.unwrap();
+        // 200 (accepted) or 409 (rejected because a higher nonce already
+        // landed). Anything else (5xx, 400, etc.) means the route bricked
+        // under contention — that's the failure this test is hunting.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "unexpected status {status} for nonce={nonce}"
+        );
+        if status == StatusCode::OK {
+            accepted_nonces.push(nonce);
+        }
+    }
+
+    // At least one PUT must have landed (10 was tried last in the natural
+    // ordering — but the actual happy-path count depends on scheduling).
+    assert!(!accepted_nonces.is_empty(), "no PUTs landed");
+
+    // GET the envelope back; it must deserialize cleanly and its nonce must
+    // be the largest one we observed in the accepted set.
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri("/envelope")
+                .header("authorization", "Bearer concurrent-put-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 200);
+    let body = get.into_body().collect().await.unwrap().to_bytes();
+    // The atomic-write check: parse must succeed, never see a truncated blob.
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).expect("envelope JSON must round-trip");
+
+    let stored_nonce = value["nonce"].as_u64().expect("nonce field");
+    let max_accepted = *accepted_nonces.iter().max().unwrap();
+    assert_eq!(
+        stored_nonce, max_accepted,
+        "stored nonce must equal max accepted nonce; accepted={accepted_nonces:?}"
+    );
 }

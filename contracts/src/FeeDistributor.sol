@@ -121,7 +121,9 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         vaultFeeInitialized[vault] = true;
         vaultFeeAdmin[vault] = admin;
 
-        emit VaultFeeConfigUpdated(vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps);
+        emit VaultFeeConfigUpdated(
+            vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps
+        );
         emit VaultFeeAdminUpdated(vault, admin);
     }
 
@@ -138,7 +140,9 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (config.validatorFeeShareBps > BPS_DENOMINATOR) revert InvalidBps();
 
         vaultFeeConfig[vault] = config;
-        emit VaultFeeConfigUpdated(vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps);
+        emit VaultFeeConfigUpdated(
+            vault, config.performanceFeeBps, config.managementFeeBps, config.validatorFeeShareBps
+        );
     }
 
     /// @notice Transfer vault fee admin
@@ -196,7 +200,7 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (feeToken == address(0)) revert ZeroAddress();
         if (!vaultFeeInitialized[vault]) revert VaultFeeNotInitialized();
 
-        uint256 currentAUM;
+        uint256 currentAUM = 0;
         try IVaultAssets(vault).totalAssets() returns (uint256 ta) {
             currentAUM = ta;
         } catch {
@@ -218,7 +222,7 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
 
         uint256 totalFee = perfFee + mgmtFee;
 
-        uint256 valShare;
+        uint256 valShare = 0;
         if (totalFee > 0) {
             uint256 vaultBalance = IERC20(feeToken).balanceOf(vault);
             if (totalFee > vaultBalance) {
@@ -228,6 +232,11 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
                 mgmtFee = totalFee - perfFee;
             }
 
+            // `vault` is bounded to vaults registered via `initializeVaultFees`
+            // (onlyOwner, gated above by `vaultFeeInitialized[vault]`). Vault
+            // must also have explicitly approved this contract on `feeToken`,
+            // so this is an opt-in pull pattern, not arbitrary draining.
+            // slither-disable-next-line arbitrary-send-erc20
             IERC20(feeToken).safeTransferFrom(vault, address(this), totalFee);
 
             valShare = (perfFee * vaultFeeConfig[vault].validatorFeeShareBps) / BPS_DENOMINATOR;
@@ -261,9 +270,8 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (token == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 protocolFees = accumulatedFees[token] > validatorFees[token]
-            ? accumulatedFees[token] - validatorFees[token]
-            : 0;
+        uint256 protocolFees =
+            accumulatedFees[token] > validatorFees[token] ? accumulatedFees[token] - validatorFees[token] : 0;
         if (protocolFees == 0) revert InsufficientProtocolFees();
         if (amount > protocolFees) amount = protocolFees;
 

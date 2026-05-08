@@ -102,13 +102,24 @@ contract VaultShare is ERC20, AccessControl {
         if (!isLinkedVault[vault]) revert VaultNotLinked(vault);
 
         isLinkedVault[vault] = false;
-        for (uint256 i = 0; i < linkedVaults.length; i++) {
+        // Linear search for the index, then swap-and-pop OUTSIDE the loop.
+        // Slither's `costly-loop` flags `pop()` placed inside loop bodies; by
+        // hoisting it after the loop we pay the cost exactly once.
+        uint256 len = linkedVaults.length;
+        uint256 idx = type(uint256).max;
+        for (uint256 i = 0; i < len; i++) {
             if (linkedVaults[i] == vault) {
-                linkedVaults[i] = linkedVaults[linkedVaults.length - 1];
-                linkedVaults.pop();
+                idx = i;
                 break;
             }
         }
+        // `isLinkedVault[vault] == true` invariant means we WILL find the
+        // index above; assert it for defense-in-depth before mutating.
+        if (idx == type(uint256).max) revert VaultNotLinked(vault);
+        if (idx != len - 1) {
+            linkedVaults[idx] = linkedVaults[len - 1];
+        }
+        linkedVaults.pop();
 
         // Revoke MINTER_ROLE so unlinked vault can no longer mint/burn shares
         _revokeRole(MINTER_ROLE, vault);
@@ -131,10 +142,15 @@ contract VaultShare is ERC20, AccessControl {
     ///      In multi-asset mode (oracle set), converts all asset balances to USD.
     /// @return nav The total NAV (in asset units for single-asset, USD-scaled for multi-asset)
     function totalNAV() public view returns (uint256 nav) {
+        uint256 len = linkedVaults.length;
+        // calls-loop: linkedVaults is admin-curated via linkVault/unlinkVault
+        // (DEFAULT_ADMIN_ROLE); no public path can grow it. Per-iter
+        // calls (totalAssets / oracle.getPrice) are required to compute NAV.
         if (address(oracle) == address(0)) {
             // Single-asset mode: sum totalAssets() of each vault (includes held positions).
             // try/catch ensures one broken vault doesn't brick deposits/withdrawals for all.
-            for (uint256 i = 0; i < linkedVaults.length; i++) {
+            for (uint256 i = 0; i < len; i++) {
+                // slither-disable-next-line calls-loop
                 try IVaultAssets(linkedVaults[i]).totalAssets() returns (uint256 assets) {
                     nav += assets;
                 } catch {
@@ -143,11 +159,14 @@ contract VaultShare is ERC20, AccessControl {
             }
         } else {
             // Multi-asset mode: convert all positions to USD via oracle
-            for (uint256 i = 0; i < linkedVaults.length; i++) {
+            for (uint256 i = 0; i < len; i++) {
                 address vault = linkedVaults[i];
+                // slither-disable-next-line calls-loop
                 try IVaultAssets(vault).totalAssets() returns (uint256 assets) {
                     if (assets > 0) {
+                        // slither-disable-next-line calls-loop
                         address vaultAsset = IVaultAssets(vault).asset();
+                        // slither-disable-next-line calls-loop
                         (uint256 price, uint8 dec) = oracle.getPrice(vaultAsset);
                         if (price == 0) revert StaleOraclePrice(vaultAsset);
                         nav += (assets * price) / (10 ** dec);

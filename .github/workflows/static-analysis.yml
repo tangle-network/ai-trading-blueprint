@@ -1,0 +1,105 @@
+name: Static Analysis
+
+# Supply-chain + lint gates that don't need a full build matrix.
+# Runs on every PR and on develop/main pushes. Kept in a separate
+# workflow from `ci.yml` so a slow `cargo deny` advisory-db fetch
+# doesn't block the build matrix.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.91"
+
+jobs:
+  cargo-deny:
+    name: Cargo Deny (advisories + licences + sources + bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The action wraps `cargo install cargo-deny --locked` and
+      # caches the binary across runs. `command: check` runs all four
+      # sections (advisories, bans, licenses, sources) — same as a
+      # local `cargo deny check`.
+      # `deny.toml` is auto-detected from the repo root, so we don't pass
+      # `--config` explicitly — older cargo-deny CLIs only accept it as a
+      # subcommand flag and the action injects `arguments` at the top
+      # level. Keeping the call minimal keeps us version-portable.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          log-level: warn
+          command: check
+
+  cargo-audit:
+    name: Cargo Audit (RustSec advisory DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Reads .cargo/audit.toml for the ignore list. Every entry there
+      # is cross-referenced in deny.toml's [advisories].ignore and in
+      # audits/static-analysis-triage.md. `-D warnings` denies on
+      # unmaintained / unsound / yanked; whitelisted IDs cover known
+      # transitive deps (substrate / solana-sdk / ethers-v2).
+      - name: Run cargo audit
+        run: cargo audit -D warnings
+
+  slither:
+    name: Slither (Solidity static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install slither + solc-select
+        run: |
+          python -m pip install --upgrade pip
+          pip install slither-analyzer solc-select
+          solc-select install 0.8.20
+          solc-select use 0.8.20
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install Soldeer deps
+        run: forge soldeer install
+
+      # slither.config.json filters dependencies/, contracts/test/,
+      # contracts/script/ and excludes already-triaged informational
+      # detectors. `--fail-pedantic` treats any new HIGH/MEDIUM as a CI
+      # failure. Inline `slither-disable-next-line` comments document
+      # any FP suppression, with rationale traceable to
+      # audits/static-analysis-triage.md.
+      - name: Run slither on production contracts
+        run: |
+          set -e
+          for f in TradeValidator TradingVault PolicyEngine FeeDistributor StrategyRegistry VaultDeployer VaultFactory VaultShare VaultShareDeployer ChainlinkUsdValuator WrappedAssetValuator; do
+            echo "=== slither contracts/src/$f.sol ==="
+            slither contracts/src/$f.sol --config-file slither.config.json
+          done
