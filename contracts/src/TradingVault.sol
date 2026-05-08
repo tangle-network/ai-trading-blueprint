@@ -35,9 +35,12 @@ interface IAavePoolHealth {
 ///      Multi-asset deployment: multiple vaults share one share token (full ERC-7575).
 ///
 ///      Trade execution requires:
-///        1. PolicyEngine.validateTrade() — per-vault hard limits
+///        1. PolicyEngine.checkTrade() — per-vault hard limits (read-only)
 ///        2. TradeValidator.validateWithSignatures() — m-of-n EIP-712 sigs
-///        3. Only then: target.call(data)
+///        3. target.call(data)
+///        4. PolicyEngine.recordTrade() — consume the rate-limit slot only on success
+///           (H-5: paired with executedIntents commit so a reverted trade does not
+///           burn either the intent or the rate-limit credit)
 contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -572,9 +575,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (params.minOutput == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
 
-        // 0. Intent deduplication — prevents multiple operators executing the same trade
+        // 0. Intent deduplication — H-5: read-only check pre-call. The actual write
+        //    is deferred to `_commitIntent` in the executor success path so that a
+        //    reverted trade leaves the intent reusable.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         // 1. Policy engine check
         _checkPolicy(params.outputToken, params.minOutput, params.target);
@@ -618,8 +622,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         }
         if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
 
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         _checkPolicy(params.inputToken, params.maxInput, params.target);
 
@@ -643,8 +647,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
 
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
 
         _checkPolicy(params.outputToken, params.minOutput, params.target);
 
@@ -652,10 +656,22 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         _checkValidators(params.intentHash, executionHash, signatures, scores, params.deadline, ACTION_KIND_EXECUTE);
     }
 
-    function _checkPolicy(address outputToken, uint256 minOutput, address target) internal {
-        if (!policyEngine.validateTrade(address(this), outputToken, minOutput, target, 0)) {
+    /// @dev H-5: read-only policy check — does NOT consume the rate-limit slot. The
+    ///      slot is consumed via `policyEngine.recordTrade(this)` in the executor
+    ///      success paths so a reverted trade does not burn a rate-limit credit.
+    function _checkPolicy(address outputToken, uint256 minOutput, address target) internal view {
+        if (!policyEngine.checkTrade(address(this), outputToken, minOutput, target)) {
             revert PolicyCheckFailed();
         }
+    }
+
+    /// @dev H-5: post-success hooks — consume executedIntents and rate-limit slot.
+    ///      Invoked at the end of every `_executeXxx` happy path AFTER all minOutput /
+    ///      health / debt-decrease checks pass. Reverts in the executor leave both
+    ///      the intent and the rate-limit credit reusable.
+    function _commitIntent(bytes32 intentHash) internal {
+        executedIntents[intentHash] = true;
+        policyEngine.recordTrade(address(this));
     }
 
     function _checkValidators(
@@ -831,6 +847,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
 
@@ -856,6 +873,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        _commitIntent(params.intentHash);
         emit DebtReductionExecuted(
             params.target, params.value, params.inputToken, debtDecreased, params.debtToken, params.intentHash
         );
@@ -894,6 +912,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             if (depositBalance * 10000 < total * depositAssetReserveBps) revert DepositAssetBelowReserve();
         }
 
+        _commitIntent(params.intentHash);
         emit TradeExecuted(params.target, params.value, outputGained, params.outputToken, params.intentHash);
     }
 
@@ -923,9 +942,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (recipient == address(0)) revert ZeroAddress();
         if (maxCollateralBps == 0) revert CollateralNotEnabled();
 
-        // Intent deduplication
+        // Intent deduplication — H-5: read-only check; commit deferred to post-success.
         if (executedIntents[intentHash]) revert IntentAlreadyExecuted(intentHash);
-        executedIntents[intentHash] = true;
 
         // BPS cap: totalOutstanding + amount <= totalAssets * maxCollateralBps / 10000
         // Use totalAssets() which already includes current totalOutstandingCollateral
@@ -944,6 +962,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
         _asset.safeTransfer(recipient, amount);
 
+        // H-5: commit only after the transfer succeeds. releaseCollateral is not a
+        // policy-engine path so we mark the intent directly without recordTrade.
+        executedIntents[intentHash] = true;
         emit CollateralReleased(msg.sender, amount, recipient, intentHash);
     }
 
@@ -1597,28 +1618,28 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     /// @dev Envelope-mode prepare for trade-shape executions: skip _checkValidators
     ///      since envelope sigs already verified in validateXxxEnvelope.
-    function _prepareEnvelopeTrade(ExecuteParams calldata params) internal {
+    function _prepareEnvelopeTrade(ExecuteParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0)) revert ZeroAddress();
         if (params.minOutput == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.outputToken, params.minOutput, params.target);
     }
 
-    function _prepareEnvelopeDebtReduction(DebtReductionParams calldata params) internal {
+    function _prepareEnvelopeDebtReduction(DebtReductionParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (params.target == address(0) || params.inputToken == address(0) || params.debtToken == address(0)) {
             revert ZeroAddress();
         }
         if (params.maxInput == 0 || params.minDebtDecrease == 0) revert ZeroAmount();
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.inputToken, params.maxInput, params.target);
     }
 
-    function _prepareEnvelopeHealthFactor(HealthFactorParams calldata params) internal {
+    function _prepareEnvelopeHealthFactor(HealthFactorParams calldata params) internal view {
         if (windDownActive) revert WindDownBlocksExecute();
         if (
             params.target == address(0) || params.outputToken == address(0) || params.pool == address(0)
@@ -1626,8 +1647,8 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         ) revert ZeroAddress();
         if (params.minOutput == 0 || params.minHealthFactor == 0) revert ZeroAmount();
         _requireValuableOutputToken(params.outputToken);
+        // H-5: read-only intent check; commit deferred to `_commitIntent` post-success.
         if (executedIntents[params.intentHash]) revert IntentAlreadyExecuted(params.intentHash);
-        executedIntents[params.intentHash] = true;
         _checkPolicy(params.outputToken, params.minOutput, params.target);
     }
 

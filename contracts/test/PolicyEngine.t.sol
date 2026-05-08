@@ -154,14 +154,14 @@ contract PolicyEngineTest is Setup {
         targets[0] = testTarget;
         pe.setTargetWhitelist(testVault, targets, true);
 
-        bool valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertFalse(valid);
 
         address[] memory tokens = new address[](1);
         tokens[0] = testToken;
         pe.setWhitelist(testVault, tokens, true);
 
-        valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertTrue(valid);
     }
 
@@ -172,14 +172,14 @@ contract PolicyEngineTest is Setup {
         tokens[0] = testToken;
         pe.setWhitelist(testVault, tokens, true);
 
-        bool valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertFalse(valid);
 
         address[] memory targets = new address[](1);
         targets[0] = testTarget;
         pe.setTargetWhitelist(testVault, targets, true);
 
-        valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertTrue(valid);
     }
 
@@ -193,10 +193,10 @@ contract PolicyEngineTest is Setup {
 
         pe.setPositionLimit(testVault, testToken, 100 ether);
 
-        bool valid = pe.validateTrade(testVault, testToken, 50 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 50 ether, testTarget);
         assertTrue(valid);
 
-        valid = pe.validateTrade(testVault, testToken, 200 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault, testToken, 200 ether, testTarget);
         assertFalse(valid);
     }
 
@@ -207,10 +207,10 @@ contract PolicyEngineTest is Setup {
         tokenA.mint(testVault, 75 ether);
         pe.setPositionLimit(testVault, testToken, 100 ether);
 
-        bool valid = pe.validateTrade(testVault, testToken, 20 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 20 ether, testTarget);
         assertTrue(valid);
 
-        valid = pe.validateTrade(testVault, testToken, 30 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault, testToken, 30 ether, testTarget);
         assertFalse(valid);
     }
 
@@ -222,7 +222,7 @@ contract PolicyEngineTest is Setup {
         targets[0] = testTarget;
         pe.setTargetWhitelist(testVault, targets, true);
 
-        bool valid = pe.validateTrade(testVault, address(0), 5 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, address(0), 5 ether, testTarget);
         assertTrue(valid);
     }
 
@@ -237,7 +237,7 @@ contract PolicyEngineTest is Setup {
         vm.deal(testVault, 75 ether);
         pe.setPositionLimit(testVault, address(0), 100 ether);
 
-        bool valid = pe.validateTrade(testVault, address(0), 20 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, address(0), 20 ether, testTarget);
         assertTrue(valid);
     }
 
@@ -252,7 +252,7 @@ contract PolicyEngineTest is Setup {
         vm.deal(testVault, 75 ether);
         pe.setPositionLimit(testVault, address(0), 100 ether);
 
-        bool valid = pe.validateTrade(testVault, address(0), 30 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, address(0), 30 ether, testTarget);
         assertFalse(valid);
     }
 
@@ -269,7 +269,7 @@ contract PolicyEngineTest is Setup {
         assertEq(leverageCap, 30000, "Leverage cap should be stored for off-chain use");
 
         // Leverage parameter is ignored on-chain — enforced by AI validators off-chain
-        bool valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 50000);
+        bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertTrue(valid, "On-chain validation should pass regardless of leverage value");
     }
 
@@ -282,19 +282,50 @@ contract PolicyEngineTest is Setup {
         _setupWhitelists(testVault);
 
         pe.setRateLimit(testVault, 3);
+        // recordTrade is onlyAuthorizedOrOwner; treat the vault address as the caller.
+        pe.setAuthorizedCaller(testVault, true);
 
         for (uint256 i = 0; i < 3; i++) {
-            bool v = pe.validateTrade(testVault, testToken, 10 ether, testTarget, 0);
+            bool v = pe.checkTrade(testVault, testToken, 10 ether, testTarget);
             assertTrue(v, "Trade should pass within rate limit");
+            vm.prank(testVault);
+            pe.recordTrade(testVault);
         }
 
-        bool valid = pe.validateTrade(testVault, testToken, 10 ether, testTarget, 0);
-        assertFalse(valid);
+        bool valid = pe.checkTrade(testVault, testToken, 10 ether, testTarget);
+        assertFalse(valid, "Fourth trade exceeds rate limit");
 
         vm.warp(block.timestamp + 1 hours + 1);
 
-        valid = pe.validateTrade(testVault, testToken, 10 ether, testTarget, 0);
-        assertTrue(valid);
+        valid = pe.checkTrade(testVault, testToken, 10 ether, testTarget);
+        assertTrue(valid, "Trade resumes after the hour rolls over");
+    }
+
+    /// @notice H-5: a failed trade does not burn a rate-limit slot. checkTrade is a
+    ///         pure view; only `recordTrade` (called post-success in TradingVault)
+    ///         consumes a slot.
+    function test_rateLimit_failedTradeDoesNotBurnSlot() public {
+        _initVault(testVault);
+        _setupWhitelists(testVault);
+
+        pe.setRateLimit(testVault, 2);
+        pe.setAuthorizedCaller(testVault, true);
+
+        // Successful trade #1 — record consumed.
+        assertTrue(pe.checkTrade(testVault, testToken, 10 ether, testTarget));
+        vm.prank(testVault);
+        pe.recordTrade(testVault);
+
+        // Trade #2 passes the check but the executor reverts — recordTrade NOT called.
+        assertTrue(pe.checkTrade(testVault, testToken, 10 ether, testTarget));
+
+        // Slot is still reusable: trade #3 passes the check and gets the second slot.
+        assertTrue(pe.checkTrade(testVault, testToken, 10 ether, testTarget));
+        vm.prank(testVault);
+        pe.recordTrade(testVault);
+
+        // Both real slots now consumed; further checks fail.
+        assertFalse(pe.checkTrade(testVault, testToken, 10 ether, testTarget));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -315,7 +346,7 @@ contract PolicyEngineTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_validateUninitialized() public {
-        bool valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertFalse(valid);
     }
 
@@ -335,10 +366,10 @@ contract PolicyEngineTest is Setup {
 
         _setupWhitelists(testVault);
 
-        bool valid = pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        bool valid = pe.checkTrade(testVault, testToken, 100 ether, testTarget);
         assertTrue(valid);
 
-        valid = pe.validateTrade(testVault2, testToken, 100 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault2, testToken, 100 ether, testTarget);
         assertFalse(valid);
 
         address[] memory tokens = new address[](1);
@@ -349,7 +380,7 @@ contract PolicyEngineTest is Setup {
         targets[0] = testTarget;
         pe.setTargetWhitelist(testVault2, targets, true);
 
-        valid = pe.validateTrade(testVault2, testToken, 100 ether, testTarget, 0);
+        valid = pe.checkTrade(testVault2, testToken, 100 ether, testTarget);
         assertTrue(valid);
 
         (, uint256 leverageCap1,,,) = pe.policies(testVault);
@@ -397,13 +428,15 @@ contract PolicyEngineTest is Setup {
         pe.setAuthorizedCaller(caller, true);
     }
 
-    function test_unauthorizedCaller_reverts() public {
+    function test_unauthorizedCaller_cannotRecordTrade() public {
         _initVault(testVault);
         _setupWhitelists(testVault);
+        pe.setRateLimit(testVault, 5);
 
-        // Non-authorized caller cannot validate trades
+        // checkTrade is permissionless view — no auth needed. The auth gate is on
+        // recordTrade, which mutates the rate-limit ring buffer.
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PolicyEngine.NotAuthorizedCaller.selector));
-        pe.validateTrade(testVault, testToken, 100 ether, testTarget, 0);
+        pe.recordTrade(testVault);
     }
 }

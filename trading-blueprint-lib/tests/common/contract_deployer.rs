@@ -36,7 +36,8 @@ sol! {
         function setTargetWhitelist(address vault, address[] calldata targets, bool allowed) external;
         function setPositionLimit(address vault, address token, uint256 maxAmount) external;
         function setLeverageCap(address vault, uint256 cap) external;
-        function validateTrade(address vault, address token, uint256 amount, address target, uint256 leverage) external returns (bool);
+        function checkTrade(address vault, address token, uint256 amount, address target) external view returns (bool);
+        function recordTrade(address vault) external;
         function isInitialized(address vault) external view returns (bool);
     }
 }
