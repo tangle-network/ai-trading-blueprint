@@ -11,6 +11,7 @@ import type { Trade, TradeStatus } from '~/lib/types/trade';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
+import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 import { formatNumber } from '~/lib/format';
 
@@ -22,6 +23,7 @@ interface TradeHistoryTabProps {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  assetMetadata?: TokenMetadata[];
 }
 
 function VenueBadge({ venue }: { venue: TradeVenue }) {
@@ -185,12 +187,14 @@ export function TradeHistoryTab({
   operatorApiUrl,
   operatorKind,
   verificationState,
+  assetMetadata,
 }: TradeHistoryTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: trades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
     operatorKind,
+    assetMetadata,
     refetchInterval: isLive ? 15_000 : false,
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);

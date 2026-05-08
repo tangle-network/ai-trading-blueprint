@@ -8,6 +8,7 @@ import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
+import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import {
   countUsableValidatorSignatures,
   getTradeValidationDisplay,
@@ -22,6 +23,7 @@ interface ReasoningTabProps {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  assetMetadata?: TokenMetadata[];
 }
 
 function getErrorMessage(error: unknown): string | null {
@@ -285,18 +287,21 @@ export function ReasoningTab({
   operatorApiUrl,
   operatorKind,
   verificationState,
+  assetMetadata,
 }: ReasoningTabProps) {
   const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: allTrades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
     operatorKind,
+    assetMetadata,
     refetchInterval: isLive ? 15_000 : false,
   });
   const { data: recentTrades } = useBotRecentValidations(botId, botName, {
     chainId,
     operatorApiUrl,
     operatorKind,
+    assetMetadata,
     enabled: isLive,
     refetchInterval: isLive ? 5_000 : false,
   });

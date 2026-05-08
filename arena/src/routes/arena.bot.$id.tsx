@@ -54,6 +54,7 @@ import {
   findMatchingInstanceRouteProvision,
 } from "~/lib/utils/instanceBotRoute";
 import { resolveBotDisplayName } from "~/lib/utils/botNames";
+import { tokenMetadataFromStrategyConfig } from "~/lib/assetUniverse";
 
 export const meta: MetaFunction = () => [{ title: "Bot — AI Trading Arena" }];
 
@@ -173,6 +174,10 @@ export default function BotDetailPage() {
         strategyType: bot.strategyType,
       })
     : "";
+  const botAssetMetadata = useMemo(
+    () => tokenMetadataFromStrategyConfig(bot?.strategyConfig),
+    [bot?.strategyConfig],
+  );
   const { data: operatorMeta } = useOperatorMeta(
     bot?.operatorApiUrl ?? routeOperatorApiUrl,
   );
@@ -305,6 +310,7 @@ export default function BotDetailPage() {
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
+              assetMetadata={botAssetMetadata}
             />
           </TabsContent>
 
@@ -317,6 +323,7 @@ export default function BotDetailPage() {
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
+              assetMetadata={botAssetMetadata}
             />
           </TabsContent>
 
@@ -329,6 +336,7 @@ export default function BotDetailPage() {
               operatorApiUrl={bot.operatorApiUrl}
               operatorKind={bot.operatorKind}
               verificationState={bot.verificationState}
+              assetMetadata={botAssetMetadata}
             />
           </TabsContent>
 
