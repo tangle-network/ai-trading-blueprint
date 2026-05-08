@@ -183,19 +183,38 @@ fn route_tokens(extra: &serde_json::Value) -> Option<Vec<Address>> {
     (tokens.len() >= 2).then_some(tokens)
 }
 
-fn route_fee_tiers(extra: &serde_json::Value, hop_count: usize, default_fee_tier: u32) -> Vec<u32> {
+fn route_fee_tiers(extra: &serde_json::Value, hop_count: usize) -> Result<Vec<u32>, TradingError> {
     let Some(values) = extra.get("fee_tiers").and_then(serde_json::Value::as_array) else {
-        return vec![default_fee_tier; hop_count];
+        return Err(TradingError::AdapterError {
+            protocol: "uniswap_v3".into(),
+            message: "fee_tiers is required when route_tokens is provided".into(),
+        });
     };
-    let fees = values
-        .iter()
-        .filter_map(|value| value.as_u64().map(|fee| fee as u32))
-        .collect::<Vec<_>>();
-    if fees.len() == hop_count {
-        fees
-    } else {
-        vec![default_fee_tier; hop_count]
+
+    if values.len() != hop_count {
+        return Err(TradingError::AdapterError {
+            protocol: "uniswap_v3".into(),
+            message: format!("fee_tiers must contain exactly {hop_count} entries"),
+        });
     }
+
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let fee = value.as_u64().ok_or_else(|| TradingError::AdapterError {
+                protocol: "uniswap_v3".into(),
+                message: format!("fee_tiers[{index}] must be a number"),
+            })?;
+            if fee > 0xFF_FFFF {
+                return Err(TradingError::AdapterError {
+                    protocol: "uniswap_v3".into(),
+                    message: format!("fee_tiers[{index}] exceeds uint24"),
+                });
+            }
+            Ok(fee as u32)
+        })
+        .collect()
 }
 
 fn encode_uniswap_path(tokens: &[Address], fee_tiers: &[u32]) -> Bytes {
@@ -254,7 +273,7 @@ impl ProtocolAdapter for UniswapV3Adapter {
                                 .into(),
                         });
                     }
-                    let fee_tiers = route_fee_tiers(&params.extra, tokens.len() - 1, fee_tier);
+                    let fee_tiers = route_fee_tiers(&params.extra, tokens.len() - 1)?;
                     self.encode_exact_input(ExactInputArgs {
                         path: encode_uniswap_path(&tokens, &fee_tiers),
                         amount_in: params.amount,
@@ -325,6 +344,7 @@ mod tests {
 
     const TOKEN_A: &str = "0x0000000000000000000000000000000000000001";
     const TOKEN_B: &str = "0x0000000000000000000000000000000000000002";
+    const TOKEN_C: &str = "0x0000000000000000000000000000000000000003";
     const VAULT: &str = "0x0000000000000000000000000000000000000099";
 
     #[test]
@@ -402,6 +422,89 @@ mod tests {
         };
         let result = adapter.encode_action(&params);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_missing_fee_tiers() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
+    }
+
+    #[test]
+    fn test_explicit_route_accepts_matching_fee_tiers() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500, 3000],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params).unwrap();
+
+        assert!(result.calldata.len() > 4);
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_wrong_fee_tier_count() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
+    }
+
+    #[test]
+    fn test_explicit_route_rejects_non_numeric_fee_tier() {
+        let adapter = UniswapV3Adapter::new();
+        let params = ActionParams {
+            action: Action::Swap,
+            token_in: TOKEN_A.parse().unwrap(),
+            token_out: TOKEN_C.parse().unwrap(),
+            amount: U256::from(1_000_000u64),
+            min_output: U256::from(990_000u64),
+            extra: serde_json::json!({
+                "route_tokens": [TOKEN_A, TOKEN_B, TOKEN_C],
+                "fee_tiers": [500, "3000"],
+            }),
+            vault_address: VAULT.parse().unwrap(),
+        };
+
+        let result = adapter.encode_action(&params);
+
+        assert!(matches!(result, Err(TradingError::AdapterError { .. })));
     }
 
     #[test]

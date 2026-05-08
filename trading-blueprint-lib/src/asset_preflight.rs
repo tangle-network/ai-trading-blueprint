@@ -70,10 +70,7 @@ pub async fn preflight_dex_asset(
 ) -> Result<DexAssetPreflightResponse, String> {
     let token = parse_non_zero_address(&request.token_address, "token_address")?;
     let base_asset = parse_non_zero_address(&request.base_asset, "base_asset")?;
-    let rpc_url = request.rpc_url.trim();
-    if rpc_url.is_empty() {
-        return Err("rpc_url is required".to_string());
-    }
+    let rpc_url = resolve_preflight_rpc_url(&request)?;
 
     let provider = ProviderBuilder::new().connect_http(
         rpc_url
@@ -231,6 +228,130 @@ fn parse_non_zero_address(raw: &str, field: &str) -> Result<Address, String> {
         return Err(format!("{field} must not be zero"));
     }
     Ok(address)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreflightRpcCandidate {
+    chain_id: Option<u64>,
+    rpc_url: String,
+}
+
+fn resolve_preflight_rpc_url(request: &DexAssetPreflightRequest) -> Result<String, String> {
+    let mut candidates = preflight_rpc_candidates_from_env(request.chain_id);
+    candidates.retain(|candidate| !candidate.rpc_url.trim().is_empty());
+
+    select_preflight_rpc_url(&candidates, request.chain_id, request.rpc_url.trim()).ok_or_else(
+        || {
+            "asset preflight RPC is not configured for this chain; configure DEX_ASSET_PREFLIGHT_RPC_URLS or a matching trusted RPC_URL"
+                .to_string()
+        },
+    )
+}
+
+fn preflight_rpc_candidates_from_env(chain_id: u64) -> Vec<PreflightRpcCandidate> {
+    let mut candidates = Vec::new();
+
+    for name in [
+        "DEX_ASSET_PREFLIGHT_RPC_URLS",
+        "DEX_ASSET_PREFLIGHT_RPC_ALLOWLIST",
+    ] {
+        if let Ok(raw) = std::env::var(name) {
+            candidates.extend(parse_preflight_rpc_candidates(&raw));
+        }
+    }
+
+    for name in [
+        format!("DEX_ASSET_PREFLIGHT_RPC_URL_{chain_id}"),
+        format!("EXECUTION_RPC_URL_{chain_id}"),
+        format!("RPC_URL_{chain_id}"),
+    ] {
+        if let Ok(raw) = std::env::var(name) {
+            candidates.push(PreflightRpcCandidate {
+                chain_id: Some(chain_id),
+                rpc_url: raw.trim().to_string(),
+            });
+        }
+    }
+
+    if let Ok(raw) = std::env::var("RPC_URL")
+        && trusted_env_chain_matches(chain_id)
+    {
+        candidates.push(PreflightRpcCandidate {
+            chain_id: Some(chain_id),
+            rpc_url: raw.trim().to_string(),
+        });
+    }
+
+    candidates
+}
+
+fn parse_preflight_rpc_candidates(raw: &str) -> Vec<PreflightRpcCandidate> {
+    raw.split([',', '\n'])
+        .filter_map(|entry| parse_preflight_rpc_candidate(entry.trim()))
+        .collect()
+}
+
+fn parse_preflight_rpc_candidate(entry: &str) -> Option<PreflightRpcCandidate> {
+    if entry.is_empty() {
+        return None;
+    }
+
+    if let Some((chain, rpc_url)) = entry.split_once('=')
+        && let Ok(chain_id) = chain.trim().parse()
+    {
+        return Some(PreflightRpcCandidate {
+            chain_id: Some(chain_id),
+            rpc_url: rpc_url.trim().to_string(),
+        });
+    }
+
+    Some(PreflightRpcCandidate {
+        chain_id: None,
+        rpc_url: entry.to_string(),
+    })
+}
+
+fn trusted_env_chain_matches(chain_id: u64) -> bool {
+    trusted_env_chain_id()
+        .map(|configured| configured == chain_id)
+        .unwrap_or(true)
+}
+
+fn trusted_env_chain_id() -> Option<u64> {
+    [
+        "EXECUTION_CHAIN_ID",
+        "PROTOCOL_CHAIN_ID",
+        "FORK_BASE_CHAIN_ID",
+        "CHAIN_ID",
+    ]
+    .iter()
+    .find_map(|name| std::env::var(name).ok())
+    .and_then(|value| value.trim().parse().ok())
+}
+
+fn select_preflight_rpc_url(
+    candidates: &[PreflightRpcCandidate],
+    chain_id: u64,
+    requested_rpc_url: &str,
+) -> Option<String> {
+    let matching_candidates = candidates
+        .iter()
+        .filter(|candidate| candidate.chain_id.is_none_or(|id| id == chain_id))
+        .collect::<Vec<_>>();
+
+    if !requested_rpc_url.is_empty() {
+        if matching_candidates
+            .iter()
+            .any(|candidate| candidate.rpc_url == requested_rpc_url)
+        {
+            return Some(requested_rpc_url.to_string());
+        }
+    }
+
+    match matching_candidates.as_slice() {
+        [candidate] => Some(candidate.rpc_url.clone()),
+        _ => None,
+    }
 }
 
 async fn read_erc20_metadata<P>(provider: &P, token: Address) -> Result<TokenMetadata, String>
@@ -426,5 +547,44 @@ fn twap_config_from_env() -> TwapConfig {
             ],
             500,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_exact_requested_rpc_from_allowlist() {
+        let candidates = parse_preflight_rpc_candidates(
+            "1=https://ethereum-rpc.publicnode.com,31339=http://127.0.0.1:42545",
+        );
+
+        let selected =
+            select_preflight_rpc_url(&candidates, 31339, "http://127.0.0.1:42545").unwrap();
+
+        assert_eq!(selected, "http://127.0.0.1:42545");
+    }
+
+    #[test]
+    fn ignores_untrusted_requested_rpc_when_single_trusted_rpc_exists() {
+        let candidates = parse_preflight_rpc_candidates("31339=http://127.0.0.1:42545");
+
+        let selected =
+            select_preflight_rpc_url(&candidates, 31339, "http://169.254.169.254/latest").unwrap();
+
+        assert_eq!(selected, "http://127.0.0.1:42545");
+    }
+
+    #[test]
+    fn rejects_untrusted_requested_rpc_when_allowlist_has_multiple_matches() {
+        let candidates = parse_preflight_rpc_candidates(
+            "31339=http://127.0.0.1:42545,31339=http://127.0.0.1:42546",
+        );
+
+        let selected =
+            select_preflight_rpc_url(&candidates, 31339, "http://169.254.169.254/latest");
+
+        assert!(selected.is_none());
     }
 }

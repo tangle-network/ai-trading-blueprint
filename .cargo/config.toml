@@ -1,3 +1,0 @@
-[patch."https://github.com/tangle-network/ai-agent-sandbox-blueprint.git"]
-ai-agent-sandbox-blueprint-lib = { path = "../ai-agent-sandbox-blueprint/ai-agent-sandbox-blueprint-lib" }
-sandbox-runtime = { path = "../ai-agent-sandbox-blueprint/sandbox-runtime" }
