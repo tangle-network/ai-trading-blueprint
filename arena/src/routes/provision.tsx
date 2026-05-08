@@ -1251,6 +1251,10 @@ export default function ProvisionPage() {
     quotesEnabled,
     PricingModelHint.SUBSCRIPTION,
     !!selectedBlueprint?.isTee,
+    // tnt-core v0.13.0: bind quote to the connected wallet (the address that
+    // will be `msg.sender` for `createServiceFromQuotes`). When undefined the
+    // hook holds the fetch — `address(0)` is rejected on-chain.
+    userAddress,
   );
 
   // Second writeContract for new service
@@ -2410,6 +2414,9 @@ export default function ProvisionPage() {
 
     const quoteTuples = quotes.map((q) => ({
       details: {
+        // tnt-core v0.13.0: `requester` is the FIRST field of the on-chain
+        // tuple. Must match `msg.sender` and the operator's signed value.
+        requester: q.details.requester,
         blueprintId: q.details.blueprintId,
         ttlBlocks: q.details.ttlBlocks,
         totalCost: q.details.totalCost,
