@@ -14,9 +14,9 @@ contract DebugEip712Test is Test {
         console.log("Domain separator:");
         console.logBytes32(domainSep);
 
-        // QUOTE_TYPEHASH
+        // QUOTE_TYPEHASH (tnt-core v0.13.0 — `requester` bound into typed data)
         bytes32 quoteTypeHash = keccak256(
-            "QuoteDetails(uint64 blueprintId,uint64 ttlBlocks,uint256 totalCost,uint64 timestamp,uint64 expiry,AssetSecurityCommitment[] securityCommitments)AssetSecurityCommitment(Asset asset,uint16 exposureBps)Asset(uint8 kind,address token)"
+            "QuoteDetails(address requester,uint64 blueprintId,uint64 ttlBlocks,uint256 totalCost,uint64 timestamp,uint64 expiry,uint8 confidentiality,AssetSecurityCommitment[] securityCommitments,ResourceCommitment[] resourceCommitments)AssetSecurityCommitment(Asset asset,uint16 exposureBps)Asset(uint8 kind,address token)ResourceCommitment(uint8 kind,uint64 count)"
         );
         console.log("QUOTE_TYPEHASH:");
         console.logBytes32(quoteTypeHash);
@@ -29,6 +29,9 @@ contract DebugEip712Test is Test {
 
         // Test with specific values
         Types.QuoteDetails memory quote;
+        // v0.13.0: bind quote to a specific requester. address(0) is rejected by
+        // the on-chain verifier so we use a non-zero placeholder for the digest.
+        quote.requester = address(0xbEEF);
         quote.blueprintId = 0;
         quote.ttlBlocks = 216000;
         quote.totalCost = 22874400000;
