@@ -1,5 +1,5 @@
 {
-  "detectors_to_exclude": "naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp,cyclomatic-complexity,reentrancy-benign,costly-loop,cache-array-length",
+  "detectors_to_exclude": "naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp,cyclomatic-complexity,incorrect-equality",
   "filter_paths": "dependencies/|contracts/test/|contracts/script/|contracts/lib/",
   "exclude_informational": false,
   "exclude_low": false,

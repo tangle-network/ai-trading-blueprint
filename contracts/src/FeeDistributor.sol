@@ -200,7 +200,7 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
         if (feeToken == address(0)) revert ZeroAddress();
         if (!vaultFeeInitialized[vault]) revert VaultFeeNotInitialized();
 
-        uint256 currentAUM;
+        uint256 currentAUM = 0;
         try IVaultAssets(vault).totalAssets() returns (uint256 ta) {
             currentAUM = ta;
         } catch {
@@ -222,7 +222,7 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
 
         uint256 totalFee = perfFee + mgmtFee;
 
-        uint256 valShare;
+        uint256 valShare = 0;
         if (totalFee > 0) {
             uint256 vaultBalance = IERC20(feeToken).balanceOf(vault);
             if (totalFee > vaultBalance) {

@@ -309,15 +309,16 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         shares = convertToShares(assets);
         if (shares == 0) revert ZeroShares();
 
-        _asset.safeTransferFrom(msg.sender, address(this), assets);
-        shareToken.mint(receiver, shares);
-
-        // Track deposit time for lockup enforcement.
-        // Only set for self-deposits to prevent griefing: an attacker depositing
-        // 1 wei to a victim's address must not reset the victim's lockup timer.
+        // CEI: write deposit-time state BEFORE any external call. Self-deposit
+        // grief-guard semantics are unchanged (still gated on
+        // `msg.sender == receiver`); a failed transfer/mint reverts the tx
+        // and rolls back this write atomically.
         if (msg.sender == receiver) {
             lastDepositTime[receiver] = block.timestamp;
         }
+
+        _asset.safeTransferFrom(msg.sender, address(this), assets);
+        shareToken.mint(receiver, shares);
 
         emit Deposit(msg.sender, receiver, assets, shares);
     }
@@ -665,6 +666,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 deadline,
         uint256 actionKind
     ) internal view {
+        // Validator returns (bool ok, uint256 validCount). `validCount` is
+        // diagnostic-only — `ok` is the auth gate, and the validator reverts
+        // upstream on insufficient-validator conditions.
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateWithSignatures(
             intentHash, executionHash, address(this), signatures, scores, deadline, actionKind
         );
@@ -767,8 +772,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function _hashApprovals(ApprovalCall[] calldata approvals) internal pure returns (bytes32) {
-        bytes memory packed;
-        for (uint256 i = 0; i < approvals.length; ++i) {
+        // Explicit init silences slither's `uninitialized-local` detector.
+        // Solidity already zero-initializes `bytes memory` to length 0, so
+        // behavior is identical — this just documents intent at the site.
+        bytes memory packed = new bytes(0);
+        uint256 n = approvals.length;
+        for (uint256 i = 0; i < n; ++i) {
             ApprovalCall calldata approval = approvals[i];
             packed = bytes.concat(
                 packed,
@@ -788,6 +797,19 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
             balanceBefore = IERC20(params.outputToken).balanceOf(address(this));
         }
 
+        // CEI: register the output token in `heldTokens` BEFORE the external
+        // call so no state write trails the call. The bookkeeping is
+        // idempotent (`isHeldToken` guard) and a failed/reverting call
+        // rolls back the storage write atomically.
+        _addHeldToken(params.outputToken);
+
+        // arbitrary-send-eth: validator-signed envelope authorizes
+        //   (target, value, data, outputToken, minOutput); slither cannot
+        //   model the cryptographic gate.
+        // reentrancy-balance: post-call balance read IS the slippage check —
+        //   that's the function purpose. nonReentrant blocks re-entry, so
+        //   the read is guaranteed fresh-after-call.
+        // slither-disable-next-line arbitrary-send-eth,reentrancy-balance
         (bool success,) = params.target.call{value: params.value}(params.data);
         if (!success) revert ExecutionFailed();
 
@@ -802,7 +824,6 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
         _checkFinalPositionLimit(params.outputToken);
-        _addHeldToken(params.outputToken);
 
         if (depositAssetReserveBps > 0) {
             uint256 total = totalAssets();
@@ -816,6 +837,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _executeDebtReduction(DebtReductionParams calldata params) internal {
         uint256 debtBefore = IERC20(params.debtToken).balanceOf(address(this));
 
+        // arbitrary-send-eth: validator-signed envelope authorizes target.
+        // reentrancy-balance: post-call read IS the debt-decrease check.
+        //   nonReentrant blocks re-entry, so the read is fresh-after-call.
+        // slither-disable-next-line arbitrary-send-eth,reentrancy-balance
         (bool success,) = params.target.call{value: params.value}(params.data);
         if (!success) revert ExecutionFailed();
 
@@ -839,6 +864,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _executeHealthFactor(HealthFactorParams calldata params) internal {
         uint256 balanceBefore = IERC20(params.outputToken).balanceOf(address(this));
 
+        // CEI: register the output token before the external call (see
+        // `_executeTrade` rationale). Idempotent + tx-reverts-roll-back.
+        _addHeldToken(params.outputToken);
+
+        // arbitrary-send-eth + reentrancy-balance: see `_executeTrade`.
+        // slither-disable-next-line arbitrary-send-eth,reentrancy-balance
         (bool success,) = params.target.call{value: params.value}(params.data);
         if (!success) revert ExecutionFailed();
 
@@ -847,8 +878,11 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (outputGained < params.minOutput) revert MinOutputNotMet(outputGained, params.minOutput);
 
         _checkFinalPositionLimit(params.outputToken);
-        _addHeldToken(params.outputToken);
 
+        // Aave returns (totalCollateralBase, totalDebtBase, availableBorrowsBase,
+        // currentLiquidationThreshold, ltv, healthFactor); only healthFactor
+        // gates the post-borrow / post-withdraw safety check.
+        // slither-disable-next-line unused-return
         (,,,,, uint256 healthFactor) = IAavePoolHealth(params.pool).getUserAccountData(params.account);
         if (healthFactor < params.minHealthFactor) {
             revert HealthFactorTooLow(healthFactor, params.minHealthFactor);
@@ -1025,7 +1059,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         // Snapshot deposit asset balance
         uint256 assetBefore = _asset.balanceOf(address(this));
 
-        // Execute the unwind call
+        // Execute the unwind call. The post-call balance comparison IS the
+        // drawdown-cap check (purpose of the function). The target is
+        // whitelisted via `whitelistedRouters[target]` upstream and the
+        // function is nonReentrant + role-gated, so the read is
+        // guaranteed fresh-after-call.
+        // slither-disable-next-line arbitrary-send-eth,reentrancy-balance
         (bool success,) = target.call{value: value}(data);
         if (!success) revert ExecutionFailed();
 
@@ -1060,6 +1099,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 totalBefore = totalAssets();
         uint256 assetBefore = _asset.balanceOf(address(this));
 
+        // adminUnwind path: target is gated by `whitelistedRouters[target]`
+        // check above. Post-call balance compare is the drawdown-cap check;
+        // nonReentrant + DEFAULT_ADMIN_ROLE keep the read fresh.
+        // slither-disable-next-line arbitrary-send-eth,reentrancy-balance
         (bool success,) = target.call{value: value}(data);
         if (!success) revert ExecutionFailed();
 
@@ -1088,6 +1131,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 amount;
         if (token == address(0)) {
             amount = address(this).balance;
+            // slither-disable-next-line arbitrary-send-eth
             (bool success,) = to.call{value: amount}("");
             if (!success) revert ExecutionFailed();
         } else {
@@ -1188,14 +1232,22 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     /// @dev Non-deposit held tokens must have a configured valuation adapter.
     function positionsValue() public view returns (uint256 total) {
         address depositAsset = asset();
-        for (uint256 i = 0; i < heldTokens.length; i++) {
+        uint256 len = heldTokens.length;
+        // calls-loop: heldTokens is admin-curated and capped at MAX_HELD_TOKENS
+        // (32). Per-iter calls (balanceOf + valuator) are required to compute
+        // NAV; the bounded length prevents the unbounded-growth DOS the
+        // detector targets.
+        for (uint256 i = 0; i < len; i++) {
             address token = heldTokens[i];
+            // slither-disable-next-line calls-loop
             uint256 bal = IERC20(token).balanceOf(address(this));
             if (bal == 0) continue;
             IAssetValuator adapter = valuationAdapters[token];
+            // slither-disable-next-line calls-loop
             if (address(adapter) == address(0) || !adapter.isSupported(token, depositAsset)) {
                 revert UnsupportedValuationAsset(token, depositAsset);
             }
+            // slither-disable-next-line calls-loop
             total += adapter.valueInAsset(token, bal, depositAsset);
         }
     }
@@ -1238,8 +1290,13 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function updateHeldTokens(address[] calldata tokens) external onlyRole(DEFAULT_ADMIN_ROLE) {
         // Clear existing — only allow tokens currently carrying zero balance. Removing a token
         // with nonzero balance would zero its contribution to positionsValue() and drop NAV.
-        for (uint256 i = 0; i < heldTokens.length; i++) {
+        // calls-loop: bounded by MAX_HELD_TOKENS = 32 (cap enforced on writes
+        // to `heldTokens`); per-iter balanceOf is required for the
+        // zero-balance precondition.
+        uint256 heldLen = heldTokens.length;
+        for (uint256 i = 0; i < heldLen; i++) {
             address held = heldTokens[i];
+            // slither-disable-next-line calls-loop
             uint256 bal = IERC20(held).balanceOf(address(this));
             if (bal > 0) revert HeldTokenNotEmpty(held, bal);
             isHeldToken[held] = false;
@@ -1247,7 +1304,9 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         delete heldTokens;
         // Add new (skip deposit asset, enforce max)
         address depositAsset = asset();
-        for (uint256 i = 0; i < tokens.length && i < MAX_HELD_TOKENS; i++) {
+        uint256 newLen = tokens.length;
+        uint256 cap = newLen < MAX_HELD_TOKENS ? newLen : MAX_HELD_TOKENS;
+        for (uint256 i = 0; i < cap; i++) {
             if (tokens[i] != depositAsset && !isHeldToken[tokens[i]]) {
                 heldTokens.push(tokens[i]);
                 isHeldToken[tokens[i]] = true;
@@ -1292,13 +1351,17 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256 supply = shareToken.totalSupply();
         if (supply == 0 || shares > supply) revert InsufficientBalance();
 
-        tokens = new address[](heldTokens.length + 1);
-        amounts = new uint256[](heldTokens.length + 1);
+        uint256 len = heldTokens.length;
+        tokens = new address[](len + 1);
+        amounts = new uint256[](len + 1);
         tokens[0] = asset();
         amounts[0] = IERC20(tokens[0]).balanceOf(address(this)) * shares / supply;
 
-        for (uint256 i = 0; i < heldTokens.length; i++) {
+        // calls-loop: bounded admin-curated heldTokens (cap 32). Per-iter
+        // balanceOf is required to compute the in-kind redemption split.
+        for (uint256 i = 0; i < len; i++) {
             tokens[i + 1] = heldTokens[i];
+            // slither-disable-next-line calls-loop
             amounts[i + 1] = IERC20(heldTokens[i]).balanceOf(address(this)) * shares / supply;
         }
     }
@@ -1322,12 +1385,22 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     function _isNavSafe() internal view returns (bool) {
         address depositAsset = asset();
-        for (uint256 i = 0; i < heldTokens.length; i++) {
+        uint256 len = heldTokens.length;
+        // calls-loop: bounded admin-curated heldTokens (cap 32). The probe
+        // calls are inherent to the safety check.
+        for (uint256 i = 0; i < len; i++) {
             address token = heldTokens[i];
+            // slither-disable-next-line calls-loop
             uint256 bal = IERC20(token).balanceOf(address(this));
             if (bal == 0) continue;
             IAssetValuator adapter = valuationAdapters[token];
             if (address(adapter) == address(0)) return false;
+            // _isNavSafe is a pricing probe — a successful return means the
+            // token can be priced; the value itself is irrelevant here
+            // (positionsValue() uses it). Any catch means the token cannot
+            // be safely valued. calls-loop is suppressed because the loop
+            // is bounded by MAX_HELD_TOKENS = 32 (see loop-level note above).
+            // slither-disable-next-line unused-return,calls-loop
             try adapter.valueInAsset(token, bal, depositAsset) returns (
                 uint256
             ) {
@@ -1343,9 +1416,10 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _removeHeldToken(address token) internal {
         if (!isHeldToken[token]) return;
         isHeldToken[token] = false;
-        for (uint256 i = 0; i < heldTokens.length; i++) {
+        uint256 len = heldTokens.length;
+        for (uint256 i = 0; i < len; i++) {
             if (heldTokens[i] == token) {
-                heldTokens[i] = heldTokens[heldTokens.length - 1];
+                heldTokens[i] = heldTokens[len - 1];
                 heldTokens.pop();
                 break;
             }
@@ -1610,38 +1684,38 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     function _decodeAaveSupply(bytes calldata data)
         internal
         pure
-        returns (address asset, uint256 amount, address onBehalfOf, uint16 referralCode)
+        returns (address aaveAsset, uint256 amount, address onBehalfOf, uint16 referralCode)
     {
         _expectSelector(data, SELECTOR_AAVE_SUPPLY);
-        (asset, amount, onBehalfOf, referralCode) = abi.decode(data[4:], (address, uint256, address, uint16));
+        (aaveAsset, amount, onBehalfOf, referralCode) = abi.decode(data[4:], (address, uint256, address, uint16));
     }
 
     function _decodeAaveWithdraw(bytes calldata data)
         internal
         pure
-        returns (address asset, uint256 amount, address to)
+        returns (address aaveAsset, uint256 amount, address to)
     {
         _expectSelector(data, SELECTOR_AAVE_WITHDRAW);
-        (asset, amount, to) = abi.decode(data[4:], (address, uint256, address));
+        (aaveAsset, amount, to) = abi.decode(data[4:], (address, uint256, address));
     }
 
     function _decodeAaveBorrow(bytes calldata data)
         internal
         pure
-        returns (address asset, uint256 amount, uint256 rateMode, uint16 refCode, address onBehalfOf)
+        returns (address aaveAsset, uint256 amount, uint256 rateMode, uint16 refCode, address onBehalfOf)
     {
         _expectSelector(data, SELECTOR_AAVE_BORROW);
-        (asset, amount, rateMode, refCode, onBehalfOf) =
+        (aaveAsset, amount, rateMode, refCode, onBehalfOf) =
             abi.decode(data[4:], (address, uint256, uint256, uint16, address));
     }
 
     function _decodeAaveRepay(bytes calldata data)
         internal
         pure
-        returns (address asset, uint256 amount, uint256 rateMode, address onBehalfOf)
+        returns (address aaveAsset, uint256 amount, uint256 rateMode, address onBehalfOf)
     {
         _expectSelector(data, SELECTOR_AAVE_REPAY);
-        (asset, amount, rateMode, onBehalfOf) = abi.decode(data[4:], (address, uint256, uint256, address));
+        (aaveAsset, amount, rateMode, onBehalfOf) = abi.decode(data[4:], (address, uint256, uint256, address));
     }
 
     function _decodeMorphoSupply(bytes calldata data)
@@ -1714,6 +1788,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         bytes32 envHash = tradeValidator.hashEnvelope(env);
@@ -1755,6 +1830,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (uint256(s.amountOutMinimum) < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(uint256(s.amountOutMinimum), reqMinOut);
         }
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateUniswapV4SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(
@@ -1793,6 +1869,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAerodromeSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         bytes32 envHash = tradeValidator.hashEnvelope(env);
@@ -1833,6 +1910,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (s.amountOutMinimum < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(s.amountOutMinimum, reqMinOut);
         }
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validatePancakeswapV3SwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         bytes32 envHash = tradeValidator.hashEnvelope(env);
@@ -1871,6 +1949,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         if (minDy < reqMinOut || params.minOutput < reqMinOut) {
             revert EnvelopeRateTooLow(minDy, reqMinOut);
         }
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateCurveStableSwapEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         bytes32 envHash = tradeValidator.hashEnvelope(env);
@@ -1895,19 +1974,24 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
-        (address asset, uint256 amount, address onBehalfOf,) = _decodeAaveSupply(params.data);
-        if (params.target != enf.pool || asset != enf.asset || onBehalfOf != address(this)) {
+        (address aaveAsset, uint256 amount, address onBehalfOf,) = _decodeAaveSupply(params.data);
+        if (params.target != enf.pool || aaveAsset != enf.asset || onBehalfOf != address(this)) {
             revert EnvelopeCheckFailed();
         }
         if (params.deadline < block.timestamp) revert EnvelopeCheckFailed();
         // Audit M-3: bound native-ETH spend per envelope.
         if (params.value > enf.maxValue) revert EnvelopeCheckFailed();
+        // Validator returns (bool ok, uint256 validCount); validCount is
+        // diagnostic only — `ok` is the auth gate, `nonReentrant` + `OPERATOR_ROLE`
+        // are the call gates, and an insufficient-validator condition reverts
+        // upstream in `validateWithSignatures`.
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAaveSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
         _prepareEnvelopeTrade(params);
         ApprovalCall[] memory approvals = new ApprovalCall[](1);
-        approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
+        approvals[0] = ApprovalCall({token: aaveAsset, spender: params.target, amount: amount});
         _applyApprovalsMemory(approvals, params.target);
         _executeTrade(params);
         // Audit M-1: clear residual allowance to prevent the router from pulling later.
@@ -1923,18 +2007,19 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
-        (address asset, uint256 amount, address to) = _decodeAaveWithdraw(params.data);
+        (address aaveAsset, uint256 amount, address to) = _decodeAaveWithdraw(params.data);
         // Audit H-1: params.account drives the post-call health-factor read in
         // _executeHealthFactor; pin it to the vault so an operator cannot satisfy
         // the check via an unrelated healthy account while the vault itself drifts
         // below enf.minHealthFactor.
         if (
-            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset || to != address(this)
+            params.target != enf.pool || params.pool != enf.pool || aaveAsset != enf.asset || to != address(this)
                 || params.account != address(this) || params.minHealthFactor < enf.minHealthFactor
                 || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAaveWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -1951,16 +2036,17 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
-        (address asset, uint256 amount, uint256 rateMode,, address onBehalfOf) = _decodeAaveBorrow(params.data);
+        (address aaveAsset, uint256 amount, uint256 rateMode,, address onBehalfOf) = _decodeAaveBorrow(params.data);
         // Audit H-1: pin params.account to the vault so the post-borrow health-factor
         // check can't be vacuously satisfied via a different healthy account.
         if (
-            params.target != enf.pool || params.pool != enf.pool || asset != enf.asset
+            params.target != enf.pool || params.pool != enf.pool || aaveAsset != enf.asset
                 || rateMode != enf.interestRateMode || onBehalfOf != address(this) || params.account != address(this)
                 || params.minHealthFactor < enf.minHealthFactor || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAaveBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -1977,20 +2063,21 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
         uint256[] calldata scores
     ) external onlyRole(OPERATOR_ROLE) nonReentrant whenNotPaused {
         _checkEnvelopeBasics(env);
-        (address asset, uint256 amount, uint256 rateMode, address onBehalfOf) = _decodeAaveRepay(params.data);
+        (address aaveAsset, uint256 amount, uint256 rateMode, address onBehalfOf) = _decodeAaveRepay(params.data);
         if (
             params.target != enf.pool || params.inputToken != enf.asset || params.debtToken != enf.debtToken
-                || asset != enf.asset || rateMode != enf.interestRateMode || onBehalfOf != address(this)
+                || aaveAsset != enf.asset || rateMode != enf.interestRateMode || onBehalfOf != address(this)
                 || params.deadline < block.timestamp
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateAaveRepayEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), amount, enf.maxSingleAmount, enf.maxTotalAmount);
         _prepareEnvelopeDebtReduction(params);
         ApprovalCall[] memory approvals = new ApprovalCall[](1);
-        approvals[0] = ApprovalCall({token: asset, spender: params.target, amount: amount});
+        approvals[0] = ApprovalCall({token: aaveAsset, spender: params.target, amount: amount});
         _applyApprovalsMemory(approvals, params.target);
         _executeDebtReduction(params);
         // Audit M-1: clear residual allowance to prevent the router from pulling later.
@@ -2015,6 +2102,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateMorphoSupplyEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -2048,6 +2136,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateMorphoWithdrawEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -2075,6 +2164,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateMorphoBorrowEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
@@ -2098,6 +2188,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
                 // Audit M-3: bound native-ETH spend per envelope.
                 || params.value > enf.maxValue
         ) revert EnvelopeCheckFailed();
+        // slither-disable-next-line unused-return
         (bool ok,) = tradeValidator.validateMorphoRepayEnvelope(env, enf, approvalSigners, signatures, scores);
         if (!ok) revert ValidatorCheckFailed();
         _consumeEnvelope(tradeValidator.hashEnvelope(env), assets, enf.maxSingleAmount, enf.maxTotalAmount);
