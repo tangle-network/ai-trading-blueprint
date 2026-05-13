@@ -161,8 +161,9 @@ contract DeployEnvelopeV3 is Script {
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer =
-            new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(
+            address(vaultFactory), address(new TradingVault()), policyEngine, tradeValidator, feeDistributor
+        );
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 

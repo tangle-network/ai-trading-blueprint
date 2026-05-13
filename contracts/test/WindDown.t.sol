@@ -137,7 +137,7 @@ contract WindDownTest is Setup {
         bytes32 intentHash = keccak256("blocked trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
             value: 0,
@@ -151,12 +151,12 @@ contract WindDownTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.WindDownBlocksExecute.selector);
+        vm.expectRevert(VaultTypes.WindDownBlocksExecute.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -174,7 +174,7 @@ contract WindDownTest is Setup {
         bytes32 intentHash = keccak256("resumed trade");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 500 ether),
             value: 0,
@@ -188,7 +188,7 @@ contract WindDownTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
@@ -326,7 +326,7 @@ contract WindDownTest is Setup {
         address rando = makeAddr("rando-contract");
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.TargetNotWhitelisted.selector, rando));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.TargetNotWhitelisted.selector, rando));
         vault.unwind(rando, "", 0);
     }
 
@@ -335,7 +335,7 @@ contract WindDownTest is Setup {
         vault.activateWindDown();
 
         vm.prank(user);
-        vm.expectRevert(TradingVault.ZeroAddress.selector);
+        vm.expectRevert(VaultTypes.ZeroAddress.selector);
         vault.unwind(address(0), "", 0);
     }
 
@@ -347,7 +347,7 @@ contract WindDownTest is Setup {
         vault.activateWindDown();
 
         vm.prank(user);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.unwind(address(unwindTarget), abi.encodeWithSelector(MockUnwindTarget.alwaysFails.selector), 0);
     }
 
@@ -488,7 +488,7 @@ contract WindDownTest is Setup {
         address rando = makeAddr("rando");
 
         vm.prank(creator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.TargetNotWhitelisted.selector, rando));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.TargetNotWhitelisted.selector, rando));
         vault.adminUnwind(rando, "", 0);
     }
 

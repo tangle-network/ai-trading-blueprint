@@ -186,7 +186,6 @@ contract VaultFactory is Ownable2Step, ReentrancyGuard {
         // detector cannot prove that the deployer/registry contracts are
         // non-malicious, but they are part of this codebase and audited
         // alongside the factory.
-        // slither-disable-next-line reentrancy-no-eth
         (vault, shareAddr) = _createVaultWithNewShare(
             serviceId,
             assetToken,
@@ -295,14 +294,12 @@ contract VaultFactory is Ownable2Step, ReentrancyGuard {
         // impossible. The state writes (`serviceVaults.push`,
         // `vaultServiceId`) are append-only registry updates keyed on a
         // freshly-CREATE2'd address, so they cannot collide with prior state.
-        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         VaultShare shareToken = vaultShareDeployer.deployShare(shareSalt, name, symbol, address(this));
         shareAddr = address(shareToken);
         emit ShareTokenCreated(serviceId, shareAddr);
 
         // Deploy TradingVault via dedicated helper to keep deployment bytecode under the EVM limit.
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, salt));
-        // slither-disable-next-line reentrancy-benign,reentrancy-events,reentrancy-no-eth
         TradingVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
         vault = address(v);
         serviceVaults[serviceId].push(vault);
@@ -324,7 +321,6 @@ contract VaultFactory is Ownable2Step, ReentrancyGuard {
         for (uint256 i = 0; i < tokensLen; i++) {
             address token = defaultWhitelistedTokens[i];
             if (isDefaultWhitelistedToken[token]) {
-                // slither-disable-next-line calls-loop
                 policyEngine.whitelistToken(vault, token, true);
             }
         }
@@ -333,7 +329,6 @@ contract VaultFactory is Ownable2Step, ReentrancyGuard {
         for (uint256 i = 0; i < targetsLen; i++) {
             target[0] = defaultWhitelistedTargets[i];
             if (isDefaultWhitelistedTarget[target[0]]) {
-                // slither-disable-next-line calls-loop
                 policyEngine.setTargetWhitelist(vault, target, true);
             }
         }

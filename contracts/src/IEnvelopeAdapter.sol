@@ -61,7 +61,7 @@ interface IEnvelopeAdapter {
     }
 
     /// @notice Decoded approval call: applied before the target call, reset to 0 after.
-    /// @dev Mirrors TradingVault.ApprovalCall to avoid a cross-library struct dep.
+    /// @dev Mirrors VaultTypes.ApprovalCall to avoid a cross-library struct dep.
     struct ApprovalSpec {
         address token;
         address spender;

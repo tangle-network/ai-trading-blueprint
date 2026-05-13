@@ -77,7 +77,9 @@ contract FullE2EForkTest is Test {
 
         // VaultFactory takes ownership of PE + TV + FD
         factory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer = new VaultDeployer(address(factory), policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(
+            address(factory), address(new TradingVault()), policyEngine, tradeValidator, feeDistributor
+        );
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(factory));
         factory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 
@@ -186,11 +188,11 @@ contract FullE2EForkTest is Test {
         scores[1] = score;
 
         // ── Step 3: Build the approval (vault approves Uniswap to spend USDC) ──
-        TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
-        approvals[0] = TradingVault.ApprovalCall({token: USDC, spender: UNISWAP_ROUTER, amount: swapAmount});
+        VaultTypes.ApprovalCall[] memory approvals = new VaultTypes.ApprovalCall[](1);
+        approvals[0] = VaultTypes.ApprovalCall({token: USDC, spender: UNISWAP_ROUTER, amount: swapAmount});
 
         // ── Step 4: Build execution params ──────────────────────────────────
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: UNISWAP_ROUTER,
             data: swapCalldata,
             value: 0,
@@ -289,10 +291,10 @@ contract FullE2EForkTest is Test {
         scores[0] = 80;
         scores[1] = 80;
 
-        TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
-        approvals[0] = TradingVault.ApprovalCall({token: USDC, spender: UNISWAP_ROUTER, amount: swapAmount});
+        VaultTypes.ApprovalCall[] memory approvals = new VaultTypes.ApprovalCall[](1);
+        approvals[0] = VaultTypes.ApprovalCall({token: USDC, spender: UNISWAP_ROUTER, amount: swapAmount});
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: UNISWAP_ROUTER,
             data: swapCalldata,
             value: 0,
@@ -308,7 +310,7 @@ contract FullE2EForkTest is Test {
 
         // Second execution with same intentHash REVERTS
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.IntentAlreadyExecuted.selector, intentHash));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.IntentAlreadyExecuted.selector, intentHash));
         vault.executeWithApprovals(params, approvals, sigs, scores);
     }
 
@@ -331,7 +333,7 @@ contract FullE2EForkTest is Test {
         scores[0] = 80;
         scores[1] = 80;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: UNISWAP_ROUTER,
             data: "",
             value: 0,
@@ -369,7 +371,7 @@ contract FullE2EForkTest is Test {
         scores[0] = 80;
         scores[1] = 80;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: UNISWAP_ROUTER,
             data: "",
             value: 0,
@@ -381,7 +383,7 @@ contract FullE2EForkTest is Test {
 
         // Execute uses actionKind=0 — signatures for actionKind=1 MUST fail
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
+        vm.expectRevert(VaultTypes.ValidatorCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 

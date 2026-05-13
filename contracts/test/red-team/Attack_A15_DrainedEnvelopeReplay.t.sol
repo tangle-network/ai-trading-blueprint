@@ -40,7 +40,7 @@ contract Attack_A15_DrainedEnvelopeReplay is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory p1 = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory p1 = VaultTypes.ExecuteParams({
             target: address(router),
             data: data1,
             value: 0,
@@ -68,7 +68,7 @@ contract Attack_A15_DrainedEnvelopeReplay is RedTeamBase {
             uint256(1),
             uint160(0)
         );
-        TradingVault.ExecuteParams memory p2 = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory p2 = VaultTypes.ExecuteParams({
             target: address(router),
             data: data2,
             value: 0,
@@ -79,7 +79,7 @@ contract Attack_A15_DrainedEnvelopeReplay is RedTeamBase {
         });
 
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.EnvelopeTotalExceeded.selector, uint256(1), uint256(0)));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.EnvelopeTotalExceeded.selector, uint256(1), uint256(0)));
         TradingVault(payable(vault)).executeUniswapV3SwapEnvelope(p2, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 }

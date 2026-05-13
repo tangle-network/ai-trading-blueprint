@@ -150,7 +150,6 @@ contract VaultShare is ERC20, AccessControl {
             // Single-asset mode: sum totalAssets() of each vault (includes held positions).
             // try/catch ensures one broken vault doesn't brick deposits/withdrawals for all.
             for (uint256 i = 0; i < len; i++) {
-                // slither-disable-next-line calls-loop
                 try IVaultAssets(linkedVaults[i]).totalAssets() returns (uint256 assets) {
                     nav += assets;
                 } catch {
@@ -161,12 +160,9 @@ contract VaultShare is ERC20, AccessControl {
             // Multi-asset mode: convert all positions to USD via oracle
             for (uint256 i = 0; i < len; i++) {
                 address vault = linkedVaults[i];
-                // slither-disable-next-line calls-loop
                 try IVaultAssets(vault).totalAssets() returns (uint256 assets) {
                     if (assets > 0) {
-                        // slither-disable-next-line calls-loop
                         address vaultAsset = IVaultAssets(vault).asset();
-                        // slither-disable-next-line calls-loop
                         (uint256 price, uint8 dec) = oracle.getPrice(vaultAsset);
                         if (price == 0) revert StaleOraclePrice(vaultAsset);
                         nav += (assets * price) / (10 ** dec);

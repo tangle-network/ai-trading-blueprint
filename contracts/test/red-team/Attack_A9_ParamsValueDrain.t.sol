@@ -39,7 +39,7 @@ contract Attack_A9_ParamsValueDrain is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 1 ether, // <-- ATTACK: spend 1 ETH from vault
@@ -56,7 +56,7 @@ contract Attack_A9_ParamsValueDrain is RedTeamBase {
         uint256 vaultEthBefore = address(vault).balance;
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 

@@ -212,7 +212,7 @@ contract PositionTrackingTest is Setup {
         sigs[0] = _signValidation(validator1Key, intentHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, address(vault), scores[1], deadline);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(targetC),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether),
             value: 0,
@@ -224,7 +224,7 @@ contract PositionTrackingTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.UnsupportedValuationAsset.selector, address(tokenC), address(tokenA))
+            abi.encodeWithSelector(VaultTypes.UnsupportedValuationAsset.selector, address(tokenC), address(tokenA))
         );
         vault.execute(params, sigs, scores);
     }
@@ -327,25 +327,25 @@ contract PositionTrackingTest is Setup {
 
     function test_deposit_zeroAddressReverts() public {
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAddress.selector));
         vault.deposit(100 ether, address(0));
     }
 
     function test_deposit_zeroAmountReverts() public {
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAmount.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAmount.selector));
         vault.deposit(0, user);
     }
 
     function test_withdraw_zeroAmountReverts() public {
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAmount.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAmount.selector));
         vault.withdraw(0, user, user);
     }
 
     function test_withdraw_zeroAddressReverts() public {
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAddress.selector));
         vault.withdraw(100 ether, address(0), user);
     }
 
@@ -357,13 +357,13 @@ contract PositionTrackingTest is Setup {
 
     function test_redeem_zeroAddressReverts() public {
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAddress.selector));
         vault.redeem(100 ether, address(0), user);
     }
 
     function test_emergencyWithdraw_zeroAddressReverts() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.ZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.ZeroAddress.selector));
         vault.emergencyWithdraw(address(tokenA), address(0));
     }
 

@@ -41,7 +41,7 @@ contract Attack_A7_MinOutputBypass is RedTeamBase {
             uint256(0), // <-- amountOutMinimum = 0 (attempted bypass)
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -55,7 +55,7 @@ contract Attack_A7_MinOutputBypass is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.EnvelopeRateTooLow.selector, uint256(0), reqMinOut));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.EnvelopeRateTooLow.selector, uint256(0), reqMinOut));
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }

@@ -125,8 +125,9 @@ contract RegisterBlueprint is Script {
         TradeValidator tradeValidator = new TradeValidator();
         FeeDistributor feeDistributor = new FeeDistributor(deployer);
         VaultFactory vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        VaultDeployer vaultDeployer =
-            new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        VaultDeployer vaultDeployer = new VaultDeployer(
+            address(vaultFactory), address(new TradingVault()), policyEngine, tradeValidator, feeDistributor
+        );
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
         _configureDefaultWhitelists(vaultFactory, usingExistingAssets, usdcAddress, wethAddress);
@@ -278,8 +279,8 @@ contract RegisterBlueprint is Script {
         signers[1] = OPERATOR2;
 
         VaultShare share = new VaultShare(vaultName, vaultSymbol, admin);
-        TradingVault vault =
-            new TradingVault(assetToken, share, policyEngine, tradeValidator, feeDistributor, admin, address(0));
+        TradingVault vault = new TradingVault();
+        vault.initialize(assetToken, share, policyEngine, tradeValidator, feeDistributor, admin, address(0));
 
         share.grantRole(share.MINTER_ROLE(), address(vault));
         share.linkVault(address(vault));

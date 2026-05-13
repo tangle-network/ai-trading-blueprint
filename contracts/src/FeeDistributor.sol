@@ -236,7 +236,6 @@ contract FeeDistributor is Ownable2Step, ReentrancyGuard {
             // (onlyOwner, gated above by `vaultFeeInitialized[vault]`). Vault
             // must also have explicitly approved this contract on `feeToken`,
             // so this is an opt-in pull pattern, not arbitrary draining.
-            // slither-disable-next-line arbitrary-send-erc20
             IERC20(feeToken).safeTransferFrom(vault, address(this), totalFee);
 
             valShare = (perfFee * vaultFeeConfig[vault].validatorFeeShareBps) / BPS_DENOMINATOR;

@@ -40,7 +40,7 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         bytes memory urCalldata =
             abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: enf.universalRouter,
             data: urCalldata,
             value: 0,
@@ -52,7 +52,7 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -84,7 +84,7 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         uint256 ddl = block.timestamp + 600;
         bytes memory urCalldata =
             abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: enf.universalRouter,
             data: urCalldata,
             value: 0,
@@ -96,7 +96,7 @@ contract Attack_A19_URCommandBufferManipulation is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }

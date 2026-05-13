@@ -64,7 +64,7 @@ contract Attack_A11_VaultReplay is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -80,7 +80,7 @@ contract Attack_A11_VaultReplay is RedTeamBase {
         // Submit to vault B. Executor's `_checkEnvelopeBasics` MUST trip on
         // `env.vault != address(this)`.
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeWrongVault.selector);
+        vm.expectRevert(VaultTypes.EnvelopeWrongVault.selector);
         TradingVault(payable(vaultB))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }

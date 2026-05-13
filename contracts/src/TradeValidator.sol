@@ -114,7 +114,6 @@ contract TradeValidator is EIP712, Ownable2Step {
             address old = config.signers.at(i - 1);
             // OZ EnumerableSet.remove returns bool; safe to ignore here because
             // `old` was just retrieved via `at()` so membership is guaranteed.
-            // slither-disable-next-line unused-return
             config.signers.remove(old);
             emit SignerRemoved(vault, old);
         }
@@ -283,7 +282,6 @@ contract TradeValidator is EIP712, Ownable2Step {
         // Backward-compat shim — the return value IS used (it's `return`-ed
         // directly), but slither's external-self-call heuristic spuriously
         // flags it as ignored.
-        // slither-disable-next-line unused-return
         return this.validateWithSignatures(intentHash, bytes32(0), vault, signatures, scores, deadline, actionKind);
     }
 

@@ -28,10 +28,10 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
     }
 
     function _v4ParamBytes() internal view returns (bytes memory) {
-        TradingVault.V4PoolKey memory poolKey = TradingVault.V4PoolKey({
+        VaultTypes.V4PoolKey memory poolKey = VaultTypes.V4PoolKey({
             currency0: address(tokenA), currency1: address(tokenB), fee: 3000, tickSpacing: 60, hooks: address(0)
         });
-        TradingVault.V4ExactInputSingleParams memory v4 = TradingVault.V4ExactInputSingleParams({
+        VaultTypes.V4ExactInputSingleParams memory v4 = VaultTypes.V4ExactInputSingleParams({
             poolKey: poolKey, zeroForOne: true, amountIn: 5 ether, amountOutMinimum: 5 ether, hookData: ""
         });
         return abi.encode(v4);
@@ -55,7 +55,7 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         bytes memory urCalldata =
             abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: enf.universalRouter,
             data: urCalldata,
             value: 0,
@@ -67,7 +67,7 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -89,7 +89,7 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         bytes memory urCalldata =
             abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: enf.universalRouter,
             data: urCalldata,
             value: 0,
@@ -101,7 +101,7 @@ contract Attack_A20_V4ActionsOutOfOrder is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
