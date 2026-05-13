@@ -39,10 +39,10 @@ contract EdgeCaseTests is Setup {
     function _buildExecuteParams(uint256 outputAmount, uint256 minOutput, bytes32 intentHash, uint256 deadline)
         internal
         view
-        returns (TradingVault.ExecuteParams memory)
+        returns (VaultTypes.ExecuteParams memory)
     {
         bytes memory data = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount);
-        return TradingVault.ExecuteParams({
+        return VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: data,
             value: 0,
@@ -53,11 +53,11 @@ contract EdgeCaseTests is Setup {
         });
     }
 
-    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
-        approvals = new TradingVault.ApprovalCall[](0);
+    function _emptyApprovals() internal pure returns (VaultTypes.ApprovalCall[] memory approvals) {
+        approvals = new VaultTypes.ApprovalCall[](0);
     }
 
-    function _createValidatorSigs(TradingVault.ExecuteParams memory params, uint256 deadline)
+    function _createValidatorSigs(VaultTypes.ExecuteParams memory params, uint256 deadline)
         internal
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
@@ -85,7 +85,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("mismatch test");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         // 2 sigs but 1 score — TradeValidator reverts with InvalidSignatureCount
         bytes[] memory sigs = new bytes[](2);
@@ -108,7 +108,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("empty sigs");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         bytes[] memory sigs = new bytes[](0);
         uint256[] memory scores = new uint256[](0);
@@ -126,7 +126,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("more sigs");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         // 1 sig, 3 scores
         bytes[] memory sigs = new bytes[](1);
@@ -148,7 +148,7 @@ contract EdgeCaseTests is Setup {
 
     function test_deposit_zeroAmountReverts() public {
         vm.prank(user);
-        vm.expectRevert(TradingVault.ZeroAmount.selector);
+        vm.expectRevert(VaultTypes.ZeroAmount.selector);
         vault.deposit(0, user);
     }
 
@@ -157,7 +157,7 @@ contract EdgeCaseTests is Setup {
         vault.deposit(1000 ether, user);
 
         vm.prank(user);
-        vm.expectRevert(TradingVault.ZeroAmount.selector);
+        vm.expectRevert(VaultTypes.ZeroAmount.selector);
         vault.withdraw(0, user, user);
     }
 
@@ -182,11 +182,11 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("zero min");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 0, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 0, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ZeroAmount.selector);
+        vm.expectRevert(VaultTypes.ZeroAmount.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -198,7 +198,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("zero target");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(0),
             data: hex"",
             value: 0,
@@ -210,7 +210,7 @@ contract EdgeCaseTests is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ZeroAddress.selector);
+        vm.expectRevert(VaultTypes.ZeroAddress.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -222,7 +222,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("expired deadline");
         uint256 deadline = block.timestamp - 1; // already expired
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         // Sign with the expired deadline
         bytes[] memory sigs = new bytes[](2);
         uint256[] memory scores = new uint256[](2);
@@ -247,7 +247,7 @@ contract EdgeCaseTests is Setup {
 
         // Point to failingSwap() which always reverts
         bytes memory data = abi.encodeWithSelector(MockTarget.failingSwap.selector);
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: data,
             value: 0,
@@ -259,7 +259,7 @@ contract EdgeCaseTests is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -355,11 +355,11 @@ contract EdgeCaseTests is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         // Trade outputs tokenB which is NOT whitelisted
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
+        vm.expectRevert(VaultTypes.PolicyCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -380,11 +380,11 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("non-whitelisted target");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
+        vm.expectRevert(VaultTypes.PolicyCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -408,11 +408,11 @@ contract EdgeCaseTests is Setup {
         uint256 deadline = block.timestamp + 1 hours;
 
         // Try to acquire 500 tokenB, exceeds 100 limit
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.PolicyCheckFailed.selector);
+        vm.expectRevert(VaultTypes.PolicyCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -513,11 +513,11 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("winddown execute");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createValidatorSigs(params, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.WindDownBlocksExecute.selector);
+        vm.expectRevert(VaultTypes.WindDownBlocksExecute.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -527,7 +527,7 @@ contract EdgeCaseTests is Setup {
 
     function test_deposit_toZeroAddressReverts() public {
         vm.prank(user);
-        vm.expectRevert(TradingVault.ZeroAddress.selector);
+        vm.expectRevert(VaultTypes.ZeroAddress.selector);
         vault.deposit(1000 ether, address(0));
     }
 
@@ -543,7 +543,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("dup signer");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         // Submit 3 sigs but 2 are from the same validator — only 2 unique, need 2-of-3
         // However, one of them is the same signer, so effectively 2 unique signers
@@ -571,7 +571,7 @@ contract EdgeCaseTests is Setup {
         bytes32 intentHash = keccak256("all dup");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildExecuteParams(500 ether, 500 ether, intentHash, deadline);
 
         // 2 sigs but both from validator1 — only 1 unique, need 2-of-3
         bytes[] memory sigs = new bytes[](2);
@@ -583,7 +583,7 @@ contract EdgeCaseTests is Setup {
         sigs[1] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
+        vm.expectRevert(VaultTypes.ValidatorCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 }

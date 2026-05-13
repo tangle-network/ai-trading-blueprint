@@ -11,7 +11,7 @@ import "./RedTeamBase.sol";
 ///      `ExecutionFailed`.
 contract MaliciousReentrantRouter {
     TradingVault public vault;
-    TradingVault.ExecuteParams public reentrantParams;
+    VaultTypes.ExecuteParams public reentrantParams;
     TradeValidator.Envelope public reentrantEnv;
     TradeValidator.UniswapV3SwapEnforcement public reentrantEnf;
     address[] public reentrantSigners;
@@ -24,7 +24,7 @@ contract MaliciousReentrantRouter {
     }
 
     function arm(
-        TradingVault.ExecuteParams calldata params,
+        VaultTypes.ExecuteParams calldata params,
         TradeValidator.Envelope calldata env,
         TradeValidator.UniswapV3SwapEnforcement calldata enf,
         address[] calldata signers,
@@ -98,7 +98,7 @@ contract Attack_A1_ReentrantRouter is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -120,7 +120,7 @@ contract Attack_A1_ReentrantRouter is RedTeamBase {
 
         vm.prank(operator);
         // Outer call sees inner revert → target.call returns false → ExecutionFailed.
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 

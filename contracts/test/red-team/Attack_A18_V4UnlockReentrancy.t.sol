@@ -8,7 +8,7 @@ import "./RedTeamBase.sol";
 ///      call) can re-enter the vault inside `execute(commands, inputs, ddl)`.
 contract MaliciousUniversalRouter {
     TradingVault public vault;
-    TradingVault.ExecuteParams public reentrantParams;
+    VaultTypes.ExecuteParams public reentrantParams;
     TradeValidator.Envelope public reentrantEnv;
     TradeValidator.UniswapV4SwapEnforcement public reentrantEnf;
     address[] public reentrantSigners;
@@ -21,7 +21,7 @@ contract MaliciousUniversalRouter {
     }
 
     function arm(
-        TradingVault.ExecuteParams calldata params,
+        VaultTypes.ExecuteParams calldata params,
         TradeValidator.Envelope calldata env,
         TradeValidator.UniswapV4SwapEnforcement calldata enf,
         address[] calldata signers,
@@ -85,12 +85,12 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
 
         // Build minimal valid V4 calldata: 1 command (V4_SWAP=0x10), 1 input, 1
         // action (SWAP_EXACT_IN_SINGLE=0x06), 1 v4 param.
-        TradingVault.V4PoolKey memory poolKey = TradingVault.V4PoolKey({
+        VaultTypes.V4PoolKey memory poolKey = VaultTypes.V4PoolKey({
             currency0: address(tokenA), currency1: address(tokenB), fee: 3000, tickSpacing: 60, hooks: address(0)
         });
         uint128 amountIn = 5 ether;
         uint128 amountOutMinimum = 5 ether;
-        TradingVault.V4ExactInputSingleParams memory v4 = TradingVault.V4ExactInputSingleParams({
+        VaultTypes.V4ExactInputSingleParams memory v4 = VaultTypes.V4ExactInputSingleParams({
             poolKey: poolKey, zeroForOne: true, amountIn: amountIn, amountOutMinimum: amountOutMinimum, hookData: ""
         });
         bytes[] memory v4Params = new bytes[](1);
@@ -104,7 +104,7 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
         bytes memory urCalldata =
             abi.encodeWithSelector(bytes4(keccak256("execute(bytes,bytes[],uint256)")), commands, urInputs, ddl);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(ur),
             data: urCalldata,
             value: 0,
@@ -122,7 +122,7 @@ contract Attack_A18_V4UnlockReentrancy is RedTeamBase {
         bytes32 envHash = tradeValidator.hashEnvelope(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV4SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 

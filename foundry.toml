@@ -9,7 +9,12 @@ libs = ["dependencies"]
 auto_detect_remappings = true
 via_ir = true
 optimizer = true
-optimizer_runs = 200
+# Hyperliquid (and any EVM enforcing EIP-170 strictly) caps runtime bytecode
+# at 24,576 B. Lower optimizer_runs trades a small amount of runtime gas for
+# smaller deployment bytecode — TradingVault + VaultDeployer would otherwise
+# blow the cap by several KB. The execute-path libraries (`ExecutionLib`,
+# `EnvelopeExecLib`, `ValuationLib`) absorb the rest of the reduction.
+optimizer_runs = 1
 
 # Fork testing RPC endpoints. Set via env vars or .env file.
 # Tests gated by `--fork-url` flag — unit tests never hit these.

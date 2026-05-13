@@ -160,7 +160,12 @@ abstract contract Setup is Test {
         tradeValidator = new TradeValidator();
         feeDistributor = new FeeDistributor(owner);
         vaultFactory = new VaultFactory(policyEngine, tradeValidator, feeDistributor);
-        vaultDeployer = new VaultDeployer(address(vaultFactory), policyEngine, tradeValidator, feeDistributor);
+        // Deploy the shared TradingVault implementation. Clones of this
+        // impl, one per service, become the actual deployed vaults — keeps
+        // `VaultDeployer.runtimeBytecode` under the EIP-170 cap.
+        TradingVault vaultImpl = new TradingVault();
+        vaultDeployer =
+            new VaultDeployer(address(vaultFactory), address(vaultImpl), policyEngine, tradeValidator, feeDistributor);
         vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
 

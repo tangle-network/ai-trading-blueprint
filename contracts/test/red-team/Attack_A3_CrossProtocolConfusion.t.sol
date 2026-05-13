@@ -88,7 +88,7 @@ contract Attack_A3_CrossProtocolConfusion is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: u.router,
             data: data,
             value: 0,

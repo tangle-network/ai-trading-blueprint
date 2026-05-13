@@ -8,7 +8,7 @@ import "./RedTeamBase.sol";
 ///      the outer call has finished.
 contract MaliciousCurvePool {
     TradingVault public vault;
-    TradingVault.ExecuteParams public reentrantParams;
+    VaultTypes.ExecuteParams public reentrantParams;
     TradeValidator.Envelope public reentrantEnv;
     TradeValidator.CurveStableSwapEnforcement public reentrantEnf;
     address[] public reentrantSigners;
@@ -21,7 +21,7 @@ contract MaliciousCurvePool {
     }
 
     function arm(
-        TradingVault.ExecuteParams calldata params,
+        VaultTypes.ExecuteParams calldata params,
         TradeValidator.Envelope calldata env,
         TradeValidator.CurveStableSwapEnforcement calldata enf,
         address[] calldata signers,
@@ -88,7 +88,7 @@ contract Attack_A2_ReentrantCurve is RedTeamBase {
         bytes memory data = abi.encodeWithSelector(
             bytes4(keccak256("exchange(int128,int128,uint256,uint256)")), int128(0), int128(1), dx, minDy
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(pool),
             data: data,
             value: 0,
@@ -107,7 +107,7 @@ contract Attack_A2_ReentrantCurve is RedTeamBase {
         uint256 consumedBefore = TradingVault(payable(vault)).envelopeConsumedAmount(envHash);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         TradingVault(payable(vault))
             .executeCurveStableSwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 

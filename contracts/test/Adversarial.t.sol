@@ -38,11 +38,11 @@ contract AdversarialTest is Setup {
         vm.stopPrank();
     }
 
-    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
-        approvals = new TradingVault.ApprovalCall[](0);
+    function _emptyApprovals() internal pure returns (VaultTypes.ApprovalCall[] memory approvals) {
+        approvals = new VaultTypes.ApprovalCall[](0);
     }
 
-    function _signExecuteParams(TradingVault.ExecuteParams memory params, uint256 score)
+    function _signExecuteParams(VaultTypes.ExecuteParams memory params, uint256 score)
         internal
         view
         returns (bytes memory sig1, bytes memory sig2)
@@ -95,7 +95,7 @@ contract AdversarialTest is Setup {
         scores[1] = 80;
 
         // Execute trade: vault calls target.swap() which mints tokenB to vault
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target),
             data: tradeData,
             value: 0,
@@ -134,7 +134,7 @@ contract AdversarialTest is Setup {
         bytes32 intentHash = keccak256("legitimate-looking-trade");
         uint256 deadline = block.timestamp + 300;
 
-        TradingVault.ExecuteParams memory signedParams = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory signedParams = VaultTypes.ExecuteParams({
             target: address(target),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether),
             value: 0,
@@ -162,7 +162,7 @@ contract AdversarialTest is Setup {
         policyEngine.setTargetWhitelist(address(vault), newTargets, true);
 
         bytes memory tradeData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1 ether);
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target2),
             data: tradeData,
             value: 0,
@@ -173,7 +173,7 @@ contract AdversarialTest is Setup {
         });
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
+        vm.expectRevert(VaultTypes.ValidatorCheckFailed.selector);
         vault.execute(params, sigs, scores);
     }
 
@@ -274,7 +274,7 @@ contract AdversarialTest is Setup {
         scores[0] = 80;
         scores[1] = 80;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target),
             data: tradeData,
             value: 0,
@@ -293,7 +293,7 @@ contract AdversarialTest is Setup {
 
         // Second execution with same intentHash reverts
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.IntentAlreadyExecuted.selector, intentHash));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.IntentAlreadyExecuted.selector, intentHash));
         vault.execute(params, sigs, scores);
     }
 
@@ -314,7 +314,7 @@ contract AdversarialTest is Setup {
         // Warp past deadline
         vm.warp(block.timestamp + 10);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 100 ether),
             value: 0,
@@ -417,7 +417,7 @@ contract AdversarialTest is Setup {
         scores[0] = 80;
         scores[1] = 80;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target),
             data: tradeData,
             value: 0,

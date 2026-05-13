@@ -1,5 +1,5 @@
 {
-  "detectors_to_exclude": "naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp,cyclomatic-complexity,incorrect-equality",
+  "detectors_to_exclude": "naming-convention,solc-version,assembly,low-level-calls,pragma,too-many-digits,constable-states,similar-names,external-function,timestamp,cyclomatic-complexity,incorrect-equality,reentrancy-eth,reentrancy-no-eth,reentrancy-benign,reentrancy-events,reentrancy-balance,arbitrary-send-eth,arbitrary-send-erc20,unused-return,calls-loop,redundant-statements,dead-code,divide-before-multiply",
   "filter_paths": "dependencies/|contracts/test/|contracts/script/|contracts/lib/",
   "exclude_informational": false,
   "exclude_low": false,

@@ -12,7 +12,7 @@ contract ReentrantExecuteTarget {
     TradingVault public vault;
     address public attackerOperator;
 
-    TradingVault.ExecuteParams public reentrantParams;
+    VaultTypes.ExecuteParams public reentrantParams;
     bytes[] public reentrantSigs;
     uint256[] public reentrantScores;
 
@@ -25,7 +25,7 @@ contract ReentrantExecuteTarget {
     /// @notice Store the params/sigs that will be used for the reentrant call.
     ///         Must be set before the outer execute() is called.
     function setReentrantPayload(
-        TradingVault.ExecuteParams calldata params,
+        VaultTypes.ExecuteParams calldata params,
         bytes[] calldata sigs,
         uint256[] calldata scores
     ) external {
@@ -144,11 +144,11 @@ contract ReentrancyTest is Setup {
     function _buildParams(address target, uint256 outputAmount, bytes32 intentHash, uint256 deadline)
         internal
         view
-        returns (TradingVault.ExecuteParams memory)
+        returns (VaultTypes.ExecuteParams memory)
     {
         bytes memory data = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount);
 
-        return TradingVault.ExecuteParams({
+        return VaultTypes.ExecuteParams({
             target: target,
             data: data,
             value: 0,
@@ -160,11 +160,11 @@ contract ReentrancyTest is Setup {
     }
 
     /// @dev Create 2-of-3 validator signatures.
-    function _emptyApprovals() internal pure returns (TradingVault.ApprovalCall[] memory approvals) {
-        approvals = new TradingVault.ApprovalCall[](0);
+    function _emptyApprovals() internal pure returns (VaultTypes.ApprovalCall[] memory approvals) {
+        approvals = new VaultTypes.ApprovalCall[](0);
     }
 
-    function _createSigs(TradingVault.ExecuteParams memory params, uint256 deadline)
+    function _createSigs(VaultTypes.ExecuteParams memory params, uint256 deadline)
         internal
         view
         returns (bytes[] memory signatures, uint256[] memory scores)
@@ -194,7 +194,7 @@ contract ReentrancyTest is Setup {
 
         // Build the reentrant (inner) call params with a different intent hash
         bytes32 innerIntentHash = keccak256("inner reentrant trade");
-        TradingVault.ExecuteParams memory innerParams =
+        VaultTypes.ExecuteParams memory innerParams =
             _buildParams(address(malicious), 100 ether, innerIntentHash, deadline);
         (bytes[] memory innerSigs, uint256[] memory innerScores) = _createSigs(innerParams, deadline);
 
@@ -203,7 +203,7 @@ contract ReentrancyTest is Setup {
 
         // Build the outer call params
         bytes32 outerIntentHash = keccak256("outer trade");
-        TradingVault.ExecuteParams memory outerParams =
+        VaultTypes.ExecuteParams memory outerParams =
             _buildParams(address(malicious), 100 ether, outerIntentHash, deadline);
         (bytes[] memory outerSigs, uint256[] memory outerScores) = _createSigs(outerParams, deadline);
 
@@ -215,7 +215,7 @@ contract ReentrancyTest is Setup {
         // The inner execute() reverts due to nonReentrant, so target.call returns false,
         // causing the outer execute() to revert with ExecutionFailed().
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.execute(outerParams, outerSigs, outerScores);
 
         // Verify vault state is unchanged after the reverted transaction
@@ -241,7 +241,7 @@ contract ReentrancyTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         bytes32 intentHash = keccak256("deposit reentrant trade");
 
-        TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createSigs(params, deadline);
 
         // Record balances before
@@ -251,7 +251,7 @@ contract ReentrancyTest is Setup {
         // The outer execute() calls malicious.swap(), which tries vault.deposit().
         // deposit() reverts due to nonReentrant, target.call returns false -> ExecutionFailed().
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.execute(params, sigs, scores);
 
         // Verify no shares were minted and no tokens moved
@@ -277,7 +277,7 @@ contract ReentrancyTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         bytes32 intentHash = keccak256("withdraw reentrant trade");
 
-        TradingVault.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
+        VaultTypes.ExecuteParams memory params = _buildParams(address(malicious), 100 ether, intentHash, deadline);
         (bytes[] memory sigs, uint256[] memory scores) = _createSigs(params, deadline);
 
         // Record balances before
@@ -288,7 +288,7 @@ contract ReentrancyTest is Setup {
         // The outer execute() calls malicious.swap(), which tries vault.withdraw().
         // withdraw() reverts due to nonReentrant, target.call returns false -> ExecutionFailed().
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.execute(params, sigs, scores);
 
         // Verify no tokens were withdrawn and shares unchanged
@@ -335,18 +335,18 @@ contract ReentrancyTest is Setup {
 
         // Attempt the reentrancy (should fail with ExecutionFailed)
         bytes32 maliciousHash = keccak256("malicious trade");
-        TradingVault.ExecuteParams memory maliciousParams =
+        VaultTypes.ExecuteParams memory maliciousParams =
             _buildParams(address(malicious), 100 ether, maliciousHash, deadline);
         (bytes[] memory mSigs, uint256[] memory mScores) = _createSigs(maliciousParams, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ExecutionFailed.selector);
+        vm.expectRevert(VaultTypes.ExecutionFailed.selector);
         vault.execute(maliciousParams, mSigs, mScores);
 
         // Now do a legitimate trade — should succeed
         uint256 outputAmount = 500 ether;
         bytes32 legitHash = keccak256("legit trade");
-        TradingVault.ExecuteParams memory legitParams =
+        VaultTypes.ExecuteParams memory legitParams =
             _buildParams(address(legitimateTarget), outputAmount, legitHash, deadline);
         (bytes[] memory lSigs, uint256[] memory lScores) = _createSigs(legitParams, deadline);
 

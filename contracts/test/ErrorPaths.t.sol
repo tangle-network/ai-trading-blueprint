@@ -456,7 +456,7 @@ contract ErrorPathsTest is Setup {
         // The mock target mints output but doesn't consume input. After trade:
         // depositAsset balance = 10000, totalAssets = 10000 + 9500 = 19500
         // Reserve check: 10000 * 10000 < 19500 * 9000 → 100M < 175.5M → true → revert
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount),
             value: 0,
@@ -470,12 +470,12 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.DepositAssetBelowReserve.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.DepositAssetBelowReserve.selector));
         vault.execute(params, sigs, scores);
     }
 
@@ -488,7 +488,7 @@ contract ErrorPathsTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         uint256 outputAmount = 9000 ether;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount),
             value: 0,
@@ -502,7 +502,7 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
@@ -520,7 +520,7 @@ contract ErrorPathsTest is Setup {
         uint256 deadline = block.timestamp + 1 hours;
         uint256 outputAmount = 100 ether; // Even a small swap to tokenB breaks 100% reserve
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), outputAmount),
             value: 0,
@@ -534,13 +534,13 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 
         // Should revert — deposit asset balance (10000) < total (10100) * 100%
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.DepositAssetBelowReserve.selector));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.DepositAssetBelowReserve.selector));
         vault.execute(params, sigs, scores);
     }
 
@@ -568,7 +568,7 @@ contract ErrorPathsTest is Setup {
         bytes32 intentHash = keccak256("decimal mismatch test");
         uint256 deadline = block.timestamp + 1 hours;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(usdcTarget),
             data: abi.encodeWithSelector(MockTarget.swap.selector, address(vault), 1000e6),
             value: 0,
@@ -582,7 +582,7 @@ contract ErrorPathsTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 80;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         sigs[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 

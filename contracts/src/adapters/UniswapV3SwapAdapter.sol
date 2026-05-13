@@ -55,8 +55,8 @@ contract UniswapV3SwapAdapter is IEnvelopeAdapter {
         uint256 sqrtPriceLimitX96; // upcast from uint160 for decode safety
     }
 
-    /// @dev Local minimal struct so we don't import TradingVault.ExecuteParams.
-    ///      Layout MUST match TradingVault.ExecuteParams exactly.
+    /// @dev Local minimal struct so we don't import VaultTypes.ExecuteParams.
+    ///      Layout MUST match VaultTypes.ExecuteParams exactly.
     struct ExecuteParams {
         address target;
         bytes data;

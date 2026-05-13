@@ -41,7 +41,7 @@ contract Attack_A10_ApprovalResidue is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,

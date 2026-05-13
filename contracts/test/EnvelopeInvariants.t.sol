@@ -280,7 +280,7 @@ contract EnvelopeInvariantsTest is Setup {
             address(vault) // onBehalfOf — set to vault so this isn't what trips the revert
         );
 
-        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+        VaultTypes.HealthFactorParams memory params = VaultTypes.HealthFactorParams({
             target: FAKE_AAVE_POOL,
             data: data,
             value: 0,
@@ -296,7 +296,7 @@ contract EnvelopeInvariantsTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault)).executeAaveBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
 
         // Post: still nothing consumed; intent hash still unmarked.
@@ -335,7 +335,7 @@ contract EnvelopeInvariantsTest is Setup {
             address(vault)
         );
 
-        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+        VaultTypes.HealthFactorParams memory params = VaultTypes.HealthFactorParams({
             target: FAKE_AAVE_POOL,
             data: data,
             value: 0,
@@ -350,7 +350,7 @@ contract EnvelopeInvariantsTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault)).executeAaveBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
@@ -373,7 +373,7 @@ contract EnvelopeInvariantsTest is Setup {
             address(vault) // to = vault
         );
 
-        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+        VaultTypes.HealthFactorParams memory params = VaultTypes.HealthFactorParams({
             target: FAKE_AAVE_POOL,
             data: data,
             value: 0,
@@ -388,14 +388,14 @@ contract EnvelopeInvariantsTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeAaveWithdrawEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Morpho borrow envelope with decoy `params.account` MUST revert.
     function test_h1_morphoBorrow_rejects_decoy_account() public {
-        TradingVault.MorphoMarketParams memory mp = TradingVault.MorphoMarketParams({
+        VaultTypes.MorphoMarketParams memory mp = VaultTypes.MorphoMarketParams({
             loanToken: address(tokenA),
             collateralToken: address(tokenB),
             oracle: address(0xCAFE),
@@ -423,7 +423,7 @@ contract EnvelopeInvariantsTest is Setup {
             address(vault) // receiver
         );
 
-        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+        VaultTypes.HealthFactorParams memory params = VaultTypes.HealthFactorParams({
             target: FAKE_MORPHO,
             data: data,
             value: 0,
@@ -438,14 +438,14 @@ contract EnvelopeInvariantsTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeMorphoBorrowEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
 
     /// @dev Morpho withdraw envelope with decoy `params.account` MUST revert.
     function test_h1_morphoWithdraw_rejects_decoy_account() public {
-        TradingVault.MorphoMarketParams memory mp = TradingVault.MorphoMarketParams({
+        VaultTypes.MorphoMarketParams memory mp = VaultTypes.MorphoMarketParams({
             loanToken: address(tokenA),
             collateralToken: address(tokenB),
             oracle: address(0xCAFE),
@@ -473,7 +473,7 @@ contract EnvelopeInvariantsTest is Setup {
             address(vault) // receiver
         );
 
-        TradingVault.HealthFactorParams memory params = TradingVault.HealthFactorParams({
+        VaultTypes.HealthFactorParams memory params = VaultTypes.HealthFactorParams({
             target: FAKE_MORPHO,
             data: data,
             value: 0,
@@ -488,7 +488,7 @@ contract EnvelopeInvariantsTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeMorphoWithdrawEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -642,7 +642,7 @@ contract EnvelopeAllowanceResetTest is Setup {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -683,11 +683,11 @@ contract EnvelopeAllowanceResetTest is Setup {
         vm.prank(address(vaultFactory));
         policyEngine.setPositionLimit(vault, address(tokenB), 1_000 ether);
 
-        TradingVault.ApprovalCall[] memory approvals = new TradingVault.ApprovalCall[](1);
-        approvals[0] = TradingVault.ApprovalCall({token: address(tokenA), spender: address(target), amount: 5 ether});
+        VaultTypes.ApprovalCall[] memory approvals = new VaultTypes.ApprovalCall[](1);
+        approvals[0] = VaultTypes.ApprovalCall({token: address(tokenA), spender: address(target), amount: 5 ether});
 
         bytes memory data = abi.encodeWithSelector(M1MockTarget.swap.selector, vault, 5 ether);
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(target),
             data: data,
             value: 0,
@@ -832,7 +832,7 @@ contract EnvelopePriceLimitPinTest is Setup {
             minOut,
             uint160(9999999999) // <-- mismatched
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -846,7 +846,7 @@ contract EnvelopePriceLimitPinTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -1090,7 +1090,7 @@ contract EnvelopeMaxValuePinTest is Setup {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 1 wei, // <-- exceeds enf.maxValue (0)
@@ -1105,7 +1105,7 @@ contract EnvelopeMaxValuePinTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeCheckFailed.selector);
+        vm.expectRevert(VaultTypes.EnvelopeCheckFailed.selector);
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -1456,7 +1456,7 @@ contract EnvelopeSlippageCapTest is Setup {
         uint256 amountIn = 10 ether;
         uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18; // 10 tokenB
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: _v3Calldata(amountIn, minOut),
             value: 0,
@@ -1472,7 +1472,7 @@ contract EnvelopeSlippageCapTest is Setup {
         // Input value = 10 (1:1 asset), output value = 10 * 0.5 = 5 → 5000 BPS slippage,
         // cap is 100 BPS.
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.SlippageCapExceeded.selector, 5000, 100));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.SlippageCapExceeded.selector, 5000, 100));
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
@@ -1492,7 +1492,7 @@ contract EnvelopeSlippageCapTest is Setup {
         uint256 amountIn = 10 ether;
         uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: _v3Calldata(amountIn, minOut),
             value: 0,
@@ -1529,7 +1529,7 @@ contract EnvelopeSlippageCapTest is Setup {
         uint256 amountIn = 10 ether;
         uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: _v3Calldata(amountIn, minOut),
             value: 0,
@@ -1569,7 +1569,7 @@ contract EnvelopeSlippageCapTest is Setup {
         uint256 amountIn = 10 ether;
         uint256 minOut = (amountIn * enf.minOutputPerInput + 1e18 - 1) / 1e18;
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: _v3Calldata(amountIn, minOut),
             value: 0,
@@ -1584,7 +1584,7 @@ contract EnvelopeSlippageCapTest is Setup {
 
         vm.prank(operator);
         vm.expectRevert(
-            abi.encodeWithSelector(TradingVault.UnsupportedValuationAsset.selector, address(tokenB), address(tokenA))
+            abi.encodeWithSelector(VaultTypes.UnsupportedValuationAsset.selector, address(tokenB), address(tokenA))
         );
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);

@@ -134,10 +134,12 @@ contract VaultShareTest is Setup {
         VaultShare multiShare = new VaultShare("Multi", "MULTI", address(this));
 
         // Deploy two vaults with the same share token but different deposit assets
-        TradingVault vault1 = new TradingVault(
+        TradingVault vault1 = new TradingVault();
+        vault1.initialize(
             address(tokenA), multiShare, policyEngine, tradeValidator, feeDistributor, address(this), operator
         );
-        TradingVault vault2 = new TradingVault(
+        TradingVault vault2 = new TradingVault();
+        vault2.initialize(
             address(tokenB), multiShare, policyEngine, tradeValidator, feeDistributor, address(this), operator
         );
 
@@ -177,10 +179,12 @@ contract VaultShareTest is Setup {
         MockOracle mockOracle = new MockOracle();
         multiShare.setOracle(address(mockOracle));
 
-        TradingVault vault1 = new TradingVault(
+        TradingVault vault1 = new TradingVault();
+        vault1.initialize(
             address(tokenA), multiShare, policyEngine, tradeValidator, feeDistributor, address(this), operator
         );
-        TradingVault vault2 = new TradingVault(
+        TradingVault vault2 = new TradingVault();
+        vault2.initialize(
             address(tokenB), multiShare, policyEngine, tradeValidator, feeDistributor, address(this), operator
         );
 

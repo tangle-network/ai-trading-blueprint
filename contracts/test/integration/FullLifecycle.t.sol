@@ -102,7 +102,7 @@ contract FullLifecycleTest is Setup {
 
         bytes memory swapData = abi.encodeWithSelector(MockTarget.swap.selector, address(vault), expectedOutput);
 
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(mockTarget),
             data: swapData,
             value: 0,
@@ -115,7 +115,7 @@ contract FullLifecycleTest is Setup {
         uint256[] memory scores = new uint256[](2);
         scores[0] = 85;
         scores[1] = 75;
-        bytes32 executionHash = vault.computeExecutionHash(params, new TradingVault.ApprovalCall[](0));
+        bytes32 executionHash = vault.computeExecutionHash(params, new VaultTypes.ApprovalCall[](0));
         signatures[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline);
         signatures[1] = _signValidation(validator2Key, intentHash, executionHash, address(vault), scores[1], deadline);
 

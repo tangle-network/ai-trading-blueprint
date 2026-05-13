@@ -130,7 +130,7 @@ contract ClobCollateralTest is Setup {
         sigs[0] = _signValidation(validator1Key, intentHash, executionHash, address(vault), scores[0], deadline, 1);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ValidatorCheckFailed.selector);
+        vm.expectRevert(VaultTypes.ValidatorCheckFailed.selector);
         vault.releaseCollateral(1000 ether, operator, intentHash, deadline, sigs, scores);
     }
 
@@ -166,7 +166,7 @@ contract ClobCollateralTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _createCollateralSigs(intentHash, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(TradingVault.IntentAlreadyExecuted.selector, intentHash));
+        vm.expectRevert(abi.encodeWithSelector(VaultTypes.IntentAlreadyExecuted.selector, intentHash));
         vault.releaseCollateral(500 ether, operator, intentHash, deadline, sigs, scores);
     }
 
@@ -326,7 +326,7 @@ contract ClobCollateralTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _createCollateralSigs(intentHash, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.ZeroAmount.selector);
+        vm.expectRevert(VaultTypes.ZeroAmount.selector);
         vault.releaseCollateral(0, operator, intentHash, deadline, sigs, scores);
     }
 
@@ -355,7 +355,7 @@ contract ClobCollateralTest is Setup {
         (bytes[] memory sigs, uint256[] memory scores) = _createCollateralSigs(intentHash, deadline);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.WindDownBlocksExecute.selector);
+        vm.expectRevert(VaultTypes.WindDownBlocksExecute.selector);
         vault.releaseCollateral(1000 ether, operator, intentHash, deadline, sigs, scores);
     }
 

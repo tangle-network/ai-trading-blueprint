@@ -44,7 +44,7 @@ contract Attack_A12_ChainReplay is RedTeamBase {
             minOut,
             uint160(0)
         );
-        TradingVault.ExecuteParams memory params = TradingVault.ExecuteParams({
+        VaultTypes.ExecuteParams memory params = VaultTypes.ExecuteParams({
             target: address(router),
             data: data,
             value: 0,
@@ -58,7 +58,7 @@ contract Attack_A12_ChainReplay is RedTeamBase {
         (bytes[] memory sigs, uint256[] memory scores) = _twoEnvSigs(env);
 
         vm.prank(operator);
-        vm.expectRevert(TradingVault.EnvelopeWrongChain.selector);
+        vm.expectRevert(VaultTypes.EnvelopeWrongChain.selector);
         TradingVault(payable(vault))
             .executeUniswapV3SwapEnvelope(params, env, enf, _sortedThreeValidators(), sigs, scores);
     }
