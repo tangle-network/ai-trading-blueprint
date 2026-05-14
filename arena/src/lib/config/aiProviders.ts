@@ -33,7 +33,7 @@ export const AI_PROVIDERS: {
     id: 'tangle-router',
     label: 'Tangle Router',
     placeholder: 'your-tangle-router-key',
-    envKey: 'TANGLE_ROUTER_API_KEY',
+    envKey: 'TANGLE_API_KEY',
     modelProvider: 'openrouter',
     modelName: 'anthropic/claude-sonnet-4-6',
   },
