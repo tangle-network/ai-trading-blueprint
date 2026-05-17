@@ -16,8 +16,8 @@ qos = ["dep:blueprint-qos"]
 [dependencies]
 trading-validator-lib = { path = "../trading-validator-lib" }
 axum = "0.8"
-blueprint-qos = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", optional = true }
-blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tangle"] }
+blueprint-qos = { version = "0.2.0-alpha.5", optional = true }
+blueprint-sdk = { version = "0.2.0-alpha.5", default-features = false, features = ["std", "tangle"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
