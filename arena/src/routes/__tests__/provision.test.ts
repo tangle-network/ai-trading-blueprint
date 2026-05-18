@@ -158,6 +158,18 @@ vi.mock('~/lib/blueprints', () => ({
       expertKnowledge: '',
     },
     {
+      id: 'hyperliquid_perp',
+      name: 'Hyperliquid Perps',
+      description: 'Hyperliquid perp strategy',
+      providers: ['Hyperliquid'],
+      executionMode: 'single-chain',
+      supportedChainIds: [998],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
       id: 'volatility',
       name: 'Volatility',
       description: 'Volatility strategy',
@@ -664,6 +676,13 @@ describe('provision runtime backend helpers', () => {
         enabled: true,
         chainId: 42161,
       },
+      {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 998,
+      },
     ] as const;
 
     expect(
@@ -681,6 +700,11 @@ describe('provision runtime backend helpers', () => {
         (target) => target.id,
       ),
     ).toEqual(['arbitrum-fork', 'arbitrum-one']);
+    expect(
+      executionTargetsForStrategy('hyperliquid_perp', [...targets]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(['hyperevm-testnet']);
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
   });
 
@@ -707,6 +731,60 @@ describe('provision runtime backend helpers', () => {
         protocolChainId: 1,
       }),
     ).toBeUndefined();
+  });
+
+  it('returns Hyperliquid as the HyperEVM perp protocol', async () => {
+    const { availableProtocolsForStrategyTarget } =
+      await import('../provision');
+
+    expect(
+      availableProtocolsForStrategyTarget('hyperliquid_perp', {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 998,
+      }),
+    ).toEqual(['hyperliquid']);
+  });
+
+  it('adds Hyperliquid account-control fields to HyperEVM perp config', async () => {
+    const { buildProvisionStrategyConfig } = await import('../provision');
+
+    expect(
+      buildProvisionStrategyConfig({
+        strategyType: 'hyperliquid_perp',
+        selectedExecutionTarget: {
+          id: 'hyperevm-testnet',
+          label: 'HyperEVM Testnet',
+          description: 'HyperEVM',
+          enabled: true,
+          chainId: 998,
+        },
+        runtimeBackend: 'docker',
+        isTeeBlueprint: false,
+        includeExecutionTarget: true,
+        executionConfig: {
+          chainId: 998n,
+          rpcUrl: 'https://rpc.hyperliquid-testnet.xyz/evm',
+          vaultBinding: 'factory',
+          provisionVaultAddress:
+            '0x0000000000000000000000000000000000000fAc',
+          vaultFactoryAddress:
+            '0x0000000000000000000000000000000000000fAc',
+          vaultAddress: '0x0000000000000000000000000000000000000fAc',
+          assetAddress: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
+          paperTrade: false,
+          protocolChainId: undefined,
+        },
+      }),
+    ).toMatchObject({
+      available_protocols: ['hyperliquid'],
+      vault_binding: 'factory',
+      hyperliquid_execution_model: 'hyperevm_vault_agent',
+      hyperliquid_account_source: 'hyperevm_vault_contract',
+      hyperliquid_api_wallet_approval: 'corewriter_on_provision',
+    });
   });
 
   it('threads validation_trust through the operator provision body when non-default', async () => {

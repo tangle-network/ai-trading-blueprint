@@ -55,6 +55,7 @@ pub fn get_pack(strategy_type: &str) -> Option<StrategyPack> {
         "dex" => Some(dex_pack()),
         "yield" => Some(yield_pack()),
         "perp" => Some(perp_pack()),
+        "hyperliquid_perp" => Some(hyperliquid_perp_pack()),
         "volatility" => Some(volatility_pack()),
         "mm" => Some(mm_pack()),
         "multi" => Some(multi_pack()),
@@ -572,6 +573,31 @@ fn perp_pack() -> StrategyPack {
     }
 }
 
+fn hyperliquid_perp_pack() -> StrategyPack {
+    let providers = vec!["hyperliquid", "coingecko"];
+    let methodology = HYPERLIQUID_PERP_STRATEGY_METHODOLOGY;
+    StrategyPack {
+        strategy_type: "hyperliquid_perp".into(),
+        name: "Hyperliquid Perps".into(),
+        provider_ids: providers.clone(),
+        strategy_methodology: methodology.into(),
+        system_prompt: compose_expert_prompt(&providers, methodology),
+        setup_commands: compose_setup_commands(&providers),
+        required_env_vars: compose_required_env_vars(&providers),
+        max_turns: 15,
+        timeout_ms: 180_000,
+        default_cron: "0 */2 * * * *".into(),
+        prompt_blocks: vec![
+            BLOCK_DATA_PIPELINE,
+            BLOCK_TA_INDICATORS,
+            BLOCK_SELF_CRITIQUE,
+            BLOCK_RISK_REGIME,
+            BLOCK_POSITION_SIZING,
+            BLOCK_CIRCUIT_BREAKER,
+        ],
+    }
+}
+
 fn volatility_pack() -> StrategyPack {
     let providers = vec![
         "polymarket",
@@ -727,6 +753,33 @@ Always compare execution cost (fees + expected slippage) across venues before ro
 - Every position must have a stop-loss set at entry time
 - Trailing stop: move stop to breakeven after achieving 1.5x risk in unrealized profit
 - Close positions that have been open >48h without hitting target (stale thesis)
+"#;
+
+const HYPERLIQUID_PERP_STRATEGY_METHODOLOGY: &str = r#"## Hyperliquid Perpetual Futures Strategy
+
+This strategy is dedicated to native Hyperliquid perp trading. It is separate
+from the generic EVM perp strategy. Use only `target_protocol: "hyperliquid"`.
+
+### Account Model
+
+- The bot account is the configured HyperEVM vault/account address.
+- The API wallet is only a signer for native Hyperliquid API orders.
+- Query account state for the bot account, not the API wallet signer.
+- Use USDC as the v1 collateral/base asset.
+
+### Trading Flow
+
+1. Check `/hyperliquid/account` before opening new risk.
+2. Confirm account value, margin usage, open positions, and open orders.
+3. Submit live trades through `/validate` and `/execute`.
+4. Use reduce-only orders when closing or reducing exposure.
+
+### Risk Management
+
+- Keep enough idle/withdrawable USDC for liquidity needs.
+- Do not increase risk if account state is stale or unavailable.
+- Stop-loss mandatory on directional trades.
+- Maintain a liquidation buffer appropriate for the configured leverage.
 "#;
 
 const VOLATILITY_STRATEGY_METHODOLOGY: &str = r#"## Volatility Trading Strategy
@@ -1732,6 +1785,7 @@ mod tests {
         assert!(get_pack("dex").is_some());
         assert!(get_pack("yield").is_some());
         assert!(get_pack("perp").is_some());
+        assert!(get_pack("hyperliquid_perp").is_some());
         assert!(get_pack("volatility").is_some());
         assert!(get_pack("mm").is_some());
         assert!(get_pack("multi").is_some());
@@ -2025,6 +2079,11 @@ mod tests {
         assert_eq!(perp.max_turns, 15);
         assert_eq!(perp.timeout_ms, 180_000);
         assert_eq!(perp.default_cron, "0 */2 * * * *");
+
+        let hl_perp = get_pack("hyperliquid_perp").unwrap();
+        assert_eq!(hl_perp.max_turns, 15);
+        assert_eq!(hl_perp.timeout_ms, 180_000);
+        assert_eq!(hl_perp.default_cron, "0 */2 * * * *");
 
         let vol = get_pack("volatility").unwrap();
         assert_eq!(vol.max_turns, 12);

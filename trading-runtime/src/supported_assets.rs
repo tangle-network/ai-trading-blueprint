@@ -65,6 +65,9 @@ pub fn supported_assets_for(
     match (normalized_strategy.as_str(), normalized_protocol.as_str()) {
         ("dex", "uniswap_v3" | "aerodrome") => dex_assets(registry_chain_id, &normalized_protocol),
         ("yield", "aave_v3") => aave_assets(registry_chain_id, &normalized_protocol),
+        ("hyperliquid_perp", "hyperliquid") => {
+            hyperliquid_perp_assets(registry_chain_id, &normalized_protocol)
+        }
         _ => Vec::new(),
     }
 }
@@ -306,7 +309,8 @@ pub fn default_protocol_for_strategy(strategy_type: &str) -> Option<&'static str
         "dex" => Some("uniswap_v3"),
         "yield" => Some("aave_v3"),
         "prediction" => Some("polymarket_clob"),
-        "perp" => Some("hyperliquid"),
+        "hyperliquid_perp" => Some("hyperliquid"),
+        "perp" => Some("gmx_v2"),
         _ => None,
     }
 }
@@ -316,6 +320,9 @@ pub fn normalize_strategy_type(strategy_type: &str) -> String {
         "dex" | "dex_trading" | "spot" => "dex".to_string(),
         "yield" | "defi_yield" | "aave" => "yield".to_string(),
         "prediction" | "prediction_market" => "prediction".to_string(),
+        "hyperliquid_perp" | "hyperliquid-perp" | "hl_perp" | "hl-perp" => {
+            "hyperliquid_perp".to_string()
+        }
         "perp" | "perp_trading" | "perpetual" => "perp".to_string(),
         other => other.to_string(),
     }
@@ -385,6 +392,22 @@ fn aave_assets(chain_id: u64, protocol: &str) -> Vec<SupportedAsset> {
         });
     }
     assets
+}
+
+fn hyperliquid_perp_assets(chain_id: u64, protocol: &str) -> Vec<SupportedAsset> {
+    token_metadata_for_chain(Some(chain_id), "USDC")
+        .map(|token| SupportedAsset {
+            strategy_type: "hyperliquid_perp".to_string(),
+            protocol: protocol.to_string(),
+            chain_id,
+            symbol: token.symbol.to_string(),
+            address: token.address.to_string(),
+            decimals: token.decimals,
+            roles: vec![TradeAssetRole::Input, TradeAssetRole::Collateral],
+            valuation_adapter: ValuationAdapterKind::None,
+        })
+        .into_iter()
+        .collect()
 }
 
 fn registry_chain_id(chain_id: u64) -> u64 {
@@ -518,6 +541,28 @@ mod tests {
         );
         assert!(assets.iter().any(|asset| asset.symbol == "variableDebtWETH"
             && asset.roles.contains(&TradeAssetRole::Debt)));
+    }
+
+    #[test]
+    fn hyperliquid_perp_hyperevm_uses_usdc_collateral_only() {
+        let assets = supported_assets_for("hyperliquid_perp", 998, "hyperliquid");
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].strategy_type, "hyperliquid_perp");
+        assert_eq!(assets[0].protocol, "hyperliquid");
+        assert_eq!(assets[0].symbol, "USDC");
+        assert!(assets[0].roles.contains(&TradeAssetRole::Input));
+        assert!(assets[0].roles.contains(&TradeAssetRole::Collateral));
+        assert_eq!(assets[0].valuation_adapter, ValuationAdapterKind::None);
+    }
+
+    #[test]
+    fn generic_perp_no_longer_defaults_to_hyperliquid() {
+        assert_eq!(default_protocol_for_strategy("perp"), Some("gmx_v2"));
+        assert_eq!(
+            default_protocol_for_strategy("hyperliquid_perp"),
+            Some("hyperliquid")
+        );
     }
 
     // ── parse-error surface + fallback behavior ─────────────────────────────

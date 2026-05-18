@@ -341,6 +341,35 @@ When funding rates diverge between GMX and Vertex:
 4. Minimum spread: 0.03%/8h to cover execution costs`,
   },
   {
+    id: 'hyperliquid_perp',
+    name: 'Hyperliquid Perps',
+    providers: ['Hyperliquid', 'CoinGecko'],
+    description: 'Native Hyperliquid perpetual futures using a bot-bound HyperEVM vault account.',
+    executionMode: 'single-chain',
+    supportedChainIds: [998],
+    cron: '0 */2 * * * *',
+    conversationCron: CONVERSATION_CRON_5_MIN,
+    researchCron: RESEARCH_CRON_2_HOURS,
+    scheduleReason: 'Hyperliquid perps are fast-moving, so trading gets priority over research.',
+    maxTurns: 15,
+    timeoutMs: 180_000,
+    expertKnowledge: `### Hyperliquid Perp Execution
+
+Use target_protocol "hyperliquid" only. This is not the generic EVM perp bot.
+
+Custody/account model:
+- The bot account is the configured HyperEVM vault address.
+- The API wallet is only a signer for native Hyperliquid API orders.
+- Query account state for the bot account, not the API wallet signer.
+- Use USDC as the v1 collateral/base asset.
+
+Before opening new risk:
+1. Check GET /hyperliquid/account
+2. Confirm account value, margin usage, open positions, and open orders
+3. Submit trades through POST /validate and POST /execute
+4. Use reduce-only orders when closing or reducing exposure`,
+  },
+  {
     id: 'volatility',
     name: 'Volatility Trading',
     providers: ['Polymarket', 'Uniswap V3', 'GMX V2', 'Hyperliquid', 'Vertex', 'CoinGecko'],

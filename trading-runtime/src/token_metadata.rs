@@ -97,6 +97,13 @@ const ARBITRUM_USDC: TokenMetadata = TokenMetadata {
     coingecko_id: Some("usd-coin"),
     aliases: USDC_ALIASES,
 };
+const HYPEREVM_TESTNET_USDC: TokenMetadata = TokenMetadata {
+    symbol: "USDC",
+    address: "0x2B3370eE501B4a559b57D449569354196457D8Ab",
+    decimals: 6,
+    coingecko_id: Some("usd-coin"),
+    aliases: USDC_ALIASES,
+};
 
 const ETHEREUM_TOKENS: &[TokenMetadata] = &[
     ETHEREUM_WETH,
@@ -108,6 +115,7 @@ const ETHEREUM_TOKENS: &[TokenMetadata] = &[
 const BASE_TOKENS: &[TokenMetadata] = &[BASE_WETH, BASE_USDC, BASE_CBBTC];
 const BASE_SEPOLIA_TOKENS: &[TokenMetadata] = &[BASE_WETH, BASE_USDC_SEPOLIA];
 const ARBITRUM_TOKENS: &[TokenMetadata] = &[ARBITRUM_WETH, ARBITRUM_USDC];
+const HYPEREVM_TESTNET_TOKENS: &[TokenMetadata] = &[HYPEREVM_TESTNET_USDC];
 
 pub fn normalize_token_key(token: &str) -> String {
     token.trim().to_ascii_lowercase()
@@ -121,6 +129,7 @@ pub fn chain_display_name(chain_id: u64) -> &'static str {
         137 => "Polygon",
         10 => "Optimism",
         43114 => "Avalanche",
+        998 => "HyperEVM testnet",
         1 => "Ethereum mainnet",
         31337 => "Ethereum fork",
         31338 | 31339 => "Ethereum local fork",
@@ -133,6 +142,7 @@ pub fn tokens_for_chain(chain_id: u64) -> &'static [TokenMetadata] {
         8453 => BASE_TOKENS,
         84532 => BASE_SEPOLIA_TOKENS,
         42161 => ARBITRUM_TOKENS,
+        998 => HYPEREVM_TESTNET_TOKENS,
         1 | 31337 | 31338 | 31339 => ETHEREUM_TOKENS,
         _ => &[],
     }
@@ -243,7 +253,7 @@ fn token_metadata_from_aave_reserve(reserve: &AaveReserve) -> TokenMetadata {
 }
 
 fn known_chain_ids() -> Vec<u64> {
-    let mut ids = vec![84532_u64, 8453, 42161, 1, 31337, 31338, 31339];
+    let mut ids = vec![998_u64, 84532, 8453, 42161, 1, 31337, 31338, 31339];
     ids.extend(AAVE_V3_MARKETS.iter().map(|market| market.chain_id));
     ids.sort_unstable();
     ids.dedup();
@@ -266,6 +276,15 @@ mod tests {
         let metadata =
             token_metadata_for_chain(Some(84532), "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
                 .expect("base sepolia usdc");
+        assert_eq!(metadata.symbol, "USDC");
+        assert_eq!(metadata.decimals, 6);
+    }
+
+    #[test]
+    fn hyperevm_testnet_usdc_is_known() {
+        let metadata =
+            token_metadata_for_chain(Some(998), "0x2B3370eE501B4a559b57D449569354196457D8Ab")
+                .expect("hyperevm testnet usdc");
         assert_eq!(metadata.symbol, "USDC");
         assert_eq!(metadata.decimals, 6);
     }
