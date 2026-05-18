@@ -52,6 +52,44 @@ pub(crate) fn get_hl_client(
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "HL client race".into()))
 }
 
+fn config_string(config: &serde_json::Value, key: &str) -> Option<String> {
+    config
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn usable_account_address(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty()
+        || value.starts_with("factory:")
+        || value.starts_with("vault:")
+        || value.eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
+    {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+pub(crate) fn hyperliquid_account_address(bot: &BotContext) -> Option<String> {
+    config_string(&bot.strategy_config, "hyperliquid_account_address")
+        .or_else(|| config_string(&bot.strategy_config, "hyperliquid_account"))
+        .or_else(|| usable_account_address(&bot.vault_address))
+}
+
+pub(crate) fn require_hyperliquid_account_address(
+    bot: &BotContext,
+) -> Result<String, (StatusCode, String)> {
+    hyperliquid_account_address(bot).ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid live execution requires strategy_config.hyperliquid_account_address or a concrete bot vault address".to_string(),
+        )
+    })
+}
+
 fn reject_live_direct_hyperliquid(bot: &BotContext) -> Result<(), (StatusCode, String)> {
     if bot.paper_trade {
         return Ok(());
@@ -88,8 +126,9 @@ async fn place_order(
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
     reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
+    let account_address = hyperliquid_account_address(&bot);
     let resp = client
-        .place_order(&req)
+        .place_order_for_account(&req, account_address.as_deref())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(OrderResponse {
@@ -105,8 +144,14 @@ async fn place_bracket(
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
     reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
+    let account_address = hyperliquid_account_address(&bot);
     let resp = client
-        .place_bracket(&req.entry, req.stop_loss.as_ref(), req.take_profit.as_ref())
+        .place_bracket_for_account(
+            &req.entry,
+            req.stop_loss.as_ref(),
+            req.take_profit.as_ref(),
+            account_address.as_deref(),
+        )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(OrderResponse {
@@ -122,8 +167,9 @@ async fn cancel_order(
 ) -> Result<Json<OrderResponse>, (StatusCode, String)> {
     reject_live_direct_hyperliquid(&bot)?;
     let client = get_hl_client(&state)?;
+    let account_address = hyperliquid_account_address(&bot);
     let resp = client
-        .cancel_order(req.asset, req.order_id)
+        .cancel_order_for_account(req.asset, req.order_id, account_address.as_deref())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(OrderResponse {
@@ -151,10 +197,12 @@ async fn set_leverage(
 
 async fn get_account(
     State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
 ) -> Result<Json<AccountInfo>, (StatusCode, String)> {
     let client = get_hl_client(&state)?;
+    let account_address = hyperliquid_account_address(&bot);
     let account = client
-        .get_account()
+        .get_account_for(account_address.as_deref())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(account))
@@ -181,4 +229,61 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route("/hyperliquid/leverage", post(set_leverage))
         .route("/hyperliquid/account", get(get_account))
         .route("/hyperliquid/prices", get(get_prices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bot(vault_address: &str, strategy_config: serde_json::Value) -> BotContext {
+        BotContext {
+            bot_id: "bot-1".to_string(),
+            vault_address: vault_address.to_string(),
+            paper_trade: false,
+            chain_id: 998,
+            rpc_url: "https://rpc.hyperliquid-testnet.xyz/evm".to_string(),
+            strategy_config,
+            risk_params: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        }
+    }
+
+    #[test]
+    fn account_address_prefers_hyperliquid_config() {
+        let bot = bot(
+            "0x1111111111111111111111111111111111111111",
+            serde_json::json!({
+                "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+            }),
+        );
+
+        assert_eq!(
+            hyperliquid_account_address(&bot).as_deref(),
+            Some("0x2222222222222222222222222222222222222222")
+        );
+    }
+
+    #[test]
+    fn account_address_falls_back_to_concrete_vault() {
+        let bot = bot(
+            "0x1111111111111111111111111111111111111111",
+            serde_json::json!({}),
+        );
+
+        assert_eq!(
+            hyperliquid_account_address(&bot).as_deref(),
+            Some("0x1111111111111111111111111111111111111111")
+        );
+    }
+
+    #[test]
+    fn account_address_rejects_placeholders() {
+        let bot = bot(
+            "factory:0x1111111111111111111111111111111111111111",
+            serde_json::json!({}),
+        );
+
+        assert_eq!(hyperliquid_account_address(&bot), None);
+    }
 }

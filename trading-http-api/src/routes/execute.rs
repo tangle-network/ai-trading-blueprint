@@ -1638,12 +1638,16 @@ async fn enforce_hyperliquid_live_risk(
     max_drawdown_pct: Decimal,
 ) -> Result<(), (StatusCode, String)> {
     let client = super::hyperliquid::get_hl_client(state)?;
-    let account = client.get_account().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Hyperliquid account refresh failed: {e}"),
-        )
-    })?;
+    let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
+    let account = client
+        .get_account_for(Some(&account_address))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid account refresh failed for {account_address}: {e}"),
+            )
+        })?;
     let account_value = account.account_value.parse::<Decimal>().map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
@@ -2454,7 +2458,7 @@ async fn execute_clob_trade(
 /// dispatches through the shared `HyperliquidClient`. Trade records are stored
 /// with `hl:` prefix on the tx_hash.
 async fn execute_hyperliquid_trade(
-    bot_id: &str,
+    bot: &crate::BotContext,
     state: &MultiBotTradingState,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
@@ -2464,6 +2468,7 @@ async fn execute_hyperliquid_trade(
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
     let hl_client = super::hyperliquid::get_hl_client(state)?;
+    let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
 
     // Map intent action to HL order params
     let action = parse_action(&req.intent.action)
@@ -2478,12 +2483,15 @@ async fn execute_hyperliquid_trade(
     );
     if is_open {
         if let Some(signed_envelope) = signed_envelope {
-            let account = hl_client.get_account().await.map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("HL account lookup failed: {e}"),
-                )
-            })?;
+            let account = hl_client
+                .get_account_for(Some(&account_address))
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        format!("HL account lookup failed for {account_address}: {e}"),
+                    )
+                })?;
             let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
             let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
             let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
@@ -2567,7 +2575,7 @@ async fn execute_hyperliquid_trade(
     };
 
     let resp = hl_client
-        .place_order(&hl_req)
+        .place_order_for_account(&hl_req, Some(&account_address))
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
@@ -2583,7 +2591,7 @@ async fn execute_hyperliquid_trade(
 
     let record = TradeRecord {
         id: trade_id,
-        bot_id: bot_id.to_string(),
+        bot_id: bot.bot_id.to_string(),
         timestamp: Utc::now(),
         action: req.intent.action.clone(),
         token_in: req.intent.token_in.clone(),
@@ -3133,7 +3141,7 @@ async fn execute_multi_bot(
     // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
     if normalized_req.intent.target_protocol == "hyperliquid" {
         let response = execute_hyperliquid_trade(
-            &bot.bot_id,
+            &bot,
             &state,
             &normalized_req,
             stored_validation,
