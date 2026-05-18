@@ -10,6 +10,10 @@ import "./VaultStorage.sol";
 import "./VaultTypes.sol";
 import "./ValuationLib.sol";
 
+interface IHyperliquidCoreWriter {
+    function sendRawAction(bytes calldata data) external;
+}
+
 /// @title VaultAdminLib
 /// @notice Vault admin + CLOB-collateral + wind-down primitives. Extracted
 ///         from `TradingVault` to keep the contract under EIP-170. All
@@ -45,6 +49,11 @@ library VaultAdminLib {
     event DepositAssetReserveBpsUpdated(uint256 bps);
     event AdminUnwindMaxDrawdownBpsUpdated(uint256 bps);
     event ValuationAdapterUpdated(address indexed token, address indexed adapter);
+    event HyperliquidApiWalletApprovalSubmitted(address indexed agentWallet, string agentName, bytes action);
+
+    address internal constant HYPERLIQUID_CORE_WRITER = 0x3333333333333333333333333333333333333333;
+    uint8 internal constant HYPERLIQUID_CORE_WRITER_VERSION = 1;
+    uint24 internal constant HYPERLIQUID_ACTION_ADD_API_WALLET = 9;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CLOB COLLATERAL
@@ -139,6 +148,22 @@ library VaultAdminLib {
         uint256 headroom = maxAllowed > $.totalOutstandingCollateral ? maxAllowed - $.totalOutstandingCollateral : 0;
         uint256 liquid = asset_.balanceOf(address(this));
         return headroom < liquid ? headroom : liquid;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HYPERLIQUID COREWRITER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function approveHyperliquidApiWallet(address agentWallet, string calldata agentName) external {
+        if (agentWallet == address(0)) revert VaultTypes.ZeroAddress();
+
+        bytes memory payload = abi.encode(agentWallet, agentName);
+        bytes memory action =
+            abi.encodePacked(HYPERLIQUID_CORE_WRITER_VERSION, bytes3(HYPERLIQUID_ACTION_ADD_API_WALLET), payload);
+
+        IHyperliquidCoreWriter(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
+
+        emit HyperliquidApiWalletApprovalSubmitted(agentWallet, agentName, action);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

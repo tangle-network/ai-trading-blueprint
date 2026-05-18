@@ -11,6 +11,7 @@ pub mod error;
 pub mod execution_hash;
 pub mod executor;
 pub mod fees;
+pub mod hyperevm_corewriter;
 pub mod hyperliquid;
 pub mod intent;
 pub mod leaderboard;

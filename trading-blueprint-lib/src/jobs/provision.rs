@@ -22,6 +22,11 @@ static PROVISION_INFLIGHT: std::sync::LazyLock<Mutex<HashSet<(u64, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 const DEFAULT_PAPER_INITIAL_CAPITAL_USD: &str = "10000";
+const HYPERLIQUID_ACCOUNT_SOURCE_HYPEREVM_VAULT: &str = "hyperevm_vault_contract";
+const HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER: &str = "corewriter_on_provision";
+const HYPERLIQUID_API_WALLET_APPROVAL_PENDING: &str = "pending_corewriter_approval";
+const HYPERLIQUID_API_WALLET_APPROVAL_SUBMITTED: &str = "submitted_corewriter_approval";
+const HYPERLIQUID_API_WALLET_APPROVAL_FAILED: &str = "failed_corewriter_approval";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VaultBinding {
@@ -277,6 +282,154 @@ fn apply_strategy_defaults(
                 .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
         }
     }
+
+    apply_hyperliquid_perp_defaults(strategy_config, request, paper_trade);
+}
+
+fn is_hyperliquid_perp_strategy(strategy_type: &str) -> bool {
+    matches!(
+        strategy_type.trim().to_ascii_lowercase().as_str(),
+        "hyperliquid_perp" | "hyperliquid-perp"
+    )
+}
+
+fn is_hyperevm_chain(chain_id: u64) -> bool {
+    matches!(chain_id, 998 | 999)
+}
+
+fn apply_hyperliquid_perp_defaults(
+    strategy_config: &mut Map<String, Value>,
+    request: &TradingProvisionRequest,
+    paper_trade: bool,
+) {
+    if !is_hyperliquid_perp_strategy(&request.strategy_type) {
+        return;
+    }
+
+    strategy_config
+        .entry("available_protocols".to_string())
+        .or_insert_with(|| Value::Array(vec![Value::String("hyperliquid".to_string())]));
+
+    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
+    if is_hyperevm_chain(execution_chain_id) && !paper_trade {
+        strategy_config
+            .entry("hyperliquid_execution_model".to_string())
+            .or_insert_with(|| Value::String("hyperevm_vault_agent".to_string()));
+        strategy_config
+            .entry("hyperliquid_account_source".to_string())
+            .or_insert_with(|| {
+                Value::String(HYPERLIQUID_ACCOUNT_SOURCE_HYPEREVM_VAULT.to_string())
+            });
+        strategy_config
+            .entry("hyperliquid_api_wallet_approval".to_string())
+            .or_insert_with(|| {
+                Value::String(HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER.to_string())
+            });
+    }
+}
+
+fn apply_hyperliquid_account_metadata(
+    strategy_config: &mut Map<String, Value>,
+    strategy_type: &str,
+    chain_id: u64,
+    paper_trade: bool,
+    vault_address: Address,
+    api_wallet_address: Option<&str>,
+) {
+    if !is_hyperliquid_perp_strategy(strategy_type) || !is_hyperevm_chain(chain_id) || paper_trade {
+        return;
+    }
+
+    let vault = format!("{vault_address:#x}");
+    strategy_config.insert(
+        "hyperliquid_account_address".to_string(),
+        Value::String(vault.clone()),
+    );
+    strategy_config.insert("hyperliquid_account".to_string(), Value::String(vault));
+    strategy_config.insert(
+        "hyperliquid_account_source".to_string(),
+        Value::String(HYPERLIQUID_ACCOUNT_SOURCE_HYPEREVM_VAULT.to_string()),
+    );
+    strategy_config
+        .entry("hyperliquid_api_wallet_approval".to_string())
+        .or_insert_with(|| Value::String(HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER.to_string()));
+    strategy_config
+        .entry("hyperliquid_api_wallet_approval_status".to_string())
+        .or_insert_with(|| Value::String(HYPERLIQUID_API_WALLET_APPROVAL_PENDING.to_string()));
+
+    if let Some(address) = api_wallet_address
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        strategy_config
+            .entry("hyperliquid_api_wallet_address".to_string())
+            .or_insert_with(|| Value::String(address.to_string()));
+    }
+}
+
+fn should_submit_hyperliquid_api_wallet_approval(
+    strategy_config: &Map<String, Value>,
+    strategy_type: &str,
+    chain_id: u64,
+    paper_trade: bool,
+) -> bool {
+    if !is_hyperliquid_perp_strategy(strategy_type) || !is_hyperevm_chain(chain_id) || paper_trade {
+        return false;
+    }
+
+    strategy_config
+        .get("hyperliquid_api_wallet_approval")
+        .and_then(Value::as_str)
+        .is_some_and(|value| {
+            value
+                .trim()
+                .eq_ignore_ascii_case(HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER)
+        })
+}
+
+fn hyperliquid_api_wallet_agent_name(strategy_config: &Map<String, Value>, bot_id: &str) -> String {
+    strategy_config
+        .get("hyperliquid_api_wallet_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(bot_id)
+        .to_string()
+}
+
+fn require_hyperliquid_api_wallet_approval_on_provision() -> bool {
+    std::env::var("HYPERLIQUID_API_WALLET_APPROVAL_REQUIRED_ON_PROVISION")
+        .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn mark_hyperliquid_api_wallet_approval_submitted(
+    strategy_config: &mut Map<String, Value>,
+    tx_hash: String,
+) {
+    strategy_config.insert(
+        "hyperliquid_api_wallet_approval_status".to_string(),
+        Value::String(HYPERLIQUID_API_WALLET_APPROVAL_SUBMITTED.to_string()),
+    );
+    strategy_config.insert(
+        "hyperliquid_api_wallet_approval_tx".to_string(),
+        Value::String(tx_hash),
+    );
+    strategy_config.remove("hyperliquid_api_wallet_approval_error");
+}
+
+fn mark_hyperliquid_api_wallet_approval_failed(
+    strategy_config: &mut Map<String, Value>,
+    error: String,
+) {
+    strategy_config.insert(
+        "hyperliquid_api_wallet_approval_status".to_string(),
+        Value::String(HYPERLIQUID_API_WALLET_APPROVAL_FAILED.to_string()),
+    );
+    strategy_config.insert(
+        "hyperliquid_api_wallet_approval_error".to_string(),
+        Value::String(error),
+    );
 }
 
 fn env_address(candidates: &[&str]) -> Option<Address> {
@@ -685,6 +838,56 @@ pub async fn provision_core(
             msg
         })?;
 
+        apply_hyperliquid_account_metadata(
+            strategy_config_obj,
+            &request.strategy_type,
+            chain_id,
+            paper_trade,
+            deployment.vault_address,
+            Some(&operator_address),
+        );
+        if should_submit_hyperliquid_api_wallet_approval(
+            strategy_config_obj,
+            &request.strategy_type,
+            chain_id,
+            paper_trade,
+        ) {
+            if let Err(e) = provision_progress::update_provision(
+                call_id,
+                ProvisionPhase::HealthCheck,
+                Some("Submitting Hyperliquid API wallet approval".into()),
+                None,
+                None,
+            ) {
+                tracing::warn!("Provision progress update failed: {e}");
+            }
+
+            let agent_name = hyperliquid_api_wallet_agent_name(strategy_config_obj, &bot_id);
+            match crate::on_chain::approve_hyperliquid_api_wallet(
+                &chain,
+                deployment.vault_address,
+                operator_addr,
+                agent_name,
+            )
+            .await
+            {
+                Ok(tx_hash) => {
+                    mark_hyperliquid_api_wallet_approval_submitted(strategy_config_obj, tx_hash);
+                }
+                Err(e) if require_hyperliquid_api_wallet_approval_on_provision() => {
+                    let msg = format!("Failed to submit Hyperliquid API wallet approval: {e}");
+                    mark_provision_failed(call_id, &msg);
+                    return Err(msg);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Hyperliquid API wallet approval submission failed; provisioning will continue with failed approval status: {e}"
+                    );
+                    mark_hyperliquid_api_wallet_approval_failed(strategy_config_obj, e);
+                }
+            }
+        }
+
         let protocol_chain_id = configured_protocol_chain_id(strategy_config_obj, chain_id);
         let supported_asset_configs = vault_supported_asset_configs(
             &request.strategy_type,
@@ -1088,6 +1291,8 @@ mod tests {
     const CHAINLINK_VALUATOR: &str = "0x0000000000000000000000000000000000000222";
     const CUSTOM_TOKEN: &str = "0x0000000000000000000000000000000000000333";
     const KNOWN_TOKEN_WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    const HYPERLIQUID_VAULT: &str = "0x0000000000000000000000000000000000000998";
+    const HYPERLIQUID_API_WALLET: &str = "0x0000000000000000000000000000000000000a91";
 
     fn set_env(unlock: &std::sync::MutexGuard<'_, ()>, vars: &[(&str, Option<&str>)]) {
         let _ = unlock; // tie env mutation to the lock guard's lifetime
@@ -1100,6 +1305,199 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn provision_request(strategy_type: &str, chain_id: u64) -> TradingProvisionRequest {
+        TradingProvisionRequest {
+            name: "test bot".to_string(),
+            strategy_type: strategy_type.to_string(),
+            strategy_config_json: "{}".to_string(),
+            risk_params_json: "{}".to_string(),
+            factory_address: Address::ZERO,
+            asset_token: Address::ZERO,
+            signers: vec![],
+            required_signatures: U256::ZERO,
+            chain_id: U256::from(chain_id),
+            rpc_url: String::new(),
+            trading_loop_cron: String::new(),
+            cpu_cores: 1,
+            memory_mb: 512,
+            max_lifetime_days: 30,
+            validator_service_ids: vec![],
+            max_collateral_bps: U256::ZERO,
+            validation_trust: 0,
+        }
+    }
+
+    #[test]
+    fn hyperliquid_perp_defaults_set_hyperevm_account_model() {
+        let mut config = Map::new();
+        let request = provision_request("hyperliquid_perp", 998);
+
+        apply_strategy_defaults(&mut config, &request, false);
+
+        assert_eq!(
+            config.get("available_protocols"),
+            Some(&serde_json::json!(["hyperliquid"]))
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_execution_model")
+                .and_then(Value::as_str),
+            Some("hyperevm_vault_agent")
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_account_source")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_ACCOUNT_SOURCE_HYPEREVM_VAULT)
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER)
+        );
+    }
+
+    #[test]
+    fn hyperliquid_account_metadata_persists_deployed_vault_account() {
+        let mut config = Map::new();
+        let vault: Address = HYPERLIQUID_VAULT.parse().unwrap();
+
+        apply_hyperliquid_account_metadata(
+            &mut config,
+            "hyperliquid_perp",
+            998,
+            false,
+            vault,
+            Some(HYPERLIQUID_API_WALLET),
+        );
+
+        assert_eq!(
+            config
+                .get("hyperliquid_account_address")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_VAULT)
+        );
+        assert_eq!(
+            config.get("hyperliquid_account").and_then(Value::as_str),
+            Some(HYPERLIQUID_VAULT)
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_address")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_API_WALLET)
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval_status")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_API_WALLET_APPROVAL_PENDING)
+        );
+    }
+
+    #[test]
+    fn hyperliquid_account_metadata_skips_paper_mode() {
+        let mut config = Map::new();
+        let vault: Address = HYPERLIQUID_VAULT.parse().unwrap();
+
+        apply_hyperliquid_account_metadata(
+            &mut config,
+            "hyperliquid_perp",
+            998,
+            true,
+            vault,
+            Some(HYPERLIQUID_API_WALLET),
+        );
+
+        assert!(config.get("hyperliquid_account_address").is_none());
+        assert!(config.get("hyperliquid_api_wallet_address").is_none());
+    }
+
+    #[test]
+    fn hyperliquid_api_wallet_approval_submission_only_for_live_hyperevm_perp() {
+        let mut config = Map::new();
+        let request = provision_request("hyperliquid_perp", 998);
+
+        apply_strategy_defaults(&mut config, &request, false);
+
+        assert!(should_submit_hyperliquid_api_wallet_approval(
+            &config,
+            "hyperliquid_perp",
+            998,
+            false
+        ));
+        assert!(!should_submit_hyperliquid_api_wallet_approval(
+            &config,
+            "hyperliquid_perp",
+            998,
+            true
+        ));
+        assert!(!should_submit_hyperliquid_api_wallet_approval(
+            &config, "perp", 998, false
+        ));
+        assert!(!should_submit_hyperliquid_api_wallet_approval(
+            &config,
+            "hyperliquid_perp",
+            1,
+            false
+        ));
+    }
+
+    #[test]
+    fn hyperliquid_api_wallet_approval_status_tracks_submit_result() {
+        let mut config = Map::new();
+
+        mark_hyperliquid_api_wallet_approval_submitted(&mut config, "0xabc".to_string());
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval_status")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_API_WALLET_APPROVAL_SUBMITTED)
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval_tx")
+                .and_then(Value::as_str),
+            Some("0xabc")
+        );
+
+        mark_hyperliquid_api_wallet_approval_failed(
+            &mut config,
+            "corewriter unavailable".to_string(),
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval_status")
+                .and_then(Value::as_str),
+            Some(HYPERLIQUID_API_WALLET_APPROVAL_FAILED)
+        );
+        assert_eq!(
+            config
+                .get("hyperliquid_api_wallet_approval_error")
+                .and_then(Value::as_str),
+            Some("corewriter unavailable")
+        );
+    }
+
+    #[test]
+    fn hyperliquid_api_wallet_agent_name_prefers_configured_name() {
+        let mut config = Map::new();
+        assert_eq!(
+            hyperliquid_api_wallet_agent_name(&config, "bot-default"),
+            "bot-default"
+        );
+
+        config.insert(
+            "hyperliquid_api_wallet_name".to_string(),
+            Value::String("  hl-bot-main  ".to_string()),
+        );
+        assert_eq!(
+            hyperliquid_api_wallet_agent_name(&config, "bot-default"),
+            "hl-bot-main"
+        );
     }
 
     /// Arena emits `valuation_adapter: "chainlink_or_uniswap_v3_twap"` for a

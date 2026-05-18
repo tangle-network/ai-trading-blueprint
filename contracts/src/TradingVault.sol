@@ -66,6 +66,7 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     event MaxCollateralBpsUpdated(uint256 bps);
     event ValuationAdapterUpdated(address indexed token, address indexed adapter);
     event InKindRedeemed(address indexed caller, address indexed receiver, address indexed owner, uint256 shares);
+    event HyperliquidApiWalletApprovalSubmitted(address indexed agentWallet, string agentName, bytes action);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // VAULT-LOCAL ERRORS (shared ones live in `VaultTypes`)
@@ -652,6 +653,14 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
 
     function setMaxCollateralBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
         VaultAdminLib.setMaxCollateralBps(bps);
+    }
+
+    function approveHyperliquidApiWallet(address agentWallet, string calldata agentName)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        nonReentrant
+    {
+        VaultAdminLib.approveHyperliquidApiWallet(agentWallet, agentName);
     }
 
     function availableCollateral() external view returns (uint256) {
