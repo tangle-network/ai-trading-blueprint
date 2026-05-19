@@ -624,6 +624,14 @@ pub fn build_operator_router() -> Router {
             get(get_bot_hyperliquid_mode),
         )
         .route(
+            "/api/bots/{bot_id}/hyperliquid/settlement",
+            get(get_bot_hyperliquid_settlement),
+        )
+        .route(
+            "/api/bots/{bot_id}/hyperliquid/settlement/run",
+            post(run_bot_hyperliquid_settlement),
+        )
+        .route(
             "/api/bots/{bot_id}/activation-progress",
             get(get_activation_progress),
         )
@@ -3651,6 +3659,42 @@ async fn get_bot_hyperliquid_mode(
         })
 }
 
+async fn get_bot_hyperliquid_settlement(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    proxy_hyperliquid_settlement(&bot, reqwest::Method::GET, "/hyperliquid/settlement").await
+}
+
+async fn run_bot_hyperliquid_settlement(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    proxy_hyperliquid_settlement(&bot, reqwest::Method::POST, "/hyperliquid/settlement/run").await
+}
+
+async fn proxy_hyperliquid_settlement(
+    bot: &TradingBotRecord,
+    method: reqwest::Method,
+    path: &str,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    fetch_trading_api_json_with_method(bot, method, path, &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid settlement request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid settlement".to_string(),
+            )
+        })
+}
+
 async fn proxy_hyperliquid_nav(
     bot: &TradingBotRecord,
     method: reqwest::Method,
@@ -4709,7 +4753,7 @@ mod tests {
                             "thresholds": {
                                 "liquidity_mode_queue_bps": 1500,
                                 "emergency_queue_bps": 6000,
-                                "min_idle_usdc_bps": 500,
+                                "min_idle_usdc_bps": 1500,
                                 "max_margin_usage_bps": 8000
                             },
                             "metrics": {
@@ -4719,6 +4763,48 @@ mod tests {
                                 "idle_usdc_bps": 400,
                                 "margin_usage_bps": 4200
                             }
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/settlement",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "state": {
+                            "bot_id": "hype-nav-proxy",
+                            "settlement_cron": "0 0 0 * * *",
+                            "next_settlement_time": "2026-05-19T00:00:00Z",
+                            "cutoff_time": "2026-05-18T23:00:00Z",
+                            "current_epoch": "2026-05-18T00:00:00Z",
+                            "cutoff_secs": 3600,
+                            "idle_buffer_bps": 1500,
+                            "idle_buffer_target": "15000000000",
+                            "cash_needed": "0",
+                            "queued_shares": "250000000",
+                            "next_request_id": "1",
+                            "next_request_created_at": "2026-05-18T22:30:00Z",
+                            "next_request_eligible": true,
+                            "eligible_pending_request_count": 1,
+                            "rollover": false,
+                            "last_attempt": null
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/settlement/run",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "attempt": {
+                            "bot_id": "hype-nav-proxy",
+                            "epoch": "2026-05-18T00:00:00Z",
+                            "last_attempt_at": "2026-05-18T00:00:03Z",
+                            "last_status": "succeeded",
+                            "fulfilled_count": 1,
+                            "fulfilled_assets": "250000000",
+                            "stopped_reason": "queue_empty",
+                            "tx_hashes": ["0xabc"]
                         }
                     }))
                 }),
@@ -4815,6 +4901,44 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["snapshot"]["mode"], "liquidity");
         assert_eq!(json["snapshot"]["metrics"]["queued_withdrawal_bps"], 1800);
+
+        let settlement_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/settlement", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(settlement_response.status(), StatusCode::OK);
+        let body = settlement_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["state"]["idle_buffer_bps"], 1500);
+        assert_eq!(json["state"]["eligible_pending_request_count"], 1);
+
+        let run_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/bots/{}/hyperliquid/settlement/run", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run_response.status(), StatusCode::OK);
+        let body = run_response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["attempt"]["fulfilled_count"], 1);
+        assert_eq!(json["attempt"]["stopped_reason"], "queue_empty");
     }
 
     /// The address embedded in the token produced by `test_auth_header()`.
