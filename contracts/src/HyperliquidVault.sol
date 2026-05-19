@@ -22,21 +22,24 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     using SafeERC20 for IERC20;
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
-    bytes32 public constant ACCOUNTANT_ROLE = keccak256("ACCOUNTANT_ROLE");
     uint8 public constant HYPERLIQUID_CORE_WRITER_VERSION = 1;
+    uint24 public constant HYPERLIQUID_ACTION_SPOT_SEND = 6;
+    uint24 public constant HYPERLIQUID_ACTION_USD_CLASS_TRANSFER = 7;
     uint24 public constant HYPERLIQUID_ACTION_ADD_API_WALLET = 9;
     address public constant HYPERLIQUID_CORE_WRITER = 0x3333333333333333333333333333333333333333;
-    uint64 public constant DEFAULT_MAX_ACCOUNTING_STALENESS = 5 minutes;
+    address public constant HYPERLIQUID_SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
+    address public constant HYPERLIQUID_ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
+    uint32 public constant HYPERLIQUID_DEFAULT_PERP_DEX_INDEX = 0;
+    uint64 public constant HYPERLIQUID_USDC_SPOT_TOKEN = 0;
+    uint8 public constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
+    uint8 public constant HYPEREVM_USDC_DECIMALS = 6;
 
     IERC20 private _asset;
     VaultShare public shareToken;
     bool private _initialized;
-    uint256 private _hyperliquidAccountAssets;
     uint256 private _pendingRedeemShares;
     uint256 public nextWithdrawalRequestId;
     uint256 public nextFulfillableWithdrawalRequestId;
-    uint64 public hyperliquidAccountAssetsUpdatedAt;
-    uint64 public maxAccountingStaleness;
 
     struct WithdrawalRequest {
         address owner;
@@ -50,8 +53,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
 
     event HyperliquidApiWalletApprovalSubmitted(address indexed agentWallet, string agentName, bytes action);
-    event HyperliquidAccountingUpdated(uint256 accountAssets, uint64 updatedAt);
-    event MaxAccountingStalenessUpdated(uint64 maxStaleness);
+    event HyperliquidUsdClassTransferSubmitted(uint64 ntl, bool toPerp, bytes action);
+    event HyperliquidSpotSendSubmitted(address indexed destination, uint64 token, uint64 weiAmount, bytes action);
     event WithdrawalQueued(uint256 indexed requestId, address indexed owner, address indexed receiver, uint256 shares);
     event WithdrawalCancelled(uint256 indexed requestId, address indexed owner, uint256 shares);
     event WithdrawalFulfilled(
@@ -62,7 +65,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     error ZeroAddress();
     error ZeroAmount();
     error InsufficientLiquidity(uint256 requested, uint256 available);
-    error StaleAccounting(uint64 updatedAt, uint64 maxStaleness);
+    error HyperCoreAccountingUnavailable();
     error InvalidWithdrawalRequest();
     error WithdrawalAlreadyFinalized();
     error WithdrawalQueueOutOfOrder(uint256 expectedRequestId, uint256 actualRequestId);
@@ -78,14 +81,10 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         _initialized = true;
         _asset = IERC20(assetToken);
         shareToken = _shareToken;
-        hyperliquidAccountAssetsUpdatedAt = uint64(block.timestamp);
-        maxAccountingStaleness = DEFAULT_MAX_ACCOUNTING_STALENESS;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(ACCOUNTANT_ROLE, admin);
         if (operator != address(0)) {
             _grantRole(OPERATOR_ROLE, operator);
-            _grantRole(ACCOUNTANT_ROLE, operator);
         }
     }
 
@@ -98,7 +97,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     }
 
     function totalAssets() public view override returns (uint256) {
-        return idleAssets() + _hyperliquidAccountAssets;
+        return idleAssets() + hyperliquidAccountAssets();
     }
 
     function pendingRedeemShares() external view returns (uint256) {
@@ -113,18 +112,45 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         return _asset.balanceOf(address(this));
     }
 
-    function hyperliquidAccountAssets() external view returns (uint256) {
-        return _hyperliquidAccountAssets;
+    function hyperliquidAccountAssets() public view returns (uint256 assets) {
+        (bool ok, uint256 value) = _tryHyperliquidAccountAssets();
+        if (!ok) revert HyperCoreAccountingUnavailable();
+        return value;
     }
 
     function isAccountingFresh() public view returns (bool) {
-        return block.timestamp <= hyperliquidAccountAssetsUpdatedAt + maxAccountingStaleness;
+        (bool ok,) = _tryHyperliquidAccountAssets();
+        return ok;
     }
 
     function _requireFreshAccounting() internal view {
-        if (!isAccountingFresh()) {
-            revert StaleAccounting(hyperliquidAccountAssetsUpdatedAt, maxAccountingStaleness);
-        }
+        if (!isAccountingFresh()) revert HyperCoreAccountingUnavailable();
+    }
+
+    function _tryHyperliquidAccountAssets() internal view returns (bool ok, uint256 assets) {
+        (bool spotOk, uint256 spotUsdc) = _tryCoreSpotUsdcBalance();
+        (bool perpOk, uint256 perpEquity) = _tryPerpAccountValue();
+        if (!spotOk || !perpOk) return (false, 0);
+        return (true, spotUsdc + perpEquity);
+    }
+
+    function _tryCoreSpotUsdcBalance() internal view returns (bool ok, uint256 balance) {
+        (bool success, bytes memory data) =
+            HYPERLIQUID_SPOT_BALANCE_PRECOMPILE.staticcall(abi.encode(address(this), HYPERLIQUID_USDC_SPOT_TOKEN));
+        if (!success || data.length < 96) return (false, 0);
+        (uint64 total,,) = abi.decode(data, (uint64, uint64, uint64));
+        uint256 scale = 10 ** (HYPERLIQUID_CORE_USDC_WEI_DECIMALS - HYPEREVM_USDC_DECIMALS);
+        return (true, uint256(total) / scale);
+    }
+
+    function _tryPerpAccountValue() internal view returns (bool ok, uint256 accountValue) {
+        (bool success, bytes memory data) = HYPERLIQUID_ACCOUNT_MARGIN_SUMMARY_PRECOMPILE.staticcall(
+            abi.encode(HYPERLIQUID_DEFAULT_PERP_DEX_INDEX, address(this))
+        );
+        if (!success || data.length < 128) return (false, 0);
+        (int64 value,,,) = abi.decode(data, (int64, uint64, uint64, int64));
+        if (value < 0) return (false, 0);
+        return (true, uint64(value));
     }
 
     function convertToShares(uint256 assets) public view override returns (uint256) {
@@ -337,18 +363,6 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         nextFulfillableWithdrawalRequestId = requestId;
     }
 
-    function setHyperliquidAccountAssets(uint256 accountAssets) external onlyRole(ACCOUNTANT_ROLE) {
-        _hyperliquidAccountAssets = accountAssets;
-        hyperliquidAccountAssetsUpdatedAt = uint64(block.timestamp);
-        emit HyperliquidAccountingUpdated(accountAssets, uint64(block.timestamp));
-    }
-
-    function setMaxAccountingStaleness(uint64 staleness) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (staleness == 0) revert ZeroAmount();
-        maxAccountingStaleness = staleness;
-        emit MaxAccountingStalenessUpdated(staleness);
-    }
-
     function approveHyperliquidApiWallet(address agentWallet, string calldata agentName)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -364,6 +378,35 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
 
         emit HyperliquidApiWalletApprovalSubmitted(agentWallet, agentName, action);
+    }
+
+    function returnUsdClassLiquidity(uint64 ntl, bool toPerp) external onlyRole(OPERATOR_ROLE) nonReentrant {
+        if (ntl == 0) revert ZeroAmount();
+
+        bytes memory action = abi.encodePacked(
+            HYPERLIQUID_CORE_WRITER_VERSION, bytes3(HYPERLIQUID_ACTION_USD_CLASS_TRANSFER), abi.encode(ntl, toPerp)
+        );
+        IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
+
+        emit HyperliquidUsdClassTransferSubmitted(ntl, toPerp, action);
+    }
+
+    function returnSpotLiquidity(address destination, uint64 token, uint64 weiAmount)
+        external
+        onlyRole(OPERATOR_ROLE)
+        nonReentrant
+    {
+        if (destination == address(0)) revert ZeroAddress();
+        if (weiAmount == 0) revert ZeroAmount();
+
+        bytes memory action = abi.encodePacked(
+            HYPERLIQUID_CORE_WRITER_VERSION,
+            bytes3(HYPERLIQUID_ACTION_SPOT_SEND),
+            abi.encode(destination, token, weiAmount)
+        );
+        IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
+
+        emit HyperliquidSpotSendSubmitted(destination, token, weiAmount, action);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {

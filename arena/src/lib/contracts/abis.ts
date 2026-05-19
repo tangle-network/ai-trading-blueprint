@@ -160,8 +160,6 @@ export const tradingVaultAbi = [
   { type: 'function', name: 'pendingRedeemShares', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'accountingShareSupply', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'isAccountingFresh', inputs: [], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
-  { type: 'function', name: 'maxAccountingStaleness', inputs: [], outputs: [{ name: '', type: 'uint64' }], stateMutability: 'view' },
-  { type: 'function', name: 'hyperliquidAccountAssetsUpdatedAt', inputs: [], outputs: [{ name: '', type: 'uint64' }], stateMutability: 'view' },
   { type: 'function', name: 'nextWithdrawalRequestId', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'nextFulfillableWithdrawalRequestId', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'withdrawalRequests', inputs: [{ name: '', type: 'uint256' }], outputs: [{ name: 'owner', type: 'address' }, { name: 'receiver', type: 'address' }, { name: 'shares', type: 'uint256' }, { name: 'createdAt', type: 'uint64' }, { name: 'fulfilledAt', type: 'uint64' }, { name: 'cancelledAt', type: 'uint64' }], stateMutability: 'view' },
@@ -182,6 +180,8 @@ export const tradingVaultAbi = [
   { type: 'function', name: 'fulfillRedeem', inputs: [{ name: 'requestId', type: 'uint256' }], outputs: [{ name: 'assets', type: 'uint256' }], stateMutability: 'nonpayable' },
   { type: 'function', name: 'fulfillNextRedeem', inputs: [], outputs: [{ name: 'requestId', type: 'uint256' }, { name: 'assets', type: 'uint256' }], stateMutability: 'nonpayable' },
   { type: 'function', name: 'redeemInKind', inputs: [{ name: 'shares', type: 'uint256' }, { name: 'receiver', type: 'address' }, { name: 'owner_', type: 'address' }], outputs: [{ name: 'tokens', type: 'address[]' }, { name: 'amounts', type: 'uint256[]' }], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'returnUsdClassLiquidity', inputs: [{ name: 'ntl', type: 'uint64' }, { name: 'toPerp', type: 'bool' }], outputs: [], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'returnSpotLiquidity', inputs: [{ name: 'destination', type: 'address' }, { name: 'token', type: 'uint64' }, { name: 'weiAmount', type: 'uint64' }], outputs: [], stateMutability: 'nonpayable' },
   { type: 'function', name: 'paused', inputs: [], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
   // Collateral views
   { type: 'function', name: 'totalOutstandingCollateral', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
@@ -197,7 +197,8 @@ export const tradingVaultAbi = [
   // Events
   { type: 'event', name: 'Deposit', inputs: [{ name: 'sender', type: 'address', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'assets', type: 'uint256', indexed: false }, { name: 'shares', type: 'uint256', indexed: false }], anonymous: false },
   { type: 'event', name: 'Withdraw', inputs: [{ name: 'sender', type: 'address', indexed: true }, { name: 'receiver', type: 'address', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'assets', type: 'uint256', indexed: false }, { name: 'shares', type: 'uint256', indexed: false }], anonymous: false },
-  { type: 'event', name: 'HyperliquidAccountingUpdated', inputs: [{ name: 'accountAssets', type: 'uint256', indexed: false }, { name: 'updatedAt', type: 'uint64', indexed: false }], anonymous: false },
+  { type: 'event', name: 'HyperliquidUsdClassTransferSubmitted', inputs: [{ name: 'ntl', type: 'uint64', indexed: false }, { name: 'toPerp', type: 'bool', indexed: false }, { name: 'action', type: 'bytes', indexed: false }], anonymous: false },
+  { type: 'event', name: 'HyperliquidSpotSendSubmitted', inputs: [{ name: 'destination', type: 'address', indexed: true }, { name: 'token', type: 'uint64', indexed: false }, { name: 'weiAmount', type: 'uint64', indexed: false }, { name: 'action', type: 'bytes', indexed: false }], anonymous: false },
   { type: 'event', name: 'WithdrawalQueued', inputs: [{ name: 'requestId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'receiver', type: 'address', indexed: true }, { name: 'shares', type: 'uint256', indexed: false }], anonymous: false },
   { type: 'event', name: 'WithdrawalCancelled', inputs: [{ name: 'requestId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'shares', type: 'uint256', indexed: false }], anonymous: false },
   { type: 'event', name: 'WithdrawalFulfilled', inputs: [{ name: 'requestId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'receiver', type: 'address', indexed: true }, { name: 'shares', type: 'uint256', indexed: false }, { name: 'assets', type: 'uint256', indexed: false }], anonymous: false },

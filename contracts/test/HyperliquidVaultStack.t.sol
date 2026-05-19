@@ -21,6 +21,8 @@ contract HyperliquidMockCoreWriter {
 
 contract HyperliquidVaultStackTest is Test {
     address internal constant CORE_WRITER = 0x3333333333333333333333333333333333333333;
+    address internal constant SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
+    address internal constant ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
 
     MockERC20 internal usdc;
     HyperliquidVault internal implementation;
@@ -80,8 +82,6 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.share(), shareAddr);
         assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(vault.hasRole(vault.OPERATOR_ROLE(), operator));
-        assertTrue(vault.hasRole(vault.ACCOUNTANT_ROLE(), admin));
-        assertTrue(vault.hasRole(vault.ACCOUNTANT_ROLE(), operator));
         assertTrue(share.isLinkedVault(vaultAddr));
         assertTrue(share.hasRole(share.MINTER_ROLE(), vaultAddr));
 
@@ -114,8 +114,7 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(shares, 1_000e6);
         assertEq(vault.idleAssets(), 1_000e6);
 
-        vm.prank(operator);
-        vault.setHyperliquidAccountAssets(9_000e6);
+        _mockHyperCoreAccount(vaultAddr, 0, 9_000e6);
         assertEq(vault.totalAssets(), 10_000e6);
         assertEq(vault.maxWithdraw(user), 1_000e6);
         assertEq(vault.maxRedeem(user), 100e6);
@@ -126,8 +125,7 @@ contract HyperliquidVaultStackTest is Test {
 
         // Simulate liquidity coming back from HyperCore while NAV stays constant.
         usdc.mint(vaultAddr, 1_000e6);
-        vm.prank(operator);
-        vault.setHyperliquidAccountAssets(8_000e6);
+        _mockHyperCoreAccount(vaultAddr, 0, 8_000e6);
 
         vm.prank(user);
         uint256 assets = vault.redeem(200e6, user, user);
@@ -135,12 +133,18 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.totalAssets(), 8_000e6);
     }
 
-    function test_staleHyperliquidAccountingBlocksUserFlows() public {
-        (address vaultAddr,) = _createBotVault(1, bytes32("stale-accounting-salt"));
+    function test_coreSpotUsdcIsIncludedInHyperliquidAccountAssets() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("core-spot-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
 
-        vm.prank(admin);
-        vault.setMaxAccountingStaleness(1);
+        _mockHyperCoreAccount(vaultAddr, 123_456_789_000, 9_000e6);
+
+        assertEq(vault.hyperliquidAccountAssets(), 10_234_567_890);
+    }
+
+    function test_hypercoreAccountingUnavailableBlocksUserFlows() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("unavailable-accounting-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
 
         usdc.mint(user, 1_000e6);
         vm.startPrank(user);
@@ -148,7 +152,8 @@ contract HyperliquidVaultStackTest is Test {
         vault.deposit(1_000e6, user);
         vm.stopPrank();
 
-        vm.warp(block.timestamp + 2);
+        vm.mockCallRevert(SPOT_BALANCE_PRECOMPILE, abi.encode(vaultAddr, uint64(0)), bytes(""));
+        vm.mockCallRevert(ACCOUNT_MARGIN_SUMMARY_PRECOMPILE, abi.encode(uint32(0), vaultAddr), bytes(""));
         assertFalse(vault.isAccountingFresh());
         assertEq(vault.maxDeposit(user), 0);
         assertEq(vault.maxWithdraw(user), 0);
@@ -161,8 +166,8 @@ contract HyperliquidVaultStackTest is Test {
         vault.redeem(1e6, user, user);
         vm.stopPrank();
 
-        vm.prank(operator);
-        vault.setHyperliquidAccountAssets(0);
+        vm.clearMockedCalls();
+        _mockHyperCoreAccount(vaultAddr, 0, 0);
         assertTrue(vault.isAccountingFresh());
     }
 
@@ -184,8 +189,7 @@ contract HyperliquidVaultStackTest is Test {
         vault.deposit(1_000e6, bob);
         vm.stopPrank();
 
-        vm.prank(operator);
-        vault.setHyperliquidAccountAssets(8_000e6);
+        _mockHyperCoreAccount(vaultAddr, 0, 8_000e6);
         assertEq(vault.accountingShareSupply(), 2_000e6);
         assertEq(vault.totalAssets(), 10_000e6);
 
@@ -209,8 +213,7 @@ contract HyperliquidVaultStackTest is Test {
         vault.fulfillRedeem(aliceRequest);
 
         usdc.mint(vaultAddr, 3_000e6);
-        vm.prank(operator);
-        vault.setHyperliquidAccountAssets(5_000e6);
+        _mockHyperCoreAccount(vaultAddr, 0, 5_000e6);
 
         uint256 aliceBalanceBefore = usdc.balanceOf(alice);
         uint256 fulfilledAssets = vault.fulfillRedeem(aliceRequest);
@@ -276,6 +279,50 @@ contract HyperliquidVaultStackTest is Test {
         vm.prank(admin);
         vm.expectRevert(HyperliquidVault.ZeroAddress.selector);
         vault.approveHyperliquidApiWallet(address(0), "bot-1");
+    }
+
+    function test_operatorCanSubmitNarrowLiquidityReturnActions() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
+        vm.etch(CORE_WRITER, address(mock).code);
+
+        bytes memory expectedUsdAction =
+            abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(uint64(1_000_000), false));
+        vm.expectEmit(false, false, false, true, vaultAddr);
+        emit HyperliquidVault.HyperliquidUsdClassTransferSubmitted(1_000_000, false, expectedUsdAction);
+
+        vm.prank(operator);
+        vault.returnUsdClassLiquidity(1_000_000, false);
+
+        HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
+        assertEq(coreWriter.lastSender(), vaultAddr);
+        assertEq(coreWriter.lastAction(), expectedUsdAction);
+
+        address destination = makeAddr("liquidity-destination");
+        bytes memory expectedSpotAction =
+            abi.encodePacked(uint8(1), bytes3(uint24(6)), abi.encode(destination, uint64(1_505), uint64(2_000_000)));
+        vm.expectEmit(true, false, false, true, vaultAddr);
+        emit HyperliquidVault.HyperliquidSpotSendSubmitted(destination, 1_505, 2_000_000, expectedSpotAction);
+
+        vm.prank(operator);
+        vault.returnSpotLiquidity(destination, 1_505, 2_000_000);
+
+        assertEq(coreWriter.lastSender(), vaultAddr);
+        assertEq(coreWriter.lastAction(), expectedSpotAction);
+    }
+
+    function test_nonOperatorCannotSubmitLiquidityReturnActions() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-acl-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+
+        vm.prank(user);
+        vm.expectRevert();
+        vault.returnUsdClassLiquidity(1_000_000, false);
+
+        vm.prank(user);
+        vm.expectRevert();
+        vault.returnSpotLiquidity(user, 1_505, 2_000_000);
     }
 
     function test_createBotVaultRejectsSignerConfigsBelowContractFloor() public {
@@ -354,7 +401,7 @@ contract HyperliquidVaultStackTest is Test {
     }
 
     function _createBotVault(uint64 serviceId, bytes32 salt) internal returns (address vault, address share) {
-        return factory.createBotVault(
+        (vault, share) = factory.createBotVault(
             serviceId,
             address(usdc),
             admin,
@@ -366,6 +413,18 @@ contract HyperliquidVaultStackTest is Test {
             salt,
             _defaultPolicyConfig(),
             _defaultFeeConfig()
+        );
+        _mockHyperCoreAccount(vault, 0, 0);
+    }
+
+    function _mockHyperCoreAccount(address vault, uint64 spotUsdcRaw, int64 perpAccountValue) internal {
+        vm.mockCall(
+            SPOT_BALANCE_PRECOMPILE, abi.encode(vault, uint64(0)), abi.encode(spotUsdcRaw, uint64(0), uint64(0))
+        );
+        vm.mockCall(
+            ACCOUNT_MARGIN_SUMMARY_PRECOMPILE,
+            abi.encode(uint32(0), vault),
+            abi.encode(perpAccountValue, uint64(0), uint64(0), int64(0))
         );
     }
 

@@ -9,6 +9,8 @@ use alloy::sol_types::SolValue;
 
 pub const CORE_WRITER_ADDRESS: &str = "0x3333333333333333333333333333333333333333";
 pub const CORE_WRITER_ENCODING_VERSION: u8 = 1;
+pub const ACTION_SPOT_SEND: u32 = 6;
+pub const ACTION_USD_CLASS_TRANSFER: u32 = 7;
 pub const ACTION_ADD_API_WALLET: u32 = 9;
 
 pub fn encode_corewriter_action(action_id: u32, payload: Vec<u8>) -> Result<Bytes, String> {
@@ -33,6 +35,20 @@ pub fn encode_add_api_wallet_action(
     encode_corewriter_action(ACTION_ADD_API_WALLET, payload)
 }
 
+pub fn encode_spot_send_action(
+    destination: Address,
+    token: u64,
+    wei: u64,
+) -> Result<Bytes, String> {
+    let payload = SolValue::abi_encode(&(destination, token, wei));
+    encode_corewriter_action(ACTION_SPOT_SEND, payload)
+}
+
+pub fn encode_usd_class_transfer_action(ntl: u64, to_perp: bool) -> Result<Bytes, String> {
+    let payload = SolValue::abi_encode(&(ntl, to_perp));
+    encode_corewriter_action(ACTION_USD_CLASS_TRANSFER, payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +62,26 @@ mod tests {
         let encoded = encode_add_api_wallet_action(agent, "bot-1").unwrap();
 
         assert_eq!(&encoded[..4], &[0x01, 0x00, 0x00, 0x09]);
+        assert!(encoded.len() > 4);
+    }
+
+    #[test]
+    fn spot_send_action_uses_official_action_id() {
+        let destination: Address = "0x0000000000000000000000000000000000000a91"
+            .parse()
+            .unwrap();
+
+        let encoded = encode_spot_send_action(destination, 1_505, 1_000_000).unwrap();
+
+        assert_eq!(&encoded[..4], &[0x01, 0x00, 0x00, 0x06]);
+        assert!(encoded.len() > 4);
+    }
+
+    #[test]
+    fn usd_class_transfer_action_uses_official_action_id() {
+        let encoded = encode_usd_class_transfer_action(1_000_000, false).unwrap();
+
+        assert_eq!(&encoded[..4], &[0x01, 0x00, 0x00, 0x07]);
         assert!(encoded.len() > 4);
     }
 
