@@ -405,7 +405,13 @@ fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
         intent.action,
         Action::OpenLong | Action::Buy | Action::CloseShort
     );
-    let reduce_only = matches!(intent.action, Action::CloseLong | Action::CloseShort);
+    let metadata_reduce_only = intent
+        .metadata
+        .get("reduce_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let reduce_only =
+        metadata_reduce_only || matches!(intent.action, Action::CloseLong | Action::CloseShort);
 
     let order_type = if let Some(trigger_px) = intent
         .metadata
@@ -1116,6 +1122,14 @@ async fn validate_multi_bot(
             &bot.rpc_url,
             protocol_chain_id,
             &bot.vault_address,
+            &req.metadata,
+        )
+        .await?;
+    }
+    if !bot.paper_trade && req.target_protocol == "hyperliquid" {
+        crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action(
+            &bot,
+            &req.action,
             &req.metadata,
         )
         .await?;

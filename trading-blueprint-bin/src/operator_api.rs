@@ -616,6 +616,14 @@ pub fn build_operator_router() -> Router {
         )
         .route("/api/bots/{bot_id}/portfolio/state", get(get_bot_portfolio))
         .route(
+            "/api/bots/{bot_id}/hyperliquid/nav",
+            get(get_bot_hyperliquid_nav).post(refresh_bot_hyperliquid_nav),
+        )
+        .route(
+            "/api/bots/{bot_id}/hyperliquid/mode",
+            get(get_bot_hyperliquid_mode),
+        )
+        .route(
             "/api/bots/{bot_id}/activation-progress",
             get(get_activation_progress),
         )
@@ -3607,6 +3615,61 @@ async fn get_bot_portfolio(
     }
 }
 
+async fn get_bot_hyperliquid_nav(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    proxy_hyperliquid_nav(&bot, reqwest::Method::GET).await
+}
+
+async fn refresh_bot_hyperliquid_nav(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    proxy_hyperliquid_nav(&bot, reqwest::Method::POST).await
+}
+
+async fn get_bot_hyperliquid_mode(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    fetch_trading_api_json_with_method(&bot, reqwest::Method::GET, "/hyperliquid/mode", &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid mode request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid mode".to_string(),
+            )
+        })
+}
+
+async fn proxy_hyperliquid_nav(
+    bot: &TradingBotRecord,
+    method: reqwest::Method,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    fetch_trading_api_json_with_method(bot, method, "/hyperliquid/nav", &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid NAV request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid NAV reconciliation".to_string(),
+            )
+        })
+}
+
 // ── Activation progress handler ──────────────────────────────────────────
 
 async fn get_activation_progress(
@@ -4607,6 +4670,151 @@ mod tests {
             .expect("bots store")
             .insert(state::bot_key(id), record.clone());
         record
+    }
+
+    async fn spawn_mock_hyperliquid_nav_api() -> String {
+        let app = Router::new()
+            .route(
+                "/hyperliquid/nav",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "total_nav": "100000",
+                            "share_price": "1"
+                        },
+                        "stale": false
+                    }))
+                })
+                .post(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "total_nav": "100001",
+                            "share_price": "1.00001"
+                        },
+                        "stale": false
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/mode",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "mode": "liquidity",
+                            "reason": "queued withdrawals are above the 1500 bps liquidity threshold",
+                            "checked_at": "2026-05-18T00:00:00Z",
+                            "thresholds": {
+                                "liquidity_mode_queue_bps": 1500,
+                                "emergency_queue_bps": 6000,
+                                "min_idle_usdc_bps": 500,
+                                "max_margin_usage_bps": 8000
+                            },
+                            "metrics": {
+                                "nav_as_of": "2026-05-18T00:00:00Z",
+                                "nav_stale": false,
+                                "queued_withdrawal_bps": 1800,
+                                "idle_usdc_bps": 400,
+                                "margin_usage_bps": 4200
+                            }
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock Hyperliquid NAV API");
+        let addr = listener.local_addr().expect("mock Hyperliquid NAV addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock Hyperliquid NAV API");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn test_bot_hyperliquid_nav_routes_proxy_trading_api() {
+        ensure_state_dir();
+        let trading_api_url = spawn_mock_hyperliquid_nav_api().await;
+        let mut bot = seed_bot(
+            "hype-nav-proxy",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-hype-nav-proxy",
+        );
+        bot.strategy_type = "hyperliquid_perp".to_string();
+        bot.trading_api_url = trading_api_url;
+        bot.trading_api_token = "tok".to_string();
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot.clone())
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let get_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_response.status(), StatusCode::OK);
+        let body = get_response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["total_nav"], "100000");
+        assert_eq!(json["snapshot"]["share_price"], "1");
+        assert_eq!(json["stale"], false);
+
+        let post_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(post_response.status(), StatusCode::OK);
+        let body = post_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["total_nav"], "100001");
+        assert_eq!(json["snapshot"]["share_price"], "1.00001");
+        assert_eq!(json["stale"], false);
+
+        let mode_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/mode", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mode_response.status(), StatusCode::OK);
+        let body = mode_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["mode"], "liquidity");
+        assert_eq!(json["snapshot"]["metrics"]["queued_withdrawal_bps"], 1800);
     }
 
     /// The address embedded in the token produced by `test_auth_header()`.

@@ -2473,14 +2473,21 @@ async fn execute_hyperliquid_trade(
     // Map intent action to HL order params
     let action = parse_action(&req.intent.action)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid action: {e}")))?;
+    let metadata_reduce_only = req
+        .intent
+        .metadata
+        .get("reduce_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // Signed Envelope mode replaces validator signatures for HL opens.
-    let is_open = matches!(
-        action,
-        trading_runtime::types::Action::OpenLong
-            | trading_runtime::types::Action::OpenShort
-            | trading_runtime::types::Action::Buy
-    );
+    let is_open = !metadata_reduce_only
+        && matches!(
+            action,
+            trading_runtime::types::Action::OpenLong
+                | trading_runtime::types::Action::OpenShort
+                | trading_runtime::types::Action::Buy
+        );
     if is_open {
         if let Some(signed_envelope) = signed_envelope {
             let account = hl_client
@@ -2513,7 +2520,7 @@ async fn execute_hyperliquid_trade(
     let reduce_only = matches!(
         action,
         trading_runtime::types::Action::CloseLong | trading_runtime::types::Action::CloseShort
-    );
+    ) || metadata_reduce_only;
 
     // Determine order type from intent metadata
     let order_type = if let Some(trigger_px) = req
@@ -2973,6 +2980,15 @@ async fn execute_multi_bot(
     }
 
     if !bot.paper_trade {
+        if normalized_req.intent.target_protocol == "hyperliquid" {
+            crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action(
+                &bot,
+                &normalized_req.intent.action,
+                &normalized_req.intent.metadata,
+            )
+            .await?;
+        }
+
         match bot.validation_trust {
             ValidationTrust::PerTrade => {
                 if uses_direct_non_vault_execution(&normalized_req.intent.target_protocol) {

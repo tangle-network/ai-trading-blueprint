@@ -4,6 +4,8 @@ pub mod auth;
 pub mod candle_store;
 pub mod envelope_renewal;
 pub mod envelope_watcher;
+pub mod hyperliquid_mode;
+pub mod hyperliquid_nav;
 pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
@@ -636,6 +638,8 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::cex::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
+        .merge(routes::hyperliquid_mode::multi_bot_router())
+        .merge(routes::hyperliquid_nav::multi_bot_router())
         .merge(routes::learning::multi_bot_router())
         .merge(routes::solana::multi_bot_router())
         .merge(routes::strategy::multi_bot_router())

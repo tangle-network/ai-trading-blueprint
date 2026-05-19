@@ -298,6 +298,67 @@ async fn spawn_mock_trading_api() -> String {
                     "has_unpriced_positions": false
                 }))
             }),
+        )
+        .route(
+            "/hyperliquid/nav",
+            get(|| async {
+                Json(json!({
+                    "snapshot": {
+                        "bot_id": "remote-bot",
+                        "account_address": "0x1111111111111111111111111111111111111111",
+                        "vault_address": "0x2222222222222222222222222222222222222222",
+                        "share_token": "0x3333333333333333333333333333333333333333",
+                        "asset_token": "0x4444444444444444444444444444444444444444",
+                        "as_of": "2026-01-01T00:00:00Z",
+                        "status": "fresh",
+                        "stale_after_secs": 60,
+                        "idle_usdc": "10000",
+                        "hyperliquid_equity": "90000",
+                        "total_nav": "100000",
+                        "withdrawable_usdc": "12000",
+                        "total_margin_used": "45000",
+                        "total_notional_position": "120000",
+                        "unrealized_pnl": "50",
+                        "total_shares": "100000",
+                        "share_price": "1",
+                        "margin_usage_bps": 5000,
+                        "open_order_count": 1,
+                        "position_count": 1,
+                        "positions": [],
+                        "warnings": []
+                    },
+                    "stale": false
+                }))
+            })
+            .post(|| async {
+                Json(json!({
+                    "snapshot": {
+                        "bot_id": "remote-bot",
+                        "account_address": "0x1111111111111111111111111111111111111111",
+                        "vault_address": "0x2222222222222222222222222222222222222222",
+                        "share_token": "0x3333333333333333333333333333333333333333",
+                        "asset_token": "0x4444444444444444444444444444444444444444",
+                        "as_of": "2026-01-01T00:00:01Z",
+                        "status": "fresh",
+                        "stale_after_secs": 60,
+                        "idle_usdc": "10000",
+                        "hyperliquid_equity": "90001",
+                        "total_nav": "100001",
+                        "withdrawable_usdc": "12000",
+                        "total_margin_used": "45000",
+                        "total_notional_position": "120000",
+                        "unrealized_pnl": "51",
+                        "total_shares": "100000",
+                        "share_price": "1.00001",
+                        "margin_usage_bps": 5000,
+                        "open_order_count": 1,
+                        "position_count": 1,
+                        "positions": [],
+                        "warnings": []
+                    },
+                    "stale": false
+                }))
+            }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1856,6 +1917,39 @@ async fn test_get_bot_portfolio_preserves_remote_value_only_positions() {
     assert_eq!(json["has_value_only_positions"], true);
     assert_eq!(json["positions"][0]["valuation_status"], "value_only");
     assert!(json["positions"][0]["entry_price"].is_null());
+}
+
+#[tokio::test]
+async fn test_get_bot_hyperliquid_nav_proxies_trading_api() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("hyperliquid-nav-bot", "hyperliquid_perp", true);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["snapshot"]["total_nav"], "100000");
+    assert_eq!(json["snapshot"]["share_price"], "1");
+    assert_eq!(json["stale"], false);
 }
 
 #[tokio::test]
