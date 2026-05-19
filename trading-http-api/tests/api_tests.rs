@@ -6775,6 +6775,119 @@ async fn test_evolution_promotion_gate_blocks_weak_paper_evidence() {
     );
 }
 
+#[tokio::test]
+async fn test_self_improvement_loop_generates_candidate_gates_and_persists_run() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..72 {
+        let base = if i < 36 {
+            140.0 - i as f64 * 1.1
+        } else {
+            100.0 + (i - 36) as f64 * 1.05
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.2),
+            "low": format!("{:.2}", base - 0.8),
+            "close": format!("{:.2}", base + 0.35),
+            "volume": "120000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let body = serde_json::json!({
+        "user_intent": "Make this strategy safer and reduce risk before any live promotion.",
+        "current": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(json["run"]["bot_id"], bot_id);
+    assert!(
+        json["run"]["candidate_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert_eq!(json["run"]["approved"], false);
+    assert_eq!(json["run"]["status"], "blocked");
+    assert!(json["run"]["blockers"].as_array().unwrap().iter().any(|b| {
+        b.as_str()
+            .unwrap()
+            .contains("missing paper trading evidence")
+    }));
+    assert_eq!(
+        json["run"]["candidate_config"]["harness"]["version"].as_u64(),
+        Some(2)
+    );
+    assert!(
+        json["run"]["candidate_config"]["harness"]["entry_threshold"]
+            .as_f64()
+            .unwrap()
+            > backtest_config()["harness"]["entry_threshold"]
+                .as_f64()
+                .unwrap()
+    );
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 1);
+    assert_eq!(runs[0]["run_id"], json["run"]["run_id"]);
+}
+
 // ── Backtest multi-token tests ─────────────────────────────────────────
 
 #[tokio::test]
