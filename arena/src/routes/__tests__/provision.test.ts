@@ -309,6 +309,41 @@ describe('provision runtime backend helpers', () => {
     ).toMatchObject({ ok: false });
   });
 
+  it('requires the contract signer floor for live factory vault creation', async () => {
+    const { validateFactoryVaultSignerConfig } = await import('../provision');
+
+    expect(validateFactoryVaultSignerConfig(2)).toMatchObject({
+      ok: false,
+      message:
+        'Factory vault creation needs at least 3 validator operators and a 2/3 supermajority',
+    });
+    expect(validateFactoryVaultSignerConfig(3)).toEqual({ ok: true });
+  });
+
+  it('merges local factory extra signers without duplicates', async () => {
+    const { mergeVaultSigners, parseFactoryExtraSigners } = await import(
+      '../provision'
+    );
+
+    const extra = parseFactoryExtraSigners(
+      '0x90f79bf6eb2c4f870365e785982e1f101e93b906, invalid, 0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+    );
+
+    expect(extra).toEqual(['0x90F79bf6EB2c4f870365E785982E1f101E93b906']);
+    expect(
+      mergeVaultSigners(
+        [
+          '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+          '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+        ],
+        extra,
+      ),
+    ).toEqual([
+      '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+      '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+    ]);
+  });
+
   it('shares normalized strategy runtime and schedules across provision payload builders', async () => {
     const {
       buildProvisionStrategyConfig,

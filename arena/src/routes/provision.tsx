@@ -13,6 +13,7 @@ import { useStore } from '@nanostores/react';
 import {
   decodeEventLog,
   encodeAbiParameters,
+  getAddress,
   parseAbiParameters,
   parseGwei,
   zeroAddress,
@@ -964,6 +965,57 @@ export function availableProtocolsForStrategyTarget(
     return ['aave_v3', 'morpho_vault'];
   }
   return undefined;
+}
+
+export function validateFactoryVaultSignerConfig(
+  signerCount: number,
+): { ok: true } | { ok: false; message: string } {
+  if (signerCount < 3) {
+    return {
+      ok: false,
+      message:
+        'Factory vault creation needs at least 3 validator operators and a 2/3 supermajority',
+    };
+  }
+  return { ok: true };
+}
+
+export function parseFactoryExtraSigners(value?: string): Address[] {
+  if (!value?.trim()) return [];
+
+  const signers: Address[] = [];
+  const seen = new Set<string>();
+  for (const raw of value.split(',')) {
+    const candidate = raw.trim();
+    if (!candidate) continue;
+    try {
+      const address = getAddress(candidate);
+      const lower = address.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        signers.push(address);
+      }
+    } catch {
+      console.warn('[provision] Ignoring invalid local factory signer:', candidate);
+    }
+  }
+  return signers;
+}
+
+export function mergeVaultSigners(
+  signers: Address[],
+  extraSigners: Address[],
+): Address[] {
+  const merged = [...signers];
+  const seen = new Set(signers.map((signer) => signer.toLowerCase()));
+  for (const signer of extraSigners) {
+    const lower = signer.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      merged.push(signer);
+    }
+  }
+  return merged;
 }
 
 export function validateStrategyExecutionSelection(
@@ -2547,13 +2599,22 @@ export default function ProvisionPage() {
     if (
       requiresExecutionTarget &&
       executionConfig?.vaultBinding === 'factory' &&
-      !executionConfig.paperTrade &&
-      vaultSigners.length < 2
+      !executionConfig.paperTrade
     ) {
-      toast.error(
-        'Factory vault creation needs at least 2 validator operators',
+      const extraSigners = parseFactoryExtraSigners(
+        import.meta.env.VITE_LOCAL_FACTORY_EXTRA_SIGNERS,
       );
-      return;
+      if (
+        extraSigners.length > 0 &&
+        (import.meta.env.DEV || import.meta.env.VITE_USE_LOCAL_CHAIN === 'true')
+      ) {
+        vaultSigners = mergeVaultSigners(vaultSigners, extraSigners);
+      }
+      const signerValidation = validateFactoryVaultSignerConfig(vaultSigners.length);
+      if (!signerValidation.ok) {
+        toast.error(signerValidation.message);
+        return;
+      }
     }
 
     const inputs = bp.encodeProvision({
@@ -2579,6 +2640,7 @@ export default function ProvisionPage() {
       maxCollateralBps: collateralCapPct
         ? BigInt(Math.round(Number(collateralCapPct) * 100))
         : 0n,
+      validationTrust,
     });
 
     submitSnapshotRef.current = {
@@ -2699,6 +2761,18 @@ export default function ProvisionPage() {
             err,
           );
         }
+      }
+      const extraSigners = parseFactoryExtraSigners(
+        import.meta.env.VITE_LOCAL_FACTORY_EXTRA_SIGNERS,
+      );
+      if (
+        extraSigners.length > 0 &&
+        (import.meta.env.DEV || import.meta.env.VITE_USE_LOCAL_CHAIN === 'true')
+      ) {
+        instanceVaultSigners = mergeVaultSigners(
+          instanceVaultSigners,
+          extraSigners,
+        );
       }
     }
 

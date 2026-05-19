@@ -594,6 +594,18 @@ fn vault_supported_asset_configs(
         .collect()
 }
 
+fn should_configure_vault_supported_assets(
+    strategy_type: &str,
+    chain_id: u64,
+    paper_trade: bool,
+) -> bool {
+    if is_hyperliquid_perp_strategy(strategy_type) && is_hyperevm_chain(chain_id) && !paper_trade {
+        return false;
+    }
+
+    true
+}
+
 fn mark_provision_failed(call_id: u64, error: &str) {
     if let Err(e) = provision_progress::update_provision(
         call_id,
@@ -616,15 +628,15 @@ fn provision_vault_symbol(call_id: u64, bot_id: &str) -> String {
 }
 
 fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U256, String> {
-    if signer_count < 2 {
-        return Err("Factory vault creation requires at least 2 validator signers".to_string());
+    if signer_count < 3 {
+        return Err(
+            "Factory vault creation requires at least 3 validator signers and a 2/3 supermajority"
+                .to_string(),
+        );
     }
 
-    let required = if requested < U256::from(2u64) {
-        U256::from(2u64)
-    } else {
-        requested
-    };
+    let floor = U256::from(((signer_count * 2) + 2) / 3);
+    let required = if requested < floor { floor } else { requested };
     if required > U256::from(signer_count as u64) {
         return Err(format!(
             "Factory vault creation requires_signatures ({required}) exceeds signer count ({signer_count})"
@@ -661,6 +673,12 @@ pub async fn provision_core(
     tee_backend: Option<&dyn sandbox_runtime::tee::TeeBackend>,
     validation_trust: Option<trading_runtime::ValidationTrust>,
 ) -> Result<TradingProvisionOutput, String> {
+    tracing::info!(
+        call_id,
+        service_id,
+        strategy_type = %request.strategy_type,
+        "Provision core starting"
+    );
     // 0. Dedup check — if a bot already exists for this (service_id, call_id),
     // return it instead of creating a duplicate. This handles operator restarts
     // that replay past on-chain events.
@@ -669,6 +687,13 @@ pub async fn provision_core(
     // find_bot_by_call check and the later insert. If another concurrent
     // provision for the same key is already running, we block it here.
     if let Ok(matches) = crate::state::bot_lookup_candidates_by_call_id(service_id, call_id) {
+        tracing::debug!(
+            call_id,
+            service_id,
+            live_matches = matches.live.len(),
+            stale_matches = matches.stale.len(),
+            "Provision dedup lookup completed"
+        );
         if matches.live.len() > 1 {
             let ids: Vec<String> = matches.live.iter().map(|bot| bot.id.clone()).collect();
             return Err(format!(
@@ -710,6 +735,12 @@ pub async fn provision_core(
         let mut set = PROVISION_INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
         !set.insert((service_id, call_id))
     };
+    tracing::debug!(
+        call_id,
+        service_id,
+        already_inflight,
+        "Provision inflight slot checked"
+    );
     if already_inflight {
         return Err(format!(
             "Provision already in progress for (service_id={service_id}, call_id={call_id})"
@@ -726,6 +757,8 @@ pub async fn provision_core(
     // Start tracking provision progress via sandbox-runtime
     if let Err(e) = provision_progress::start_provision(call_id) {
         tracing::warn!("Provision progress tracking failed: {e}");
+    } else {
+        tracing::debug!(call_id, service_id, "Provision progress tracking started");
     }
     if let Err(e) = provision_progress::update_provision_metadata(
         call_id,
@@ -888,33 +921,35 @@ pub async fn provision_core(
             }
         }
 
-        let protocol_chain_id = configured_protocol_chain_id(strategy_config_obj, chain_id);
-        let supported_asset_configs = vault_supported_asset_configs(
-            &request.strategy_type,
-            protocol_chain_id,
-            request.asset_token,
-            &Value::Object(strategy_config_obj.clone()),
-        )
-        .inspect_err(|e| mark_provision_failed(call_id, e))?;
-        if !supported_asset_configs.is_empty() {
-            let policy_engine = policy_engine_address_from_env().ok_or_else(|| {
-                let msg = "Execution-chain vault provisioning requires POLICY_ENGINE_ADDRESS or EXECUTION_POLICY_ENGINE to whitelist supported assets".to_string();
-                mark_provision_failed(call_id, &msg);
-                msg
-            })?;
-            crate::on_chain::configure_vault_supported_assets(
-                &chain,
-                deployment.vault_address,
-                policy_engine,
+        if should_configure_vault_supported_assets(&request.strategy_type, chain_id, paper_trade) {
+            let protocol_chain_id = configured_protocol_chain_id(strategy_config_obj, chain_id);
+            let supported_asset_configs = vault_supported_asset_configs(
+                &request.strategy_type,
+                protocol_chain_id,
                 request.asset_token,
-                &supported_asset_configs,
+                &Value::Object(strategy_config_obj.clone()),
             )
-            .await
-            .map_err(|e| {
-                let msg = format!("Failed to configure supported vault assets: {e}");
-                mark_provision_failed(call_id, &msg);
-                msg
-            })?;
+            .inspect_err(|e| mark_provision_failed(call_id, e))?;
+            if !supported_asset_configs.is_empty() {
+                let policy_engine = policy_engine_address_from_env().ok_or_else(|| {
+                    let msg = "Execution-chain vault provisioning requires POLICY_ENGINE_ADDRESS or EXECUTION_POLICY_ENGINE to whitelist supported assets".to_string();
+                    mark_provision_failed(call_id, &msg);
+                    msg
+                })?;
+                crate::on_chain::configure_vault_supported_assets(
+                    &chain,
+                    deployment.vault_address,
+                    policy_engine,
+                    request.asset_token,
+                    &supported_asset_configs,
+                )
+                .await
+                .map_err(|e| {
+                    let msg = format!("Failed to configure supported vault assets: {e}");
+                    mark_provision_failed(call_id, &msg);
+                    msg
+                })?;
+            }
         }
 
         provision_output_vault = deployment.vault_address;
@@ -1205,11 +1240,24 @@ pub async fn provision(
         .unwrap_or(0);
     let caller_addr = alloy::primitives::Address::from(caller);
     let caller_str = format!("{caller_addr:#x}");
+    tracing::info!(
+        call_id,
+        service_id,
+        caller = %caller_str,
+        strategy_type = %request.strategy_type,
+        validation_trust = request.validation_trust,
+        "Provision handler received Tangle job"
+    );
     let validation_trust = match request.validation_trust {
         0 => None, // default → PerTrade
         1 => Some(trading_runtime::ValidationTrust::Envelope),
         2 => Some(trading_runtime::ValidationTrust::SelfOperated),
-        other => return Err(format!("Invalid validation_trust discriminant {other}")),
+        other => {
+            let msg = format!("Invalid validation_trust discriminant {other}");
+            let _ = provision_progress::start_provision(call_id);
+            mark_provision_failed(call_id, &msg);
+            return Err(msg);
+        }
     };
     Ok(TangleResult(
         provision_core(
@@ -1500,6 +1548,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn required_factory_signatures_rejects_less_than_three_signers() {
+        let err = required_factory_signatures(U256::ZERO, 2).expect_err("2 signers is below floor");
+
+        assert!(err.contains("at least 3 validator signers"));
+    }
+
+    #[test]
+    fn required_factory_signatures_defaults_to_two_thirds_floor() {
+        assert_eq!(
+            required_factory_signatures(U256::ZERO, 3).expect("3 signers"),
+            U256::from(2u64)
+        );
+        assert_eq!(
+            required_factory_signatures(U256::ZERO, 4).expect("4 signers"),
+            U256::from(3u64)
+        );
+        assert_eq!(
+            required_factory_signatures(U256::from(2u64), 5).expect("5 signers"),
+            U256::from(4u64)
+        );
+    }
+
+    #[test]
+    fn required_factory_signatures_honors_stricter_valid_request() {
+        assert_eq!(
+            required_factory_signatures(U256::from(4u64), 4).expect("4 of 4 is valid"),
+            U256::from(4u64)
+        );
+    }
+
     /// Arena emits `valuation_adapter: "chainlink_or_uniswap_v3_twap"` for a
     /// custom (non-Chainlink-bundled) asset. Provision must resolve that to
     /// a `VaultSupportedAssetConfig` whose `adapter_address` is the
@@ -1684,6 +1763,30 @@ mod tests {
         assert!(
             err.contains("WETH") && err.contains("ChainlinkUsd"),
             "error must name the symbol + adapter kind so the operator can fix it; got: {err}",
+        );
+    }
+
+    #[test]
+    fn hyperliquid_hyperevm_live_vault_skips_generic_policy_wiring() {
+        assert!(
+            !should_configure_vault_supported_assets("hyperliquid_perp", 998, false),
+            "HyperliquidVaultFactory is lightweight and has no PolicyEngine"
+        );
+        assert!(
+            !should_configure_vault_supported_assets("hyperliquid-perp", 999, false),
+            "hyphenated alias should use the same HyperEVM vault behavior"
+        );
+    }
+
+    #[test]
+    fn generic_vault_strategies_still_configure_policy_assets() {
+        assert!(should_configure_vault_supported_assets("dex", 1, false));
+        assert!(should_configure_vault_supported_assets(
+            "perp", 42161, false
+        ));
+        assert!(
+            should_configure_vault_supported_assets("hyperliquid_perp", 998, true),
+            "paper mode does not deploy the lightweight execution vault"
         );
     }
 }
