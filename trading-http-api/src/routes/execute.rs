@@ -3120,6 +3120,7 @@ async fn execute_multi_bot(
 
         let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
+            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot)?;
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
             let clob = state.clob_client.as_ref().ok_or_else(|| {

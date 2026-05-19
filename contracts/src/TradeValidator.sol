@@ -3,17 +3,14 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/access/Ownable2Step.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title TradeValidator
 /// @notice EIP-712 signature verification with per-vault m-of-n signer configuration
 /// @dev Score IS part of the signed data to prevent score manipulation attacks.
 ///      Validators are modular — configured per vault instance, don't need to know
 ///      about blueprint operators. Each vault has its own signer set and threshold.
-contract TradeValidator is EIP712, Ownable2Step {
+contract TradeValidator is EIP712 {
     using ECDSA for bytes32;
-    using EnumerableSet for EnumerableSet.AddressSet;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -48,6 +45,7 @@ contract TradeValidator is EIP712, Ownable2Step {
     error SignerNotInSet(address signer);
     error InvalidScoreThreshold();
     error NotVaultConfigOwnerOrOwner();
+    error NotOwner();
 
     /// @dev Audit L-4: signer/signature length cap. Reverts when either array exceeds
     ///      MAX_APPROVAL_SIGNERS so the O(N²) dedup loop stays bounded.
@@ -62,13 +60,16 @@ contract TradeValidator is EIP712, Ownable2Step {
     event SignerRemoved(address indexed vault, address indexed signer);
     event ScoreThresholdUpdated(address indexed vault, uint256 threshold);
     event VaultConfigOwnerUpdated(address indexed vault, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TYPES
     // ═══════════════════════════════════════════════════════════════════════════
 
     struct VaultConfig {
-        EnumerableSet.AddressSet signers;
+        address[] signers;
+        mapping(address signer => bool enabled) isSigner;
         uint256 requiredSignatures;
     }
 
@@ -88,11 +89,41 @@ contract TradeValidator is EIP712, Ownable2Step {
     /// @notice Tracks who configured each vault (for permissioned threshold updates)
     mapping(address vault => address) public vaultConfigOwner;
 
+    /// @notice Contract owner. Kept as a public variable to preserve the Ownable ABI getter.
+    address public owner;
+
+    /// @notice Pending owner for two-step ownership transfers.
+    address public pendingOwner;
+
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    constructor() EIP712("TradeValidator", "1") Ownable(msg.sender) {}
+    constructor() EIP712("TradeValidator", "1") {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    /// @notice Start a two-step ownership transfer.
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Accept ownership after `transferOwnership`.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address previousOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(previousOwner, msg.sender);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // VAULT CONFIGURATION
@@ -109,21 +140,22 @@ contract TradeValidator is EIP712, Ownable2Step {
         VaultConfig storage config = _vaultConfigs[vault];
 
         // Clear existing signers
-        uint256 len = config.signers.length();
+        uint256 len = config.signers.length;
         for (uint256 i = len; i > 0; i--) {
-            address old = config.signers.at(i - 1);
-            // OZ EnumerableSet.remove returns bool; safe to ignore here because
-            // `old` was just retrieved via `at()` so membership is guaranteed.
-            config.signers.remove(old);
+            address old = config.signers[i - 1];
+            config.isSigner[old] = false;
             emit SignerRemoved(vault, old);
         }
+        delete config.signers;
 
         // Add new signers (check for duplicates)
         for (uint256 i = 0; i < signers.length; i++) {
-            if (signers[i] == address(0)) revert ZeroAddress();
-            bool added = config.signers.add(signers[i]);
-            if (!added) revert DuplicateSigner(signers[i]);
-            emit SignerAdded(vault, signers[i]);
+            address signer = signers[i];
+            if (signer == address(0)) revert ZeroAddress();
+            if (config.isSigner[signer]) revert DuplicateSigner(signer);
+            config.isSigner[signer] = true;
+            config.signers.push(signer);
+            emit SignerAdded(vault, signer);
         }
 
         config.requiredSignatures = requiredSigs;
@@ -142,8 +174,9 @@ contract TradeValidator is EIP712, Ownable2Step {
     function addSigner(address vault, address signer) external onlyOwner {
         if (signer == address(0)) revert ZeroAddress();
         VaultConfig storage config = _vaultConfigs[vault];
-        bool added = config.signers.add(signer);
-        if (!added) revert DuplicateSigner(signer);
+        if (config.isSigner[signer]) revert DuplicateSigner(signer);
+        config.isSigner[signer] = true;
+        config.signers.push(signer);
         emit SignerAdded(vault, signer);
     }
 
@@ -152,9 +185,17 @@ contract TradeValidator is EIP712, Ownable2Step {
     ///      or if signer is not in the set.
     function removeSigner(address vault, address signer) external onlyOwner {
         VaultConfig storage config = _vaultConfigs[vault];
-        if (config.signers.length() <= config.requiredSignatures) revert WouldBreachThreshold();
-        bool removed = config.signers.remove(signer);
-        if (!removed) revert SignerNotInSet(signer);
+        if (config.signers.length <= config.requiredSignatures) revert WouldBreachThreshold();
+        if (!config.isSigner[signer]) revert SignerNotInSet(signer);
+        config.isSigner[signer] = false;
+        uint256 len = config.signers.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (config.signers[i] == signer) {
+                config.signers[i] = config.signers[len - 1];
+                config.signers.pop();
+                break;
+            }
+        }
         emit SignerRemoved(vault, signer);
     }
 
@@ -164,21 +205,21 @@ contract TradeValidator is EIP712, Ownable2Step {
     ///      To lower the threshold, deploy a new vault.
     function setRequiredSignatures(address vault, uint256 requiredSigs) external onlyOwner {
         VaultConfig storage config = _vaultConfigs[vault];
-        if (requiredSigs == 0 || requiredSigs > config.signers.length()) {
+        if (requiredSigs == 0 || requiredSigs > config.signers.length) {
             revert InvalidRequiredSignatures();
         }
         if (requiredSigs < config.requiredSignatures) {
             revert InvalidRequiredSignatures();
         }
         config.requiredSignatures = requiredSigs;
-        emit VaultConfigured(vault, requiredSigs, config.signers.length());
+        emit VaultConfigured(vault, requiredSigs, config.signers.length);
     }
 
     /// @notice Set the minimum average score threshold for a vault
     /// @param vault The vault address
     /// @param threshold Minimum average score (0-100)
     function setMinScoreThreshold(address vault, uint256 threshold) external {
-        if (msg.sender != owner() && msg.sender != vaultConfigOwner[vault]) {
+        if (msg.sender != owner && msg.sender != vaultConfigOwner[vault]) {
             revert NotVaultConfigOwnerOrOwner();
         }
         if (threshold > 100) revert InvalidScoreThreshold();
@@ -188,7 +229,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     /// @notice Transfer vault config ownership to a new address
     function setVaultConfigOwner(address vault, address newOwner) external {
-        if (msg.sender != owner() && msg.sender != vaultConfigOwner[vault]) {
+        if (msg.sender != owner && msg.sender != vaultConfigOwner[vault]) {
             revert NotVaultConfigOwnerOrOwner();
         }
         if (newOwner == address(0)) revert ZeroAddress();
@@ -239,7 +280,7 @@ contract TradeValidator is EIP712, Ownable2Step {
             address signer = ECDSA.recover(digest, signatures[i]);
 
             // Check signer is in the vault's authorized set
-            if (!config.signers.contains(signer)) continue;
+            if (!config.isSigner[signer]) continue;
 
             // Prevent double-counting the same signer
             bool duplicate = false;
@@ -291,7 +332,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     /// @notice Get all signers for a vault
     function getVaultSigners(address vault) external view returns (address[] memory) {
-        return _vaultConfigs[vault].signers.values();
+        return _vaultConfigs[vault].signers;
     }
 
     /// @notice Get the required signature count for a vault
@@ -301,12 +342,12 @@ contract TradeValidator is EIP712, Ownable2Step {
 
     /// @notice Check if an address is an authorized signer for a vault
     function isVaultSigner(address vault, address signer) external view returns (bool) {
-        return _vaultConfigs[vault].signers.contains(signer);
+        return _vaultConfigs[vault].isSigner[signer];
     }
 
     /// @notice Get the total number of signers for a vault
     function getSignerCount(address vault) external view returns (uint256) {
-        return _vaultConfigs[vault].signers.length();
+        return _vaultConfigs[vault].signers.length;
     }
 
     /// @notice Compute the EIP-712 digest for a trade validation (useful for off-chain signing)
@@ -682,7 +723,7 @@ contract TradeValidator is EIP712, Ownable2Step {
 
         for (uint256 i = 0; i < signatures.length; i++) {
             address signer = ECDSA.recover(digest, signatures[i]);
-            if (!config.signers.contains(signer)) continue;
+            if (!config.isSigner[signer]) continue;
             if (!_addressInCalldata(approvalSigners, signer)) continue;
             bool duplicate = false;
             for (uint256 j = 0; j < seenCount; j++) {

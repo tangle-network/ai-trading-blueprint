@@ -2460,6 +2460,94 @@ async fn test_hyperliquid_execute_rejects_account_metadata_mismatch() {
 }
 
 #[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_pending_api_wallet_approval_before_submission() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-pending-approval-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-pending-approval", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-pending-approval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("API wallet approval is not submitted"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_kill_switch_before_submission() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-kill-switch-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_kill_switch": true,
+        "hyperliquid_api_wallet_approval_status": "submitted_corewriter_approval"
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-kill-switch", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-kill-switch")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("execution is disabled"));
+}
+
+#[tokio::test]
 async fn test_live_self_operated_execute_rejects_by_default() {
     ensure_state_dir();
     let bot_id = format!("bot-self-operated-{}", uuid::Uuid::new_v4());

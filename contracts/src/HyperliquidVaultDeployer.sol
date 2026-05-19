@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/Clones.sol";
 import "./HyperliquidVault.sol";
-import "./TradeValidator.sol";
+import "./ITradeValidator.sol";
 import "./VaultShare.sol";
 
 /// @title HyperliquidVaultDeployer
@@ -31,7 +31,7 @@ contract HyperliquidVaultDeployer {
         bytes32 salt,
         address assetToken,
         VaultShare shareToken,
-        TradeValidator tradeValidator,
+        ITradeValidator tradeValidator,
         address admin,
         address operator
     ) external onlyFactory returns (HyperliquidVault) {

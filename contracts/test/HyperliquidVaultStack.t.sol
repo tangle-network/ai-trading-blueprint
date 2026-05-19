@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../src/HyperliquidVault.sol";
 import "../src/HyperliquidVaultDeployer.sol";
 import "../src/HyperliquidVaultFactory.sol";
+import "../src/HyperliquidTradeValidator.sol";
 import "../src/VaultShare.sol";
 import "../src/VaultShareDeployer.sol";
 import "./helpers/Setup.sol";
@@ -26,7 +27,7 @@ contract HyperliquidVaultStackTest is Test {
 
     MockERC20 internal usdc;
     HyperliquidVault internal implementation;
-    TradeValidator internal tradeValidator;
+    HyperliquidTradeValidator internal tradeValidator;
     HyperliquidVaultFactory internal factory;
     HyperliquidVaultDeployer internal vaultDeployer;
     VaultShareDeployer internal shareDeployer;
@@ -42,7 +43,7 @@ contract HyperliquidVaultStackTest is Test {
     function setUp() public {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         implementation = new HyperliquidVault();
-        tradeValidator = new TradeValidator();
+        tradeValidator = new HyperliquidTradeValidator();
         factory = new HyperliquidVaultFactory(tradeValidator);
         vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         shareDeployer = new VaultShareDeployer(address(factory));
@@ -474,7 +475,10 @@ contract HyperliquidVaultStackGasTest is Test {
         _assertUnderLimit(startGas, "HyperliquidVault implementation deploy");
 
         startGas = gasleft();
-        TradeValidator tradeValidator = new TradeValidator();
+        HyperliquidTradeValidator tradeValidator = new HyperliquidTradeValidator();
+        _assertUnderLimit(startGas, "HyperliquidTradeValidator deploy");
+
+        startGas = gasleft();
         HyperliquidVaultFactory factory = new HyperliquidVaultFactory(tradeValidator);
         _assertUnderLimit(startGas, "HyperliquidVaultFactory deploy");
 
@@ -494,7 +498,7 @@ contract HyperliquidVaultStackGasTest is Test {
     function test_createBotVaultStaysUnderHyperevmGasLimit() public {
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6);
         HyperliquidVault implementation = new HyperliquidVault();
-        TradeValidator tradeValidator = new TradeValidator();
+        HyperliquidTradeValidator tradeValidator = new HyperliquidTradeValidator();
         HyperliquidVaultFactory factory = new HyperliquidVaultFactory(tradeValidator);
         HyperliquidVaultDeployer vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         VaultShareDeployer shareDeployer = new VaultShareDeployer(address(factory));

@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./VaultShare.sol";
-import "./TradeValidator.sol";
+import "./ITradeValidator.sol";
 import "./interfaces/IERC7575.sol";
 
 interface IHyperliquidCoreWriterMinimal {
@@ -37,7 +37,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
 
     IERC20 private _asset;
     VaultShare public shareToken;
-    TradeValidator public tradeValidator;
+    ITradeValidator public tradeValidator;
     bool private _initialized;
     uint256 private _pendingRedeemShares;
     uint256 public nextWithdrawalRequestId;
@@ -77,7 +77,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     function initialize(
         address assetToken,
         VaultShare _shareToken,
-        TradeValidator _tradeValidator,
+        ITradeValidator _tradeValidator,
         address admin,
         address operator
     ) external {
