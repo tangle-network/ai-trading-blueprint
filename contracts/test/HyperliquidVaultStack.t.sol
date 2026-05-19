@@ -26,6 +26,7 @@ contract HyperliquidVaultStackTest is Test {
 
     MockERC20 internal usdc;
     HyperliquidVault internal implementation;
+    TradeValidator internal tradeValidator;
     HyperliquidVaultFactory internal factory;
     HyperliquidVaultDeployer internal vaultDeployer;
     VaultShareDeployer internal shareDeployer;
@@ -41,9 +42,12 @@ contract HyperliquidVaultStackTest is Test {
     function setUp() public {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         implementation = new HyperliquidVault();
-        factory = new HyperliquidVaultFactory();
+        tradeValidator = new TradeValidator();
+        factory = new HyperliquidVaultFactory(tradeValidator);
         vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         shareDeployer = new VaultShareDeployer(address(factory));
+        tradeValidator.transferOwnership(address(factory));
+        factory.acceptDependencyOwnership();
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
@@ -80,10 +84,13 @@ contract HyperliquidVaultStackTest is Test {
 
         assertEq(vault.asset(), address(usdc));
         assertEq(vault.share(), shareAddr);
+        assertEq(address(vault.tradeValidator()), address(tradeValidator));
         assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(vault.hasRole(vault.OPERATOR_ROLE(), operator));
         assertTrue(share.isLinkedVault(vaultAddr));
         assertTrue(share.hasRole(share.MINTER_ROLE(), vaultAddr));
+        assertEq(tradeValidator.getRequiredSignatures(vaultAddr), 2);
+        assertTrue(tradeValidator.isVaultSigner(vaultAddr, validator1));
 
         usdc.mint(user, 1_000e6);
         vm.startPrank(user);
@@ -281,7 +288,7 @@ contract HyperliquidVaultStackTest is Test {
         vault.approveHyperliquidApiWallet(address(0), "bot-1");
     }
 
-    function test_operatorCanSubmitNarrowLiquidityReturnActions() public {
+    function test_operatorCanSubmitUsdClassLiquidityReturnOnly() public {
         (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
@@ -298,6 +305,13 @@ contract HyperliquidVaultStackTest is Test {
         HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
         assertEq(coreWriter.lastSender(), vaultAddr);
         assertEq(coreWriter.lastAction(), expectedUsdAction);
+    }
+
+    function test_adminCanSubmitSpotLiquidityReturn() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-spot-return-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
+        vm.etch(CORE_WRITER, address(mock).code);
 
         address destination = makeAddr("liquidity-destination");
         bytes memory expectedSpotAction =
@@ -305,9 +319,10 @@ contract HyperliquidVaultStackTest is Test {
         vm.expectEmit(true, false, false, true, vaultAddr);
         emit HyperliquidVault.HyperliquidSpotSendSubmitted(destination, 1_505, 2_000_000, expectedSpotAction);
 
-        vm.prank(operator);
+        vm.prank(admin);
         vault.returnSpotLiquidity(destination, 1_505, 2_000_000);
 
+        HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
         assertEq(coreWriter.lastSender(), vaultAddr);
         assertEq(coreWriter.lastAction(), expectedSpotAction);
     }
@@ -319,6 +334,10 @@ contract HyperliquidVaultStackTest is Test {
         vm.prank(user);
         vm.expectRevert();
         vault.returnUsdClassLiquidity(1_000_000, false);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        vault.returnSpotLiquidity(user, 1_505, 2_000_000);
 
         vm.prank(user);
         vm.expectRevert();
@@ -455,7 +474,8 @@ contract HyperliquidVaultStackGasTest is Test {
         _assertUnderLimit(startGas, "HyperliquidVault implementation deploy");
 
         startGas = gasleft();
-        HyperliquidVaultFactory factory = new HyperliquidVaultFactory();
+        TradeValidator tradeValidator = new TradeValidator();
+        HyperliquidVaultFactory factory = new HyperliquidVaultFactory(tradeValidator);
         _assertUnderLimit(startGas, "HyperliquidVaultFactory deploy");
 
         startGas = gasleft();
@@ -466,15 +486,20 @@ contract HyperliquidVaultStackGasTest is Test {
         VaultShareDeployer shareDeployer = new VaultShareDeployer(address(factory));
         _assertUnderLimit(startGas, "VaultShareDeployer deploy");
 
+        tradeValidator.transferOwnership(address(factory));
+        factory.acceptDependencyOwnership();
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
     function test_createBotVaultStaysUnderHyperevmGasLimit() public {
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6);
         HyperliquidVault implementation = new HyperliquidVault();
-        HyperliquidVaultFactory factory = new HyperliquidVaultFactory();
+        TradeValidator tradeValidator = new TradeValidator();
+        HyperliquidVaultFactory factory = new HyperliquidVaultFactory(tradeValidator);
         HyperliquidVaultDeployer vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         VaultShareDeployer shareDeployer = new VaultShareDeployer(address(factory));
+        tradeValidator.transferOwnership(address(factory));
+        factory.acceptDependencyOwnership();
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
 
         address[] memory signers = new address[](3);

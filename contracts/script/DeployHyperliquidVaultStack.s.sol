@@ -6,6 +6,7 @@ import "forge-std/StdJson.sol";
 import "../src/HyperliquidVault.sol";
 import "../src/HyperliquidVaultDeployer.sol";
 import "../src/HyperliquidVaultFactory.sol";
+import "../src/TradeValidator.sol";
 import "../src/VaultShareDeployer.sol";
 import "../test/helpers/Setup.sol"; // MockERC20, only used when ASSET_TOKEN is unset
 
@@ -26,6 +27,7 @@ contract DeployHyperliquidVaultStack is Script {
         address vaultImplementation;
         address vaultDeployer;
         address vaultShareDeployer;
+        address tradeValidator;
     }
 
     struct DeployConfig {
@@ -53,9 +55,12 @@ contract DeployHyperliquidVaultStack is Script {
         }
 
         HyperliquidVault implementation = new HyperliquidVault();
-        HyperliquidVaultFactory factory = new HyperliquidVaultFactory();
+        TradeValidator tradeValidator = new TradeValidator();
+        HyperliquidVaultFactory factory = new HyperliquidVaultFactory(tradeValidator);
         HyperliquidVaultDeployer vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         VaultShareDeployer shareDeployer = new VaultShareDeployer(address(factory));
+        tradeValidator.transferOwnership(address(factory));
+        factory.acceptDependencyOwnership();
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
 
         vm.stopBroadcast();
@@ -67,7 +72,8 @@ contract DeployHyperliquidVaultStack is Script {
             vaultFactory: address(factory),
             vaultImplementation: address(implementation),
             vaultDeployer: address(vaultDeployer),
-            vaultShareDeployer: address(shareDeployer)
+            vaultShareDeployer: address(shareDeployer),
+            tradeValidator: address(tradeValidator)
         });
 
         if (cfg.writeJson) {
@@ -79,6 +85,7 @@ contract DeployHyperliquidVaultStack is Script {
         emit log_string(string.concat("HYPERLIQUID_VAULT_IMPLEMENTATION=", vm.toString(address(implementation))));
         emit log_string(string.concat("HYPERLIQUID_VAULT_DEPLOYER=", vm.toString(address(vaultDeployer))));
         emit log_string(string.concat("HYPERLIQUID_VAULT_SHARE_DEPLOYER=", vm.toString(address(shareDeployer))));
+        emit log_string(string.concat("HYPERLIQUID_TRADE_VALIDATOR=", vm.toString(address(tradeValidator))));
     }
 
     function _loadConfigFromEnv() internal view returns (DeployConfig memory cfg) {
@@ -101,7 +108,8 @@ contract DeployHyperliquidVaultStack is Script {
         vm.serializeAddress(key, "vaultFactory", r.vaultFactory);
         vm.serializeAddress(key, "vaultImplementation", r.vaultImplementation);
         vm.serializeAddress(key, "vaultDeployer", r.vaultDeployer);
-        string memory output = vm.serializeAddress(key, "vaultShareDeployer", r.vaultShareDeployer);
+        vm.serializeAddress(key, "vaultShareDeployer", r.vaultShareDeployer);
+        string memory output = vm.serializeAddress(key, "tradeValidator", r.tradeValidator);
 
         vm.writeFile(jsonPath, output);
     }

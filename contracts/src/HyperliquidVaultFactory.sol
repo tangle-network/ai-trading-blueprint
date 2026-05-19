@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./HyperliquidVault.sol";
 import "./HyperliquidVaultDeployer.sol";
+import "./TradeValidator.sol";
 import "./VaultShare.sol";
 import "./VaultShareDeployer.sol";
 
@@ -52,6 +53,7 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
     mapping(address => bool) public authorizedCallers;
     mapping(address vault => SignerConfig) public signerConfigs;
 
+    TradeValidator public immutable tradeValidator;
     HyperliquidVaultDeployer public deployer;
     VaultShareDeployer public shareDeployer;
 
@@ -60,7 +62,15 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
         _;
     }
 
-    constructor() Ownable(msg.sender) {}
+    constructor(TradeValidator _tradeValidator) Ownable(msg.sender) {
+        if (address(_tradeValidator) == address(0)) revert ZeroAddress();
+        tradeValidator = _tradeValidator;
+    }
+
+    /// @notice Accept pending ownership of the shared TradeValidator.
+    function acceptDependencyOwnership() external onlyOwner {
+        tradeValidator.acceptOwnership();
+    }
 
     function setVaultDeployers(HyperliquidVaultDeployer _deployer, VaultShareDeployer _shareDeployer)
         external
@@ -117,7 +127,8 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
         emit ShareTokenCreated(serviceId, shareAddr);
 
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, "hyperliquid-vault", salt));
-        HyperliquidVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
+        HyperliquidVault v =
+            vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, tradeValidator, admin, operator);
         vault = address(v);
 
         serviceVaults[serviceId].push(vault);
@@ -126,6 +137,7 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
 
         shareToken.grantRole(shareToken.MINTER_ROLE(), vault);
         shareToken.linkVault(vault);
+        tradeValidator.configureVault(vault, signers, requiredSigs);
 
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }

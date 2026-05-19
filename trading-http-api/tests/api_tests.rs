@@ -40,6 +40,7 @@ const TEST_TOKEN: &str = "test-api-token-12345";
 const TEST_VALIDATOR_PRIVATE_KEY: &str =
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const TEST_VERIFYING_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const DEFAULT_TEST_VAULT_ADDRESS: &str = "0x0000000000000000000000000000000000000001";
 
 /// Ensure a shared temp state dir is set for the entire test binary.
 /// OnceCell-backed stores in trade_store/metrics_store init once per process.
@@ -258,7 +259,23 @@ fn test_zero_hash() -> String {
 }
 
 fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Option<u64>) {
-    let intent_json = body["intent"].clone();
+    let mut intent_json = body["intent"].clone();
+    let protocol = intent_json["target_protocol"]
+        .as_str()
+        .expect("protocol")
+        .to_string();
+    if protocol == "hyperliquid" {
+        let metadata = intent_json
+            .as_object_mut()
+            .expect("intent object")
+            .entry("metadata")
+            .or_insert_with(|| serde_json::json!({}));
+        let metadata = metadata.as_object_mut().expect("metadata object");
+        metadata
+            .entry("hyperliquid_account_address")
+            .or_insert_with(|| serde_json::json!(DEFAULT_TEST_VAULT_ADDRESS));
+        body["intent"] = intent_json.clone();
+    }
     let validation = body
         .get_mut("validation")
         .and_then(|value| value.as_object_mut())
@@ -269,7 +286,6 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
         .unwrap_or(1_999_999_999);
     validation.insert("deadline".into(), serde_json::json!(deadline));
 
-    let protocol = intent_json["target_protocol"].as_str().expect("protocol");
     let adapter_chain_id = execution_chain_id.map(trading_http_api::protocol_chain_id_from_env);
     let intent_chain_id = adapter_chain_id.unwrap_or(42161);
     let mut intent = trading_runtime::TradeIntentBuilder::new()
@@ -293,7 +309,7 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
                 .parse()
                 .expect("min_amount_out decimal"),
         )
-        .target_protocol(protocol)
+        .target_protocol(&protocol)
         .chain_id(intent_chain_id)
         .metadata(
             intent_json
@@ -351,6 +367,10 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
         };
         format_b256(hash_hyperliquid_order(
             &order,
+            metadata
+                .get("hyperliquid_account_address")
+                .and_then(|value| value.as_str())
+                .unwrap_or(DEFAULT_TEST_VAULT_ADDRESS),
             intent_hash_b256,
             alloy::primitives::U256::from(deadline),
             execution_chain_id.unwrap_or(intent_chain_id),
@@ -637,6 +657,55 @@ async fn mock_direct_validator_approval(rpc_mock: &MockServer, approved: bool) {
         .respond_with(ResponseTemplate::new(200).set_body_json(rpc_result_hex(
             (approved, U256::from(valid_count)).abi_encode(),
         )))
+        .mount(rpc_mock)
+        .await;
+}
+
+async fn mock_hyperliquid_normal_mode(rpc_mock: &MockServer, bot: &BotContext) {
+    trading_http_api::hyperliquid_nav::record_snapshot(
+        trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
+            bot_id: bot.bot_id.clone(),
+            account_address: bot.vault_address.clone(),
+            vault_address: bot.vault_address.clone(),
+            share_token: "0x0000000000000000000000000000000000000002".to_string(),
+            asset_token: "0x0000000000000000000000000000000000000003".to_string(),
+            as_of: chrono::Utc::now(),
+            status: "ok".to_string(),
+            stale_after_secs: 60,
+            idle_usdc: "500".to_string(),
+            hyperliquid_equity: "500".to_string(),
+            total_nav: "1000".to_string(),
+            withdrawable_usdc: "500".to_string(),
+            total_margin_used: "0".to_string(),
+            total_notional_position: "0".to_string(),
+            unrealized_pnl: "0".to_string(),
+            total_shares: "1000".to_string(),
+            share_price: Some("1".to_string()),
+            margin_usage_bps: Some(0),
+            open_order_count: 0,
+            position_count: 0,
+            positions: vec![],
+            warnings: vec![],
+            onchain_accounting_tx_hash: None,
+        },
+    )
+    .expect("record hyperliquid nav snapshot");
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("0x9bf2ae82"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+        )
+        .mount(rpc_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("0x635b6ac5"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(rpc_result_hex(U256::from(1_000u64).abi_encode())),
+        )
         .mount(rpc_mock)
         .await;
 }
@@ -2330,6 +2399,7 @@ async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
     let bot_id = format!("bot-hl-denied-{}", uuid::Uuid::new_v4());
     let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
     bot.rpc_url = rpc_mock.uri();
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
     let state = multi_bot_state_for_bot("bot-token-hl-denied", bot);
     let app = build_multi_bot_router(state);
     let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
@@ -2357,6 +2427,36 @@ async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn test_hyperliquid_execute_rejects_account_metadata_mismatch() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-account-mismatch-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let state = multi_bot_state_for_bot("bot-token-hl-account-mismatch", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["hyperliquid_account_address"] =
+        serde_json::json!("0x2222222222222222222222222222222222222222");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-account-mismatch")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("does not match the provisioned bot account"));
 }
 
 #[tokio::test]

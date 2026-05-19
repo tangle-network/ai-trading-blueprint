@@ -659,7 +659,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         runner = runner.producer(producer).background_service(gateway);
     }
 
-    let private_key_for_shutdown = std::env::var("PRIVATE_KEY").unwrap_or_default();
+    let private_key_for_shutdown = std::env::var("HYPERLIQUID_API_WALLET_PRIVATE_KEY")
+        .or_else(|_| std::env::var("HYPERLIQUID_API_PRIVATE_KEY"))
+        .unwrap_or_default();
     let result = runner
         .with_shutdown_handler(async move {
             tracing::info!("Shutting down trading blueprint — closing HL positions");

@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/Clones.sol";
 import "./HyperliquidVault.sol";
+import "./TradeValidator.sol";
 import "./VaultShare.sol";
 
 /// @title HyperliquidVaultDeployer
@@ -26,13 +27,16 @@ contract HyperliquidVaultDeployer {
         implementation = _implementation;
     }
 
-    function deployVault(bytes32 salt, address assetToken, VaultShare shareToken, address admin, address operator)
-        external
-        onlyFactory
-        returns (HyperliquidVault)
-    {
+    function deployVault(
+        bytes32 salt,
+        address assetToken,
+        VaultShare shareToken,
+        TradeValidator tradeValidator,
+        address admin,
+        address operator
+    ) external onlyFactory returns (HyperliquidVault) {
         address clone = Clones.cloneDeterministic(implementation, salt);
-        HyperliquidVault(payable(clone)).initialize(assetToken, shareToken, admin, operator);
+        HyperliquidVault(payable(clone)).initialize(assetToken, shareToken, tradeValidator, admin, operator);
         return HyperliquidVault(payable(clone));
     }
 
