@@ -321,9 +321,11 @@ describe('provision runtime backend helpers', () => {
   });
 
   it('merges local factory extra signers without duplicates', async () => {
-    const { mergeVaultSigners, parseFactoryExtraSigners } = await import(
-      '../provision'
-    );
+    const {
+      mergeVaultSigners,
+      parseFactoryExtraSigners,
+      validateFactoryVaultSignerConfig,
+    } = await import('../provision');
 
     const extra = parseFactoryExtraSigners(
       '0x90f79bf6eb2c4f870365e785982e1f101e93b906, invalid, 0x90F79bf6EB2c4f870365E785982E1f101E93b906',
@@ -342,6 +344,17 @@ describe('provision runtime backend helpers', () => {
       '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
       '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
     ]);
+
+    const localSigners = mergeVaultSigners(
+      [
+        '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+      ],
+      extra,
+    );
+    expect(validateFactoryVaultSignerConfig(localSigners.length)).toEqual({
+      ok: true,
+    });
   });
 
   it('shares normalized strategy runtime and schedules across provision payload builders', async () => {
