@@ -77,14 +77,42 @@ interface HyperliquidModeResponse {
   snapshot: HyperliquidModeSnapshot;
 }
 
+interface HyperliquidSettlementAttempt {
+  epoch: string;
+  last_attempt_at: string;
+  last_status: 'succeeded' | 'skipped' | 'failed';
+  fulfilled_count: number;
+  fulfilled_assets: string;
+  stopped_reason: string;
+  tx_hashes: string[];
+}
+
+interface HyperliquidSettlementState {
+  next_settlement_time: string;
+  cutoff_time: string;
+  cutoff_secs: number;
+  idle_buffer_bps: number;
+  idle_buffer_target?: string | null;
+  cash_needed?: string | null;
+  queued_shares?: string | null;
+  next_request_id?: string | null;
+  next_request_created_at?: string | null;
+  next_request_eligible?: boolean | null;
+  eligible_pending_request_count?: number | null;
+  rollover: boolean;
+  last_attempt?: HyperliquidSettlementAttempt | null;
+}
+
+interface HyperliquidSettlementResponse {
+  state: HyperliquidSettlementState;
+}
+
 interface HyperliquidAccountingState {
   idleAssets?: bigint;
   hyperliquidAssets?: bigint;
   pendingRedeemShares?: bigint;
   accountingShareSupply?: bigint;
   isAccountingFresh?: boolean;
-  accountingUpdatedAt?: bigint;
-  maxAccountingStaleness?: bigint;
   nextWithdrawalRequestId?: bigint;
   nextFulfillableWithdrawalRequestId?: bigint;
 }
@@ -232,6 +260,18 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
       ),
   });
 
+  const settlementQuery = useQuery({
+    queryKey: ['hyperliquid-settlement', apiUrl, bot.id, auth.authCacheKey],
+    enabled: bot.strategyType === 'hyperliquid_perp' && Boolean(auth.authCacheKey && auth.getCachedToken()),
+    refetchInterval: 15_000,
+    queryFn: () =>
+      operatorJsonWithAuth<HyperliquidSettlementResponse>(
+        apiUrl,
+        `/api/bots/${encodeURIComponent(bot.id)}/hyperliquid/settlement`,
+        auth,
+      ),
+  });
+
   const accountingQuery = useQuery({
     queryKey: ['hyperliquid-vault-accounting', vaultAddress, targetChainId],
     enabled: Boolean(vaultAddress),
@@ -246,8 +286,6 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
           { address: vaultAddress, abi: tradingVaultAbi, functionName: 'pendingRedeemShares' },
           { address: vaultAddress, abi: tradingVaultAbi, functionName: 'accountingShareSupply' },
           { address: vaultAddress, abi: tradingVaultAbi, functionName: 'isAccountingFresh' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'hyperliquidAccountAssetsUpdatedAt' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxAccountingStaleness' },
           { address: vaultAddress, abi: tradingVaultAbi, functionName: 'nextWithdrawalRequestId' },
           { address: vaultAddress, abi: tradingVaultAbi, functionName: 'nextFulfillableWithdrawalRequestId' },
         ],
@@ -260,10 +298,8 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
         pendingRedeemShares: results[2]?.status === 'success' ? (results[2].result as bigint) : undefined,
         accountingShareSupply: results[3]?.status === 'success' ? (results[3].result as bigint) : undefined,
         isAccountingFresh: results[4]?.status === 'success' ? (results[4].result as boolean) : undefined,
-        accountingUpdatedAt: results[5]?.status === 'success' ? (results[5].result as bigint) : undefined,
-        maxAccountingStaleness: results[6]?.status === 'success' ? (results[6].result as bigint) : undefined,
-        nextWithdrawalRequestId: results[7]?.status === 'success' ? (results[7].result as bigint) : undefined,
-        nextFulfillableWithdrawalRequestId: results[8]?.status === 'success' ? (results[8].result as bigint) : undefined,
+        nextWithdrawalRequestId: results[5]?.status === 'success' ? (results[5].result as bigint) : undefined,
+        nextFulfillableWithdrawalRequestId: results[6]?.status === 'success' ? (results[6].result as bigint) : undefined,
       };
     },
   });
@@ -319,6 +355,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
     void queueQuery.refetch();
     void navQuery.refetch();
     void modeQuery.refetch();
+    void settlementQuery.refetch();
   };
 
   if (bot.strategyType !== 'hyperliquid_perp') {
@@ -343,6 +380,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
 
   const snapshot = navQuery.data?.snapshot;
   const mode = modeQuery.data?.snapshot;
+  const settlement = settlementQuery.data?.state;
   const onchain = accountingQuery.data;
 
   return (
@@ -394,6 +432,11 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
             Mode unavailable: {modeQuery.error instanceof Error ? modeQuery.error.message : String(modeQuery.error)}
           </p>
         )}
+        {settlementQuery.error && (
+          <p className="mb-4 text-sm text-red-500">
+            Settlement unavailable: {settlementQuery.error instanceof Error ? settlementQuery.error.message : String(settlementQuery.error)}
+          </p>
+        )}
 
         <div className={`mb-4 rounded-lg border p-3 ${modeClassName(mode?.mode)}`}>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -418,17 +461,21 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
           <Metric label="Queued shares" value={formatShares(onchain?.pendingRedeemShares, shareUnitDecimals)} />
           <Metric label="Queued withdrawal %" value={formatPercentBps(mode?.metrics.queued_withdrawal_bps ?? undefined)} />
           <Metric label="Idle USDC %" value={formatPercentBps(mode?.metrics.idle_usdc_bps ?? undefined)} />
+          <Metric label="Idle buffer" value={formatPercentBps(settlement?.idle_buffer_bps ?? mode?.thresholds.min_idle_usdc_bps)} />
+          <Metric label="Cash needed" value={settlement?.cash_needed ? formatAsset(BigInt(settlement.cash_needed), vault.assetDecimals, vault.assetSymbol) : 'N/A'} />
+          <Metric label="Next settlement" value={formatIsoTimestamp(settlement?.next_settlement_time)} />
+          <Metric label="Cutoff" value={formatIsoTimestamp(settlement?.cutoff_time)} />
           <Metric label="Margin usage" value={formatPercentBps(mode?.metrics.margin_usage_bps ?? snapshot?.margin_usage_bps)} />
-          <Metric label="Last accounting update" value={formatTimestamp(onchain?.accountingUpdatedAt)} />
         </dl>
 
         <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
           <div>Vault: <span className="font-mono break-all">{vaultAddress}</span></div>
           <div>Chain: {targetChainName}</div>
-          <div>Accounting fresh: {onchain?.isAccountingFresh == null ? 'N/A' : onchain.isAccountingFresh ? 'yes' : 'no'}</div>
-          <div>Max accounting staleness: {onchain?.maxAccountingStaleness == null ? 'N/A' : `${onchain.maxAccountingStaleness.toString()}s`}</div>
+          <div>HyperCore read: {onchain?.isAccountingFresh == null ? 'N/A' : onchain.isAccountingFresh ? 'available' : 'unavailable'}</div>
           <div>Liquidity mode threshold: {formatPercentBps(mode?.thresholds.liquidity_mode_queue_bps)}</div>
           <div>Emergency queue threshold: {formatPercentBps(mode?.thresholds.emergency_queue_bps)}</div>
+          <div>Settlement rollover: {settlement?.rollover == null ? 'N/A' : settlement.rollover ? 'yes' : 'no'}</div>
+          <div>Last settlement: {settlement?.last_attempt ? `${settlement.last_attempt.last_status} (${settlement.last_attempt.stopped_reason})` : 'None recorded'}</div>
         </div>
 
         {snapshot?.warnings?.length ? (
@@ -449,7 +496,11 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
         isConnected={isConnected}
         assetSymbol={vault.assetSymbol}
         idleUsdc={snapshot?.idle_usdc}
+        totalNav={snapshot?.total_nav}
+        idleBufferBps={settlement?.idle_buffer_bps ?? mode?.thresholds.min_idle_usdc_bps}
         sharePrice={snapshot?.share_price}
+        nextSettlementTime={settlement?.next_settlement_time}
+        cutoffTime={settlement?.cutoff_time}
         accountingFresh={onchain?.isAccountingFresh}
         onSuccess={refetchVaultState}
       />
@@ -463,6 +514,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
         isLoading={queueQuery.isLoading || accountingQuery.isLoading}
         isReady={isReady}
         nextFulfillableWithdrawalRequestId={onchain?.nextFulfillableWithdrawalRequestId}
+        settlement={settlement}
         onSuccess={refetchVaultState}
       />
     </div>
@@ -480,7 +532,11 @@ function RedeemPanel({
   isConnected,
   assetSymbol,
   idleUsdc,
+  totalNav,
+  idleBufferBps,
   sharePrice,
+  nextSettlementTime,
+  cutoffTime,
   accountingFresh,
   onSuccess,
 }: {
@@ -494,7 +550,11 @@ function RedeemPanel({
   isConnected: boolean;
   assetSymbol: string;
   idleUsdc?: string;
+  totalNav?: string;
+  idleBufferBps?: number;
   sharePrice?: string;
+  nextSettlementTime?: string;
+  cutoffTime?: string;
   accountingFresh?: boolean;
   onSuccess: () => void;
 }) {
@@ -519,11 +579,17 @@ function RedeemPanel({
     ? sharesNumber * Number(sharePrice)
     : undefined;
   const instantLiquidity = idleUsdc ? Number(idleUsdc) : undefined;
+  const idleBufferUsdc = totalNav && idleBufferBps != null
+    ? Number(totalNav) * (idleBufferBps / 10_000)
+    : undefined;
+  const instantAvailableUsdc = instantLiquidity != null && idleBufferUsdc != null
+    ? Math.max(0, instantLiquidity - idleBufferUsdc)
+    : instantLiquidity;
   const willBeInstant =
     estimatedUsdc != null &&
-    instantLiquidity != null &&
+    instantAvailableUsdc != null &&
     estimatedUsdc > 0 &&
-    estimatedUsdc <= instantLiquidity;
+    estimatedUsdc <= instantAvailableUsdc;
   const insufficientShares = typeof parsedShares === 'bigint' && parsedShares > 0n && (userShares ?? 0n) < parsedShares;
   const maxShares = userShares != null ? Number(formatUnits(userShares, shareUnitDecimals)) : undefined;
   const isPending = redeem.isPending || redeem.isConfirming || requestRedeem.isPending || requestRedeem.isConfirming;
@@ -577,7 +643,7 @@ function RedeemPanel({
     }
 
     const action = willBeInstant ? redeem.redeem : requestRedeem.requestRedeem;
-    const label = willBeInstant ? 'Withdraw' : 'Queue withdrawal';
+    const label = willBeInstant ? 'Request instant withdrawal' : 'Request queued withdrawal';
     action(vaultAddress, shares, shareUnitDecimals, targetChainId, {
       onHash(h) {
         addTx(h, `${label} ${shares || '?'} shares`, targetChainId);
@@ -603,14 +669,14 @@ function RedeemPanel({
     : isPending
     ? willBeInstant ? 'Withdrawing...' : 'Queueing...'
     : willBeInstant
-    ? `Withdraw ${assetSymbol}`
-    : 'Queue Withdrawal';
+    ? `Request ${assetSymbol}`
+    : 'Request Withdrawal';
 
   return (
     <section className="rounded-lg border bg-card p-4">
       <h3 className="text-sm font-semibold">Redeem shares</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        Instant redemption uses idle vault USDC. Larger exits are queued by shares and paid at fresh NAV when fulfilled.
+        Request withdrawal anytime. Small exits may be instant when they leave the idle buffer intact; larger exits settle during the next eligible settlement window.
       </p>
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div>
@@ -647,7 +713,19 @@ function RedeemPanel({
           </div>
           <div className="mt-2 flex justify-between gap-3">
             <span className="text-muted-foreground">Path</span>
-            <span className="font-medium">{willBeInstant ? 'Instant' : 'Queued'}</span>
+            <span className="font-medium">{willBeInstant ? 'Instant if safe' : 'Settlement window'}</span>
+          </div>
+          <div className="mt-2 flex justify-between gap-3">
+            <span className="text-muted-foreground">Idle buffer</span>
+            <span className="font-medium">{formatUsd(idleBufferUsdc)}</span>
+          </div>
+          <div className="mt-2 flex justify-between gap-3">
+            <span className="text-muted-foreground">Next window</span>
+            <span className="font-medium text-right">{formatIsoTimestamp(nextSettlementTime)}</span>
+          </div>
+          <div className="mt-2 flex justify-between gap-3">
+            <span className="text-muted-foreground">Cutoff</span>
+            <span className="font-medium text-right">{formatIsoTimestamp(cutoffTime)}</span>
           </div>
         </div>
       </div>
@@ -673,6 +751,7 @@ function QueuePanel({
   isLoading,
   isReady,
   nextFulfillableWithdrawalRequestId,
+  settlement,
   onSuccess,
 }: {
   vaultAddress: Address;
@@ -683,6 +762,7 @@ function QueuePanel({
   isLoading: boolean;
   isReady: boolean;
   nextFulfillableWithdrawalRequestId?: bigint;
+  settlement?: HyperliquidSettlementState;
   onSuccess: () => void;
 }) {
   const cancelRedeem = useCancelRedeem();
@@ -690,6 +770,7 @@ function QueuePanel({
   const cancelConfirmedRef = useRef(false);
   const fulfillConfirmedRef = useRef(false);
   const hasFulfillable = nextFulfillableWithdrawalRequestId != null && nextFulfillableWithdrawalRequestId > 0n;
+  const showAdminControls = import.meta.env.VITE_SHOW_HYPERLIQUID_ADMIN_CONTROLS === 'true';
 
   useEffect(() => {
     if (cancelRedeem.isSuccess && !cancelConfirmedRef.current) {
@@ -749,18 +830,27 @@ function QueuePanel({
         <div>
           <h3 className="text-sm font-semibold">Withdrawal queue</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            Requests are served FIFO. Pending requests can be cancelled before fulfillment.
+            Requests are served FIFO. Requests after the cutoff roll forward, and unpaid requests remain queued for a later window.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!isReady || !hasFulfillable || fulfillNext.isPending || fulfillNext.isConfirming}
-          onClick={onFulfillNext}
-        >
-          {fulfillNext.isPending || fulfillNext.isConfirming ? 'Fulfilling...' : 'Fulfill next'}
-        </Button>
+        {showAdminControls && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!isReady || !hasFulfillable || fulfillNext.isPending || fulfillNext.isConfirming}
+            onClick={onFulfillNext}
+          >
+            {fulfillNext.isPending || fulfillNext.isConfirming ? 'Fulfilling...' : 'Admin fulfill next'}
+          </Button>
+        )}
+      </div>
+
+      <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+        <div>Next settlement: {formatIsoTimestamp(settlement?.next_settlement_time)}</div>
+        <div>Cutoff: {formatIsoTimestamp(settlement?.cutoff_time)}</div>
+        <div>Eligible requests: {settlement?.eligible_pending_request_count ?? 'N/A'}</div>
+        <div>Rollover: {settlement?.rollover == null ? 'N/A' : settlement.rollover ? 'yes' : 'no'}</div>
       </div>
 
       <div className="mt-4 overflow-x-auto">

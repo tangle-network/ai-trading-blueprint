@@ -231,6 +231,9 @@ Authorization: Bearer {token}
 - GET /adapters — List available protocol adapters
 
 ### Hyperliquid Perps Endpoints (native L1 API — preferred for HL)
+- GET /hyperliquid/nav — Required before opening or increasing risk; confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.
+- GET /hyperliquid/mode — Required before opening or increasing risk. If mode is `liquidity` or `emergency_wind_down`, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure.
+- GET /hyperliquid/settlement — Withdrawal pressure tool. Reports FIFO queue pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
 - POST /hyperliquid/order — Place any order type directly
   Body: {{ "asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {{ "type": "market" }} }}
 - POST /hyperliquid/bracket — Entry + stop-loss + take-profit grouped

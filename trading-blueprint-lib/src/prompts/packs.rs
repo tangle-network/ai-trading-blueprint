@@ -769,14 +769,16 @@ from the generic EVM perp strategy. Use only `target_protocol: "hyperliquid"`.
 
 ### Trading Flow
 
-1. Check `/hyperliquid/account` before opening new risk.
-2. Confirm account value, margin usage, open positions, and open orders.
-3. Submit live trades through `/validate` and `/execute`.
-4. Use reduce-only orders when closing or reducing exposure.
+1. Check `/hyperliquid/nav`, `/hyperliquid/mode`, and `/hyperliquid/account` before opening new risk.
+2. Confirm fresh NAV, idle buffer, withdrawal pressure, account value, margin usage, open positions, and open orders.
+3. If mode is `liquidity`, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure.
+4. Submit live trades through `/validate` and `/execute`.
+5. Use reduce-only orders when closing or reducing exposure.
 
 ### Risk Management
 
 - Keep enough idle/withdrawable USDC for liquidity needs.
+- Respect the settlement tool's idle buffer target and cash-needed fields.
 - Do not increase risk if account state is stale or unavailable.
 - Stop-loss mandatory on directional trades.
 - Maintain a liquidation buffer appropriate for the configured leverage.
