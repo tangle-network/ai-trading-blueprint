@@ -13,7 +13,7 @@ trading-runtime = { path = "../trading-runtime" }
 sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 axum = "0.8"
-blueprint-sdk = { version = "0.2.0-alpha.5", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures-util = "0.3"
 once_cell = "1"
@@ -29,7 +29,7 @@ ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-a
 alloy = { version = "1", features = ["node-bindings", "sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
 anyhow = "1"
 blueprint-anvil-testing-utils = { git = "https://github.com/tangle-network/blueprint.git", branch = "main" }
-blueprint-sdk = { version = "0.2.0-alpha.5", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
+blueprint-sdk = { git = "https://github.com/tangle-network/blueprint.git", branch = "main", default-features = false, features = ["std", "tracing", "macros", "tangle", "local-store"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 http-body-util = "0.1"
 hyper = "1"

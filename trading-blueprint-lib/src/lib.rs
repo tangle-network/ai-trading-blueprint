@@ -18,6 +18,7 @@ pub mod providers;
 pub mod registration;
 pub mod session_auth;
 pub mod state;
+pub mod tangle_compat;
 pub mod wind_down;
 pub mod workflow_compat;
 
@@ -33,6 +34,7 @@ use blueprint_sdk::Job;
 use blueprint_sdk::Router;
 use blueprint_sdk::alloy::sol;
 use blueprint_sdk::tangle::TangleLayer;
+use tangle_compat::EvmTangleMetadataCompatLayer;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Job IDs — must match TradingBlueprint.sol constants
@@ -119,16 +121,20 @@ sol! {
 
 pub fn router() -> Router {
     Router::new()
-        .route(JOB_PROVISION, jobs::provision.layer(TangleLayer))
-        .route(JOB_CONFIGURE, jobs::configure.layer(TangleLayer))
-        .route(JOB_START_TRADING, jobs::start.layer(TangleLayer))
-        .route(JOB_STOP_TRADING, jobs::stop.layer(TangleLayer))
-        .route(JOB_STATUS, jobs::status.layer(TangleLayer))
-        .route(JOB_DEPROVISION, jobs::deprovision.layer(TangleLayer))
-        .route(JOB_EXTEND, jobs::extend.layer(TangleLayer))
-        .route(JOB_PROMPT, jobs::prompt.layer(TangleLayer))
-        .route(JOB_TASK, jobs::task.layer(TangleLayer))
-        .route(JOB_EXEC, jobs::exec.layer(TangleLayer))
+        .route(JOB_PROVISION, jobs::provision.layer(tangle_layer()))
+        .route(JOB_CONFIGURE, jobs::configure.layer(tangle_layer()))
+        .route(JOB_START_TRADING, jobs::start.layer(tangle_layer()))
+        .route(JOB_STOP_TRADING, jobs::stop.layer(tangle_layer()))
+        .route(JOB_STATUS, jobs::status.layer(tangle_layer()))
+        .route(JOB_DEPROVISION, jobs::deprovision.layer(tangle_layer()))
+        .route(JOB_EXTEND, jobs::extend.layer(tangle_layer()))
+        .route(JOB_PROMPT, jobs::prompt.layer(tangle_layer()))
+        .route(JOB_TASK, jobs::task.layer(tangle_layer()))
+        .route(JOB_EXEC, jobs::exec.layer(tangle_layer()))
         .route(JOB_WORKFLOW_TICK, jobs::workflow_tick)
         .route(JOB_WEBHOOK_EVENT, jobs::webhook_event)
+}
+
+fn tangle_layer() -> EvmTangleMetadataCompatLayer<TangleLayer> {
+    EvmTangleMetadataCompatLayer::new(TangleLayer)
 }
