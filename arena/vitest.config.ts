@@ -9,8 +9,15 @@ export default defineConfig({
   resolve: {
     alias: {
       // Stub browser-heavy packages we don't need to exercise in unit tests.
+      '@tangle-network/sandbox-ui/hooks': path.join(
+        stubs,
+        'sandbox-ui-hooks.ts',
+      ),
+      '@tangle-network/sandbox-ui/utils': path.join(
+        stubs,
+        'sandbox-ui-utils.ts',
+      ),
       '@tangle-network/sandbox-ui': path.join(stubs, 'empty.ts'),
-      '@tangle-network/sandbox-ui/hooks': path.join(stubs, 'empty.ts'),
       'framer-motion': path.join(stubs, 'framer-motion.tsx'),
     },
   },

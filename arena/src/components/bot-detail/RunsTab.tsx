@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AgentBranding } from "@tangle-network/sandbox-ui/types";
 import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
@@ -385,12 +385,18 @@ function RunsSidebar({
   runs,
   activeRunId,
   stacked,
+  hasOlderRuns,
+  isLoadingOlderRuns,
   onSelect,
+  onLoadOlder,
 }: {
   runs: RunItem[];
   activeRunId: string;
   stacked: boolean;
+  hasOlderRuns: boolean;
+  isLoadingOlderRuns: boolean;
   onSelect: (id: string) => void;
+  onLoadOlder: () => void;
 }) {
   return (
     <aside
@@ -418,47 +424,68 @@ function RunsSidebar({
             No autonomous runs yet
           </div>
         ) : (
-          runs.map((run) => {
-            const isActive = run.id === activeRunId;
-            return (
-              <button
-                key={run.id}
-                className={`group flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
-                  isActive
-                    ? "bg-arena-elements-item-backgroundActive"
-                    : "hover:bg-arena-elements-item-backgroundHover"
-                }`}
-                onClick={() => onSelect(run.id)}
-              >
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                    run.status === "running"
-                      ? "bg-amber-400"
-                      : run.status === "completed"
-                        ? "bg-emerald-500"
-                        : run.status === "interrupted"
-                          ? "bg-slate-500"
-                          : "bg-crimson-500"
+          <>
+            {runs.map((run) => {
+              const isActive = run.id === activeRunId;
+              return (
+                <button
+                  key={run.id}
+                  className={`group flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
+                    isActive
+                      ? "bg-arena-elements-item-backgroundActive"
+                      : "hover:bg-arena-elements-item-backgroundHover"
                   }`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
-                    {run.title}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5">
-                    <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
-                      {run.subtitle}
+                  onClick={() => onSelect(run.id)}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      run.status === "running"
+                        ? "bg-amber-400"
+                        : run.status === "completed"
+                          ? "bg-emerald-500"
+                          : run.status === "interrupted"
+                            ? "bg-slate-500"
+                            : "bg-crimson-500"
+                    }`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                      {run.title}
                     </div>
-                    <span
-                      className={`rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(run.status)}`}
-                    >
-                      {getStatusLabel(run.status)}
-                    </span>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
+                        {run.subtitle}
+                      </div>
+                      <span
+                        className={`rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(run.status)}`}
+                      >
+                        {getStatusLabel(run.status)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </button>
-            );
-          })
+                </button>
+              );
+            })}
+            {hasOlderRuns ? (
+              <div className="border-t border-arena-elements-dividerColor/40 px-3 py-2">
+                <button
+                  type="button"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 px-2 py-1.5 text-[11px] font-data text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={onLoadOlder}
+                  disabled={isLoadingOlderRuns}
+                >
+                  <span
+                    className={
+                      isLoadingOlderRuns
+                        ? "i-ph:arrow-clockwise animate-spin text-sm"
+                        : "i-ph:clock-counter-clockwise text-sm"
+                    }
+                  />
+                  {isLoadingOlderRuns ? "Loading..." : "Load older"}
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </aside>
@@ -602,15 +629,23 @@ export function RunsTab({
     };
   }, []);
 
-  const runsQuery = useQuery<BotRunsResponse>({
+  const runsQuery = useInfiniteQuery({
     queryKey: ["bot-runs", apiUrl, token, botId],
     enabled: isAuthenticated && !!apiUrl && !!token,
-    queryFn: async () => {
-      const response = await fetch(`${apiUrl}/runs?limit=100`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) => {
+      const cursor =
+        typeof pageParam === "string" && pageParam.length > 0
+          ? pageParam
+          : null;
+      const response = await fetch(
+        `${apiUrl}/runs?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
         throw new Error(
@@ -620,16 +655,35 @@ export function RunsTab({
 
       return parseRunsResponse(await response.json());
     },
+    getNextPageParam: (lastPage: BotRunsResponse) =>
+      lastPage.nextCursor ?? undefined,
     staleTime: 5_000,
     refetchInterval: (query) => {
-      const payload = query.state.data as BotRunsResponse | undefined;
-      return payload?.runs.some((run) => run.status === "running")
+      const payload = query.state.data as
+        | { pages?: BotRunsResponse[] }
+        | undefined;
+      return payload?.pages?.some((page) =>
+        page.runs.some((run) => run.status === "running"),
+      )
         ? 5_000
         : false;
     },
   });
 
-  const runs = runsQuery.data?.runs ?? [];
+  const runs = useMemo(() => {
+    const seen = new Set<string>();
+    return (
+      runsQuery.data?.pages.flatMap((page) =>
+        page.runs.filter((run) => {
+          if (seen.has(run.runId)) {
+            return false;
+          }
+          seen.add(run.runId);
+          return true;
+        }),
+      ) ?? []
+    );
+  }, [runsQuery.data]);
 
   useEffect(() => {
     if (runs.length === 0) {
@@ -766,7 +820,12 @@ export function RunsTab({
           runs={runItems}
           activeRunId={activeRun?.runId ?? ""}
           stacked={isStackedLayout}
+          hasOlderRuns={runsQuery.hasNextPage}
+          isLoadingOlderRuns={runsQuery.isFetchingNextPage}
           onSelect={setActiveRunId}
+          onLoadOlder={() => {
+            void runsQuery.fetchNextPage();
+          }}
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
