@@ -86,3 +86,132 @@ export function useRedeemInKind() {
 
   return { redeemInKind, hash, isPending, isConfirming, isSuccess, error, reset };
 }
+
+/** Redeem shares for the vault's base asset. */
+export function useRedeem() {
+  const { address: userAddress } = useAccount();
+  const [receiptChainId, setReceiptChainId] = useState<number | undefined>();
+  const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: receiptChainId });
+
+  function redeem(
+    vaultAddress: Address,
+    shares: string,
+    shareDecimals: number,
+    chainId: number,
+    callbacks?: RedeemCallbacks,
+  ) {
+    if (!userAddress) return;
+    const parsed = parseUnits(shares, shareDecimals);
+    setReceiptChainId(chainId);
+    writeContract(
+      {
+        address: vaultAddress,
+        abi: tradingVaultAbi,
+        functionName: 'redeem',
+        args: [parsed, userAddress, userAddress],
+        chainId,
+      },
+      {
+        onSuccess(h) { callbacks?.onHash?.(h); },
+        onError(e) { callbacks?.onError?.(e); },
+      },
+    );
+  }
+
+  return { redeem, hash, isPending, isConfirming, isSuccess, error, reset };
+}
+
+/** Queue a share-based redemption when the vault lacks enough idle liquidity. */
+export function useRequestRedeem() {
+  const { address: userAddress } = useAccount();
+  const [receiptChainId, setReceiptChainId] = useState<number | undefined>();
+  const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: receiptChainId });
+
+  function requestRedeem(
+    vaultAddress: Address,
+    shares: string,
+    shareDecimals: number,
+    chainId: number,
+    callbacks?: RedeemCallbacks,
+  ) {
+    if (!userAddress) return;
+    const parsed = parseUnits(shares, shareDecimals);
+    setReceiptChainId(chainId);
+    writeContract(
+      {
+        address: vaultAddress,
+        abi: tradingVaultAbi,
+        functionName: 'requestRedeem',
+        args: [parsed, userAddress, userAddress],
+        chainId,
+      },
+      {
+        onSuccess(h) { callbacks?.onHash?.(h); },
+        onError(e) { callbacks?.onError?.(e); },
+      },
+    );
+  }
+
+  return { requestRedeem, hash, isPending, isConfirming, isSuccess, error, reset };
+}
+
+export function useCancelRedeem() {
+  const [receiptChainId, setReceiptChainId] = useState<number | undefined>();
+  const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: receiptChainId });
+
+  function cancelRedeem(
+    vaultAddress: Address,
+    requestId: bigint,
+    chainId: number,
+    callbacks?: RedeemCallbacks,
+  ) {
+    setReceiptChainId(chainId);
+    writeContract(
+      {
+        address: vaultAddress,
+        abi: tradingVaultAbi,
+        functionName: 'cancelRedeem',
+        args: [requestId],
+        chainId,
+      },
+      {
+        onSuccess(h) { callbacks?.onHash?.(h); },
+        onError(e) { callbacks?.onError?.(e); },
+      },
+    );
+  }
+
+  return { cancelRedeem, hash, isPending, isConfirming, isSuccess, error, reset };
+}
+
+export function useFulfillNextRedeem() {
+  const [receiptChainId, setReceiptChainId] = useState<number | undefined>();
+  const { writeContract, data: hash, isPending, error, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: receiptChainId });
+
+  function fulfillNextRedeem(
+    vaultAddress: Address,
+    chainId: number,
+    callbacks?: RedeemCallbacks,
+  ) {
+    setReceiptChainId(chainId);
+    writeContract(
+      {
+        address: vaultAddress,
+        abi: tradingVaultAbi,
+        functionName: 'fulfillNextRedeem',
+        args: [],
+        chainId,
+      },
+      {
+        onSuccess(h) { callbacks?.onHash?.(h); },
+        onError(e) { callbacks?.onError?.(e); },
+      },
+    );
+  }
+
+  return { fulfillNextRedeem, hash, isPending, isConfirming, isSuccess, error, reset };
+}

@@ -39,6 +39,8 @@ const LOCAL_BOOTSTRAP_SCAN_BLOCKS = 500n;
 const MAX_ACTIVITY_ITEMS = 20;
 const LOCAL_CHAIN_IDS = new Set([31337, 31338, 31339]);
 const CHUNK_CONCURRENCY = 16;
+const HYPEREVM_TESTNET_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
+const HYPEREVM_RECENT_BLOCK_WINDOW = 9n;
 
 const erc20TransferEvent = {
   type: 'event',
@@ -175,6 +177,21 @@ async function getVaultLogs(
   targetChainId: number,
 ) {
   const currentBlock = await client.getBlockNumber();
+  if (targetChainId === HYPEREVM_TESTNET_CHAIN_ID) {
+    const fromBlock = currentBlock > HYPEREVM_RECENT_BLOCK_WINDOW
+      ? currentBlock - HYPEREVM_RECENT_BLOCK_WINDOW
+      : 0n;
+    try {
+      return await client.getLogs({
+        address: vaultAddress,
+        fromBlock,
+        toBlock: currentBlock,
+      });
+    } catch {
+      return [];
+    }
+  }
+
   const fromBlock = currentBlock > RECENT_BLOCK_WINDOW ? currentBlock - RECENT_BLOCK_WINDOW : 0n;
 
   if (LOCAL_CHAIN_IDS.has(targetChainId)) {

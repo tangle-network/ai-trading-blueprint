@@ -4,19 +4,14 @@ import { type ReactNode } from 'react';
 import type { Chain } from 'viem';
 import { defaultConnectKitOptions, getTangleWalletChains } from '@tangle-network/blueprint-ui';
 import { Web3Shell } from '@tangle-network/blueprint-ui/components';
-import { executionForkChain, tangleLocal } from '~/lib/contracts/chains';
+import { executionForkChain, hyperEvmTestnet, tangleLocal } from '~/lib/contracts/chains';
 import { http } from 'wagmi';
 
 function isLocalRpcUrl(rpcUrl: string | undefined): boolean {
   if (!rpcUrl) return false;
   try {
     const { hostname } = new URL(rpcUrl);
-    return (
-      hostname === '127.0.0.1' ||
-      hostname === 'localhost' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1'
-    );
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1';
   } catch {
     return false;
   }
@@ -41,12 +36,12 @@ function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
     import.meta.env.VITE_DEX_ETHEREUM_ENABLED !== 'false' &&
     executionForkChain.id !== tangleLocal.id &&
     isLocalRpcUrl(executionForkRpc);
-
-  if (!shouldIncludeLocalExecutionFork) return tangleChains;
+  const shouldIncludeHyperEvmTestnet = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED === 'true';
 
   return dedupeChains([
     tangleLocal,
-    executionForkChain,
+    ...(shouldIncludeLocalExecutionFork ? [executionForkChain] : []),
+    ...(shouldIncludeHyperEvmTestnet ? [hyperEvmTestnet] : []),
     ...tangleChains.slice(1),
   ]);
 }
@@ -56,12 +51,7 @@ const walletChains = getArenaWalletChains();
 const config = createConfig(
   getDefaultConfig({
     chains: walletChains,
-    transports: Object.fromEntries(
-      walletChains.map((chain) => [
-        chain.id,
-        http(chain.rpcUrls.default.http[0]),
-      ]),
-    ),
+    transports: Object.fromEntries(walletChains.map((chain) => [chain.id, http(chain.rpcUrls.default.http[0])])),
     walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3fcc6bba6f1de962d911bb5b5c3dba68',
     appName: 'AI Trading Arena',
     appDescription: 'AI-powered trading competition platform on Tangle Network',
