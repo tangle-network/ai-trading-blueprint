@@ -38,9 +38,15 @@ contract HyperliquidVaultStackTest is Test {
     address internal validator1 = makeAddr("validator1");
     address internal validator2 = makeAddr("validator2");
     address internal validator3 = makeAddr("validator3");
+    uint256 internal validator1Key;
+    uint256 internal validator2Key;
+    uint256 internal validator3Key;
     address internal agentWallet = makeAddr("agentWallet");
 
     function setUp() public {
+        (validator1, validator1Key) = makeAddrAndKey("validator1");
+        (validator2, validator2Key) = makeAddrAndKey("validator2");
+        (validator3, validator3Key) = makeAddrAndKey("validator3");
         usdc = new MockERC20("USD Coin", "USDC", 6);
         implementation = new HyperliquidVault();
         tradeValidator = new HyperliquidTradeValidator();
@@ -108,6 +114,40 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(usdc.balanceOf(user), 400e6);
         assertEq(share.balanceOf(user), 600e6);
         assertEq(vault.totalAssets(), 600e6);
+    }
+
+    function test_hyperliquidTradeValidatorAcceptsOnlyVaultBoundExecutionHash() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("validator-bind-salt"));
+        bytes32 intentHash = keccak256("bot-intent");
+        bytes32 executionHash = keccak256(abi.encode("hyperliquid", vaultAddr, "ETH", true, uint256(1 ether)));
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256[] memory scores = new uint256[](2);
+        scores[0] = 80;
+        scores[1] = 75;
+
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _signValidation(validator1Key, intentHash, executionHash, vaultAddr, scores[0], deadline, 2);
+        sigs[1] = _signValidation(validator2Key, intentHash, executionHash, vaultAddr, scores[1], deadline, 2);
+
+        (bool approved, uint256 validCount) =
+            tradeValidator.validateWithSignatures(intentHash, executionHash, vaultAddr, sigs, scores, deadline, 2);
+        assertTrue(approved);
+        assertEq(validCount, 2);
+
+        (approved, validCount) = tradeValidator.validateWithSignatures(
+            intentHash, keccak256("wrong-execution"), vaultAddr, sigs, scores, deadline, 2
+        );
+        assertFalse(approved, "signatures must not replay onto a different execution hash");
+        assertEq(validCount, 0);
+
+        address otherVault = makeAddr("other-vault");
+        vm.expectRevert(abi.encodeWithSelector(HyperliquidTradeValidator.VaultNotConfigured.selector, otherVault));
+        tradeValidator.validateWithSignatures(intentHash, executionHash, otherVault, sigs, scores, deadline, 2);
+
+        (approved, validCount) =
+            tradeValidator.validateWithSignatures(intentHash, executionHash, vaultAddr, sigs, scores, deadline, 1);
+        assertFalse(approved, "signatures must not replay across action kinds");
+        assertEq(validCount, 0);
     }
 
     function test_hyperliquidAccountingMakesSharesNavAwareButLiquidityBound() public {
@@ -463,6 +503,20 @@ contract HyperliquidVaultStackTest is Test {
         return HyperliquidVaultFactory.FeeConfig({
             performanceFeeBps: 2_000, managementFeeBps: 200, validatorFeeShareBps: 3_000
         });
+    }
+
+    function _signValidation(
+        uint256 privateKey,
+        bytes32 intentHash,
+        bytes32 executionHash,
+        address vault,
+        uint256 score,
+        uint256 deadline,
+        uint256 actionKind
+    ) internal view returns (bytes memory) {
+        bytes32 digest = tradeValidator.computeDigest(intentHash, executionHash, vault, score, deadline, actionKind);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 }
 

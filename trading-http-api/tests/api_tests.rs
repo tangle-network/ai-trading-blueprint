@@ -6605,6 +6605,176 @@ async fn test_evolution_full_cycle_record_then_evolve() {
     assert!(json["result"]["test_candles"].as_u64().unwrap() > 0);
 }
 
+#[tokio::test]
+async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut candidate = backtest_config();
+    candidate["harness"]["position_sizing"] =
+        serde_json::json!({"method": "fixed_fraction", "fraction": 0.35});
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert!(json["candles_used"].as_u64().unwrap() >= 60);
+    assert!(json["blockers"].as_array().unwrap().iter().any(|b| {
+        b.as_str()
+            .unwrap()
+            .contains("missing paper trading evidence")
+    }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_blocks_weak_paper_evidence() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-paper-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "paper": {
+            "trades": 3,
+            "total_return_pct": -1.2,
+            "max_drawdown_pct": 25.0,
+            "candidate_hash": "sha256:test"
+        },
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    let blockers = json["blockers"].as_array().unwrap();
+    assert!(
+        blockers
+            .iter()
+            .any(|b| b.as_str().unwrap().contains("need at least 20"))
+    );
+    assert!(
+        blockers
+            .iter()
+            .any(|b| b.as_str().unwrap().contains("return must be positive"))
+    );
+    assert!(
+        blockers
+            .iter()
+            .any(|b| b.as_str().unwrap().contains("exceeds 10.00% limit"))
+    );
+}
+
 // ── Backtest multi-token tests ─────────────────────────────────────────
 
 #[tokio::test]
