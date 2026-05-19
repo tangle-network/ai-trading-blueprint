@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
-import { publicClient, txListStore, updateTx } from '@tangle-network/blueprint-ui';
+import { txListStore, updateTx } from '@tangle-network/blueprint-ui';
+import { getChainPublicClient } from '~/lib/contracts/chainClients';
 
 /**
  * Watches all pending transactions and updates their status when confirmed or failed.
@@ -17,7 +18,8 @@ export function useTxWatcher() {
       if (watching.current.has(tx.hash)) continue;
       watching.current.add(tx.hash);
 
-      publicClient
+      const client = getChainPublicClient(tx.chainId);
+      client
         .waitForTransactionReceipt({ hash: tx.hash })
         .then((receipt: { status: string; blockNumber: bigint; gasUsed: bigint }) => {
           updateTx(tx.hash, {
