@@ -32,6 +32,8 @@ const CONVERSATION_CRON_10_MIN: &str = "0 1,11,21,31,41,51 * * * *";
 const RESEARCH_CRON_1_HOUR: &str = "0 2 * * * *";
 const RESEARCH_CRON_2_HOURS: &str = "0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *";
 const RESEARCH_CRON_6_HOURS: &str = "0 2 0,6,12,18 * * *";
+const DEFAULT_FAST_WORKFLOW_MAX_TURNS: u64 = 5;
+const DEFAULT_FAST_WORKFLOW_TIMEOUT_MS: u64 = 120_000;
 
 fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let mut map = BOT_LIFECYCLE_LOCKS
@@ -474,13 +476,14 @@ pub async fn activate_bot_with_secrets(
             .map(|p| p.default_cron.clone())
             .unwrap_or_else(|| "0 */5 * * * *".to_string())
     };
+    let (fast_max_turns, fast_timeout_ms) = fast_workflow_budget(pack.as_ref());
 
     let fast_wf = json!({
         "sidecar_url": record.sidecar_url,
         "prompt": fast_prompt,
         "session_id": format!("fast-{bot_id}"),
-        "max_turns": 5,
-        "timeout_ms": 120_000,
+        "max_turns": fast_max_turns,
+        "timeout_ms": fast_timeout_ms,
         "sidecar_token": record.token,
         "backend_profile_json": &profile_json,
     });
@@ -628,6 +631,27 @@ pub async fn activate_bot_with_secrets(
         trading_api_token,
         trading_api_url,
     })
+}
+
+fn fast_workflow_budget(pack: Option<&crate::prompts::packs::StrategyPack>) -> (u64, u64) {
+    match pack {
+        Some(pack) => (
+            if pack.max_turns > 0 {
+                pack.max_turns
+            } else {
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS
+            },
+            if pack.timeout_ms > 0 {
+                pack.timeout_ms
+            } else {
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            },
+        ),
+        None => (
+            DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+            DEFAULT_FAST_WORKFLOW_TIMEOUT_MS,
+        ),
+    }
 }
 
 /// Wait for the sidecar's HTTP server to respond to health checks.
@@ -983,6 +1007,8 @@ pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn submit_trade_tool_preserves_query_strings() {
         let tool = include_str!("../prompts/tools/submit_trade.js");
@@ -997,6 +1023,34 @@ mod tests {
         assert!(tool.contains("Invalid --action. Use buy or sell."));
         assert!(tool.contains("action: action"));
         assert!(tool.contains("estimated_proceeds_usd"));
+    }
+
+    #[test]
+    fn hyperliquid_pack_fast_workflow_uses_pack_budget() {
+        let pack = crate::prompts::packs::get_pack("hyperliquid_perp").unwrap();
+        assert_eq!(fast_workflow_budget(Some(&pack)), (15, 180_000));
+    }
+
+    #[test]
+    fn fast_workflow_budget_keeps_defaults_for_non_pack_and_zero_overrides() {
+        assert_eq!(
+            fast_workflow_budget(None),
+            (
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            )
+        );
+
+        let mut pack = crate::prompts::packs::get_pack("dex").unwrap();
+        pack.max_turns = 0;
+        pack.timeout_ms = 0;
+        assert_eq!(
+            fast_workflow_budget(Some(&pack)),
+            (
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            )
+        );
     }
 }
 

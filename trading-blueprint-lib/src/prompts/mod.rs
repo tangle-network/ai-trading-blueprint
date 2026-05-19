@@ -121,6 +121,23 @@ pub fn build_pack_loop_prompt(
                 metrics_idx = metrics_step_index,
             )
         }
+        "hyperliquid_perp" => format!(
+            "Trading tick ({name}). Run these steps:\n\n\
+             1. Load the Trading API client: `const api=require('/home/agent/tools/api-client')`.\n\
+             2. Check live Hyperliquid state before considering risk:\n\
+                `await api.getHyperliquidNav()` — confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.\n\
+                `await api.getHyperliquidMode()` — if mode is `liquidity` or `emergency_wind_down`, do not open or increase exposure.\n\
+                `await api.apiCall('GET','/hyperliquid/account')` — inspect account value, usable margin, positions, and open orders.\n\
+                `await api.apiCall('GET','/hyperliquid/prices')` — read current perp mid prices.\n\
+             3. If account value, withdrawable, or usable/free margin is missing, zero, stale, or not parseable, make a safe skip decision. Log it with `node /home/agent/tools/log-decision.js '{{\"action\":\"skip\",\"reason\":\"no-usable-hyperliquid-margin\"}}'`, write metrics with `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`, and stop.\n\
+             4. If mode allows risk and there is usable margin, choose a small ETH/BTC/SOL perp action from current positions, prices, funding, and risk limits. Prefer no trade unless the setup is clear.\n\
+             5. For any actionable trade, build an intent with `target_protocol: \"hyperliquid\"`, `action: \"open\"`, `action: \"close\"`, or `action: \"reduce\"`, and `metadata` containing `asset`, `is_buy`, `size`, optional `limit_price`, leverage, reduce-only intent when reducing, and stop-loss / take-profit context when available. Use the Trading API validation/execution flow: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`.\n\
+             6. Alternatively, for native order placement only when validation/execution is not appropriate, call `await api.apiCall('POST','/hyperliquid/order', {{asset:'ETH', is_buy:true, size:'0.01', order_type:{{type:'market'}}}})` with conservative size and the same risk checks.\n\
+             7. Log every trade or skip with `log-decision.js` and write metrics with `write-metrics.js` using the latest NAV/account value.\n\n\
+             Use only Hyperliquid state and actions in this loop. Be decisive — you have {max_turns} turns.",
+            name = pack.name,
+            max_turns = pack.max_turns,
+        ),
         _ => format!(
             "Trading tick ({name}). Run these steps:\n\n\
              1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
@@ -773,6 +790,29 @@ mod tests {
             prompt.contains("1000000") && prompt.contains("1000000000000000000"),
             "dex loop prompt must give concrete base-unit examples"
         );
+    }
+
+    #[test]
+    fn test_hyperliquid_perp_loop_prompt_uses_hyperliquid_workflow_only() {
+        let pack = packs::get_pack("hyperliquid_perp").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "hyperliquid_perp".to_string();
+        config.chain_id = 998;
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+
+        assert!(prompt.contains("getHyperliquidNav"));
+        assert!(prompt.contains("getHyperliquidMode"));
+        assert!(prompt.contains("/hyperliquid/account"));
+        assert!(prompt.contains("/hyperliquid/prices"));
+        assert!(prompt.contains("/hyperliquid/order"));
+        assert!(prompt.contains("no-usable-hyperliquid-margin"));
+        assert!(prompt.contains("target_protocol: \"hyperliquid\""));
+        assert!(prompt.contains("15 turns"));
+        assert!(!prompt.contains("condition-id"));
+        assert!(!prompt.contains("polymarket_clob"));
+        assert!(!prompt.contains("submit-trade.js"));
+        assert!(!prompt.contains("check-orders.js"));
+        assert!(!prompt.contains("manage-collateral.js"));
     }
 
     #[test]

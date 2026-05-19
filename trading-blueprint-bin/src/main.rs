@@ -61,6 +61,68 @@ fn configure_runtime_env() {
         // any worker threads.
         unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
     }
+    if std::env::var("REQUEST_TIMEOUT_SECS").is_err() {
+        // SAFETY: single-threaded at this point — called before tokio spawns
+        // any worker threads.
+        unsafe { std::env::set_var("REQUEST_TIMEOUT_SECS", "360") };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env_var(key: &str, value: Option<OsString>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn configure_runtime_env_defaults_request_timeout() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");
+        let original_idle = std::env::var_os("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+
+        unsafe {
+            std::env::remove_var("REQUEST_TIMEOUT_SECS");
+            std::env::remove_var("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+        }
+
+        super::configure_runtime_env();
+
+        assert_eq!(std::env::var("REQUEST_TIMEOUT_SECS").unwrap(), "360");
+        assert_eq!(std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").unwrap(), "0");
+
+        restore_env_var("REQUEST_TIMEOUT_SECS", original_timeout);
+        restore_env_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", original_idle);
+    }
+
+    #[test]
+    fn configure_runtime_env_preserves_request_timeout_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");
+        let original_idle = std::env::var_os("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+
+        unsafe {
+            std::env::set_var("REQUEST_TIMEOUT_SECS", "42");
+            std::env::remove_var("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+        }
+
+        super::configure_runtime_env();
+
+        assert_eq!(std::env::var("REQUEST_TIMEOUT_SECS").unwrap(), "42");
+        assert_eq!(std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").unwrap(), "0");
+
+        restore_env_var("REQUEST_TIMEOUT_SECS", original_timeout);
+        restore_env_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", original_idle);
+    }
 }
 
 #[tokio::main]
