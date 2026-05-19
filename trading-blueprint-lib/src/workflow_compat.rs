@@ -10,14 +10,9 @@
 //! The trading-blueprint-bin still exposes per-run history via
 //! `/api/bots/:id/runs` and `/api/bots/:id/runs/:run_id`. Rather than gut
 //! that endpoint surface or downgrade it to "feature unavailable", this
-//! module provides the same shape backed by **bin-local in-memory stores**.
-//! Behavior identical to the sibling's old impl from the API caller's
-//! perspective; persistence is per-process (was: persistent on disk).
-//!
-//! Long-term: promote these stores to disk-backed persistence (the
-//! sibling's `PersistentStore` flavor) so runs survive restarts. The
-//! current process-local storage matches the sibling's old behavior from
-//! the API caller's perspective but loses runs on restart.
+//! module provides the same shape backed by blueprint-state JSON stores.
+//! Runtime code persists every observed latest execution here before the
+//! sibling runtime overwrites its one-slot `latest_execution` summary.
 
 // Several items in this module are only consumed by the integration tests
 // (`tests/operator_api_tests.rs`). They're public-API for the test crate
@@ -25,10 +20,10 @@
 // detector under `-D warnings`. Allow at the module level.
 #![allow(dead_code)]
 
-use ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry;
+use ai_agent_sandbox_blueprint_lib::workflows::{WorkflowEntry, WorkflowLatestExecution};
+use once_cell::sync::OnceCell;
+use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -58,7 +53,7 @@ pub struct WorkflowRunRecord {
 }
 
 /// Per-run transcript record. Same shape the bin's tests already construct.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkflowRunTranscriptRecord {
     pub run_id: String,
     pub session_id: String,
@@ -66,17 +61,8 @@ pub struct WorkflowRunTranscriptRecord {
     pub messages: serde_json::Value,
 }
 
-// ── In-memory stores (bin-local, process-scoped) ──────────────────────────
-
-fn runs_store() -> &'static Mutex<HashMap<String, WorkflowRunRecord>> {
-    static STORE: OnceLock<Mutex<HashMap<String, WorkflowRunRecord>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn transcripts_store() -> &'static Mutex<HashMap<String, WorkflowRunTranscriptRecord>> {
-    static STORE: OnceLock<Mutex<HashMap<String, WorkflowRunTranscriptRecord>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static RUNS: OnceCell<PersistentStore<WorkflowRunRecord>> = OnceCell::new();
+static TRANSCRIPTS: OnceCell<PersistentStore<WorkflowRunTranscriptRecord>> = OnceCell::new();
 
 /// Wrapper that mirrors the sibling's old `PersistentStore`-shape `.insert`
 /// signature (returns `Result<(), String>`) so call sites compile without
@@ -85,9 +71,9 @@ pub struct WorkflowRunsStore;
 
 impl WorkflowRunsStore {
     pub fn insert(&self, key: String, record: WorkflowRunRecord) -> Result<(), String> {
-        let mut guard = runs_store().lock().map_err(|e| e.to_string())?;
-        guard.insert(key, record);
-        Ok(())
+        workflow_runs_store()?
+            .insert(key, record)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -98,6 +84,84 @@ pub fn workflow_runs() -> Result<WorkflowRunsStore, String> {
     Ok(WorkflowRunsStore)
 }
 
+fn workflow_runs_store() -> Result<&'static PersistentStore<WorkflowRunRecord>, String> {
+    RUNS.get_or_try_init(|| {
+        let path = sandbox_runtime::store::state_dir().join("workflow-runs.json");
+        PersistentStore::open(path).map_err(|e| e.to_string())
+    })
+    .map_err(|err: String| err)
+}
+
+fn workflow_run_transcripts_store()
+-> Result<&'static PersistentStore<WorkflowRunTranscriptRecord>, String> {
+    TRANSCRIPTS
+        .get_or_try_init(|| {
+            let path = sandbox_runtime::store::state_dir().join("workflow-run-transcripts.json");
+            PersistentStore::open(path).map_err(|e| e.to_string())
+        })
+        .map_err(|err: String| err)
+}
+
+pub fn workflow_run_record_from_latest_execution(
+    workflow_id: u64,
+    latest: WorkflowLatestExecution,
+) -> WorkflowRunRecord {
+    WorkflowRunRecord {
+        run_id: format!("latest-{workflow_id}-{}", latest.executed_at),
+        workflow_id,
+        status: if latest.success {
+            WorkflowRunStatus::Completed
+        } else {
+            WorkflowRunStatus::Failed
+        },
+        started_at: latest.executed_at,
+        completed_at: Some(latest.executed_at),
+        session_id: (!latest.session_id.is_empty()).then_some(latest.session_id),
+        trace_id: (!latest.trace_id.is_empty()).then_some(latest.trace_id),
+        duration_ms: latest.duration_ms,
+        input_tokens: latest.input_tokens,
+        output_tokens: latest.output_tokens,
+        result: (!latest.result.is_empty()).then_some(latest.result),
+        error: (!latest.error.is_empty()).then_some(latest.error),
+    }
+}
+
+pub fn latest_execution_run_for_workflow(
+    workflow_id: u64,
+) -> Result<Option<WorkflowRunRecord>, String> {
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    let latest = ai_agent_sandbox_blueprint_lib::workflows::workflow_runtime()
+        .map_err(|e| e.to_string())?
+        .get(&key)
+        .map_err(|e| e.to_string())?
+        .and_then(|metadata| metadata.latest_execution);
+
+    Ok(latest.map(|execution| workflow_run_record_from_latest_execution(workflow_id, execution)))
+}
+
+pub fn persist_latest_execution_run(
+    workflow_id: u64,
+    latest: WorkflowLatestExecution,
+) -> Result<WorkflowRunRecord, String> {
+    let record = workflow_run_record_from_latest_execution(workflow_id, latest);
+    workflow_runs_store()?
+        .insert(record.run_id.clone(), record.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
+pub fn backfill_latest_execution_run(
+    workflow_id: u64,
+) -> Result<Option<WorkflowRunRecord>, String> {
+    let Some(record) = latest_execution_run_for_workflow(workflow_id)? else {
+        return Ok(None);
+    };
+    workflow_runs_store()?
+        .insert(record.run_id.clone(), record.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(Some(record))
+}
+
 /// List runs for a set of workflow ids, sorted by started_at desc.
 /// Empty input → empty output.
 pub fn list_workflow_runs_for_workflows(
@@ -106,29 +170,35 @@ pub fn list_workflow_runs_for_workflows(
     if workflow_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let guard = runs_store().lock().map_err(|e| e.to_string())?;
-    let mut out: Vec<WorkflowRunRecord> = guard
+    let mut out: Vec<WorkflowRunRecord> = workflow_runs_store()?
         .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
         .filter(|run| workflow_ids.contains(&run.workflow_id))
-        .cloned()
         .collect();
     // Newest first — matches the sibling's old behavior for cursor pagination.
-    out.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    out.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.run_id.cmp(&a.run_id))
+    });
     Ok(out)
 }
 
 /// Look up a single run by id.
 pub fn get_workflow_run(run_id: &str) -> Result<Option<WorkflowRunRecord>, String> {
-    let guard = runs_store().lock().map_err(|e| e.to_string())?;
-    Ok(guard.get(run_id).cloned())
+    workflow_runs_store()?
+        .get(run_id)
+        .map_err(|e| e.to_string())
 }
 
 /// Look up a transcript by run id.
 pub fn get_workflow_run_transcript(
     run_id: &str,
 ) -> Result<Option<WorkflowRunTranscriptRecord>, String> {
-    let guard = transcripts_store().lock().map_err(|e| e.to_string())?;
-    Ok(guard.get(run_id).cloned())
+    workflow_run_transcripts_store()?
+        .get(run_id)
+        .map_err(|e| e.to_string())
 }
 
 /// Test helper that mirrors the sibling's old name — inserts a transcript
@@ -139,9 +209,9 @@ pub fn get_workflow_run_transcript(
 pub fn insert_workflow_run_transcript_for_testing(
     record: WorkflowRunTranscriptRecord,
 ) -> Result<(), String> {
-    let mut guard = transcripts_store().lock().map_err(|e| e.to_string())?;
-    guard.insert(record.run_id.clone(), record);
-    Ok(())
+    workflow_run_transcripts_store()?
+        .insert(record.run_id.clone(), record)
+        .map_err(|e| e.to_string())
 }
 
 /// Apply-workflow-failure no-op. The sibling's `store_failed_execution`

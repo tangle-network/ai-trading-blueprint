@@ -1963,6 +1963,17 @@ fn run_precedes_cursor(run: &WorkflowRunRecord, cursor: &(u64, String)) -> bool 
     run.started_at < cursor.0 || (run.started_at == cursor.0 && run.run_id < cursor.1)
 }
 
+fn latest_execution_runs_for_workflows(workflow_ids: &[u64]) -> Vec<WorkflowRunRecord> {
+    workflow_ids
+        .iter()
+        .filter_map(|workflow_id| {
+            trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(*workflow_id)
+                .ok()
+                .flatten()
+        })
+        .collect()
+}
+
 fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
     let transcript_available = run
         .session_id
@@ -2178,6 +2189,16 @@ async fn list_bot_runs(
     let mut runs =
         trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    for latest_run in latest_execution_runs_for_workflows(&workflow_ids) {
+        if !runs.iter().any(|run| run.run_id == latest_run.run_id) {
+            runs.push(latest_run);
+        }
+    }
+    runs.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.run_id.cmp(&a.run_id))
+    });
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -2207,6 +2228,18 @@ async fn get_bot_run(
         .collect::<HashSet<_>>();
     let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .or_else(|| {
+            workflow_ids
+                .iter()
+                .find_map(|workflow_id| {
+                    trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(
+                        *workflow_id,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .filter(|run| run.run_id == run_id)
+        })
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
     if !workflow_ids.contains(&run.workflow_id) {
@@ -2383,9 +2416,70 @@ async fn run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before instance manual run"
+        );
+    }
+
+    let execution = match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+        Ok(execution) => execution,
+        Err(err) => {
+            match ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                workflow_id,
+                err.clone(),
+            ) {
+                Ok(latest_execution) => {
+                    if let Err(persist_err) =
+                        trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                            workflow_id,
+                            latest_execution,
+                        )
+                    {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %persist_err,
+                            "Failed to persist failed instance workflow run history"
+                        );
+                    }
+                }
+                Err(store_err) => {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %store_err,
+                        "Failed to store failed instance workflow latest execution"
+                    );
+                }
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, err));
+        }
+    };
+
+    let latest_execution = execution.latest_execution.clone();
+    if let Err(err) = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+        workflow_id,
+        latest_execution.clone(),
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to store instance workflow latest execution"
+        );
+    }
+    if let Err(err) = trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        latest_execution,
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to persist instance workflow run history"
+        );
+    }
 
     let last_run_at = execution.last_run_at;
     let next_run_at = execution.next_run_at;
@@ -2888,9 +2982,70 @@ async fn debug_run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before instance debug run"
+        );
+    }
+
+    let execution = match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+        Ok(execution) => execution,
+        Err(err) => {
+            match ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                workflow_id,
+                err.clone(),
+            ) {
+                Ok(latest_execution) => {
+                    if let Err(persist_err) =
+                        trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                            workflow_id,
+                            latest_execution,
+                        )
+                    {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %persist_err,
+                            "Failed to persist failed instance debug workflow run history"
+                        );
+                    }
+                }
+                Err(store_err) => {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %store_err,
+                        "Failed to store failed instance debug workflow latest execution"
+                    );
+                }
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, err));
+        }
+    };
+
+    let latest_execution = execution.latest_execution.clone();
+    if let Err(err) = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+        workflow_id,
+        latest_execution.clone(),
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to store instance debug workflow latest execution"
+        );
+    }
+    if let Err(err) = trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        latest_execution,
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to persist instance debug workflow run history"
+        );
+    }
 
     let last_run_at = execution.last_run_at;
     let next_run_at = execution.next_run_at;

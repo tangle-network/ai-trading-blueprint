@@ -1473,6 +1473,125 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     assert!(cursor_json["next_cursor"].is_null());
 }
 
+#[tokio::test]
+async fn test_runs_routes_page_durable_latest_execution_history() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-durable-bot", "dex", true, Some(9_100_301));
+    let workflow_id = bot.workflow_id.expect("workflow id");
+    let auth = test_auth_header(SUBMITTER);
+
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_100,
+            success: true,
+            result: "First durable run".to_string(),
+            error: String::new(),
+            trace_id: "trace-durable-1".to_string(),
+            duration_ms: 12_000,
+            input_tokens: 11,
+            output_tokens: 7,
+            session_id: "fast-runs-durable-bot-1775824100".to_string(),
+        },
+    )
+    .expect("persist first run");
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_200,
+            success: false,
+            result: String::new(),
+            error: "Provider credits exhausted".to_string(),
+            trace_id: String::new(),
+            duration_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            session_id: String::new(),
+        },
+    )
+    .expect("persist second run");
+
+    let first_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs?limit=1", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = first_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    assert_eq!(
+        first_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824200")
+    );
+    assert_eq!(first_json["runs"][0]["status"], "failed");
+    assert_eq!(
+        first_json["next_cursor"],
+        format!("1775824200:latest-{workflow_id}-1775824200")
+    );
+
+    let cursor = first_json["next_cursor"].as_str().expect("cursor");
+    let second_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs?limit=1&cursor={cursor}", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body = second_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(
+        second_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824100")
+    );
+    assert_eq!(second_json["runs"][0]["result"], "First durable run");
+    assert!(second_json["next_cursor"].is_null());
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/latest-{workflow_id}-1775824100",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(
+        detail_json["run_id"],
+        format!("latest-{workflow_id}-1775824100")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Bot control tests (with auth)
 // ---------------------------------------------------------------------------
