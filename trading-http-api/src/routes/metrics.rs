@@ -7,9 +7,11 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::hyperliquid_nav::{HyperliquidNavSnapshot, reconcile_hyperliquid_nav};
 use crate::live_portfolio::{LiveRiskInput, reconcile_live_portfolio, snapshot_to_metric};
 use crate::metrics_store::{self, MetricSnapshot};
 use crate::routes::portfolio::{PortfolioResponse, build_multi_bot_portfolio_response};
+use crate::routes::validate::strategy_type_from_config;
 use crate::trade_store;
 use crate::{MultiBotTradingState, TradingApiState};
 
@@ -186,12 +188,35 @@ pub(crate) async fn capture_metrics_snapshot_for_bot(
     bot: &crate::BotContext,
     market_data_base_url: &str,
 ) -> Result<MetricSnapshot, String> {
+    capture_metrics_snapshot_for_bot_with_state(bot, None, market_data_base_url).await
+}
+
+pub(crate) async fn capture_metrics_snapshot_for_bot_with_state(
+    bot: &crate::BotContext,
+    multi_bot_state: Option<&MultiBotTradingState>,
+    market_data_base_url: &str,
+) -> Result<MetricSnapshot, String> {
+    let trade_count = trade_store::trades_for_bot(&bot.bot_id, 1, 0)?.total as u32;
+
+    if !bot.paper_trade
+        && strategy_type_from_config(&bot.strategy_config) == Some("hyperliquid_perp")
+        && let Some(state) = multi_bot_state
+    {
+        let nav = reconcile_hyperliquid_nav(state, bot)
+            .await
+            .map_err(|(_, message)| message)?;
+        let previous = metrics_store::latest_snapshot_for_bot(&bot.bot_id)?;
+        let snapshot =
+            build_snapshot_from_hyperliquid_nav(bot, &nav, trade_count, previous.as_ref());
+        metrics_store::record_snapshot(snapshot.clone())?;
+        return Ok(snapshot);
+    }
+
     if !bot.paper_trade {
         let input = LiveRiskInput::from_bot(bot, market_data_base_url);
         let live = reconcile_live_portfolio(&input)
             .await
             .map_err(|(_, message)| message)?;
-        let trade_count = trade_store::trades_for_bot(&bot.bot_id, 1, 0)?.total as u32;
         let snapshot = snapshot_to_metric(&live, trade_count);
         metrics_store::record_snapshot(snapshot.clone())?;
         return Ok(snapshot);
@@ -199,7 +224,6 @@ pub(crate) async fn capture_metrics_snapshot_for_bot(
 
     let portfolio = build_multi_bot_portfolio_response(bot, market_data_base_url).await;
     let previous = metrics_store::latest_snapshot_for_bot(&bot.bot_id)?;
-    let trade_count = trade_store::trades_for_bot(&bot.bot_id, 1, 0)?.total as u32;
 
     let snapshot = build_snapshot_from_portfolio(
         &bot.bot_id,
@@ -210,6 +234,42 @@ pub(crate) async fn capture_metrics_snapshot_for_bot(
     );
     metrics_store::record_snapshot(snapshot.clone())?;
     Ok(snapshot)
+}
+
+fn build_snapshot_from_hyperliquid_nav(
+    bot: &crate::BotContext,
+    nav: &HyperliquidNavSnapshot,
+    trade_count: u32,
+    previous: Option<&MetricSnapshot>,
+) -> MetricSnapshot {
+    let account_value = parse_decimal(&nav.total_nav).unwrap_or(Decimal::ZERO);
+    let baseline = initial_capital_usd(&bot.strategy_config).unwrap_or(account_value);
+    let total_pnl = account_value - baseline;
+    let realized_pnl = previous
+        .and_then(|snapshot| parse_decimal(&snapshot.realized_pnl))
+        .unwrap_or(Decimal::ZERO);
+    let unrealized_pnl = parse_decimal(&nav.unrealized_pnl).unwrap_or(total_pnl - realized_pnl);
+    let previous_hwm = previous
+        .and_then(|snapshot| parse_decimal(&snapshot.high_water_mark))
+        .unwrap_or(baseline.max(account_value));
+    let high_water_mark = previous_hwm.max(account_value).max(baseline);
+    let drawdown_pct = if high_water_mark > Decimal::ZERO {
+        ((high_water_mark - account_value) / high_water_mark) * Decimal::new(100, 0)
+    } else {
+        Decimal::ZERO
+    };
+
+    MetricSnapshot {
+        timestamp: nav.as_of,
+        bot_id: bot.bot_id.clone(),
+        account_value_usd: account_value.to_string(),
+        unrealized_pnl: unrealized_pnl.to_string(),
+        realized_pnl: realized_pnl.to_string(),
+        high_water_mark: high_water_mark.to_string(),
+        drawdown_pct: drawdown_pct.to_string(),
+        positions_count: nav.position_count as u32,
+        trade_count,
+    }
 }
 
 async fn backfill_initial_snapshot_for_bot(

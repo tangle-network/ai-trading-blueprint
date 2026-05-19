@@ -2,7 +2,7 @@ use crate::live_portfolio::{
     LiveRiskInput, enforce_live_risk, max_drawdown_from_strategy_config,
     resolve_live_token_usd_valuation,
 };
-use crate::routes::metrics::capture_metrics_snapshot_for_bot;
+use crate::routes::metrics::capture_metrics_snapshot_for_bot_with_state;
 use crate::trade_store::{
     self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
     TradeExecutionStatus, TradeRecord,
@@ -3091,8 +3091,12 @@ async fn execute_multi_bot(
         ensure_clob_sell_inventory(&bot.bot_id, &clob_params)?;
         let result =
             execute_paper_clob_trade(&bot.bot_id, clob, &normalized_req, stored_validation).await?;
-        if let Err(error) =
-            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
         {
             tracing::warn!(
                 bot_id = %bot.bot_id,
@@ -3107,8 +3111,12 @@ async fn execute_multi_bot(
         let response =
             execute_paper_trade(&bot.bot_id, &normalized_req, stored_validation, &valuation)
                 .await?;
-        if let Err(error) =
-            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
         {
             tracing::warn!(
                 bot_id = %bot.bot_id,
@@ -3142,8 +3150,12 @@ async fn execute_multi_bot(
             &valuation,
         )
         .await?;
-        if let Err(error) =
-            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
         {
             tracing::warn!(
                 bot_id = %bot.bot_id,
@@ -3165,8 +3177,12 @@ async fn execute_multi_bot(
             signed_envelope.as_ref(),
         )
         .await?;
-        if let Err(error) =
-            capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
         {
             tracing::warn!(
                 bot_id = %bot.bot_id,
@@ -3225,8 +3241,12 @@ async fn execute_multi_bot(
                 &state.alert_sink,
             )
             .await?;
-            if let Err(error) =
-                capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await
+            if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+                &bot,
+                Some(&state),
+                &state.market_data_base_url,
+            )
+            .await
             {
                 tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
             }
@@ -3245,7 +3265,10 @@ async fn execute_multi_bot(
         alert_sink: &state.alert_sink,
     })
     .await?;
-    if let Err(error) = capture_metrics_snapshot_for_bot(&bot, &state.market_data_base_url).await {
+    if let Err(error) =
+        capture_metrics_snapshot_for_bot_with_state(&bot, Some(&state), &state.market_data_base_url)
+            .await
+    {
         tracing::warn!(
             bot_id = %bot.bot_id,
             %error,

@@ -18,7 +18,7 @@ static MODE_SNAPSHOTS: OnceCell<PersistentStore<HyperliquidModeSnapshot>> = Once
 
 const DEFAULT_LIQUIDITY_MODE_QUEUE_BPS: u32 = 1_500;
 const DEFAULT_EMERGENCY_QUEUE_BPS: u32 = 6_000;
-const DEFAULT_MIN_IDLE_USDC_BPS: u32 = 500;
+const DEFAULT_MIN_IDLE_USDC_BPS: u32 = 1_500;
 const DEFAULT_MAX_MARGIN_USAGE_BPS: u32 = 8_000;
 
 sol! {
@@ -458,7 +458,7 @@ mod tests {
         HyperliquidModeThresholds {
             liquidity_mode_queue_bps: 1_500,
             emergency_queue_bps: 6_000,
-            min_idle_usdc_bps: 500,
+            min_idle_usdc_bps: 1_500,
             max_margin_usage_bps: 8_000,
         }
     }
@@ -573,9 +573,12 @@ mod tests {
     #[test]
     fn normal_when_nav_fresh_and_queue_small() {
         let now = Utc::now();
+        let mut snapshot = nav(now);
+        snapshot.idle_usdc = "20000".to_string();
+        snapshot.hyperliquid_equity = "80000".to_string();
         let mode = decide_hyperliquid_mode(
             "bot-1",
-            Some(&nav(now)),
+            Some(&snapshot),
             Some(&queue(1_000, 100_000)),
             thresholds(),
             now,

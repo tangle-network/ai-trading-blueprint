@@ -13,6 +13,7 @@ pub mod health;
 pub mod hyperliquid;
 pub mod hyperliquid_mode;
 pub mod hyperliquid_nav;
+pub mod hyperliquid_settlement;
 pub mod learning;
 pub mod market_data;
 pub mod metrics;

@@ -26,7 +26,7 @@ sol! {
     function totalSupply() external view returns (uint256);
     function decimals() external view returns (uint8);
     function accountingShareSupply() external view returns (uint256);
-    function setHyperliquidAccountAssets(uint256 accountAssets) external;
+    function hyperliquidAccountAssets() external view returns (uint256);
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,6 +146,12 @@ pub async fn reconcile_hyperliquid_nav(
         accountingShareSupplyCall {}.abi_encode(),
     )
     .await?;
+    let core_account_raw = eth_call_u256(
+        &provider,
+        vault_address,
+        hyperliquidAccountAssetsCall {}.abi_encode(),
+    )
+    .await?;
     let asset_decimals = token_decimals(&provider, bot.chain_id, asset_token).await?;
 
     let client = get_hl_client(state)?;
@@ -159,25 +165,20 @@ pub async fn reconcile_hyperliquid_nav(
             )
         })?;
 
-    let mut snapshot = build_snapshot_from_parts(NavBuildInput {
+    let snapshot = build_snapshot_from_parts(NavBuildInput {
         bot_id: &bot.bot_id,
         account_address: &account_address,
         vault_address,
         share_token,
         asset_token,
         idle_raw,
+        core_account_raw,
         shares_raw,
         asset_decimals,
         account: &account,
         as_of: Utc::now(),
         stale_after_secs: nav_stale_after_secs(bot),
     })?;
-
-    if let Some(tx_hash) =
-        sync_onchain_accounting(state, bot, vault_address, asset_decimals, &mut snapshot).await?
-    {
-        snapshot.onchain_accounting_tx_hash = Some(tx_hash);
-    }
 
     record_snapshot(snapshot.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(snapshot)
@@ -190,6 +191,7 @@ struct NavBuildInput<'a> {
     share_token: Address,
     asset_token: Address,
     idle_raw: U256,
+    core_account_raw: U256,
     shares_raw: U256,
     asset_decimals: u8,
     account: &'a AccountInfo,
@@ -202,7 +204,8 @@ fn build_snapshot_from_parts(
 ) -> Result<HyperliquidNavSnapshot, (StatusCode, String)> {
     let idle_usdc = u256_to_decimal(input.idle_raw, input.asset_decimals)?;
     let total_shares = u256_to_decimal(input.shares_raw, input.asset_decimals)?;
-    let hyperliquid_equity = parse_decimal_field("account_value", &input.account.account_value)?;
+    let hyperliquid_equity = u256_to_decimal(input.core_account_raw, input.asset_decimals)?;
+    let api_perp_equity = parse_decimal_field("account_value", &input.account.account_value)?;
     let withdrawable_usdc = parse_decimal_field("withdrawable", &input.account.withdrawable)?;
     let total_margin_used =
         parse_decimal_field("total_margin_used", &input.account.total_margin_used)?;
@@ -218,8 +221,8 @@ fn build_snapshot_from_parts(
     if total_shares.is_zero() {
         warnings.push("total share supply is zero; share price is unavailable".to_string());
     }
-    if hyperliquid_equity.is_sign_negative() {
-        warnings.push("Hyperliquid account equity is negative".to_string());
+    if api_perp_equity.is_sign_negative() {
+        warnings.push("Hyperliquid API perp equity is negative".to_string());
     }
 
     Ok(HyperliquidNavSnapshot {
@@ -260,73 +263,6 @@ fn build_snapshot_from_parts(
         warnings,
         onchain_accounting_tx_hash: None,
     })
-}
-
-async fn sync_onchain_accounting(
-    state: &MultiBotTradingState,
-    bot: &BotContext,
-    vault_address: Address,
-    asset_decimals: u8,
-    snapshot: &mut HyperliquidNavSnapshot,
-) -> Result<Option<String>, (StatusCode, String)> {
-    let Some(chain_client) = state.chain_client.as_ref() else {
-        snapshot.warnings.push(
-            "on-chain accounting was not updated; no shared chain client is configured".to_string(),
-        );
-        return Ok(None);
-    };
-    if state.chain_client_chain_id != Some(bot.chain_id)
-        || state.chain_client_rpc_url.as_deref() != Some(bot.rpc_url.as_str())
-    {
-        snapshot.warnings.push(
-            "on-chain accounting was not updated; shared chain client does not match this bot chain/RPC"
-                .to_string(),
-        );
-        return Ok(None);
-    }
-
-    let equity = parse_decimal_field("account_value", &snapshot.hyperliquid_equity)?;
-    if equity.is_sign_negative() {
-        snapshot.warnings.push(
-            "on-chain accounting was not updated because Hyperliquid equity is negative"
-                .to_string(),
-        );
-        return Ok(None);
-    }
-    let raw_equity = decimal_to_u256(equity, asset_decimals)?;
-    let tx = TransactionRequest::default().to(vault_address).input(
-        Bytes::from(
-            setHyperliquidAccountAssetsCall {
-                accountAssets: raw_equity,
-            }
-            .abi_encode(),
-        )
-        .into(),
-    );
-    let pending = chain_client
-        .provider
-        .send_transaction(tx)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Hyperliquid on-chain accounting tx send failed: {e}"),
-            )
-        })?;
-    let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
-    let receipt = pending.get_receipt().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Hyperliquid on-chain accounting tx receipt failed: {e}"),
-        )
-    })?;
-    if !receipt.status() {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            format!("Hyperliquid on-chain accounting transaction reverted: {tx_hash}"),
-        ));
-    }
-    Ok(Some(tx_hash))
 }
 
 fn parse_concrete_address(raw: &str, label: &str) -> Result<Address, (StatusCode, String)> {
@@ -401,23 +337,6 @@ fn u256_to_decimal(amount: U256, decimals: u8) -> Result<Decimal, (StatusCode, S
     })?;
     let scale = Decimal::from(10u64.pow(decimals as u32));
     Ok(raw / scale)
-}
-
-fn decimal_to_u256(amount: Decimal, decimals: u8) -> Result<U256, (StatusCode, String)> {
-    if amount.is_sign_negative() {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            "Cannot convert negative Hyperliquid NAV amount to raw units".to_string(),
-        ));
-    }
-    let scale = Decimal::from(10u64.pow(decimals as u32));
-    let raw = (amount * scale).trunc();
-    U256::from_str(&raw.to_string()).map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to convert Hyperliquid NAV amount to raw units: {e}"),
-        )
-    })
 }
 
 fn bps_ratio(
@@ -552,6 +471,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             idle_raw: U256::from(10_000_000_000u64),
+            core_account_raw: U256::from(90_000_500_000u64),
             shares_raw: U256::from(100_000_000_000u64),
             asset_decimals: 6,
             account: &account(),
@@ -586,6 +506,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             idle_raw: U256::from(1_000_000u64),
+            core_account_raw: U256::ZERO,
             shares_raw: U256::ZERO,
             asset_decimals: 6,
             account: &account(),
@@ -596,12 +517,5 @@ mod tests {
 
         assert_eq!(snapshot.share_price, None);
         assert!(snapshot.warnings.iter().any(|w| w.contains("share supply")));
-    }
-
-    #[test]
-    fn converts_decimal_nav_to_raw_units_without_rounding_up() {
-        let raw = decimal_to_u256(Decimal::from_str("90000.1234567").unwrap(), 6).unwrap();
-        assert_eq!(raw, U256::from(90_000_123_456u64));
-        assert!(decimal_to_u256(Decimal::from_str("-1").unwrap(), 6).is_err());
     }
 }
