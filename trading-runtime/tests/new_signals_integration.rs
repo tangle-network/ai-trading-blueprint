@@ -67,7 +67,7 @@ fn macd_crossover_produces_trades() {
     );
     eprintln!("MACD: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "MACD crossover should produce trades on oscillating data"
     );
 }
@@ -83,7 +83,7 @@ fn sma_cross_produces_trades() {
     );
     eprintln!("SmaCross: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "SMA crossover should produce trades on oscillating data"
     );
 }
@@ -99,7 +99,7 @@ fn bollinger_band_produces_trades() {
     );
     eprintln!("Bollinger: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "Bollinger band below-lower should trigger on dips"
     );
 }
@@ -128,7 +128,7 @@ fn obv_trend_produces_trades() {
     );
     eprintln!("OBV: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "OBV positive trend should produce trades"
     );
 }
@@ -141,7 +141,7 @@ fn vwap_deviation_produces_trades() {
     );
     eprintln!("VWAP: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "Price below VWAP should produce trades on dips"
     );
 }
@@ -157,7 +157,7 @@ fn mean_reversion_produces_trades() {
     );
     eprintln!("MeanReversion: {} trades", result.trades.len());
     assert!(
-        result.trades.len() > 0,
+        !result.trades.is_empty(),
         "Mean reversion should fire on oversold z-score dips"
     );
 }
@@ -240,7 +240,6 @@ fn walk_forward_detects_overfit_flag() {
         gas_cost_usd: Decimal::ZERO,
         taker_fee_bps: 0,
     };
-    let engine = BacktestEngine::new(config.clone());
     let candles = make_oscillating_candles(200);
 
     // Walk-forward compare same config against itself

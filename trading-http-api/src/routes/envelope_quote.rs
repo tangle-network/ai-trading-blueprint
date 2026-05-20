@@ -40,10 +40,10 @@ const UNISWAP_V3_QUOTER_V2: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
 
 /// Chains where the canonical Uniswap V3 SwapRouter / QuoterV2 are deployed.
 fn uniswap_v3_quoter_for_chain(chain_id: u64) -> Option<Address> {
-    if let Ok(raw) = std::env::var(format!("UNISWAP_V3_QUOTER_{chain_id}")) {
-        if let Ok(addr) = raw.parse() {
-            return Some(addr);
-        }
+    if let Ok(raw) = std::env::var(format!("UNISWAP_V3_QUOTER_{chain_id}"))
+        && let Ok(addr) = raw.parse()
+    {
+        return Some(addr);
     }
     match chain_id {
         // Mainnet, Arbitrum, Polygon, Optimism, Base — canonical Uniswap V3 chains.
@@ -58,10 +58,10 @@ const UNISWAP_V3_ROUTER: &str = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
 
 /// Uniswap V4 V4Quoter — deployment per chain.
 fn uniswap_v4_quoter_for_chain(chain_id: u64) -> Option<Address> {
-    if let Ok(raw) = std::env::var(format!("UNISWAP_V4_QUOTER_{chain_id}")) {
-        if let Ok(addr) = raw.parse() {
-            return Some(addr);
-        }
+    if let Ok(raw) = std::env::var(format!("UNISWAP_V4_QUOTER_{chain_id}"))
+        && let Ok(addr) = raw.parse()
+    {
+        return Some(addr);
     }
     match chain_id {
         // Mainnet
@@ -76,10 +76,10 @@ fn uniswap_v4_quoter_for_chain(chain_id: u64) -> Option<Address> {
 
 /// Universal Router 2.0 — used to route v4 swaps from the vault.
 fn uniswap_universal_router_for_chain(chain_id: u64) -> Option<Address> {
-    if let Ok(raw) = std::env::var(format!("UNISWAP_UNIVERSAL_ROUTER_{chain_id}")) {
-        if let Ok(addr) = raw.parse() {
-            return Some(addr);
-        }
+    if let Ok(raw) = std::env::var(format!("UNISWAP_UNIVERSAL_ROUTER_{chain_id}"))
+        && let Ok(addr) = raw.parse()
+    {
+        return Some(addr);
     }
     match chain_id {
         1 => "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af".parse().ok(),
@@ -91,10 +91,10 @@ fn uniswap_universal_router_for_chain(chain_id: u64) -> Option<Address> {
 
 /// Aerodrome Slipstream Quoter (Base only).
 fn aerodrome_quoter_for_chain(chain_id: u64) -> Option<Address> {
-    if let Ok(raw) = std::env::var(format!("AERODROME_QUOTER_{chain_id}")) {
-        if let Ok(addr) = raw.parse() {
-            return Some(addr);
-        }
+    if let Ok(raw) = std::env::var(format!("AERODROME_QUOTER_{chain_id}"))
+        && let Ok(addr) = raw.parse()
+    {
+        return Some(addr);
     }
     match chain_id {
         8453 => "0x254cF9E1E6e233aa1AC962CB9B05b2cfeAaE15b0".parse().ok(),
@@ -107,10 +107,10 @@ const AERODROME_ROUTER: &str = "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5";
 
 /// Morpho Blue protocol address per chain.
 fn morpho_for_chain(chain_id: u64) -> Option<Address> {
-    if let Ok(raw) = std::env::var(format!("MORPHO_BLUE_{chain_id}")) {
-        if let Ok(addr) = raw.parse() {
-            return Some(addr);
-        }
+    if let Ok(raw) = std::env::var(format!("MORPHO_BLUE_{chain_id}"))
+        && let Ok(addr) = raw.parse()
+    {
+        return Some(addr);
     }
     match chain_id {
         // Mainnet + Base — only chains where Morpho Blue is currently deployed.

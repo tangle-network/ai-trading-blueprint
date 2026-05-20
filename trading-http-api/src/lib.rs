@@ -14,6 +14,7 @@ pub mod metrics_store;
 pub mod nav_stream;
 pub mod rate_limit;
 pub mod routes;
+pub mod sandbox_store;
 pub mod session_auth;
 pub mod trade_store;
 
@@ -493,108 +494,6 @@ pub fn validate_morpho_protocol_request(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn protocol_allow_list_accepts_configured_protocols() {
-        let config = json!({ "available_protocols": ["gmx_v2", "vertex"] });
-        assert!(validate_protocol_available(&config, "gmx_v2").is_ok());
-        assert!(validate_protocol_available(&config, "vertex").is_ok());
-        assert!(validate_protocol_available(&config, "hyperliquid").is_err());
-    }
-
-    #[test]
-    fn missing_protocol_allow_list_is_unrestricted() {
-        assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
-    }
-
-    #[test]
-    fn legacy_morpho_protocol_is_rejected() {
-        let err = validate_morpho_protocol_request(
-            &json!({}),
-            1,
-            "morpho",
-            "supply",
-            "0x0000000000000000000000000000000000000001",
-            "0x0000000000000000000000000000000000000001",
-            &json!({}),
-        )
-        .expect_err("legacy morpho should fail closed");
-        assert!(err.contains("ambiguous"));
-    }
-
-    #[test]
-    fn morpho_vault_requires_allowlisted_vault_asset_and_chain() {
-        let config = json!({
-            "morpho_vaults": [{
-                "chain_id": 1,
-                "vault_address": "0x0000000000000000000000000000000000000099",
-                "asset": "0x0000000000000000000000000000000000000001"
-            }]
-        });
-
-        assert!(
-            validate_morpho_protocol_request(
-                &config,
-                1,
-                "morpho_vault",
-                "supply",
-                "0x0000000000000000000000000000000000000001",
-                "0x0000000000000000000000000000000000000001",
-                &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
-            )
-            .is_ok()
-        );
-
-        let err = validate_morpho_protocol_request(
-            &config,
-            8453,
-            "morpho_vault",
-            "supply",
-            "0x0000000000000000000000000000000000000001",
-            "0x0000000000000000000000000000000000000001",
-            &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
-        )
-        .expect_err("wrong chain should be rejected");
-        assert!(err.contains("not allowlisted"));
-    }
-
-    #[test]
-    fn min_aave_health_factor_defaults_to_one_point_five() {
-        let (value, wad) = min_aave_health_factor_from_risk_params(&json!({})).unwrap();
-        assert_eq!(value.to_string(), "1.5");
-        assert_eq!(wad, "1500000000000000000");
-    }
-
-    #[test]
-    fn min_aave_health_factor_rejects_too_low_values() {
-        let err =
-            min_aave_health_factor_from_risk_params(&json!({"min_aave_health_factor": "1.0"}))
-                .expect_err("too-low health factor should fail closed");
-        assert!(err.contains("at least 1.01"));
-    }
-
-    #[test]
-    fn enrich_yield_safety_metadata_injects_canonical_health_factor() {
-        let metadata = enrich_yield_safety_metadata(
-            "aave_v3",
-            "borrow",
-            &json!({"min_aave_health_factor": 1.6}),
-            &json!({"rate_mode": 2}),
-        )
-        .unwrap();
-        assert_eq!(metadata["rate_mode"], 2);
-        assert_eq!(metadata["min_aave_health_factor"], "1.6");
-        assert_eq!(
-            metadata["min_aave_health_factor_wad"],
-            "1600000000000000000"
-        );
-    }
-}
-
 /// Build a multi-bot trading HTTP API router.
 ///
 /// This serves `/validate`, `/execute`, and `/health` for ALL bots.
@@ -720,4 +619,106 @@ async fn multi_bot_ready(
         },
         axum::Json(payload),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn protocol_allow_list_accepts_configured_protocols() {
+        let config = json!({ "available_protocols": ["gmx_v2", "vertex"] });
+        assert!(validate_protocol_available(&config, "gmx_v2").is_ok());
+        assert!(validate_protocol_available(&config, "vertex").is_ok());
+        assert!(validate_protocol_available(&config, "hyperliquid").is_err());
+    }
+
+    #[test]
+    fn missing_protocol_allow_list_is_unrestricted() {
+        assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
+    }
+
+    #[test]
+    fn legacy_morpho_protocol_is_rejected() {
+        let err = validate_morpho_protocol_request(
+            &json!({}),
+            1,
+            "morpho",
+            "supply",
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000001",
+            &json!({}),
+        )
+        .expect_err("legacy morpho should fail closed");
+        assert!(err.contains("ambiguous"));
+    }
+
+    #[test]
+    fn morpho_vault_requires_allowlisted_vault_asset_and_chain() {
+        let config = json!({
+            "morpho_vaults": [{
+                "chain_id": 1,
+                "vault_address": "0x0000000000000000000000000000000000000099",
+                "asset": "0x0000000000000000000000000000000000000001"
+            }]
+        });
+
+        assert!(
+            validate_morpho_protocol_request(
+                &config,
+                1,
+                "morpho_vault",
+                "supply",
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000001",
+                &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
+            )
+            .is_ok()
+        );
+
+        let err = validate_morpho_protocol_request(
+            &config,
+            8453,
+            "morpho_vault",
+            "supply",
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000001",
+            &json!({"vault_address": "0x0000000000000000000000000000000000000099"}),
+        )
+        .expect_err("wrong chain should be rejected");
+        assert!(err.contains("not allowlisted"));
+    }
+
+    #[test]
+    fn min_aave_health_factor_defaults_to_one_point_five() {
+        let (value, wad) = min_aave_health_factor_from_risk_params(&json!({})).unwrap();
+        assert_eq!(value.to_string(), "1.5");
+        assert_eq!(wad, "1500000000000000000");
+    }
+
+    #[test]
+    fn min_aave_health_factor_rejects_too_low_values() {
+        let err =
+            min_aave_health_factor_from_risk_params(&json!({"min_aave_health_factor": "1.0"}))
+                .expect_err("too-low health factor should fail closed");
+        assert!(err.contains("at least 1.01"));
+    }
+
+    #[test]
+    fn enrich_yield_safety_metadata_injects_canonical_health_factor() {
+        let metadata = enrich_yield_safety_metadata(
+            "aave_v3",
+            "borrow",
+            &json!({"min_aave_health_factor": 1.6}),
+            &json!({"rate_mode": 2}),
+        )
+        .unwrap();
+        assert_eq!(metadata["rate_mode"], 2);
+        assert_eq!(metadata["min_aave_health_factor"], "1.6");
+        assert_eq!(
+            metadata["min_aave_health_factor_wad"],
+            "1600000000000000000"
+        );
+    }
 }

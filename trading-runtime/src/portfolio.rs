@@ -262,8 +262,10 @@ mod tests {
 
     #[test]
     fn test_closing_value_only_position_does_not_realize_unknown_pnl() {
-        let mut portfolio = PortfolioState::default();
-        portfolio.realized_pnl = Decimal::new(25, 0);
+        let mut portfolio = PortfolioState {
+            realized_pnl: Decimal::new(25, 0),
+            ..PortfolioState::default()
+        };
         portfolio.add_position(make_value_only_position("WETH", 2, 2100));
 
         let result = portfolio.close_position("WETH", "test").unwrap();

@@ -1,0 +1,82 @@
+{
+  "suite": "self-improvement-mcp",
+  "passed": 5,
+  "failed": 0,
+  "total": 5,
+  "success_rate": 1,
+  "results": [
+    {
+      "name": "mcp_protocol_and_bounded_list",
+      "passed": true,
+      "metrics": {
+        "duration_ms": 37
+      },
+      "evidence": {
+        "tools": [
+          "self_improvement.create_task",
+          "self_improvement.status",
+          "self_improvement.list_tasks",
+          "self_improvement.logs",
+          "self_improvement.patch",
+          "self_improvement.cancel",
+          "self_improvement.backtest",
+          "self_improvement.promote_candidate"
+        ]
+      },
+      "at": "2026-05-20T12:07:57.200Z"
+    },
+    {
+      "name": "deterministic_patch_approval",
+      "passed": true,
+      "metrics": {
+        "duration_ms": 243,
+        "files_changed": 1,
+        "rounds": 1
+      },
+      "evidence": {
+        "task_id": "sit-1779278877312-3c85299458a0ed4f",
+        "patch_sha256": "sha256:4608c0674ae880ef9269658a2864f124f0ce3db854dedf8ba9c748b9505867ed"
+      },
+      "at": "2026-05-20T12:07:57.521Z"
+    },
+    {
+      "name": "no_change_failure_gate",
+      "passed": true,
+      "metrics": {
+        "duration_ms": 767,
+        "rounds": 1
+      },
+      "evidence": {
+        "task_id": "sit-1779278877632-8b7d71475959968c",
+        "failure": "no_approved_variant"
+      },
+      "at": "2026-05-20T12:07:58.365Z"
+    },
+    {
+      "name": "untracked_new_file_approval",
+      "passed": true,
+      "metrics": {
+        "duration_ms": 221,
+        "files_changed": 1
+      },
+      "evidence": {
+        "task_id": "sit-1779278878534-d525f01acb058a28",
+        "patch_sha256": "sha256:2a18855af7f6edb716db6768611c02e1d4d44e8adef5a36f1fef5bba2d1f2920"
+      },
+      "at": "2026-05-20T12:07:58.721Z"
+    },
+    {
+      "name": "opencode_new_file_approval",
+      "passed": true,
+      "metrics": {
+        "duration_ms": 34411,
+        "files_changed": 1
+      },
+      "evidence": {
+        "task_id": "sit-1779278878828-43da98ac4171a54a",
+        "patch_sha256": "sha256:2a18855af7f6edb716db6768611c02e1d4d44e8adef5a36f1fef5bba2d1f2920"
+      },
+      "at": "2026-05-20T12:08:33.205Z"
+    }
+  ]
+}

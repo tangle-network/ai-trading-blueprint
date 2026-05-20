@@ -78,6 +78,20 @@ pub struct TradeRecord {
     /// Harness config version that was active when this trade was made
     #[serde(default)]
     pub harness_version: Option<u32>,
+    /// Candidate strategy/config hash under paper evaluation. Promotion gates
+    /// derive paper evidence from persisted trades matching this hash.
+    #[serde(default)]
+    pub candidate_hash: Option<String>,
+    /// Exact sandbox/code revision that produced this paper trade. This is the
+    /// strongest evidence key for Revision Arena promotion decisions.
+    #[serde(default)]
+    pub revision_id: Option<String>,
+    /// Realized paper PnL percentage for this candidate-scoped paper trade.
+    #[serde(default)]
+    pub paper_pnl_pct: Option<String>,
+    /// Candidate paper equity after this trade, used to derive drawdown.
+    #[serde(default)]
+    pub paper_equity_after: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -274,6 +288,42 @@ pub fn trades_for_bot(
         trades: page,
         total,
     })
+}
+
+pub fn paper_trades_for_candidate(
+    bot_id: &str,
+    candidate_hash: &str,
+) -> Result<Vec<TradeRecord>, String> {
+    let bid = bot_id.to_string();
+    let hash = candidate_hash.to_string();
+    let mut all: Vec<TradeRecord> = trades()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|t| {
+            t.bot_id == bid && t.paper_trade && t.candidate_hash.as_deref() == Some(hash.as_str())
+        })
+        .collect();
+    all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    Ok(all)
+}
+
+pub fn paper_trades_for_revision(
+    bot_id: &str,
+    revision_id: &str,
+) -> Result<Vec<TradeRecord>, String> {
+    let bid = bot_id.to_string();
+    let revision = revision_id.to_string();
+    let mut all: Vec<TradeRecord> = trades()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|t| {
+            t.bot_id == bid && t.paper_trade && t.revision_id.as_deref() == Some(revision.as_str())
+        })
+        .collect();
+    all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    Ok(all)
 }
 
 /// Returns the number of trade records awaiting retry.

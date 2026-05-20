@@ -18,6 +18,10 @@ pub struct SelfImprovementRun {
     pub current_config: serde_json::Value,
     pub candidate_config: serde_json::Value,
     pub paper_evidence: Option<serde_json::Value>,
+    #[serde(default)]
+    pub base_snapshot_id: Option<String>,
+    #[serde(default)]
+    pub sandbox_revision_id: Option<String>,
 }
 
 pub fn runs() -> Result<&'static PersistentStore<SelfImprovementRun>, String> {

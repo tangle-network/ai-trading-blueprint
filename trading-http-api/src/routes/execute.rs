@@ -7,7 +7,7 @@ use crate::trade_store::{
     self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
     TradeExecutionStatus, TradeRecord,
 };
-use crate::{MultiBotTradingState, TradingApiState};
+use crate::{MultiBotTradingState, TradingApiState, sandbox_store};
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
@@ -951,14 +951,13 @@ fn bind_hyperliquid_account_metadata(
             if let Some(supplied) = map
                 .get("hyperliquid_account_address")
                 .and_then(serde_json::Value::as_str)
+                && !supplied.trim().eq_ignore_ascii_case(account)
             {
-                if !supplied.trim().eq_ignore_ascii_case(account) {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        "Hyperliquid account metadata does not match the provisioned bot account"
-                            .to_string(),
-                    ));
-                }
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Hyperliquid account metadata does not match the provisioned bot account"
+                        .to_string(),
+                ));
             }
             map.insert(
                 "hyperliquid_account_address".to_string(),
@@ -1114,23 +1113,23 @@ async fn resolve_market_valuation(
             price.price_usd,
         )),
         Err(error) => {
-            if let Some(live_input) = live_input {
-                if let Some(amount_raw) = amount_out_raw(intent) {
-                    let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
-                    if let Some(valuation) = resolve_live_token_usd_valuation(
-                        live_input,
-                        &intent.token_out,
-                        amount_raw,
-                        decimals,
-                    )
-                    .await
-                    {
-                        return Ok(TradeValuationSnapshot::priced(
-                            position_size,
-                            amount_out,
-                            valuation.price_usd,
-                        ));
-                    }
+            if let Some(live_input) = live_input
+                && let Some(amount_raw) = amount_out_raw(intent)
+            {
+                let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+                if let Some(valuation) = resolve_live_token_usd_valuation(
+                    live_input,
+                    &intent.token_out,
+                    amount_raw,
+                    decimals,
+                )
+                .await
+                {
+                    return Ok(TradeValuationSnapshot::priced(
+                        position_size,
+                        amount_out,
+                        valuation.price_usd,
+                    ));
                 }
             }
             tracing::warn!(
@@ -1174,20 +1173,15 @@ async fn resolve_swap_valuation(
         .await
         .ok()
         .map(|price| price.price_usd);
-    if token_out_price.is_none() {
-        if let (Some(live_input), Ok(amount_raw)) =
+    if token_out_price.is_none()
+        && let (Some(live_input), Ok(amount_raw)) =
             (live_input, U256::from_str(&intent.min_amount_out))
-        {
-            let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
-            token_out_price = resolve_live_token_usd_valuation(
-                live_input,
-                &intent.token_out,
-                amount_raw,
-                decimals,
-            )
-            .await
-            .map(|valuation| valuation.price_usd);
-        }
+    {
+        let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+        token_out_price =
+            resolve_live_token_usd_valuation(live_input, &intent.token_out, amount_raw, decimals)
+                .await
+                .map(|valuation| valuation.price_usd);
     }
     let estimated_amount_out = match (
         market_client
@@ -1637,6 +1631,52 @@ fn metadata_string(metadata: &serde_json::Value, key: &str) -> Option<String> {
     }
 }
 
+fn intent_revision_id(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, "revision_id")
+        .or_else(|| metadata_string(metadata, "sandbox_revision_id"))
+}
+
+fn enforce_revision_execution_mode(
+    bot_id: &str,
+    paper_trade: bool,
+    metadata: &serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
+    let Some(revision_id) = intent_revision_id(metadata) else {
+        return Ok(());
+    };
+
+    if paper_trade {
+        sandbox_store::get_revision(bot_id, &revision_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("revision_id '{revision_id}' does not exist for bot"),
+                )
+            })?;
+        return Ok(());
+    }
+
+    let active = sandbox_store::active_revision(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    match active {
+        Some(active) if active.revision_id == revision_id => Ok(()),
+        Some(active) => Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "revision_id '{revision_id}' is not the active live revision '{}'",
+                active.revision_id
+            ),
+        )),
+        None if revision_id == "rev-0" => Ok(()),
+        None => Err((
+            StatusCode::FORBIDDEN,
+            "live execution without an active sandbox revision only allows revision_id 'rev-0'"
+                .to_string(),
+        )),
+    }
+}
+
 fn metadata_u8(metadata: &serde_json::Value, key: &str) -> Option<u8> {
     match metadata.get(key) {
         Some(serde_json::Value::Number(value)) => {
@@ -1893,6 +1933,11 @@ async fn execute_paper_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
+            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        revision_id: intent_revision_id(&req.intent.metadata),
+        paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
+        paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
     trade_store::record_trade(record).await.map_err(|e| {
         (
@@ -1983,6 +2028,11 @@ async fn execute_paper_clob_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
+            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        revision_id: intent_revision_id(&req.intent.metadata),
+        paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
+        paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
     trade_store::record_trade(record).await.map_err(|e| {
         (
@@ -2248,6 +2298,10 @@ async fn execute_real_envelope_trade_inner(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     if let Err(e) = trade_store::record_trade(record).await {
         tracing::error!(error = %e, "envelope-mode trade submitted but persistence failed");
@@ -2361,12 +2415,10 @@ async fn execute_real_trade_inner(
         token_out_addr,
         min_out_u256,
         outcome.output_gained,
-    ) {
-        if let Some(bps) =
-            crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
-        {
-            crate::learning_store::record_fill(bot_id, tin, tout, bps);
-        }
+    ) && let Some(bps) =
+        crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
+    {
+        crate::learning_store::record_fill(bot_id, tin, tout, bps);
     }
 
     let trade_id = uuid::Uuid::new_v4().to_string();
@@ -2413,6 +2465,10 @@ async fn execute_real_trade_inner(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     // On-chain tx already succeeded — persistence failure must NOT return 500
     // (agent would retry and potentially double-spend). Log error but return 200.
@@ -2509,6 +2565,10 @@ async fn execute_clob_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     // CLOB order already submitted — persistence failure must NOT return 500
     // (agent would retry and submit a duplicate order). Log and return 200.
@@ -2586,28 +2646,26 @@ async fn execute_hyperliquid_trade(
                 | trading_runtime::types::Action::OpenShort
                 | trading_runtime::types::Action::Buy
         );
-    if is_open {
-        if let Some(signed_envelope) = signed_envelope {
-            let account = hl_client
-                .get_account_for(Some(&account_address))
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_GATEWAY,
-                        format!("HL account lookup failed for {account_address}: {e}"),
-                    )
-                })?;
-            let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
-            let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
-            let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
-            apply_envelope_checks(
-                signed_envelope,
-                &req.intent,
-                size_usd,
-                current_exposure,
-                true,
-            )?;
-        }
+    if is_open && let Some(signed_envelope) = signed_envelope {
+        let account = hl_client
+            .get_account_for(Some(&account_address))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("HL account lookup failed for {account_address}: {e}"),
+                )
+            })?;
+        let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
+        let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
+        let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+        apply_envelope_checks(
+            signed_envelope,
+            &req.intent,
+            size_usd,
+            current_exposure,
+            true,
+        )?;
     }
     let is_buy = matches!(
         action,
@@ -2728,6 +2786,10 @@ async fn execute_hyperliquid_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     if let Err(e) = trade_store::record_trade(record).await {
         tracing::error!(
@@ -2796,6 +2858,11 @@ async fn execute(
         &normalized_request.intent.target_protocol,
         &normalized_request.intent.metadata,
         &authoritative_hyperliquid_account,
+    )?;
+    enforce_revision_execution_mode(
+        &state.bot_id,
+        state.paper_trade,
+        &normalized_request.intent.metadata,
     )?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
@@ -3040,6 +3107,11 @@ async fn execute_multi_bot(
         &authoritative_hyperliquid_account,
     )?;
     reject_live_hyperliquid_leverage_metadata(&bot, &normalized_req.intent)?;
+    enforce_revision_execution_mode(
+        &bot.bot_id,
+        bot.paper_trade,
+        &normalized_req.intent.metadata,
+    )?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
         protocol_chain_id,
@@ -3105,6 +3177,13 @@ async fn execute_multi_bot(
     }
 
     if !bot.paper_trade {
+        if bot.validation_trust == ValidationTrust::SelfOperated {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Live SelfOperated trust mode is disabled until exact-action production authorization is implemented".into(),
+            ));
+        }
+
         if normalized_req.intent.target_protocol == "hyperliquid" {
             crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action_with_nav_refresh(
                 &state,
@@ -3138,12 +3217,7 @@ async fn execute_multi_bot(
             ValidationTrust::Envelope => {
                 // Loaded and verified above; signed_envelope is already set.
             }
-            ValidationTrust::SelfOperated => {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "Live SelfOperated trust mode is disabled until exact-action production authorization is implemented".into(),
-                ));
-            }
+            ValidationTrust::SelfOperated => unreachable!("handled before external live checks"),
         }
 
         if check_and_insert_intent(&canonical_intent_hash) {
@@ -3188,18 +3262,18 @@ async fn execute_multi_bot(
 
     // For paper envelope trades, enforce constraints now (no live HL account data available).
     // Live HL trades re-check with real account exposure inside execute_hyperliquid_trade.
-    if bot.paper_trade {
-        if let Some(ref env) = signed_envelope {
-            let is_open = is_open_action(&normalized_req.intent.action);
-            let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
-            apply_envelope_checks(
-                env,
-                &normalized_req.intent,
-                size_usd,
-                Decimal::ZERO,
-                is_open,
-            )?;
-        }
+    if bot.paper_trade
+        && let Some(ref env) = signed_envelope
+    {
+        let is_open = is_open_action(&normalized_req.intent.action);
+        let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+        apply_envelope_checks(
+            env,
+            &normalized_req.intent,
+            size_usd,
+            Decimal::ZERO,
+            is_open,
+        )?;
     }
 
     if bot.paper_trade && is_clob_trade {
@@ -3353,32 +3427,32 @@ async fn execute_multi_bot(
     };
 
     // Envelope-mode dispatch for vault-routed protocols.
-    if let Some(ref env) = signed_envelope {
-        if env.enforcement.is_some() {
-            let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
-            let response = execute_real_envelope_trade(
-                &bot.bot_id,
-                &executor,
-                &intent,
-                env,
-                &normalized_req,
-                stored_validation,
-                &valuation,
-                intent_hash_b256,
-                &state.alert_sink,
-            )
-            .await?;
-            if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
-                &bot,
-                Some(&state),
-                &state.market_data_base_url,
-            )
-            .await
-            {
-                tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
-            }
-            return Ok(response);
+    if let Some(ref env) = signed_envelope
+        && env.enforcement.is_some()
+    {
+        let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
+        let response = execute_real_envelope_trade(
+            &bot.bot_id,
+            &executor,
+            &intent,
+            env,
+            &normalized_req,
+            stored_validation,
+            &valuation,
+            intent_hash_b256,
+            &state.alert_sink,
+        )
+        .await?;
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
+        {
+            tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
         }
+        return Ok(response);
     }
 
     let response = execute_real_trade(RealTradeExecution {
@@ -3580,6 +3654,106 @@ mod tests {
             verifying_contract: Some("0x0000000000000000000000000000000000000002".to_string()),
             validated_at: None,
         }
+    }
+
+    fn insert_test_revision(bot_id: &str, revision_id: &str) {
+        let snapshot_id = format!("ss-{}", uuid::Uuid::new_v4());
+        sandbox_store::insert_snapshot(sandbox_store::SandboxSnapshot {
+            snapshot_id: snapshot_id.clone(),
+            bot_id: bot_id.to_string(),
+            created_at: chrono::Utc::now(),
+            base_repo: "ai-trading-blueprint".to_string(),
+            base_ref: "test".to_string(),
+            base_commit: "0000000".to_string(),
+            base_image_digest: "sha256:image".to_string(),
+            workspace_digest: "sha256:workspace".to_string(),
+            workspace_path: None,
+            notes: None,
+        })
+        .expect("insert snapshot");
+        sandbox_store::insert_revision(sandbox_store::SandboxRevision {
+            revision_id: revision_id.to_string(),
+            bot_id: bot_id.to_string(),
+            created_at: chrono::Utc::now(),
+            base_snapshot_id: snapshot_id,
+            parent_revision_id: None,
+            run_id: None,
+            user_intent: "test revision".to_string(),
+            patch_sha256: "sha256:patch".to_string(),
+            patch: "diff --git a/test b/test".to_string(),
+            files_changed: vec!["test".to_string()],
+            tests: vec!["cargo test".to_string()],
+            status: "candidate".to_string(),
+        })
+        .expect("insert revision");
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_rev0_live_without_active_revision() {
+        let bot_id = format!("mode-bootstrap-{}", uuid::Uuid::new_v4());
+        let metadata = serde_json::json!({ "revision_id": "rev-0" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, false, &metadata).is_ok());
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_known_paper_revision() {
+        let bot_id = format!("mode-paper-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-known");
+        let metadata = serde_json::json!({ "revision_id": "sr-known" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, true, &metadata).is_ok());
+    }
+
+    #[test]
+    fn revision_execution_mode_rejects_unknown_paper_revision() {
+        let bot_id = format!("mode-paper-missing-{}", uuid::Uuid::new_v4());
+        let metadata = serde_json::json!({ "revision_id": "sr-missing" });
+
+        let err = enforce_revision_execution_mode(&bot_id, true, &metadata)
+            .expect_err("unknown paper revision should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("does not exist"));
+    }
+
+    #[test]
+    fn revision_execution_mode_rejects_non_active_live_revision() {
+        let bot_id = format!("mode-live-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-active");
+        insert_test_revision(&bot_id, "sr-candidate");
+        sandbox_store::set_active_revision(sandbox_store::ActiveSandboxRevision {
+            bot_id: bot_id.clone(),
+            revision_id: "sr-active".to_string(),
+            activated_at: chrono::Utc::now(),
+            reason: "test activation".to_string(),
+            rollback_from: None,
+        })
+        .expect("set active revision");
+        let metadata = serde_json::json!({ "revision_id": "sr-candidate" });
+
+        let err = enforce_revision_execution_mode(&bot_id, false, &metadata)
+            .expect_err("non-active live revision should be rejected");
+
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+        assert!(err.1.contains("not the active live revision"));
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_active_live_revision() {
+        let bot_id = format!("mode-live-active-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-active");
+        sandbox_store::set_active_revision(sandbox_store::ActiveSandboxRevision {
+            bot_id: bot_id.clone(),
+            revision_id: "sr-active".to_string(),
+            activated_at: chrono::Utc::now(),
+            reason: "test activation".to_string(),
+            rollback_from: None,
+        })
+        .expect("set active revision");
+        let metadata = serde_json::json!({ "revision_id": "sr-active" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, false, &metadata).is_ok());
     }
 
     #[test]

@@ -45,7 +45,6 @@ vi.mock(
     }),
     useRunGroups: () => [],
   }),
-  { virtual: true },
 );
 
 vi.mock(
@@ -54,7 +53,6 @@ vi.mock(
     cn: (...classes: Array<string | false | null | undefined>) =>
       classes.filter(Boolean).join(" "),
   }),
-  { virtual: true },
 );
 
 vi.mock("~/lib/operator/meta", async () => {

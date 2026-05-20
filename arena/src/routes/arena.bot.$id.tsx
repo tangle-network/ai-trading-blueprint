@@ -22,6 +22,7 @@ import {
 } from "~/components/bot-detail/ReasoningTab";
 import { ChatTab } from "~/components/bot-detail/ChatTab";
 import { RunsTab } from "~/components/bot-detail/RunsTab";
+import { RevisionArenaTab } from "~/components/bot-detail/RevisionArenaTab";
 import { ControlsTab } from "~/components/bot-detail/ControlsTab";
 import { SecretsTab } from "~/components/bot-detail/SecretsTab";
 import { EnvelopeTab } from "~/components/bot-detail/EnvelopeTab";
@@ -67,6 +68,7 @@ const VALID_BOT_TABS = [
   "trades",
   "reasoning",
   "runs",
+  "arena",
   "chat",
   "terminal",
   "vault",
@@ -351,6 +353,7 @@ export default function BotDetailPage() {
             {operatorMeta?.features.chat && (
               <TabsTrigger value="runs">Runs</TabsTrigger>
             )}
+            <TabsTrigger value="arena">Revision Arena</TabsTrigger>
             {operatorMeta?.features.chat && (
               <TabsTrigger value="chat">Chat</TabsTrigger>
             )}
@@ -420,6 +423,17 @@ export default function BotDetailPage() {
               </ErrorBoundary>
             </TabsContent>
           )}
+
+          <TabsContent value="arena" className="mt-6">
+            <ErrorBoundary>
+              <RevisionArenaTab
+                botId={bot.id}
+                operatorApiUrl={bot.operatorApiUrl}
+                operatorKind={bot.operatorKind}
+                verificationState={bot.verificationState}
+              />
+            </ErrorBoundary>
+          </TabsContent>
 
           {operatorMeta?.features.chat && (
             <TabsContent value="chat" className="mt-6">

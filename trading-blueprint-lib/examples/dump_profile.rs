@@ -56,6 +56,8 @@ fn main() {
         service_id: 0,
         harness_json: serde_json::Value::Null,
         validation_trust: trading_runtime::ValidationTrust::default(),
+        baseline_backtest: None,
+        renewal_webhook_url: None,
     };
 
     let profile = pack.build_agent_profile(&config);
