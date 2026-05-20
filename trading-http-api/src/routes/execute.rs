@@ -1875,6 +1875,10 @@ async fn execute_paper_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
+            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
+        paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
     trade_store::record_trade(record).await.map_err(|e| {
         (
@@ -1965,6 +1969,10 @@ async fn execute_paper_clob_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
+            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
+        paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
     trade_store::record_trade(record).await.map_err(|e| {
         (
@@ -2230,6 +2238,9 @@ async fn execute_real_envelope_trade_inner(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     if let Err(e) = trade_store::record_trade(record).await {
         tracing::error!(error = %e, "envelope-mode trade submitted but persistence failed");
@@ -2395,6 +2406,9 @@ async fn execute_real_trade_inner(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     // On-chain tx already succeeded — persistence failure must NOT return 500
     // (agent would retry and potentially double-spend). Log error but return 200.
@@ -2491,6 +2505,9 @@ async fn execute_clob_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     // CLOB order already submitted — persistence failure must NOT return 500
     // (agent would retry and submit a duplicate order). Log and return 200.
@@ -2690,6 +2707,9 @@ async fn execute_hyperliquid_trade(
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     };
     if let Err(e) = trade_store::record_trade(record).await {
         tracing::error!(
