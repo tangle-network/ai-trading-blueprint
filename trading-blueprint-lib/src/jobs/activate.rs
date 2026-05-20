@@ -28,9 +28,9 @@ fn trading_agent_package_json() -> String {
         "private": true,
         "scripts": {
             "serve": "opencode serve",
-            "self-improve": "node /home/agent/tools/self-improvement-loop.mjs run",
-            "self-improve:status": "node /home/agent/tools/self-improvement-loop.mjs status",
-            "mcp:self-improvement": "node /home/agent/tools/self-improvement-mcp-server.mjs"
+            "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.mjs run",
+            "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.mjs status",
+            "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
         },
         "dependencies": {
             "@tangle-network/agent-eval": "^0.29.1",
@@ -984,13 +984,15 @@ pub(crate) async fn write_prebuilt_tools(
         &json!({
             "name": "trading-self-improvement",
             "transport": "stdio",
-            "command": "node",
-            "args": ["/home/agent/tools/self-improvement-mcp-server.mjs"],
+            "command": "bun",
+            "args": ["--bun", "/home/agent/tools/self-improvement-mcp-server.mjs"],
             "tools": [
                 "self_improvement.create_task",
                 "self_improvement.status",
+                "self_improvement.list_tasks",
                 "self_improvement.logs",
                 "self_improvement.patch",
+                "self_improvement.cancel",
                 "self_improvement.backtest",
                 "self_improvement.promote_candidate"
             ]
@@ -1120,11 +1122,11 @@ mod tests {
         assert_eq!(package["scripts"]["serve"], "opencode serve");
         assert_eq!(
             package["scripts"]["self-improve:status"],
-            "node /home/agent/tools/self-improvement-loop.mjs status"
+            "bun --bun /home/agent/tools/self-improvement-loop.mjs status"
         );
         assert_eq!(
             package["scripts"]["mcp:self-improvement"],
-            "node /home/agent/tools/self-improvement-mcp-server.mjs"
+            "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
         );
         assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
         assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
@@ -1151,11 +1153,18 @@ mod tests {
         let tool = include_str!("../prompts/tools/self_improvement_mcp_server.mjs");
         assert!(tool.contains("tools/list"));
         assert!(tool.contains("tools/call"));
+        assert!(tool.contains("auto-dev-style"));
+        assert!(tool.contains("variants"));
+        assert!(tool.contains("reviewer_command"));
+        assert!(tool.contains("selectWinner"));
+        assert!(tool.contains("highest_readiness"));
         assert!(tool.contains("self_improvement.create_task"));
+        assert!(tool.contains("self_improvement.list_tasks"));
         assert!(tool.contains("git worktree add"));
         assert!(tool.contains("max_shots"));
         assert!(tool.contains("runCodingAgent"));
         assert!(tool.contains("runTests"));
+        assert!(tool.contains("self_improvement.cancel"));
         assert!(tool.contains("self_improvement.promote_candidate"));
     }
 }
