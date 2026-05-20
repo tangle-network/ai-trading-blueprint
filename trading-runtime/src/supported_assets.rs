@@ -87,12 +87,12 @@ pub fn supported_assets_for_config(
         return configured;
     }
 
-    if normalized_strategy == "hyperliquid_perp" && normalized_protocol == "hyperliquid" {
-        if let Some(asset) =
+    if normalized_strategy == "hyperliquid_perp"
+        && normalized_protocol == "hyperliquid"
+        && let Some(asset) =
             hyperliquid_perp_asset_from_config(chain_id, &normalized_protocol, strategy_config)
-        {
-            return vec![asset];
-        }
+    {
+        return vec![asset];
     }
 
     supported_assets_for(&normalized_strategy, chain_id, &normalized_protocol)

@@ -2125,6 +2125,10 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -2259,6 +2263,10 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -2353,6 +2361,10 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");

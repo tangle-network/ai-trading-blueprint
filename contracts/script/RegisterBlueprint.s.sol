@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
-import "tnt-core-0.10.1/src/libraries/Types.sol";
+import {Types} from "tnt-core/libraries/Types.sol";
 import "../src/blueprints/TradingBlueprint.sol";
 import "../src/blueprints/ValidatorBlueprint.sol";
 import "../src/VaultFactory.sol";

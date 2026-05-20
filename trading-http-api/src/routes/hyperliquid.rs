@@ -613,7 +613,7 @@ fn redact_error_token(token: &str) -> String {
     };
     let (prefix, rest) = token.split_at(scheme_start);
     let trailing = rest
-        .find(|ch: char| matches!(ch, ')' | ']' | '}'))
+        .find([')', ']', '}'])
         .map(|idx| &rest[idx..])
         .unwrap_or("");
     format!("{prefix}<redacted-url>{trailing}")

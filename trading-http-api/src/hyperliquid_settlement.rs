@@ -305,12 +305,14 @@ async fn run_settlement_inner(
             let attempt = settlement_attempt(
                 bot,
                 schedule.current_epoch,
-                HyperliquidSettlementStatus::Failed,
-                0,
-                U256::ZERO,
-                format!("settlement_failed: {err}"),
-                vec![],
-                reservation.retry_count,
+                SettlementAttemptOutcome {
+                    status: HyperliquidSettlementStatus::Failed,
+                    fulfilled_count: 0,
+                    fulfilled_assets: U256::ZERO,
+                    stopped_reason: format!("settlement_failed: {err}"),
+                    tx_hashes: vec![],
+                    retry_count: reservation.retry_count,
+                },
             );
             record_attempt(attempt).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
             return Err((status, err));
@@ -380,12 +382,14 @@ async fn run_reserved_settlement(
             let attempt = settlement_attempt(
                 bot,
                 schedule.current_epoch,
-                HyperliquidSettlementStatus::Failed,
-                0,
-                U256::ZERO,
-                format!("nav_refresh_failed: {err}"),
-                vec![],
-                0,
+                SettlementAttemptOutcome {
+                    status: HyperliquidSettlementStatus::Failed,
+                    fulfilled_count: 0,
+                    fulfilled_assets: U256::ZERO,
+                    stopped_reason: format!("nav_refresh_failed: {err}"),
+                    tx_hashes: vec![],
+                    retry_count: 0,
+                },
             );
             return Err((status, attempt.stopped_reason));
         }
@@ -394,12 +398,14 @@ async fn run_reserved_settlement(
         let attempt = settlement_attempt(
             bot,
             schedule.current_epoch,
-            HyperliquidSettlementStatus::Skipped,
-            0,
-            U256::ZERO,
-            "nav_stale".to_string(),
-            vec![],
-            0,
+            SettlementAttemptOutcome {
+                status: HyperliquidSettlementStatus::Skipped,
+                fulfilled_count: 0,
+                fulfilled_assets: U256::ZERO,
+                stopped_reason: "nav_stale".to_string(),
+                tx_hashes: vec![],
+                retry_count: 0,
+            },
         );
         return Ok(attempt);
     }
@@ -501,38 +507,49 @@ async fn run_reserved_settlement(
     let attempt = settlement_attempt(
         bot,
         schedule.current_epoch,
-        status,
-        fulfilled_count,
-        fulfilled_assets,
-        stopped_reason,
-        tx_hashes,
-        0,
+        SettlementAttemptOutcome {
+            status,
+            fulfilled_count,
+            fulfilled_assets,
+            stopped_reason,
+            tx_hashes,
+            retry_count: 0,
+        },
     );
     Ok(attempt)
 }
 
-fn settlement_attempt(
-    bot: &BotContext,
-    epoch: DateTime<Utc>,
+struct SettlementAttemptOutcome {
     status: HyperliquidSettlementStatus,
     fulfilled_count: u32,
     fulfilled_assets: U256,
     stopped_reason: String,
     tx_hashes: Vec<String>,
     retry_count: u32,
+}
+
+fn settlement_attempt(
+    bot: &BotContext,
+    epoch: DateTime<Utc>,
+    outcome: SettlementAttemptOutcome,
 ) -> HyperliquidSettlementAttempt {
     let last_attempt_at = Utc::now();
-    let next_retry_after = retry_after_for_status(&status, &stopped_reason, last_attempt_at, bot);
+    let next_retry_after = retry_after_for_status(
+        &outcome.status,
+        &outcome.stopped_reason,
+        last_attempt_at,
+        bot,
+    );
     HyperliquidSettlementAttempt {
         bot_id: bot.bot_id.clone(),
         epoch,
         last_attempt_at,
-        last_status: status,
-        fulfilled_count,
-        fulfilled_assets: fulfilled_assets.to_string(),
-        stopped_reason,
-        tx_hashes,
-        retry_count,
+        last_status: outcome.status,
+        fulfilled_count: outcome.fulfilled_count,
+        fulfilled_assets: outcome.fulfilled_assets.to_string(),
+        stopped_reason: outcome.stopped_reason,
+        tx_hashes: outcome.tx_hashes,
+        retry_count: outcome.retry_count,
         next_retry_after,
         in_progress_expires_at: None,
     }
