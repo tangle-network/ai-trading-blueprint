@@ -3948,6 +3948,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -4064,6 +4065,7 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -4144,6 +4146,7 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -4297,6 +4300,7 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -6867,11 +6871,76 @@ async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_can
         .as_str()
         .unwrap()
         .to_string();
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "user_intent": "Create exact revision-scoped paper evidence candidate.",
+                        "base_snapshot_id": snapshot_id,
+                        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// revision-scoped evidence\n",
+                        "files_changed": ["strategy.rs"],
+                        "tests": ["cargo test -p trading-runtime --lib"],
+                        "status": "candidate"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let revision_id = revision["revision_id"].as_str().unwrap().to_string();
 
     for i in 0..20 {
         let exec_body = execute_body_with_metadata(serde_json::json!({
             "test_nonce": uuid::Uuid::new_v4().to_string(),
-            "candidate_hash": candidate_hash,
+            "candidate_hash": "sha256:intentionally-wrong",
+            "revision_id": revision_id,
             "paper_pnl_pct": "0.1",
             "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 10.0))
         }));
@@ -6897,6 +6966,7 @@ async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_can
         "current": backtest_config(),
         "candidate": backtest_config(),
         "token": "ETH",
+        "revision_id": revision_id,
         "paper": {
             "trades": 0,
             "total_return_pct": -99.0,
@@ -6925,6 +6995,7 @@ async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_can
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["paper"]["candidate_hash"], candidate_hash);
+    assert_eq!(json["paper"]["revision_id"], revision_id);
     assert_eq!(json["paper"]["trades"], 20);
     assert!(json["paper"]["total_return_pct"].as_f64().unwrap() > 0.0);
     assert_eq!(json["paper"]["max_drawdown_pct"].as_f64().unwrap(), 0.0);

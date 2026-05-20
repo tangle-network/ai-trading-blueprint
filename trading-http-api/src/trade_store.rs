@@ -82,6 +82,10 @@ pub struct TradeRecord {
     /// derive paper evidence from persisted trades matching this hash.
     #[serde(default)]
     pub candidate_hash: Option<String>,
+    /// Exact sandbox/code revision that produced this paper trade. This is the
+    /// strongest evidence key for Revision Arena promotion decisions.
+    #[serde(default)]
+    pub revision_id: Option<String>,
     /// Realized paper PnL percentage for this candidate-scoped paper trade.
     #[serde(default)]
     pub paper_pnl_pct: Option<String>,
@@ -298,6 +302,24 @@ pub fn paper_trades_for_candidate(
         .into_iter()
         .filter(|t| {
             t.bot_id == bid && t.paper_trade && t.candidate_hash.as_deref() == Some(hash.as_str())
+        })
+        .collect();
+    all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    Ok(all)
+}
+
+pub fn paper_trades_for_revision(
+    bot_id: &str,
+    revision_id: &str,
+) -> Result<Vec<TradeRecord>, String> {
+    let bid = bot_id.to_string();
+    let revision = revision_id.to_string();
+    let mut all: Vec<TradeRecord> = trades()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|t| {
+            t.bot_id == bid && t.paper_trade && t.revision_id.as_deref() == Some(revision.as_str())
         })
         .collect();
     all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));

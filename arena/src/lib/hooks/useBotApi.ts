@@ -148,7 +148,13 @@ export interface RevisionArenaEntry {
   tests: string[];
   promotion_approved?: boolean | null;
   promotion_blockers: string[];
-  paper_evidence?: Record<string, unknown> | null;
+  paper_evidence?: {
+    trades?: number;
+    total_return_pct?: number;
+    max_drawdown_pct?: number;
+    candidate_hash?: string | null;
+    revision_id?: string | null;
+  } | null;
 }
 
 export interface RevisionModeCapability {

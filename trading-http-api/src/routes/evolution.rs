@@ -106,6 +106,9 @@ pub struct PaperEvidence {
     /// Optional candidate strategy/config/content hash. Returned for auditability.
     #[serde(default)]
     pub candidate_hash: Option<String>,
+    /// Optional exact code/sandbox revision used to derive this paper evidence.
+    #[serde(default)]
+    pub revision_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -113,6 +116,10 @@ pub struct PromotionGateRequest {
     pub current: BacktestConfig,
     pub candidate: BacktestConfig,
     pub token: Option<String>,
+    /// Exact sandbox/code revision whose persisted paper trades should be used
+    /// as promotion evidence. Falls back to candidate_hash for older runs.
+    #[serde(default)]
+    pub revision_id: Option<String>,
     #[serde(default = "default_train_pct")]
     pub train_pct: f64,
     #[serde(default)]
@@ -365,7 +372,8 @@ async fn promotion_gate_inner(
         )
     })?;
     let candidate_hash = hash_json(&candidate_json)?;
-    let (paper, mut evidence_blockers) = paper_evidence_from_store(bot_id, &candidate_hash)?;
+    let (paper, mut evidence_blockers) =
+        paper_evidence_from_store(bot_id, &candidate_hash, req.revision_id.as_deref())?;
     let run = run_evolution_inner(
         bot_id,
         RunEvolutionRequest {
@@ -421,9 +429,27 @@ async fn promotion_gate_inner(
 fn paper_evidence_from_store(
     bot_id: &str,
     candidate_hash: &str,
+    revision_id: Option<&str>,
 ) -> Result<(Option<PaperEvidence>, Vec<String>), (StatusCode, String)> {
-    let trades = trade_store::paper_trades_for_candidate(bot_id, candidate_hash)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let (trades, evidence_revision_id) = if let Some(revision_id) = revision_id {
+        let revision_trades = trade_store::paper_trades_for_revision(bot_id, revision_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        if revision_trades.is_empty() {
+            (
+                trade_store::paper_trades_for_candidate(bot_id, candidate_hash)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?,
+                None,
+            )
+        } else {
+            (revision_trades, Some(revision_id))
+        }
+    } else {
+        (
+            trade_store::paper_trades_for_candidate(bot_id, candidate_hash)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?,
+            None,
+        )
+    };
     if trades.is_empty() {
         return Ok((None, Vec::new()));
     }
@@ -475,6 +501,7 @@ fn paper_evidence_from_store(
             total_return_pct,
             max_drawdown_pct,
             candidate_hash: Some(candidate_hash.to_string()),
+            revision_id: evidence_revision_id.map(str::to_string),
         }),
         blockers,
     ))
@@ -525,22 +552,6 @@ async fn self_improve_inner(
     })?;
     let candidate_hash = hash_json(&candidate_json)?;
     let sandbox_mutation = req.sandbox_mutation;
-
-    let promotion = promotion_gate_inner(
-        bot_id,
-        PromotionGateRequest {
-            current: req.current,
-            candidate,
-            token: req.token,
-            train_pct: req.train_pct,
-            paper: req.paper,
-            min_paper_trades: req.min_paper_trades,
-            max_paper_drawdown_pct: req.max_paper_drawdown_pct,
-        },
-    )
-    .await?
-    .0;
-
     let run_id = format!("sir-{}", uuid::Uuid::new_v4());
     let sandbox_revision = match sandbox_mutation {
         Some(mutation) => {
@@ -552,6 +563,24 @@ async fn self_improve_inner(
         }
         None => None,
     };
+
+    let promotion = promotion_gate_inner(
+        bot_id,
+        PromotionGateRequest {
+            current: req.current,
+            candidate,
+            token: req.token,
+            revision_id: sandbox_revision
+                .as_ref()
+                .map(|revision| revision.revision_id.clone()),
+            train_pct: req.train_pct,
+            paper: req.paper,
+            min_paper_trades: req.min_paper_trades,
+            max_paper_drawdown_pct: req.max_paper_drawdown_pct,
+        },
+    )
+    .await?
+    .0;
 
     let run = evolution_store::SelfImprovementRun {
         run_id,

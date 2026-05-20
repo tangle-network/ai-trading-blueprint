@@ -160,6 +160,23 @@ function RevisionRow({ revision }: { revision: RevisionArenaEntry }) {
           </ul>
         </div>
       )}
+
+      {revision.paper_evidence && (
+        <div className="mt-3 grid gap-2 text-[11px] font-data text-arena-elements-textSecondary sm:grid-cols-3">
+          <div>
+            <span className="text-arena-elements-textTertiary">Paper trades</span>{" "}
+            {revision.paper_evidence.trades ?? 0}
+          </div>
+          <div>
+            <span className="text-arena-elements-textTertiary">Paper return</span>{" "}
+            {revision.paper_evidence.total_return_pct ?? 0}%
+          </div>
+          <div>
+            <span className="text-arena-elements-textTertiary">Max drawdown</span>{" "}
+            {revision.paper_evidence.max_drawdown_pct ?? 0}%
+          </div>
+        </div>
+      )}
     </div>
   );
 }

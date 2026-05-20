@@ -7,7 +7,7 @@ use crate::trade_store::{
     self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
     TradeExecutionStatus, TradeRecord,
 };
-use crate::{MultiBotTradingState, TradingApiState};
+use crate::{MultiBotTradingState, TradingApiState, sandbox_store};
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
@@ -1613,6 +1613,52 @@ fn metadata_string(metadata: &serde_json::Value, key: &str) -> Option<String> {
     }
 }
 
+fn intent_revision_id(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, "revision_id")
+        .or_else(|| metadata_string(metadata, "sandbox_revision_id"))
+}
+
+fn enforce_revision_execution_mode(
+    bot_id: &str,
+    paper_trade: bool,
+    metadata: &serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
+    let Some(revision_id) = intent_revision_id(metadata) else {
+        return Ok(());
+    };
+
+    if paper_trade {
+        sandbox_store::get_revision(bot_id, &revision_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("revision_id '{revision_id}' does not exist for bot"),
+                )
+            })?;
+        return Ok(());
+    }
+
+    let active = sandbox_store::active_revision(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    match active {
+        Some(active) if active.revision_id == revision_id => Ok(()),
+        Some(active) => Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "revision_id '{revision_id}' is not the active live revision '{}'",
+                active.revision_id
+            ),
+        )),
+        None if revision_id == "rev-0" => Ok(()),
+        None => Err((
+            StatusCode::FORBIDDEN,
+            "live execution without an active sandbox revision only allows revision_id 'rev-0'"
+                .to_string(),
+        )),
+    }
+}
+
 fn metadata_u8(metadata: &serde_json::Value, key: &str) -> Option<u8> {
     match metadata.get(key) {
         Some(serde_json::Value::Number(value)) => {
@@ -1871,6 +1917,7 @@ async fn execute_paper_trade(
         harness_version: None,
         candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
             .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
@@ -1965,6 +2012,7 @@ async fn execute_paper_clob_trade(
         harness_version: None,
         candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
             .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
@@ -2233,6 +2281,7 @@ async fn execute_real_envelope_trade_inner(
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2399,6 +2448,7 @@ async fn execute_real_trade_inner(
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2498,6 +2548,7 @@ async fn execute_clob_trade(
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2698,6 +2749,7 @@ async fn execute_hyperliquid_trade(
         agent_reasoning: None,
         harness_version: None,
         candidate_hash: None,
+        revision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2773,6 +2825,11 @@ async fn execute(
         &normalized_request.intent.target_protocol,
         &normalized_request.intent.metadata,
         &authoritative_hyperliquid_account,
+    )?;
+    enforce_revision_execution_mode(
+        &state.bot_id,
+        state.paper_trade,
+        &normalized_request.intent.metadata,
     )?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
@@ -3015,6 +3072,11 @@ async fn execute_multi_bot(
         &normalized_req.intent.target_protocol,
         &normalized_req.intent.metadata,
         &authoritative_hyperliquid_account,
+    )?;
+    enforce_revision_execution_mode(
+        &bot.bot_id,
+        bot.paper_trade,
+        &normalized_req.intent.metadata,
     )?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
@@ -3557,6 +3619,106 @@ mod tests {
             verifying_contract: Some("0x0000000000000000000000000000000000000002".to_string()),
             validated_at: None,
         }
+    }
+
+    fn insert_test_revision(bot_id: &str, revision_id: &str) {
+        let snapshot_id = format!("ss-{}", uuid::Uuid::new_v4());
+        sandbox_store::insert_snapshot(sandbox_store::SandboxSnapshot {
+            snapshot_id: snapshot_id.clone(),
+            bot_id: bot_id.to_string(),
+            created_at: chrono::Utc::now(),
+            base_repo: "ai-trading-blueprint".to_string(),
+            base_ref: "test".to_string(),
+            base_commit: "0000000".to_string(),
+            base_image_digest: "sha256:image".to_string(),
+            workspace_digest: "sha256:workspace".to_string(),
+            workspace_path: None,
+            notes: None,
+        })
+        .expect("insert snapshot");
+        sandbox_store::insert_revision(sandbox_store::SandboxRevision {
+            revision_id: revision_id.to_string(),
+            bot_id: bot_id.to_string(),
+            created_at: chrono::Utc::now(),
+            base_snapshot_id: snapshot_id,
+            parent_revision_id: None,
+            run_id: None,
+            user_intent: "test revision".to_string(),
+            patch_sha256: "sha256:patch".to_string(),
+            patch: "diff --git a/test b/test".to_string(),
+            files_changed: vec!["test".to_string()],
+            tests: vec!["cargo test".to_string()],
+            status: "candidate".to_string(),
+        })
+        .expect("insert revision");
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_rev0_live_without_active_revision() {
+        let bot_id = format!("mode-bootstrap-{}", uuid::Uuid::new_v4());
+        let metadata = serde_json::json!({ "revision_id": "rev-0" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, false, &metadata).is_ok());
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_known_paper_revision() {
+        let bot_id = format!("mode-paper-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-known");
+        let metadata = serde_json::json!({ "revision_id": "sr-known" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, true, &metadata).is_ok());
+    }
+
+    #[test]
+    fn revision_execution_mode_rejects_unknown_paper_revision() {
+        let bot_id = format!("mode-paper-missing-{}", uuid::Uuid::new_v4());
+        let metadata = serde_json::json!({ "revision_id": "sr-missing" });
+
+        let err = enforce_revision_execution_mode(&bot_id, true, &metadata)
+            .expect_err("unknown paper revision should be rejected");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("does not exist"));
+    }
+
+    #[test]
+    fn revision_execution_mode_rejects_non_active_live_revision() {
+        let bot_id = format!("mode-live-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-active");
+        insert_test_revision(&bot_id, "sr-candidate");
+        sandbox_store::set_active_revision(sandbox_store::ActiveSandboxRevision {
+            bot_id: bot_id.clone(),
+            revision_id: "sr-active".to_string(),
+            activated_at: chrono::Utc::now(),
+            reason: "test activation".to_string(),
+            rollback_from: None,
+        })
+        .expect("set active revision");
+        let metadata = serde_json::json!({ "revision_id": "sr-candidate" });
+
+        let err = enforce_revision_execution_mode(&bot_id, false, &metadata)
+            .expect_err("non-active live revision should be rejected");
+
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+        assert!(err.1.contains("not the active live revision"));
+    }
+
+    #[test]
+    fn revision_execution_mode_allows_active_live_revision() {
+        let bot_id = format!("mode-live-active-{}", uuid::Uuid::new_v4());
+        insert_test_revision(&bot_id, "sr-active");
+        sandbox_store::set_active_revision(sandbox_store::ActiveSandboxRevision {
+            bot_id: bot_id.clone(),
+            revision_id: "sr-active".to_string(),
+            activated_at: chrono::Utc::now(),
+            reason: "test activation".to_string(),
+            rollback_from: None,
+        })
+        .expect("set active revision");
+        let metadata = serde_json::json!({ "revision_id": "sr-active" });
+
+        assert!(enforce_revision_execution_mode(&bot_id, false, &metadata).is_ok());
     }
 
     #[test]
