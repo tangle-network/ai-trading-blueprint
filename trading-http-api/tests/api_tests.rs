@@ -751,6 +751,13 @@ fn execute_body() -> String {
     execute_body_for_chain(None)
 }
 
+fn execute_body_with_metadata(metadata: serde_json::Value) -> String {
+    let mut body: serde_json::Value = serde_json::from_str(&execute_body_for_chain(None)).unwrap();
+    body["intent"]["metadata"] = metadata;
+    attach_validation_hashes(&mut body, None);
+    serde_json::to_string(&body).unwrap()
+}
+
 // ── Existing tests ──────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -3940,6 +3947,9 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -4053,6 +4063,9 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -4130,6 +4143,9 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -4280,6 +4296,9 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -6680,12 +6699,12 @@ async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
     assert!(json["blockers"].as_array().unwrap().iter().any(|b| {
         b.as_str()
             .unwrap()
-            .contains("missing paper trading evidence")
+            .contains("missing persisted paper trading evidence")
     }));
 }
 
 #[tokio::test]
-async fn test_evolution_promotion_gate_blocks_weak_paper_evidence() {
+async fn test_evolution_promotion_gate_ignores_forged_request_paper_evidence() {
     let mock = MockServer::start().await;
     let bot_id = format!("evo-gate-paper-{}", uuid::Uuid::new_v4());
     let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
@@ -6730,10 +6749,10 @@ async fn test_evolution_promotion_gate_blocks_weak_paper_evidence() {
         "candidate": backtest_config(),
         "token": "ETH",
         "paper": {
-            "trades": 3,
-            "total_return_pct": -1.2,
-            "max_drawdown_pct": 25.0,
-            "candidate_hash": "sha256:test"
+            "trades": 999,
+            "total_return_pct": 50.0,
+            "max_drawdown_pct": 0.1,
+            "candidate_hash": "sha256:forged"
         },
         "min_paper_trades": 20,
         "max_paper_drawdown_pct": 10.0
@@ -6757,22 +6776,156 @@ async fn test_evolution_promotion_gate_blocks_weak_paper_evidence() {
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["approved"], false);
+    assert_eq!(json["paper"], serde_json::Value::Null);
     let blockers = json["blockers"].as_array().unwrap();
     assert!(
         blockers
             .iter()
-            .any(|b| b.as_str().unwrap().contains("need at least 20"))
+            .any(|b| b.as_str().unwrap().contains("missing persisted paper"))
     );
-    assert!(
-        blockers
-            .iter()
-            .any(|b| b.as_str().unwrap().contains("return must be positive"))
-    );
-    assert!(
-        blockers
-            .iter()
-            .any(|b| b.as_str().unwrap().contains("exceeds 10.00% limit"))
-    );
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_candidate_trades() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-persisted-paper-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let candidate = backtest_config();
+    let probe_body = serde_json::json!({
+        "user_intent": "Probe exact candidate hash before persisted paper evidence exists.",
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+    let probe_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&probe_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = probe_resp.status();
+    let bytes = probe_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let probe_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = probe_json["run"]["candidate_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": candidate_hash,
+            "paper_pnl_pct": "0.1",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 10.0))
+        }));
+        let exec_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", &format!("Bearer {bot_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = exec_resp.status();
+        let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    }
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "paper": {
+            "trades": 0,
+            "total_return_pct": -99.0,
+            "max_drawdown_pct": 99.0,
+            "candidate_hash": "sha256:forged"
+        },
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["paper"]["candidate_hash"], candidate_hash);
+    assert_eq!(json["paper"]["trades"], 20);
+    assert!(json["paper"]["total_return_pct"].as_f64().unwrap() > 0.0);
+    assert_eq!(json["paper"]["max_drawdown_pct"].as_f64().unwrap(), 0.0);
+    let blockers = json["blockers"].as_array().unwrap();
+    assert!(!blockers.iter().any(|b| {
+        let blocker = b.as_str().unwrap();
+        blocker.contains("missing persisted paper")
+            || blocker.contains("need at least")
+            || blocker.contains("return must be positive")
+            || blocker.contains("drawdown")
+            || blocker.contains("missing pnl")
+            || blocker.contains("missing equity")
+    }));
 }
 
 #[tokio::test]
@@ -6855,7 +7008,7 @@ async fn test_self_improvement_loop_generates_candidate_gates_and_persists_run()
     assert!(json["run"]["blockers"].as_array().unwrap().iter().any(|b| {
         b.as_str()
             .unwrap()
-            .contains("missing paper trading evidence")
+            .contains("missing persisted paper trading evidence")
     }));
     assert_eq!(
         json["run"]["candidate_config"]["harness"]["version"].as_u64(),

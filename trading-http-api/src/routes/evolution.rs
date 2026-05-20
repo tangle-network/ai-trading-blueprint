@@ -9,7 +9,7 @@ use std::sync::Arc;
 use trading_runtime::backtest::{BacktestConfig, BacktestEngine, ExitRule, WalkForwardResult};
 
 use crate::candle_store::{self, CandleQuery};
-use crate::{MultiBotTradingState, TradingApiState, evolution_store};
+use crate::{MultiBotTradingState, TradingApiState, evolution_store, trade_store};
 
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
@@ -211,7 +211,14 @@ async fn promotion_gate_inner(
     bot_id: &str,
     req: PromotionGateRequest,
 ) -> Result<Json<PromotionGateResponse>, (StatusCode, String)> {
-    let paper = req.paper.clone();
+    let candidate_json = serde_json::to_value(&req.candidate).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize candidate: {e}"),
+        )
+    })?;
+    let candidate_hash = hash_json(&candidate_json)?;
+    let (paper, mut evidence_blockers) = paper_evidence_from_store(bot_id, &candidate_hash)?;
     let run = run_evolution_inner(
         bot_id,
         RunEvolutionRequest {
@@ -231,6 +238,7 @@ async fn promotion_gate_inner(
     if run.result.likely_overfit {
         blockers.push("candidate is likely overfit out-of-sample".to_string());
     }
+    blockers.append(&mut evidence_blockers);
 
     match paper.as_ref() {
         Some(p) => {
@@ -250,7 +258,7 @@ async fn promotion_gate_inner(
                 ));
             }
         }
-        None => blockers.push("missing paper trading evidence for candidate".to_string()),
+        None => blockers.push("missing persisted paper trading evidence for candidate".to_string()),
     }
 
     Ok(Json(PromotionGateResponse {
@@ -261,6 +269,68 @@ async fn promotion_gate_inner(
         candles_used: run.candles_used,
         paper,
     }))
+}
+
+fn paper_evidence_from_store(
+    bot_id: &str,
+    candidate_hash: &str,
+) -> Result<(Option<PaperEvidence>, Vec<String>), (StatusCode, String)> {
+    let trades = trade_store::paper_trades_for_candidate(bot_id, candidate_hash)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if trades.is_empty() {
+        return Ok((None, Vec::new()));
+    }
+
+    let mut blockers = Vec::new();
+    let mut total_return_pct = 0.0f64;
+    let mut high_watermark: Option<f64> = None;
+    let mut max_drawdown_pct = 0.0f64;
+    let mut missing_pnl = false;
+    let mut missing_equity = false;
+
+    for trade in &trades {
+        match trade
+            .paper_pnl_pct
+            .as_deref()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+        {
+            Some(value) => total_return_pct += value,
+            None => missing_pnl = true,
+        }
+
+        match trade
+            .paper_equity_after
+            .as_deref()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0)
+        {
+            Some(equity) => {
+                let hwm = high_watermark.map_or(equity, |current| current.max(equity));
+                high_watermark = Some(hwm);
+                max_drawdown_pct = max_drawdown_pct.max(((hwm - equity) / hwm) * 100.0);
+            }
+            None => missing_equity = true,
+        }
+    }
+
+    if missing_pnl {
+        blockers.push("persisted paper trades are missing pnl metrics for candidate".to_string());
+    }
+    if missing_equity {
+        blockers
+            .push("persisted paper trades are missing equity metrics for candidate".to_string());
+    }
+
+    Ok((
+        Some(PaperEvidence {
+            trades: trades.len() as u64,
+            total_return_pct,
+            max_drawdown_pct,
+            candidate_hash: Some(candidate_hash.to_string()),
+        }),
+        blockers,
+    ))
 }
 
 async fn self_improve(
