@@ -6888,6 +6888,187 @@ async fn test_self_improvement_loop_generates_candidate_gates_and_persists_run()
     assert_eq!(runs[0]["run_id"], json["run"]["run_id"]);
 }
 
+#[tokio::test]
+async fn test_self_improvement_rejects_short_intent_before_artifacting() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-short-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "user_intent": "too short",
+        "current": backtest_config(),
+        "token": "ETH"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_self_improvement_stress_concurrent_runs_persist_and_stay_bot_scoped() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-stress-{}", uuid::Uuid::new_v4());
+    let other_bot_id = format!("self-improve-other-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+    let other_state = test_state_with_bot_id(&mock.uri(), &other_bot_id).await;
+    let other_app = build_router(other_state);
+
+    let mut candles = Vec::new();
+    for i in 0..96 {
+        let base = if i < 48 {
+            160.0 - i as f64 * 0.9
+        } else {
+            116.0 + (i - 48) as f64 * 0.85
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.1),
+            "low": format!("{:.2}", base - 0.7),
+            "close": format!("{:.2}", base + 0.3),
+            "volume": "150000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut explicit_candidate = backtest_config();
+    explicit_candidate["harness"]["version"] = serde_json::json!(77);
+    explicit_candidate["harness"]["entry_threshold"] = serde_json::json!(0.42);
+
+    let mut calls = Vec::new();
+    for i in 0..12 {
+        let app = app.clone();
+        let bot_id = bot_id.clone();
+        let mut body = serde_json::json!({
+            "user_intent": format!("Concurrent improvement run {i}: reduce drawdown without live mutation."),
+            "current": backtest_config(),
+            "candidate": explicit_candidate,
+            "token": "ETH",
+            "train_pct": 0.7
+        });
+        if i % 2 == 0 {
+            body["paper"] = serde_json::json!({
+                "trades": 3,
+                "total_return_pct": -0.2,
+                "max_drawdown_pct": 15.0,
+                "candidate_hash": format!("candidate-{i}")
+            });
+        }
+        calls.push(tokio::spawn(async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/evolution/self-improve")
+                        .header("authorization", &format!("Bearer {bot_id}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_string(&body).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        }));
+    }
+
+    let results = futures_util::future::join_all(calls).await;
+    let mut run_ids = std::collections::BTreeSet::new();
+    for result in results {
+        let json = result.unwrap();
+        assert_eq!(json["run"]["approved"], false);
+        assert_eq!(json["run"]["status"], "blocked");
+        assert_eq!(
+            json["run"]["candidate_config"]["harness"]["version"].as_u64(),
+            Some(77),
+            "explicit agent candidate must not be overwritten by generator"
+        );
+        assert!(run_ids.insert(json["run"]["run_id"].as_str().unwrap().to_string()));
+    }
+    assert_eq!(run_ids.len(), 12);
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 12);
+
+    let other_resp = other_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {other_bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(other_resp.status(), 200);
+    let bytes = other_resp.into_body().collect().await.unwrap().to_bytes();
+    let other_runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(other_runs.as_array().unwrap().len(), 0);
+}
+
 // ── Backtest multi-token tests ─────────────────────────────────────────
 
 #[tokio::test]
