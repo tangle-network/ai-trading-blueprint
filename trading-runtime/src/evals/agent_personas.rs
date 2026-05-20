@@ -142,6 +142,8 @@ pub fn default_scenarios() -> Vec<TradingEvalScenario> {
         second_order_crowded_breakout_fade(),
         second_order_stop_cascade_recovery(),
         second_order_amm_rebalancer_flow(),
+        third_order_crowded_alpha_decay(),
+        third_order_adaptive_counterparty_rotation(),
     ]
 }
 
@@ -526,6 +528,48 @@ fn second_order_amm_rebalancer_flow() -> TradingEvalScenario {
     }
 }
 
+fn third_order_crowded_alpha_decay() -> TradingEvalScenario {
+    let candles = alpha_decay_candles("META-CROWDED-ALPHA-DECAY", 280, 0.50);
+    TradingEvalScenario {
+        id: "third_order_crowded_alpha_decay".to_string(),
+        split: "dev".to_string(),
+        objective: "Evaluate a meta-strategy that recognizes a once-profitable bot pattern becoming crowded and de-risks when the alpha decays.".to_string(),
+        market_regime: "alpha_decay_after_strategy_crowding".to_string(),
+        persona: mandate(
+            "third_order_adaptive_game_theory_bot",
+            "Third-Order Adaptive Market-Structure Trader",
+            &["polymarket_clob", "hyperliquid"],
+            &["polygon", "hyperliquid"],
+            limits(6.0, 12.0, 2, 70),
+        ),
+        baseline: config(default_harness(), 60, 30, 1),
+        candidate: config(momentum_harness(0.06, 5.0, 8.0), 10, 4, 0),
+        candles,
+        funding: vec![],
+    }
+}
+
+fn third_order_adaptive_counterparty_rotation() -> TradingEvalScenario {
+    let candles = counterparty_rotation_candles("META-COUNTERPARTY-ROTATION", 280, 3_200.0);
+    TradingEvalScenario {
+        id: "third_order_adaptive_counterparty_rotation".to_string(),
+        split: "dev".to_string(),
+        objective: "Evaluate whether the strategy survives a rotation from momentum bots to inventory-rebalancing bots without overfitting to the first counterparty population.".to_string(),
+        market_regime: "counterparty_population_rotation".to_string(),
+        persona: mandate(
+            "third_order_adaptive_game_theory_bot",
+            "Third-Order Adaptive Market-Structure Trader",
+            &["uniswap_v3", "hyperliquid", "polymarket_clob"],
+            &["base", "hyperliquid", "polygon"],
+            limits(5.0, 12.0, 2, 80),
+        ),
+        baseline: config(momentum_harness(0.07, 5.0, 9.0), 80, 40, 2),
+        candidate: config(mean_reversion_harness(0.05, 10, 1.1, 5.0, 8.0), 10, 4, 1),
+        candles,
+        funding: funding_wave("META-COUNTERPARTY-ROTATION", 280, 0.0001),
+    }
+}
+
 fn mandate(
     id: &str,
     role: &str,
@@ -745,6 +789,40 @@ fn amm_rebalancer_candles(token: &str, n: usize, center: f64) -> Vec<Candle> {
         .collect()
 }
 
+fn alpha_decay_candles(token: &str, n: usize, center: f64) -> Vec<Candle> {
+    (0..n)
+        .map(|i| {
+            let cycle = (i % 36) as f64;
+            let crowding = i as f64 / n as f64;
+            let early_momentum = 0.055 * (1.0 - crowding) * (cycle / 6.0).sin().max(0.0);
+            let late_fade = 0.05 * crowding * (cycle / 5.0).sin();
+            let close = (center + early_momentum - late_fade).clamp(0.05, 0.95);
+            bot_pattern_candle(token, i, close, 0.012, cycle)
+        })
+        .collect()
+}
+
+fn counterparty_rotation_candles(token: &str, n: usize, center: f64) -> Vec<Candle> {
+    (0..n)
+        .map(|i| {
+            let cycle = (i % 44) as f64;
+            let phase = i as f64 / n as f64;
+            let momentum_population = if phase < 0.55 {
+                0.025 * (cycle / 8.0).sin().max(0.0)
+            } else {
+                0.0
+            };
+            let rebalancer_population = if phase >= 0.45 {
+                0.032 * (cycle / 4.0).sin()
+            } else {
+                0.0
+            };
+            let close = center * (1.0 + momentum_population + rebalancer_population);
+            bot_pattern_candle(token, i, close, 0.015, cycle)
+        })
+        .collect()
+}
+
 fn bot_pattern_candle(token: &str, idx: usize, close: f64, range: f64, cycle: f64) -> Candle {
     let mut c = candle(token, idx, close, range);
     let burst = if (8.0..18.0).contains(&cycle) {
@@ -790,7 +868,7 @@ mod tests {
     #[test]
     fn persona_eval_suite_has_required_coverage_and_passes() {
         let report = run_persona_eval_suite().expect("suite runs");
-        assert_eq!(report.total, 9);
+        assert_eq!(report.total, 11);
         assert_eq!(report.failed, 0, "{report:#?}");
         assert!(report.min_score >= 70, "{report:#?}");
         let ids: Vec<&str> = report
@@ -806,6 +884,7 @@ mod tests {
             "risk_on_arbitrage_bot",
             "protocol_researcher",
             "second_order_game_theory_bot",
+            "third_order_adaptive_game_theory_bot",
         ] {
             assert!(ids.contains(&required), "missing persona {required}");
         }

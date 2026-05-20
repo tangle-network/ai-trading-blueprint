@@ -27,6 +27,7 @@ Current personas:
 - `risk_on_arbitrage_bot`
 - `protocol_researcher`
 - `second_order_game_theory_bot`
+- `third_order_adaptive_game_theory_bot`
 
 Each scenario defines:
 
@@ -45,6 +46,19 @@ The second-order game-theory scenarios currently cover:
   join confirmed flow briefly and avoid late reversal exposure
 - AMM rebalancer flow: inventory-management bots create predictable
   oscillations after shocks; the candidate must avoid toxic first prints
+
+The third-order adaptive scenarios currently cover:
+
+- crowded alpha decay: a profitable bot pattern becomes crowded; the candidate
+  is scored against a naive, high-cost baseline that keeps paying for stale edge
+- counterparty rotation: the dominant counterparty population changes from
+  momentum bots to rebalancer bots; the candidate is scored on held-out survival
+  rather than training-window fit
+
+These are deterministic proxies. The stronger eval is an agent-loop task where
+the sandboxed trading agent observes train-window microstructure, writes a new
+`HarnessConfig`, and is scored on the held-out regime through the same
+backtester.
 
 Scoring is 90 points today because the subjective reasoning judge is not wired
 yet:
