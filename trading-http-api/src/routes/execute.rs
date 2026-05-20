@@ -987,6 +987,24 @@ fn hyperliquid_account_from_intent(intent: &TradeIntent) -> Result<String, (Stat
         })
 }
 
+fn reject_live_hyperliquid_leverage_metadata(
+    bot: &crate::BotContext,
+    intent: &IntentPayload,
+) -> Result<(), (StatusCode, String)> {
+    if bot.paper_trade || intent.target_protocol != "hyperliquid" {
+        return Ok(());
+    }
+    if intent.metadata.get("leverage").is_none() {
+        return Ok(());
+    }
+
+    Err((
+        StatusCode::BAD_REQUEST,
+        "Live Hyperliquid /execute does not accept leverage metadata because account-scoped leverage updates are not supported by the current client; omit leverage and use the preconfigured account leverage"
+            .to_string(),
+    ))
+}
+
 #[derive(Clone, Debug)]
 struct TradeValuationSnapshot {
     amount_out: Option<Decimal>,
@@ -2529,6 +2547,26 @@ async fn execute_hyperliquid_trade(
     super::hyperliquid::require_hyperliquid_execution_ready(state, bot)?;
     let hl_client = super::hyperliquid::get_hl_client(state)?;
     let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
+    let intent_account = req
+        .intent
+        .metadata
+        .get("hyperliquid_account_address")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Hyperliquid order submission requires hyperliquid_account_address metadata"
+                    .to_string(),
+            )
+        })?;
+    if !intent_account.eq_ignore_ascii_case(&account_address) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid intent account does not match the authoritative bot account".to_string(),
+        ));
+    }
 
     // Map intent action to HL order params
     let action = parse_action(&req.intent.action)
@@ -2746,16 +2784,11 @@ async fn execute(
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let authoritative_hyperliquid_account =
         if normalized_request.intent.target_protocol == "hyperliquid" {
-            super::hyperliquid::hyperliquid_account_address_from_config(
+            super::hyperliquid::require_hyperliquid_account_address_from_config(
                 &state.strategy_config,
                 &state.vault_address,
-            )
-            .ok_or_else(|| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Hyperliquid execution requires an authoritative account address".to_string(),
-                )
-            })?
+                state.paper_trade,
+            )?
         } else {
             String::new()
         };
@@ -3006,6 +3039,7 @@ async fn execute_multi_bot(
         &normalized_req.intent.metadata,
         &authoritative_hyperliquid_account,
     )?;
+    reject_live_hyperliquid_leverage_metadata(&bot, &normalized_req.intent)?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
         protocol_chain_id,

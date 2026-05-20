@@ -671,16 +671,11 @@ async fn validate(
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let authoritative_hyperliquid_account = if request.target_protocol == "hyperliquid" {
-        crate::routes::hyperliquid::hyperliquid_account_address_from_config(
+        crate::routes::hyperliquid::require_hyperliquid_account_address_from_config(
             &state.strategy_config,
             &state.vault_address,
-        )
-        .ok_or_else(|| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Hyperliquid validation requires an authoritative account address".to_string(),
-            )
-        })?
+            state.paper_trade,
+        )?
     } else {
         String::new()
     };

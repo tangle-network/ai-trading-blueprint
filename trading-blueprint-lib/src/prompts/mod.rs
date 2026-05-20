@@ -131,9 +131,8 @@ pub fn build_pack_loop_prompt(
                 `await api.apiCall('GET','/hyperliquid/prices')` — read current perp mid prices.\n\
              3. If account value, withdrawable, or usable/free margin is missing, zero, stale, or not parseable, make a safe skip decision. Log it with `node /home/agent/tools/log-decision.js '{{\"action\":\"skip\",\"reason\":\"no-usable-hyperliquid-margin\"}}'`, write metrics with `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`, and stop.\n\
              4. If mode allows risk and there is usable margin, choose a small ETH/BTC/SOL perp action from current positions, prices, funding, and risk limits. Prefer no trade unless the setup is clear.\n\
-             5. For any actionable trade, build an intent with `target_protocol: \"hyperliquid\"`, `action: \"open\"`, `action: \"close\"`, or `action: \"reduce\"`, and `metadata` containing `asset`, `is_buy`, `size`, optional `limit_price`, leverage, reduce-only intent when reducing, and stop-loss / take-profit context when available. Use the Trading API validation/execution flow: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`.\n\
-             6. Alternatively, for native order placement only when validation/execution is not appropriate, call `await api.apiCall('POST','/hyperliquid/order', {{asset:'ETH', is_buy:true, size:'0.01', order_type:{{type:'market'}}}})` with conservative size and the same risk checks.\n\
-             7. Log every trade or skip with `log-decision.js` and write metrics with `write-metrics.js` using the latest NAV/account value.\n\n\
+             5. For any actionable trade, build an intent with `target_protocol: \"hyperliquid\"`, `action: \"open\"`, `action: \"close\"`, or `action: \"reduce\"`, and `metadata` containing `asset`, optional `limit_price`, reduce-only intent when reducing, and stop-loss / take-profit context when available. Do not include `leverage`; live account leverage is preconfigured outside the tick loop. Use only the Trading API validation/execution flow: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`.\n\
+             6. Log every trade or skip with `log-decision.js` and write metrics with `write-metrics.js` using the latest NAV/account value.\n\n\
              Use only Hyperliquid state and actions in this loop. Be decisive — you have {max_turns} turns.",
             name = pack.name,
             max_turns = pack.max_turns,
@@ -247,18 +246,14 @@ Authorization: Bearer {token}
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
 
-### Hyperliquid Perps Endpoints (native L1 API — preferred for HL)
+### Hyperliquid Perps Endpoints
 - GET /hyperliquid/nav — Required before opening or increasing risk; confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.
 - GET /hyperliquid/mode — Required before opening or increasing risk. If mode is `liquidity` or `emergency_wind_down`, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure.
 - GET /hyperliquid/settlement — Withdrawal pressure tool. Reports FIFO queue pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
-- POST /hyperliquid/order — Place any order type directly
-  Body: {{ "asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {{ "type": "market" }} }}
-- POST /hyperliquid/bracket — Entry + stop-loss + take-profit grouped
-  Body: {{ "entry": {{...}}, "stop_loss": {{...}}, "take_profit": {{...}} }}
-- POST /hyperliquid/cancel — Cancel an order
+- Live orders must go through POST /validate then POST /execute with `target_protocol: "hyperliquid"`; direct native order/leverage routes are unavailable for live bots.
+- Do not include `metadata.leverage` in live Hyperliquid execute intents; leverage is account-level configuration outside this tick loop.
+- POST /hyperliquid/cancel — Cancel a paper-mode order only; live risk-reducing actions must still go through /execute.
   Body: {{ "asset": 1, "order_id": 12345 }}
-- POST /hyperliquid/leverage — Set leverage (do this BEFORE placing orders)
-  Body: {{ "asset": 1, "leverage": 5, "is_cross": true }}
 - GET /hyperliquid/account — Positions, margin, open orders
 - GET /hyperliquid/prices — Mid prices for all HL perp markets
 
@@ -804,7 +799,8 @@ mod tests {
         assert!(prompt.contains("getHyperliquidMode"));
         assert!(prompt.contains("/hyperliquid/account"));
         assert!(prompt.contains("/hyperliquid/prices"));
-        assert!(prompt.contains("/hyperliquid/order"));
+        assert!(!prompt.contains("/hyperliquid/order"));
+        assert!(prompt.contains("Do not include `leverage`"));
         assert!(prompt.contains("no-usable-hyperliquid-margin"));
         assert!(prompt.contains("target_protocol: \"hyperliquid\""));
         assert!(prompt.contains("15 turns"));

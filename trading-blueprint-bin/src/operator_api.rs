@@ -3704,26 +3704,29 @@ async fn get_bot_portfolio(
 }
 
 async fn get_bot_hyperliquid_nav(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     proxy_hyperliquid_nav(&bot, reqwest::Method::GET).await
 }
 
 async fn refresh_bot_hyperliquid_nav(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     proxy_hyperliquid_nav(&bot, reqwest::Method::POST).await
 }
 
 async fn get_bot_hyperliquid_mode(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     fetch_trading_api_json_with_method(&bot, reqwest::Method::GET, "/hyperliquid/mode", &[])
         .await
         .map_err(|err| {
@@ -3740,18 +3743,20 @@ async fn get_bot_hyperliquid_mode(
 }
 
 async fn get_bot_hyperliquid_settlement(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     proxy_hyperliquid_settlement(&bot, reqwest::Method::GET, "/hyperliquid/settlement").await
 }
 
 async fn run_bot_hyperliquid_settlement(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     proxy_hyperliquid_settlement(&bot, reqwest::Method::POST, "/hyperliquid/settlement/run").await
 }
 
@@ -5066,6 +5071,59 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["attempt"]["fulfilled_count"], 1);
         assert_eq!(json["attempt"]["stopped_reason"], "queue_empty");
+    }
+
+    #[tokio::test]
+    async fn test_bot_hyperliquid_proxy_routes_reject_wrong_submitter() {
+        ensure_state_dir();
+
+        let mut bot = seed_bot(
+            "hype-proxy-forbidden-1",
+            "0xDEAD000000000000000000000000000000000003",
+            true,
+            "sandbox-hype-proxy-forbidden-1",
+        );
+        bot.strategy_type = "hyperliquid_perp".to_string();
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot.clone())
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let routes = [
+            ("GET", format!("/api/bots/{}/hyperliquid/nav", bot.id)),
+            ("POST", format!("/api/bots/{}/hyperliquid/nav", bot.id)),
+            ("GET", format!("/api/bots/{}/hyperliquid/mode", bot.id)),
+            (
+                "GET",
+                format!("/api/bots/{}/hyperliquid/settlement", bot.id),
+            ),
+            (
+                "POST",
+                format!("/api/bots/{}/hyperliquid/settlement/run", bot.id),
+            ),
+        ];
+
+        for (method, uri) in routes {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("authorization", test_auth_header())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{method} Hyperliquid proxy route should reject wrong submitter"
+            );
+        }
     }
 
     /// The address embedded in the token produced by `test_auth_header()`.

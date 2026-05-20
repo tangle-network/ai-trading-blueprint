@@ -387,14 +387,19 @@ fn should_submit_hyperliquid_api_wallet_approval(
         })
 }
 
-fn hyperliquid_api_wallet_agent_name(strategy_config: &Map<String, Value>, bot_id: &str) -> String {
-    strategy_config
+fn hyperliquid_api_wallet_agent_name(
+    strategy_config: &Map<String, Value>,
+    bot_id: &str,
+) -> Result<String, String> {
+    let configured_name = strategy_config
         .get("hyperliquid_api_wallet_name")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(bot_id)
-        .to_string()
+        .map(str::trim);
+
+    trading_http_api::routes::hyperliquid::normalize_hyperliquid_api_wallet_name(
+        configured_name,
+        bot_id,
+    )
 }
 
 fn require_hyperliquid_api_wallet_approval_on_provision() -> bool {
@@ -895,7 +900,8 @@ pub async fn provision_core(
                 tracing::warn!("Provision progress update failed: {e}");
             }
 
-            let agent_name = hyperliquid_api_wallet_agent_name(strategy_config_obj, &bot_id);
+            let agent_name = hyperliquid_api_wallet_agent_name(strategy_config_obj, &bot_id)
+                .map_err(|e| format!("Invalid Hyperliquid API wallet name: {e}"))?;
             match crate::on_chain::approve_hyperliquid_api_wallet(
                 &chain,
                 deployment.vault_address,
@@ -1534,7 +1540,7 @@ mod tests {
     fn hyperliquid_api_wallet_agent_name_prefers_configured_name() {
         let mut config = Map::new();
         assert_eq!(
-            hyperliquid_api_wallet_agent_name(&config, "bot-default"),
+            hyperliquid_api_wallet_agent_name(&config, "bot-default").unwrap(),
             "bot-default"
         );
 
@@ -1543,7 +1549,7 @@ mod tests {
             Value::String("  hl-bot-main  ".to_string()),
         );
         assert_eq!(
-            hyperliquid_api_wallet_agent_name(&config, "bot-default"),
+            hyperliquid_api_wallet_agent_name(&config, "bot-default").unwrap(),
             "hl-bot-main"
         );
     }

@@ -2149,7 +2149,6 @@ fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
             "target_protocol": "hyperliquid",
             "metadata": {
                 "asset": "ETH",
-                "leverage": 2,
                 "stop_loss_pct": 3.0
             }
         },
@@ -2457,6 +2456,132 @@ async fn test_hyperliquid_execute_rejects_account_metadata_mismatch() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
     assert!(String::from_utf8_lossy(&body).contains("does not match the provisioned bot account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_per_trade_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-config-drift", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_envelope_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-envelope-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-envelope-config-drift", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-envelope-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-validate-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-validate-config-drift", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_leverage_metadata_before_submission() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-leverage-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let state = multi_bot_state_for_bot("bot-token-hl-leverage", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["leverage"] = serde_json::json!(2);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-leverage")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("does not accept leverage metadata"));
+    assert!(body.contains("account-scoped leverage"));
 }
 
 #[tokio::test]
