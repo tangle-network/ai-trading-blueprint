@@ -24,6 +24,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::hyperliquid_nav::{DefaultHyperliquidNavReconciler, HyperliquidNavReconciler};
 use trading_runtime::PortfolioState;
 use trading_runtime::chain::ChainClient;
 use trading_runtime::executor::TradeExecutor;
@@ -191,6 +192,9 @@ pub struct MultiBotTradingState {
     /// the auth middleware so the dapp can subscribe without a token.
     /// Defaults to `None`; binaries opt in by injecting a `NavStreamConfig`.
     pub nav_stream_config: Option<nav_stream::NavStreamConfig>,
+    /// Refreshes Hyperliquid NAV before mode decisions. Tests can inject a
+    /// fake reconciler so execute-route freshness behavior is deterministic.
+    pub hyperliquid_nav_reconciler: Arc<dyn HyperliquidNavReconciler>,
 }
 
 impl Default for MultiBotTradingState {
@@ -210,6 +214,7 @@ impl Default for MultiBotTradingState {
             rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
             key_provider: trading_runtime::cex::default_provider(),
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: Arc::new(DefaultHyperliquidNavReconciler),
         }
     }
 }

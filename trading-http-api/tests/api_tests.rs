@@ -662,35 +662,16 @@ async fn mock_direct_validator_approval(rpc_mock: &MockServer, approved: bool) {
 }
 
 async fn mock_hyperliquid_normal_mode(rpc_mock: &MockServer, bot: &BotContext) {
-    trading_http_api::hyperliquid_nav::record_snapshot(
-        trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
-            bot_id: bot.bot_id.clone(),
-            account_address: bot.vault_address.clone(),
-            vault_address: bot.vault_address.clone(),
-            share_token: "0x0000000000000000000000000000000000000002".to_string(),
-            asset_token: "0x0000000000000000000000000000000000000003".to_string(),
-            as_of: chrono::Utc::now(),
-            status: "ok".to_string(),
-            stale_after_secs: 60,
-            idle_usdc: "500".to_string(),
-            hyperliquid_equity: "500".to_string(),
-            total_nav: "1000".to_string(),
-            withdrawable_usdc: "500".to_string(),
-            total_margin_used: "0".to_string(),
-            total_notional_position: "0".to_string(),
-            unrealized_pnl: "0".to_string(),
-            total_shares: "1000".to_string(),
-            share_price: Some("1".to_string()),
-            margin_usage_bps: Some(0),
-            open_order_count: 0,
-            position_count: 0,
-            positions: vec![],
-            warnings: vec![],
-            onchain_accounting_tx_hash: None,
-        },
-    )
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        bot,
+        chrono::Utc::now(),
+    ))
     .expect("record hyperliquid nav snapshot");
 
+    mock_hyperliquid_mode_queue(rpc_mock).await;
+}
+
+async fn mock_hyperliquid_mode_queue(rpc_mock: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/"))
         .and(body_string_contains("0x9bf2ae82"))
@@ -708,6 +689,89 @@ async fn mock_hyperliquid_normal_mode(rpc_mock: &MockServer, bot: &BotContext) {
         )
         .mount(rpc_mock)
         .await;
+}
+
+fn hyperliquid_nav_snapshot(
+    bot: &BotContext,
+    as_of: chrono::DateTime<chrono::Utc>,
+) -> trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
+    trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
+        bot_id: bot.bot_id.clone(),
+        account_address: bot.vault_address.clone(),
+        vault_address: bot.vault_address.clone(),
+        share_token: "0x0000000000000000000000000000000000000002".to_string(),
+        asset_token: "0x0000000000000000000000000000000000000003".to_string(),
+        as_of,
+        status: "fresh".to_string(),
+        stale_after_secs: 60,
+        idle_usdc: "500".to_string(),
+        hyperliquid_equity: "500".to_string(),
+        total_nav: "1000".to_string(),
+        withdrawable_usdc: "500".to_string(),
+        total_margin_used: "0".to_string(),
+        total_notional_position: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+        total_shares: "1000".to_string(),
+        share_price: Some("1".to_string()),
+        margin_usage_bps: Some(0),
+        open_order_count: 0,
+        position_count: 0,
+        positions: vec![],
+        warnings: vec![],
+        onchain_accounting_tx_hash: None,
+    }
+}
+
+struct FakeHyperliquidNavReconciler {
+    result: Result<trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot, (StatusCode, String)>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeHyperliquidNavReconciler {
+    fn fresh(bot: &BotContext) -> Arc<Self> {
+        Arc::new(Self {
+            result: Ok(hyperliquid_nav_snapshot(bot, chrono::Utc::now())),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn stale(bot: &BotContext) -> Arc<Self> {
+        Arc::new(Self {
+            result: Ok(hyperliquid_nav_snapshot(
+                bot,
+                chrono::Utc::now() - chrono::Duration::seconds(120),
+            )),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn unavailable(message: &str) -> Arc<Self> {
+        Arc::new(Self {
+            result: Err((StatusCode::BAD_GATEWAY, message.to_string())),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl trading_http_api::hyperliquid_nav::HyperliquidNavReconciler for FakeHyperliquidNavReconciler {
+    async fn reconcile(
+        &self,
+        _state: &MultiBotTradingState,
+        _bot: &BotContext,
+    ) -> Result<trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot, (StatusCode, String)>
+    {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(snapshot) = &self.result {
+            trading_http_api::hyperliquid_nav::record_snapshot(snapshot.clone())
+                .expect("record fake hyperliquid nav snapshot");
+        }
+        self.result.clone()
+    }
 }
 
 fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
@@ -2037,10 +2101,27 @@ fn multi_bot_state_with_strategy_config_and_bot(
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     })
 }
 
 fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTradingState> {
+    multi_bot_state_for_bot_with_nav_reconciler(
+        auth_token,
+        bot,
+        Arc::new(trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler),
+    )
+}
+
+fn multi_bot_state_for_bot_with_nav_reconciler(
+    auth_token: &str,
+    bot: BotContext,
+    hyperliquid_nav_reconciler: Arc<
+        dyn trading_http_api::hyperliquid_nav::HyperliquidNavReconciler,
+    >,
+) -> Arc<MultiBotTradingState> {
     ensure_state_dir();
     let auth_token = auth_token.to_string();
     Arc::new(MultiBotTradingState {
@@ -2067,6 +2148,7 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler,
     })
 }
 
@@ -2426,6 +2508,388 @@ async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_first_trade_refreshes_missing_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+
+    let bot_id = format!("bot-hl-first-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-first-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-first-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_mode = trading_http_api::hyperliquid_mode::latest_mode_for_bot(&bot_id)
+        .expect("latest mode")
+        .expect("mode snapshot");
+    assert_eq!(
+        latest_mode.mode,
+        trading_http_api::hyperliquid_mode::HyperliquidBotMode::Normal
+    );
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_refreshes_stale_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+
+    let bot_id = format!("bot-hl-stale-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        &bot,
+        chrono::Utc::now() - chrono::Duration::seconds(120),
+    ))
+    .expect("record stale hyperliquid nav snapshot");
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-stale-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-stale-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_nav = trading_http_api::hyperliquid_nav::latest_snapshot_for_bot(&bot_id)
+        .expect("latest nav")
+        .expect("nav snapshot");
+    assert!(!latest_nav.is_stale_at(chrono::Utc::now()));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_when_nav_refresh_stays_stale() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+
+    let bot_id = format!("bot-hl-stale-refresh-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::stale(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-stale-refresh",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-stale-refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV refresh"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_when_nav_refresh_unavailable() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+
+    let bot_id = format!("bot-hl-nav-unavailable-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::unavailable("Hyperliquid NAV unavailable");
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-nav-unavailable",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-nav-unavailable")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 502, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV unavailable"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_first_trade_refreshes_missing_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+    let validator = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 85,
+            "signature": TEST_SIG,
+            "reasoning": "Mode gate passed after NAV refresh",
+            "validator": "0xValidator1"
+        })))
+        .mount(&validator)
+        .await;
+
+    let bot_id = format!("bot-hl-validate-first-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = vec![validator.uri()];
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-first-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-first-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_mode = trading_http_api::hyperliquid_mode::latest_mode_for_bot(&bot_id)
+        .expect("latest mode")
+        .expect("mode snapshot");
+    assert_eq!(
+        latest_mode.mode,
+        trading_http_api::hyperliquid_mode::HyperliquidBotMode::Normal
+    );
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_refreshes_stale_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+    let validator = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 85,
+            "signature": TEST_SIG,
+            "reasoning": "Mode gate passed after stale NAV refresh",
+            "validator": "0xValidator1"
+        })))
+        .mount(&validator)
+        .await;
+
+    let bot_id = format!("bot-hl-validate-stale-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = vec![validator.uri()];
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        &bot,
+        chrono::Utc::now() - chrono::Duration::seconds(120),
+    ))
+    .expect("record stale hyperliquid nav snapshot");
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-stale-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-stale-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_nav = trading_http_api::hyperliquid_nav::latest_snapshot_for_bot(&bot_id)
+        .expect("latest nav")
+        .expect("nav snapshot");
+    assert!(!latest_nav.is_stale_at(chrono::Utc::now()));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_when_nav_refresh_stays_stale() {
+    ensure_state_dir();
+
+    let bot_id = format!("bot-hl-validate-stale-refresh-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let nav_reconciler = FakeHyperliquidNavReconciler::stale(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-stale-refresh",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header(
+                    "authorization",
+                    "Bearer bot-token-hl-validate-stale-refresh",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV refresh"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_when_nav_refresh_unavailable() {
+    ensure_state_dir();
+
+    let bot_id = format!("bot-hl-validate-nav-unavailable-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let nav_reconciler = FakeHyperliquidNavReconciler::unavailable("Hyperliquid NAV unavailable");
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-nav-unavailable",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header(
+                    "authorization",
+                    "Bearer bot-token-hl-validate-nav-unavailable",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 502, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV unavailable"));
+    assert_eq!(nav_reconciler.calls(), 1);
 }
 
 #[tokio::test]
@@ -4107,6 +4571,9 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -4803,6 +5270,9 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     })
 }
 
@@ -5471,6 +5941,9 @@ async fn test_multi_bot_clob_execute() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5601,6 +6074,9 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -5693,6 +6169,9 @@ async fn test_multi_bot_clob_execute_not_configured() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5791,6 +6270,9 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);

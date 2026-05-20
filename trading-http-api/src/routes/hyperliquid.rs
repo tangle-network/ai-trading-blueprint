@@ -652,6 +652,9 @@ mod tests {
             key_provider: trading_runtime::cex::default_provider(),
             rate_limiter: std::sync::Arc::new(crate::rate_limit::PerBotRateLimiter::default()),
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: std::sync::Arc::new(
+                crate::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+            ),
         }
     }
 

@@ -3106,7 +3106,8 @@ async fn execute_multi_bot(
 
     if !bot.paper_trade {
         if normalized_req.intent.target_protocol == "hyperliquid" {
-            crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action(
+            crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action_with_nav_refresh(
+                &state,
                 &bot,
                 &normalized_req.intent.action,
                 &normalized_req.intent.metadata,

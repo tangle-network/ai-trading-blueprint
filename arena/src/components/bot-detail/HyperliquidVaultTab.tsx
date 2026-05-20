@@ -128,6 +128,23 @@ interface WithdrawalRequestView {
   cancelledAt: bigint;
 }
 
+const withdrawalRequestsAbi = [
+  {
+    type: 'function',
+    name: 'withdrawalRequests',
+    inputs: [{ name: 'requestId', type: 'uint256' }],
+    outputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'receiver', type: 'address' },
+      { name: 'shares', type: 'uint256' },
+      { name: 'createdAt', type: 'uint64' },
+      { name: 'fulfilledAt', type: 'uint64' },
+      { name: 'cancelledAt', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+] as const;
+
 const DEFAULT_HYPEREVM_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID);
 
 const usdFormatter = new Intl.NumberFormat('en-US', {
@@ -331,7 +348,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
       const results = await client.multicall({
         contracts: ids.map((id) => ({
           address: configuredVaultAddress,
-          abi: tradingVaultAbi,
+          abi: withdrawalRequestsAbi,
           functionName: 'withdrawalRequests',
           args: [id],
         })),

@@ -11,8 +11,8 @@ use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use crate::BotContext;
 use crate::hyperliquid_nav::{self, HyperliquidNavSnapshot};
+use crate::{BotContext, MultiBotTradingState};
 
 static MODE_SNAPSHOTS: OnceCell<PersistentStore<HyperliquidModeSnapshot>> = OnceCell::new();
 
@@ -122,6 +122,28 @@ pub async fn evaluate_hyperliquid_mode(
     Ok(snapshot)
 }
 
+pub async fn evaluate_hyperliquid_mode_with_nav_refresh(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+) -> Result<HyperliquidModeSnapshot, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Ok(paper_mode_snapshot(&bot.bot_id));
+    }
+
+    let thresholds = thresholds_from_bot(bot);
+    let nav = fresh_or_refreshed_nav(state, bot, Utc::now()).await?;
+    let queue_state = read_queue_state(bot).await?;
+    let snapshot = decide_hyperliquid_mode(
+        &bot.bot_id,
+        Some(&nav),
+        Some(&queue_state),
+        thresholds,
+        Utc::now(),
+    )?;
+    record_mode(snapshot.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(snapshot)
+}
+
 pub async fn enforce_hyperliquid_mode_for_action(
     bot: &BotContext,
     action: &str,
@@ -151,6 +173,74 @@ pub async fn enforce_hyperliquid_mode_for_action(
         )),
         _ => Ok(snapshot),
     }
+}
+
+pub async fn enforce_hyperliquid_mode_for_action_with_nav_refresh(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    action: &str,
+    metadata: &serde_json::Value,
+) -> Result<HyperliquidModeSnapshot, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Ok(paper_mode_snapshot(&bot.bot_id));
+    }
+
+    let snapshot = evaluate_hyperliquid_mode_with_nav_refresh(state, bot).await?;
+    let policy = classify_hyperliquid_action(action, metadata);
+    match (&snapshot.mode, policy) {
+        (HyperliquidBotMode::Normal, _) => Ok(snapshot),
+        (HyperliquidBotMode::Liquidity, HyperliquidActionPolicy::RiskIncreasing) => Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Hyperliquid bot is in Liquidity mode: {}. Only reduce-only or risk-reducing actions are allowed.",
+                snapshot.reason
+            ),
+        )),
+        (HyperliquidBotMode::EmergencyWindDown, HyperliquidActionPolicy::RiskIncreasing) => Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Hyperliquid bot is in EmergencyWindDown mode: {}. New risk is blocked.",
+                snapshot.reason
+            ),
+        )),
+        _ => Ok(snapshot),
+    }
+}
+
+async fn fresh_or_refreshed_nav(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    now: DateTime<Utc>,
+) -> Result<HyperliquidNavSnapshot, (StatusCode, String)> {
+    let latest = hyperliquid_nav::latest_snapshot_for_bot(&bot.bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Some(snapshot) = latest
+        && !snapshot.is_stale_at(now)
+    {
+        return Ok(snapshot);
+    }
+
+    let refreshed = state
+        .hyperliquid_nav_reconciler
+        .reconcile(state, bot)
+        .await?;
+    if refreshed.bot_id != bot.bot_id {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "Hyperliquid NAV refresh returned snapshot for {}, expected {}",
+                refreshed.bot_id, bot.bot_id
+            ),
+        ));
+    }
+    if refreshed.is_stale_at(Utc::now()) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid NAV refresh did not produce a fresh snapshot; refusing mode evaluation"
+                .to_string(),
+        ));
+    }
+    Ok(refreshed)
 }
 
 pub fn classify_hyperliquid_action(

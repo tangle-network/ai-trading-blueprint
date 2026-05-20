@@ -14,10 +14,11 @@ pub struct HyperliquidModeResponse {
 }
 
 async fn get_mode(
-    State(_state): State<Arc<MultiBotTradingState>>,
+    State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<BotContext>,
 ) -> Result<Json<HyperliquidModeResponse>, (StatusCode, String)> {
-    let snapshot = hyperliquid_mode::evaluate_hyperliquid_mode(&bot).await?;
+    let snapshot =
+        hyperliquid_mode::evaluate_hyperliquid_mode_with_nav_refresh(&state, &bot).await?;
     Ok(Json(HyperliquidModeResponse { snapshot }))
 }
 

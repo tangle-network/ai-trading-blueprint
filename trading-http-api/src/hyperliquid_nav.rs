@@ -74,6 +74,29 @@ impl HyperliquidNavSnapshot {
     }
 }
 
+#[async_trait::async_trait]
+pub trait HyperliquidNavReconciler: Send + Sync {
+    async fn reconcile(
+        &self,
+        state: &MultiBotTradingState,
+        bot: &BotContext,
+    ) -> Result<HyperliquidNavSnapshot, (StatusCode, String)>;
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultHyperliquidNavReconciler;
+
+#[async_trait::async_trait]
+impl HyperliquidNavReconciler for DefaultHyperliquidNavReconciler {
+    async fn reconcile(
+        &self,
+        state: &MultiBotTradingState,
+        bot: &BotContext,
+    ) -> Result<HyperliquidNavSnapshot, (StatusCode, String)> {
+        reconcile_hyperliquid_nav(state, bot).await
+    }
+}
+
 pub fn snapshots() -> Result<&'static PersistentStore<HyperliquidNavSnapshot>, String> {
     NAV_SNAPSHOTS
         .get_or_try_init(|| {

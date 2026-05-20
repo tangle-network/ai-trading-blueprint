@@ -58,9 +58,13 @@ contract HyperliquidVaultStackTest is Test {
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
+    function test_hyperliquidFundMovementActionKindIsDistinctFromOrder() public view {
+        assertEq(implementation.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT(), 4);
+    }
+
     function test_implementationInitializeRevertsButFactoryCloneInitializes() public {
         vm.expectRevert(HyperliquidVault.AlreadyInitialized.selector);
-        implementation.initialize(address(usdc), VaultShare(address(0)), tradeValidator, admin, operator);
+        implementation.initialize(address(usdc), VaultShare(address(0)), tradeValidator, admin, operator, 0, 0, 0);
 
         (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("implementation-lock-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
@@ -105,6 +109,14 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.asset(), address(usdc));
         assertEq(vault.share(), shareAddr);
         assertEq(address(vault.tradeValidator()), address(tradeValidator));
+        assertEq(vault.leverageCap(), 50_000);
+        assertEq(vault.maxTradesPerHour(), 100);
+        assertEq(vault.maxSlippageBps(), 500);
+        (uint256 policyLeverageCap, uint256 policyMaxTradesPerHour, uint256 policyMaxSlippageBps) =
+            factory.vaultPolicyConfigs(vaultAddr);
+        assertEq(policyLeverageCap, 50_000);
+        assertEq(policyMaxTradesPerHour, 100);
+        assertEq(policyMaxSlippageBps, 500);
         assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(vault.hasRole(vault.OPERATOR_ROLE(), operator));
         assertTrue(share.isLinkedVault(vaultAddr));
@@ -452,7 +464,27 @@ contract HyperliquidVaultStackTest is Test {
         vault.approveHyperliquidApiWallet(address(0), "bot-1");
     }
 
-    function test_operatorCanSubmitUsdClassLiquidityReturnOnly() public {
+    function test_operatorCannotSubmitUsdClassLiquidityReturnWithoutValidatorQuorum() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-no-quorum-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
+        vm.etch(CORE_WRITER, address(mock).code);
+
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRequired.selector);
+        vault.returnUsdClassLiquidity(1_000_000, false);
+
+        HyperliquidVault.FundMovementAuthorization memory singleSignerApproval =
+            _usdClassAuthorization(vault, 1_000_000, false, 1, block.timestamp + 1 hours, false);
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
+        vault.returnUsdClassLiquidity(1_000_000, false, singleSignerApproval);
+
+        HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
+        assertEq(coreWriter.lastAction().length, 0, "CoreWriter must not be called without quorum");
+    }
+
+    function test_validQuorumApprovalPermitsUsdClassLiquidityReturnOnlyForBoundAction() public {
         (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
@@ -460,18 +492,51 @@ contract HyperliquidVaultStackTest is Test {
 
         bytes memory expectedUsdAction =
             abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(uint64(1_000_000), false));
+        HyperliquidVault.FundMovementAuthorization memory approval =
+            _usdClassAuthorization(vault, 1_000_000, false, 7, block.timestamp + 1 hours, true);
         vm.expectEmit(false, false, false, true, vaultAddr);
         emit HyperliquidVault.HyperliquidUsdClassTransferSubmitted(1_000_000, false, expectedUsdAction);
 
         vm.prank(operator);
-        vault.returnUsdClassLiquidity(1_000_000, false);
+        vault.returnUsdClassLiquidity(1_000_000, false, approval);
 
         HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
         assertEq(coreWriter.lastSender(), vaultAddr);
         assertEq(coreWriter.lastAction(), expectedUsdAction);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.FundMovementNonceAlreadyUsed.selector, uint256(7)));
+        vault.returnUsdClassLiquidity(1_000_000, false, approval);
+
+        HyperliquidVault.FundMovementAuthorization memory redirectAttempt =
+            _usdClassAuthorization(vault, 1_000_000, true, 8, block.timestamp + 1 hours, true);
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
+        vault.returnUsdClassLiquidity(1_000_000, false, redirectAttempt);
     }
 
-    function test_adminCanSubmitSpotLiquidityReturn() public {
+    function test_adminCannotSubmitSpotLiquidityReturnWithoutValidatorQuorum() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-spot-no-quorum-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
+        vm.etch(CORE_WRITER, address(mock).code);
+
+        address destination = makeAddr("liquidity-destination");
+        vm.prank(admin);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRequired.selector);
+        vault.returnSpotLiquidity(destination, 1_505, 2_000_000);
+
+        HyperliquidVault.FundMovementAuthorization memory wrongDestinationApproval =
+            _spotAuthorization(vault, makeAddr("attacker"), 1_505, 2_000_000, 10, block.timestamp + 1 hours, true);
+        vm.prank(admin);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
+        vault.returnSpotLiquidity(destination, 1_505, 2_000_000, wrongDestinationApproval);
+
+        HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
+        assertEq(coreWriter.lastAction().length, 0, "CoreWriter must not be called without bound quorum approval");
+    }
+
+    function test_validQuorumApprovalPermitsSpotLiquidityReturnOnlyForBoundAction() public {
         (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-spot-return-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
@@ -480,15 +545,42 @@ contract HyperliquidVaultStackTest is Test {
         address destination = makeAddr("liquidity-destination");
         bytes memory expectedSpotAction =
             abi.encodePacked(uint8(1), bytes3(uint24(6)), abi.encode(destination, uint64(1_505), uint64(2_000_000)));
+        HyperliquidVault.FundMovementAuthorization memory approval =
+            _spotAuthorization(vault, destination, 1_505, 2_000_000, 11, block.timestamp + 1 hours, true);
         vm.expectEmit(true, false, false, true, vaultAddr);
         emit HyperliquidVault.HyperliquidSpotSendSubmitted(destination, 1_505, 2_000_000, expectedSpotAction);
 
         vm.prank(admin);
-        vault.returnSpotLiquidity(destination, 1_505, 2_000_000);
+        vault.returnSpotLiquidity(destination, 1_505, 2_000_000, approval);
 
         HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
         assertEq(coreWriter.lastSender(), vaultAddr);
         assertEq(coreWriter.lastAction(), expectedSpotAction);
+    }
+
+    function test_fundMovementApprovalBindsPolicyAndChainContext() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-context-bind-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
+        vm.etch(CORE_WRITER, address(mock).code);
+
+        HyperliquidVault.FundMovementAuthorization memory wrongPolicyApproval =
+            _usdClassAuthorizationWithPolicy(vault, 1_000_000, false, 21, block.timestamp + 1 hours, 99_999, 100, 500);
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
+        vault.returnUsdClassLiquidity(1_000_000, false, wrongPolicyApproval);
+
+        uint256 originalChainId = block.chainid;
+        HyperliquidVault.FundMovementAuthorization memory chainBoundApproval =
+            _usdClassAuthorization(vault, 1_000_000, false, 22, block.timestamp + 1 hours, true);
+        vm.chainId(originalChainId + 1);
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
+        vault.returnUsdClassLiquidity(1_000_000, false, chainBoundApproval);
+        vm.chainId(originalChainId);
+
+        HyperliquidMockCoreWriter coreWriter = HyperliquidMockCoreWriter(CORE_WRITER);
+        assertEq(coreWriter.lastAction().length, 0, "CoreWriter must not be called with stale context");
     }
 
     function test_nonOperatorCannotSubmitLiquidityReturnActions() public {
@@ -626,6 +718,138 @@ contract HyperliquidVaultStackTest is Test {
         return HyperliquidVaultFactory.FeeConfig({
             performanceFeeBps: 2_000, managementFeeBps: 200, validatorFeeShareBps: 3_000
         });
+    }
+
+    function _usdClassAuthorization(
+        HyperliquidVault vault,
+        uint64 ntl,
+        bool toPerp,
+        uint256 nonce,
+        uint256 deadline,
+        bool quorum
+    ) internal view returns (HyperliquidVault.FundMovementAuthorization memory authorization) {
+        bytes memory action = abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(ntl, toPerp));
+        return _fundMovementAuthorization(
+            vault, uint24(7), address(0), uint64(0), ntl, toPerp, nonce, deadline, action, quorum
+        );
+    }
+
+    function _usdClassAuthorizationWithPolicy(
+        HyperliquidVault vault,
+        uint64 ntl,
+        bool toPerp,
+        uint256 nonce,
+        uint256 deadline,
+        uint256 leverageCap,
+        uint256 maxTradesPerHour,
+        uint256 maxSlippageBps
+    ) internal view returns (HyperliquidVault.FundMovementAuthorization memory authorization) {
+        bytes memory action = abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(ntl, toPerp));
+        bytes32 intentHash = keccak256(
+            abi.encode(
+                vault.HYPERLIQUID_FUND_MOVEMENT_TYPEHASH(),
+                address(vault),
+                block.chainid,
+                uint24(7),
+                address(0),
+                uint64(0),
+                ntl,
+                toPerp,
+                nonce,
+                deadline,
+                leverageCap,
+                maxTradesPerHour,
+                maxSlippageBps
+            )
+        );
+        bytes32 executionHash = keccak256(
+            abi.encode(
+                vault.HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH(), address(vault), block.chainid, uint24(7), action
+            )
+        );
+
+        authorization.nonce = nonce;
+        authorization.deadline = deadline;
+        authorization.signatures = new bytes[](2);
+        authorization.scores = new uint256[](2);
+        authorization.scores[0] = 80;
+        authorization.scores[1] = 75;
+        authorization.signatures[0] = _signValidation(
+            validator1Key,
+            intentHash,
+            executionHash,
+            address(vault),
+            authorization.scores[0],
+            deadline,
+            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+        );
+        authorization.signatures[1] = _signValidation(
+            validator2Key,
+            intentHash,
+            executionHash,
+            address(vault),
+            authorization.scores[1],
+            deadline,
+            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+        );
+    }
+
+    function _spotAuthorization(
+        HyperliquidVault vault,
+        address destination,
+        uint64 token,
+        uint64 weiAmount,
+        uint256 nonce,
+        uint256 deadline,
+        bool quorum
+    ) internal view returns (HyperliquidVault.FundMovementAuthorization memory authorization) {
+        bytes memory action = abi.encodePacked(uint8(1), bytes3(uint24(6)), abi.encode(destination, token, weiAmount));
+        return _fundMovementAuthorization(
+            vault, uint24(6), destination, token, weiAmount, false, nonce, deadline, action, quorum
+        );
+    }
+
+    function _fundMovementAuthorization(
+        HyperliquidVault vault,
+        uint24 actionType,
+        address destination,
+        uint64 token,
+        uint64 amount,
+        bool direction,
+        uint256 nonce,
+        uint256 deadline,
+        bytes memory action,
+        bool quorum
+    ) internal view returns (HyperliquidVault.FundMovementAuthorization memory authorization) {
+        uint256 sigCount = quorum ? 2 : 1;
+        authorization.nonce = nonce;
+        authorization.deadline = deadline;
+        authorization.signatures = new bytes[](sigCount);
+        authorization.scores = new uint256[](sigCount);
+        authorization.scores[0] = 80;
+        if (quorum) authorization.scores[1] = 75;
+        (bytes32 intentHash, bytes32 executionHash) =
+            vault.computeFundMovementHashes(actionType, destination, token, amount, direction, nonce, deadline, action);
+        authorization.signatures[0] = _signValidation(
+            validator1Key,
+            intentHash,
+            executionHash,
+            address(vault),
+            authorization.scores[0],
+            deadline,
+            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+        );
+        if (quorum) {
+            authorization.signatures[1] = _signValidation(
+                validator2Key,
+                intentHash,
+                executionHash,
+                address(vault),
+                authorization.scores[1],
+                deadline,
+                vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            );
+        }
     }
 
     function _signValidation(

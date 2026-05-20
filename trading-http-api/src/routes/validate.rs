@@ -1211,7 +1211,8 @@ async fn validate_multi_bot(
         .await?;
     }
     if !bot.paper_trade && req.target_protocol == "hyperliquid" {
-        crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action(
+        crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action_with_nav_refresh(
+            &state,
             &bot,
             &req.action,
             &req.metadata,

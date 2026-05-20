@@ -46,6 +46,7 @@ contract HyperliquidVaultFactory {
 
     mapping(uint64 serviceId => address[]) public serviceVaults;
     mapping(address vault => uint64) public vaultServiceId;
+    mapping(address vault => PolicyConfig) public vaultPolicyConfigs;
     mapping(address => bool) public authorizedCallers;
 
     address public owner;
@@ -128,7 +129,7 @@ contract HyperliquidVaultFactory {
         string calldata name,
         string calldata symbol,
         bytes32 salt,
-        PolicyConfig calldata,
+        PolicyConfig calldata policyConfig,
         FeeConfig calldata
     ) external onlyAuthorized nonReentrant returns (address vault, address shareAddr) {
         if (assetToken == address(0) || admin == address(0)) revert ZeroAddress();
@@ -153,12 +154,22 @@ contract HyperliquidVaultFactory {
         emit ShareTokenCreated(serviceId, shareAddr);
 
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, "hyperliquid-vault", salt));
-        HyperliquidVault v =
-            vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, tradeValidator, admin, operator);
+        HyperliquidVault v = vaultDeployer.deployVault(
+            vaultSalt,
+            assetToken,
+            shareToken,
+            tradeValidator,
+            admin,
+            operator,
+            policyConfig.leverageCap,
+            policyConfig.maxTradesPerHour,
+            policyConfig.maxSlippageBps
+        );
         vault = address(v);
 
         serviceVaults[serviceId].push(vault);
         vaultServiceId[vault] = serviceId;
+        vaultPolicyConfigs[vault] = policyConfig;
 
         shareToken.grantRole(shareToken.MINTER_ROLE(), vault);
         shareToken.linkVault(vault);

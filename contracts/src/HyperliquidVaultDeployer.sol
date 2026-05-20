@@ -33,10 +33,16 @@ contract HyperliquidVaultDeployer {
         VaultShare shareToken,
         ITradeValidator tradeValidator,
         address admin,
-        address operator
+        address operator,
+        uint256 leverageCap,
+        uint256 maxTradesPerHour,
+        uint256 maxSlippageBps
     ) external onlyFactory returns (HyperliquidVault) {
         address clone = Clones.cloneDeterministic(implementation, salt);
-        HyperliquidVault(payable(clone)).initialize(assetToken, shareToken, tradeValidator, admin, operator);
+        HyperliquidVault(payable(clone))
+            .initialize(
+                assetToken, shareToken, tradeValidator, admin, operator, leverageCap, maxTradesPerHour, maxSlippageBps
+            );
         return HyperliquidVault(payable(clone));
     }
 

@@ -477,6 +477,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             // wrapper that consumes the field defaults to no NAV stream when
             // None. Wire later when the trading-bin needs to stream NAV.
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: std::sync::Arc::new(
+                trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+            ),
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);
