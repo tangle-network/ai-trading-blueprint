@@ -34,6 +34,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     uint64 public constant HYPERLIQUID_USDC_SPOT_TOKEN = 0;
     uint8 public constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
     uint8 public constant HYPEREVM_USDC_DECIMALS = 6;
+    uint256 public constant HYPERLIQUID_VIRTUAL_OFFSET = 10 ** HYPEREVM_USDC_DECIMALS;
 
     IERC20 private _asset;
     VaultShare public shareToken;
@@ -66,6 +67,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     error AlreadyInitialized();
     error ZeroAddress();
     error ZeroAmount();
+    error ZeroShares();
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error HyperCoreAccountingUnavailable();
     error InvalidWithdrawalRequest();
@@ -168,16 +170,15 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     }
 
     function convertToShares(uint256 assets) public view override returns (uint256) {
-        uint256 supply = accountingShareSupply();
-        uint256 nav = totalAssets();
-        if (supply == 0 || nav == 0) return assets;
+        uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
         return assets * supply / nav;
     }
 
     function convertToAssets(uint256 shares) public view override returns (uint256) {
-        uint256 supply = accountingShareSupply();
-        if (supply == 0) return shares;
-        return shares * totalAssets() / supply;
+        uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
+        return shares * nav / supply;
     }
 
     function maxDeposit(address) external view override returns (uint256) {
@@ -200,6 +201,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         _requireFreshAccounting();
 
         shares = convertToShares(assets);
+        if (shares == 0) revert ZeroShares();
         _asset.safeTransferFrom(msg.sender, address(this), assets);
         shareToken.mint(receiver, shares);
 
@@ -214,9 +216,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     }
 
     function previewWithdraw(uint256 assets) public view override returns (uint256 shares) {
-        uint256 supply = accountingShareSupply();
-        uint256 nav = totalAssets();
-        if (supply == 0 || nav == 0) return assets;
+        uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
         return (assets * supply + nav - 1) / nav;
     }
 
@@ -246,7 +247,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     function maxRedeem(address owner) external view override returns (uint256) {
         if (!isAccountingFresh()) return 0;
         uint256 ownerShares = shareToken.balanceOf(owner);
-        uint256 liquidShares = previewWithdraw(idleAssets());
+        uint256 liquidShares = convertToShares(idleAssets());
         return ownerShares < liquidShares ? ownerShares : liquidShares;
     }
 

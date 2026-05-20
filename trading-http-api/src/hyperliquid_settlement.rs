@@ -8,7 +8,6 @@ use chrono::{DateTime, TimeZone, Utc};
 use once_cell::sync::OnceCell;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 use crate::hyperliquid_nav::{self, HyperliquidNavSnapshot};
 use crate::{BotContext, MultiBotTradingState};
@@ -157,10 +156,14 @@ pub async fn settlement_state(
         latest_attempt_for_bot(&bot.bot_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let vault_state = read_vault_state(&provider, vault).await.ok();
-    let next_request = match vault_state
-        .as_ref()
-        .and_then(|state| request_id_to_u64(state.next_fulfillable_withdrawal_request_id))
-    {
+    let next_request_id = match vault_state.as_ref() {
+        Some(state) => Some(request_id_to_u64(
+            state.next_fulfillable_withdrawal_request_id,
+            "next_fulfillable_withdrawal_request_id",
+        )?),
+        None => None,
+    };
+    let next_request = match next_request_id {
         Some(id) if id > 0 => read_withdrawal_request(&provider, vault, U256::from(id))
             .await
             .ok(),
@@ -214,14 +217,12 @@ pub async fn settlement_state(
             .map(|state| state.next_fulfillable_withdrawal_request_id.to_string()),
         next_request_created_at: next_request.as_ref().map(|request| request.created_at),
         next_request_eligible,
-        eligible_pending_request_count: eligible_pending_count(
-            &provider,
-            vault,
-            vault_state.as_ref(),
-            schedule.next_cutoff,
-        )
-        .await
-        .ok(),
+        eligible_pending_request_count: match vault_state.as_ref() {
+            Some(state) => {
+                Some(eligible_pending_count(&provider, vault, state, schedule.next_cutoff).await?)
+            }
+            None => None,
+        },
         rollover: last_attempt.as_ref().is_some_and(|attempt| {
             matches!(
                 attempt.stopped_reason.as_str(),
@@ -321,19 +322,10 @@ async fn run_settlement_inner(
             break;
         }
 
-        let Some(request_id) =
-            request_id_to_u64(vault_state.next_fulfillable_withdrawal_request_id)
-        else {
+        let Some((request_id, _last_id)) = eligible_pending_request_id_bounds(&vault_state)? else {
             stopped_reason = "queue_empty".to_string();
             break;
         };
-        if request_id == 0
-            || vault_state.next_fulfillable_withdrawal_request_id
-                > vault_state.next_withdrawal_request_id
-        {
-            stopped_reason = "queue_empty".to_string();
-            break;
-        }
 
         let request = read_withdrawal_request(&provider, vault, U256::from(request_id)).await?;
         if request.fulfilled_at != 0 || request.cancelled_at != 0 || request.shares == U256::ZERO {
@@ -460,17 +452,10 @@ fn latest_fresh_nav_or_stop(
 async fn eligible_pending_count(
     provider: &impl Provider,
     vault: Address,
-    state: Option<&VaultSettlementState>,
+    state: &VaultSettlementState,
     cutoff: DateTime<Utc>,
 ) -> Result<u32, (StatusCode, String)> {
-    let Some(state) = state else {
-        return Ok(0);
-    };
-    let Some(mut request_id) = request_id_to_u64(state.next_fulfillable_withdrawal_request_id)
-    else {
-        return Ok(0);
-    };
-    let Some(last_id) = request_id_to_u64(state.next_withdrawal_request_id) else {
+    let Some((mut request_id, last_id)) = eligible_pending_request_id_bounds(state)? else {
         return Ok(0);
     };
 
@@ -487,6 +472,24 @@ async fn eligible_pending_count(
         request_id = request_id.saturating_add(1);
     }
     Ok(count)
+}
+
+fn eligible_pending_request_id_bounds(
+    state: &VaultSettlementState,
+) -> Result<Option<(u64, u64)>, (StatusCode, String)> {
+    let request_id = request_id_to_u64(
+        state.next_fulfillable_withdrawal_request_id,
+        "next_fulfillable_withdrawal_request_id",
+    )?;
+    let last_id = request_id_to_u64(
+        state.next_withdrawal_request_id,
+        "next_withdrawal_request_id",
+    )?;
+
+    if request_id == 0 || request_id > last_id {
+        return Ok(None);
+    }
+    Ok(Some((request_id, last_id)))
 }
 
 async fn read_vault_state(
@@ -693,8 +696,16 @@ fn available_after_buffer(idle_assets: U256, buffer: U256) -> U256 {
     idle_assets.saturating_sub(buffer)
 }
 
-fn request_id_to_u64(value: U256) -> Option<u64> {
-    u64::from_str(&value.to_string()).ok()
+fn request_id_to_u64(value: U256, field: &str) -> Result<u64, (StatusCode, String)> {
+    if value > U256::from(u64::MAX) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "Hyperliquid settlement {field} value {value} exceeds supported u64 range; vault queue state is corrupt or unsupported"
+            ),
+        ));
+    }
+    Ok(value.to::<u64>())
 }
 
 fn parse_concrete_address(raw: &str, label: &str) -> Result<Address, (StatusCode, String)> {
@@ -732,6 +743,20 @@ mod tests {
             risk_params,
             validator_endpoints: vec![],
             validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        }
+    }
+
+    fn vault_state_with_request_ids(
+        next_fulfillable_withdrawal_request_id: U256,
+        next_withdrawal_request_id: U256,
+    ) -> VaultSettlementState {
+        VaultSettlementState {
+            idle_assets: U256::ZERO,
+            total_assets: U256::ZERO,
+            pending_redeem_shares: U256::ZERO,
+            next_withdrawal_request_id,
+            next_fulfillable_withdrawal_request_id,
+            is_accounting_fresh: true,
         }
     }
 
@@ -784,6 +809,65 @@ mod tests {
             available_after_buffer(idle, buffer),
             U256::from(5_000_000_000u64)
         );
+    }
+
+    #[test]
+    fn request_id_conversion_rejects_oversized_u256_values() {
+        let err =
+            request_id_to_u64(U256::from(u64::MAX) + U256::from(1u64), "next_request").unwrap_err();
+
+        assert_eq!(err.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(err.1.contains("exceeds supported u64 range"));
+        assert!(err.1.contains("corrupt or unsupported"));
+    }
+
+    #[test]
+    fn eligible_pending_bounds_preserve_legitimate_empty_queues() {
+        let zero_next = vault_state_with_request_ids(U256::ZERO, U256::ZERO);
+        assert_eq!(
+            eligible_pending_request_id_bounds(&zero_next).unwrap(),
+            None
+        );
+
+        let next_after_last = vault_state_with_request_ids(U256::from(3u64), U256::from(2u64));
+        assert_eq!(
+            eligible_pending_request_id_bounds(&next_after_last).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn eligible_pending_bounds_return_supported_non_empty_range() {
+        let state = vault_state_with_request_ids(U256::from(2u64), U256::from(4u64));
+
+        assert_eq!(
+            eligible_pending_request_id_bounds(&state).unwrap(),
+            Some((2, 4))
+        );
+    }
+
+    #[test]
+    fn eligible_pending_bounds_reject_oversized_next_withdrawal_request_id() {
+        let state =
+            vault_state_with_request_ids(U256::from(1u64), U256::from(u64::MAX) + U256::from(1u64));
+        let err = eligible_pending_request_id_bounds(&state).unwrap_err();
+
+        assert_eq!(err.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(err.1.contains("next_withdrawal_request_id"));
+        assert!(err.1.contains("corrupt or unsupported"));
+    }
+
+    #[test]
+    fn eligible_pending_bounds_reject_oversized_next_fulfillable_withdrawal_request_id() {
+        let state = vault_state_with_request_ids(
+            U256::from(u64::MAX) + U256::from(1u64),
+            U256::from(u64::MAX),
+        );
+        let err = eligible_pending_request_id_bounds(&state).unwrap_err();
+
+        assert_eq!(err.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(err.1.contains("next_fulfillable_withdrawal_request_id"));
+        assert!(err.1.contains("corrupt or unsupported"));
     }
 
     #[test]

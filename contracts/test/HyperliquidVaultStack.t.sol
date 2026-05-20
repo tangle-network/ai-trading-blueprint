@@ -129,6 +129,112 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.totalAssets(), 600e6);
     }
 
+    function test_firstDepositAfterPrefundUsesVirtualOffsetAndRedeemsFairly() public {
+        (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("prefund-first-deposit-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        VaultShare share = VaultShare(shareAddr);
+
+        usdc.mint(vaultAddr, 1);
+        assertEq(vault.totalAssets(), 1);
+        uint256 virtualOffset = vault.HYPERLIQUID_VIRTUAL_OFFSET();
+        uint256 expectedShares = 1_000e6 * virtualOffset / (1 + virtualOffset);
+        assertEq(vault.convertToShares(1_000e6), expectedShares);
+        assertGt(expectedShares, 0);
+
+        usdc.mint(user, 1_000e6);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1_000e6);
+        uint256 shares = vault.deposit(1_000e6, user);
+        assertEq(shares, expectedShares);
+        assertEq(share.balanceOf(user), expectedShares);
+
+        uint256 assets = vault.redeem(shares, user, user);
+        vm.stopPrank();
+
+        assertApproxEqAbs(assets, 1_000e6, 1);
+        assertApproxEqAbs(usdc.balanceOf(user), 1_000e6, 1);
+        assertLe(vault.totalAssets(), 2);
+    }
+
+    function test_donationAfterFirstDepositCannotMintZeroShares() public {
+        (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("post-deposit-donation-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        VaultShare share = VaultShare(shareAddr);
+        address donor = makeAddr("donor");
+        address victim = makeAddr("victim");
+
+        usdc.mint(user, 1e6);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1e6);
+        uint256 firstShares = vault.deposit(1e6, user);
+        vm.stopPrank();
+        assertEq(firstShares, 1e6);
+
+        usdc.mint(donor, 1_000e6);
+        vm.prank(donor);
+        usdc.transfer(vaultAddr, 1_000e6);
+
+        uint256 expectedVictimShares = vault.convertToShares(1_000e6);
+        assertGt(expectedVictimShares, 0);
+
+        usdc.mint(victim, 1_000e6);
+        vm.startPrank(victim);
+        usdc.approve(vaultAddr, 1_000e6);
+        uint256 victimShares = vault.deposit(1_000e6, victim);
+        vm.stopPrank();
+        assertEq(victimShares, expectedVictimShares);
+        assertEq(share.balanceOf(victim), expectedVictimShares);
+
+        address dustDepositor = makeAddr("dustDepositor");
+        usdc.mint(dustDepositor, 1);
+        vm.startPrank(dustDepositor);
+        usdc.approve(vaultAddr, 1);
+        assertEq(vault.convertToShares(1), 0);
+        vm.expectRevert(HyperliquidVault.ZeroShares.selector);
+        vault.deposit(1, dustDepositor);
+        vm.stopPrank();
+    }
+
+    function test_hyperCoreNavDonationCannotMintZeroShares() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("hypercore-nav-donation-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+
+        _mockHyperCoreAccount(vaultAddr, 0, 10_000e6);
+        assertEq(vault.totalAssets(), 10_000e6);
+        assertEq(vault.convertToShares(1), 0);
+
+        usdc.mint(user, 1);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1);
+        vm.expectRevert(HyperliquidVault.ZeroShares.selector);
+        vault.deposit(1, user);
+        vm.stopPrank();
+    }
+
+    function test_deterministicAddressPrefundingStillAllowsFirstDeposit() public {
+        bytes32 salt = bytes32("deterministic-prefund-salt");
+        bytes32 vaultSalt = keccak256(abi.encodePacked(uint64(1), address(usdc), admin, "hyperliquid-vault", salt));
+        address predictedVault = vaultDeployer.predictVault(vaultSalt);
+
+        usdc.mint(predictedVault, 1_000e6);
+
+        (address vaultAddr, address shareAddr) = _createBotVault(1, salt);
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        VaultShare share = VaultShare(shareAddr);
+        assertEq(vaultAddr, predictedVault);
+        assertEq(vault.totalAssets(), 1_000e6);
+
+        usdc.mint(user, 1_000e6);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1_000e6);
+        uint256 expectedShares = vault.convertToShares(1_000e6);
+        assertGt(expectedShares, 0);
+        uint256 shares = vault.deposit(1_000e6, user);
+        vm.stopPrank();
+        assertEq(shares, expectedShares);
+        assertEq(share.balanceOf(user), expectedShares);
+    }
+
     function test_hyperliquidTradeValidatorAcceptsOnlyVaultBoundExecutionHash() public {
         (address vaultAddr,) = _createBotVault(1, bytes32("validator-bind-salt"));
         bytes32 intentHash = keccak256("bot-intent");
@@ -178,10 +284,11 @@ contract HyperliquidVaultStackTest is Test {
         _mockHyperCoreAccount(vaultAddr, 0, 9_000e6);
         assertEq(vault.totalAssets(), 10_000e6);
         assertEq(vault.maxWithdraw(user), 1_000e6);
-        assertEq(vault.maxRedeem(user), 100e6);
+        assertEq(vault.maxRedeem(user), vault.convertToShares(vault.idleAssets()));
 
+        uint256 redeemAssets = vault.convertToAssets(200e6);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.InsufficientLiquidity.selector, 2_000e6, 1_000e6));
+        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.InsufficientLiquidity.selector, redeemAssets, 1_000e6));
         vault.redeem(200e6, user, user);
 
         // Simulate liquidity coming back from HyperCore while NAV stays constant.
@@ -190,8 +297,8 @@ contract HyperliquidVaultStackTest is Test {
 
         vm.prank(user);
         uint256 assets = vault.redeem(200e6, user, user);
-        assertEq(assets, 2_000e6);
-        assertEq(vault.totalAssets(), 8_000e6);
+        assertEq(assets, redeemAssets);
+        assertEq(vault.totalAssets(), 10_000e6 - redeemAssets);
     }
 
     function test_coreSpotUsdcIsIncludedInHyperliquidAccountAssets() public {
@@ -270,7 +377,10 @@ contract HyperliquidVaultStackTest is Test {
         vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.WithdrawalQueueOutOfOrder.selector, 1, 2));
         vault.fulfillRedeem(bobRequest);
 
-        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.InsufficientLiquidity.selector, 2_500e6, 2_000e6));
+        uint256 aliceRequestAssets = vault.convertToAssets(500e6);
+        vm.expectRevert(
+            abi.encodeWithSelector(HyperliquidVault.InsufficientLiquidity.selector, aliceRequestAssets, 2_000e6)
+        );
         vault.fulfillRedeem(aliceRequest);
 
         usdc.mint(vaultAddr, 3_000e6);
@@ -278,8 +388,8 @@ contract HyperliquidVaultStackTest is Test {
 
         uint256 aliceBalanceBefore = usdc.balanceOf(alice);
         uint256 fulfilledAssets = vault.fulfillRedeem(aliceRequest);
-        assertEq(fulfilledAssets, 2_500e6);
-        assertEq(usdc.balanceOf(alice), aliceBalanceBefore + 2_500e6);
+        assertEq(fulfilledAssets, aliceRequestAssets);
+        assertEq(usdc.balanceOf(alice), aliceBalanceBefore + aliceRequestAssets);
         assertEq(vault.pendingRedeemShares(), 100e6);
         assertEq(vault.nextFulfillableWithdrawalRequestId(), 2);
     }

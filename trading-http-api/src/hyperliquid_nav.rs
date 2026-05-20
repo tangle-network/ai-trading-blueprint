@@ -20,6 +20,7 @@ use trading_runtime::token_metadata::known_token_decimals;
 static NAV_SNAPSHOTS: OnceCell<PersistentStore<HyperliquidNavSnapshot>> = OnceCell::new();
 
 const DEFAULT_NAV_STALE_AFTER_SECS: i64 = 60;
+const MAX_NAV_STALE_AFTER_SECS: i64 = 300;
 
 sol! {
     function balanceOf(address account) external view returns (uint256);
@@ -290,12 +291,7 @@ fn nav_stale_after_secs(bot: &BotContext) -> i64 {
         .get("max_nav_staleness_secs")
         .and_then(serde_json::Value::as_i64)
         .filter(|value| *value > 0)
-        .or_else(|| {
-            bot.strategy_config
-                .get("max_nav_staleness_secs")
-                .and_then(serde_json::Value::as_i64)
-                .filter(|value| *value > 0)
-        })
+        .map(|value| value.min(MAX_NAV_STALE_AFTER_SECS))
         .unwrap_or(DEFAULT_NAV_STALE_AFTER_SECS)
 }
 
@@ -328,15 +324,96 @@ fn parse_decimal_field(label: &str, raw: &str) -> Result<Decimal, (StatusCode, S
     })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum NavNumericError {
+    UnsupportedTokenDecimals {
+        decimals: u8,
+        max_decimals: u32,
+    },
+    UnrepresentableRawAmount {
+        raw: String,
+        decimals: u8,
+        reason: String,
+    },
+}
+
+impl NavNumericError {
+    fn into_http(self) -> (StatusCode, String) {
+        match self {
+            Self::UnsupportedTokenDecimals {
+                decimals,
+                max_decimals,
+            } => (
+                StatusCode::BAD_GATEWAY,
+                format!(
+                    "Unsupported token decimals for Hyperliquid NAV: {decimals}; maximum supported is {max_decimals}"
+                ),
+            ),
+            Self::UnrepresentableRawAmount {
+                raw,
+                decimals,
+                reason,
+            } => (
+                StatusCode::BAD_GATEWAY,
+                format!(
+                    "Raw Hyperliquid NAV amount {raw} with {decimals} decimals cannot be represented safely: {reason}"
+                ),
+            ),
+        }
+    }
+}
+
 fn u256_to_decimal(amount: U256, decimals: u8) -> Result<Decimal, (StatusCode, String)> {
-    let raw = Decimal::from_str(&amount.to_string()).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to convert raw NAV amount to decimal: {e}"),
-        )
-    })?;
-    let scale = Decimal::from(10u64.pow(decimals as u32));
-    Ok(raw / scale)
+    checked_u256_to_decimal(amount, decimals).map_err(NavNumericError::into_http)
+}
+
+fn checked_u256_to_decimal(amount: U256, decimals: u8) -> Result<Decimal, NavNumericError> {
+    if u32::from(decimals) > Decimal::MAX_SCALE {
+        return Err(NavNumericError::UnsupportedTokenDecimals {
+            decimals,
+            max_decimals: Decimal::MAX_SCALE,
+        });
+    }
+
+    let raw = amount.to_string();
+    let scaled = scaled_u256_decimal_string(&raw, decimals);
+    Decimal::from_str(&scaled).map_err(|e| NavNumericError::UnrepresentableRawAmount {
+        raw,
+        decimals,
+        reason: e.to_string(),
+    })
+}
+
+fn scaled_u256_decimal_string(raw: &str, decimals: u8) -> String {
+    if decimals == 0 {
+        return raw.to_string();
+    }
+
+    let decimals = usize::from(decimals);
+    if raw.len() <= decimals {
+        let mut fraction = format!("{}{}", "0".repeat(decimals - raw.len()), raw);
+        trim_fractional_trailing_zeros(&mut fraction);
+        return if fraction.is_empty() {
+            "0".to_string()
+        } else {
+            format!("0.{fraction}")
+        };
+    }
+
+    let split = raw.len() - decimals;
+    let mut fraction = raw[split..].to_string();
+    trim_fractional_trailing_zeros(&mut fraction);
+    if fraction.is_empty() {
+        raw[..split].to_string()
+    } else {
+        format!("{}.{fraction}", &raw[..split])
+    }
+}
+
+fn trim_fractional_trailing_zeros(fraction: &mut String) {
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
 }
 
 fn bps_ratio(
@@ -416,6 +493,20 @@ mod tests {
     use super::*;
     use trading_runtime::hyperliquid::{AccountInfo, HlOpenOrderInfo, PositionInfo};
 
+    fn bot(risk_params: serde_json::Value, strategy_config: serde_json::Value) -> BotContext {
+        BotContext {
+            bot_id: "bot-1".to_string(),
+            vault_address: "0x1111111111111111111111111111111111111111".to_string(),
+            paper_trade: false,
+            chain_id: 998,
+            rpc_url: "https://rpc.hyperliquid-testnet.xyz/evm".to_string(),
+            strategy_config,
+            risk_params,
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        }
+    }
+
     fn account() -> AccountInfo {
         AccountInfo {
             account_value: "90000.50".to_string(),
@@ -481,8 +572,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(snapshot.idle_usdc, "10000");
-        assert_eq!(snapshot.hyperliquid_equity, "90000.50");
-        assert_eq!(snapshot.total_nav, "100000.50");
+        assert_eq!(snapshot.hyperliquid_equity, "90000.5");
+        assert_eq!(snapshot.total_nav, "100000.5");
         assert_eq!(snapshot.total_shares, "100000");
         assert_eq!(snapshot.share_price.as_deref(), Some("1.000005"));
         assert_eq!(snapshot.unrealized_pnl, "50.00");
@@ -517,5 +608,65 @@ mod tests {
 
         assert_eq!(snapshot.share_price, None);
         assert!(snapshot.warnings.iter().any(|w| w.contains("share supply")));
+    }
+
+    #[test]
+    fn nav_staleness_ignores_strategy_config_and_uses_default_without_risk_policy() {
+        let bot = bot(
+            serde_json::json!({}),
+            serde_json::json!({
+                "max_nav_staleness_secs": 10_000
+            }),
+        );
+
+        assert_eq!(nav_stale_after_secs(&bot), DEFAULT_NAV_STALE_AFTER_SECS);
+    }
+
+    #[test]
+    fn nav_staleness_uses_risk_policy_with_hard_cap() {
+        let bot = bot(
+            serde_json::json!({
+                "max_nav_staleness_secs": 10_000
+            }),
+            serde_json::json!({
+                "max_nav_staleness_secs": 30
+            }),
+        );
+
+        assert_eq!(nav_stale_after_secs(&bot), MAX_NAV_STALE_AFTER_SECS);
+    }
+
+    #[test]
+    fn u256_to_decimal_rejects_unsupported_token_decimals() {
+        let err = checked_u256_to_decimal(U256::from(1u64), 29).unwrap_err();
+
+        assert_eq!(
+            err,
+            NavNumericError::UnsupportedTokenDecimals {
+                decimals: 29,
+                max_decimals: Decimal::MAX_SCALE,
+            }
+        );
+    }
+
+    #[test]
+    fn u256_to_decimal_accepts_large_raw_when_scaled_value_fits() {
+        let raw = U256::from_str("1000000000000000000000000000000").unwrap();
+
+        assert!(Decimal::from_str(&raw.to_string()).is_err());
+        assert_eq!(
+            checked_u256_to_decimal(raw, 18).unwrap(),
+            Decimal::from(1_000_000_000_000u64)
+        );
+    }
+
+    #[test]
+    fn u256_to_decimal_rejects_unrepresentable_raw_values() {
+        let err = checked_u256_to_decimal(U256::MAX, 6).unwrap_err();
+
+        assert!(matches!(
+            err,
+            NavNumericError::UnrepresentableRawAmount { decimals: 6, .. }
+        ));
     }
 }
