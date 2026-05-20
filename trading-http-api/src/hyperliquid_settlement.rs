@@ -5,19 +5,27 @@ use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use axum::http::StatusCode;
 use chrono::{DateTime, TimeZone, Utc};
-use once_cell::sync::OnceCell;
+use dashmap::DashMap;
+use once_cell::sync::{Lazy, OnceCell};
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 use crate::hyperliquid_nav::{self, HyperliquidNavSnapshot};
 use crate::{BotContext, MultiBotTradingState};
 
 static SETTLEMENT_ATTEMPTS: OnceCell<PersistentStore<HyperliquidSettlementAttempt>> =
     OnceCell::new();
+static SETTLEMENT_RESERVATION_LOCKS: Lazy<DashMap<String, Arc<Mutex<()>>>> =
+    Lazy::new(DashMap::new);
 
-pub const DEFAULT_WITHDRAWAL_SETTLEMENT_CRON: &str = "0 0 0 * * *";
-pub const DEFAULT_WITHDRAWAL_CUTOFF_SECS: i64 = 3_600;
+pub const CONTRACT_WITHDRAWAL_SETTLEMENT_CRON: &str = "0 0 0 * * *";
+pub const CONTRACT_WITHDRAWAL_CUTOFF_SECS: i64 = 3_600;
 pub const DEFAULT_MIN_IDLE_USDC_BPS: u32 = 1_500;
+pub const DEFAULT_MAX_SETTLEMENT_FULFILLMENTS: u32 = 25;
+pub const DEFAULT_SETTLEMENT_RETRY_BACKOFF_SECS: i64 = 300;
+pub const DEFAULT_SETTLEMENT_LOCK_TTL_SECS: i64 = 900;
+const MAX_SETTLEMENT_FULFILLMENTS_CAP: u32 = 100;
 
 sol! {
     function idleAssets() external view returns (uint256);
@@ -26,7 +34,8 @@ sol! {
     function nextWithdrawalRequestId() external view returns (uint256);
     function nextFulfillableWithdrawalRequestId() external view returns (uint256);
     function isAccountingFresh() external view returns (bool);
-    function convertToAssets(uint256 shares) external view returns (uint256);
+    function withdrawalRequestAssets(uint256 requestId) external view returns (uint256);
+    function withdrawalRequestEligibleAt(uint256 requestId) external view returns (uint64);
     function withdrawalRequests(uint256 requestId) external view returns (
         address owner,
         address receiver,
@@ -35,12 +44,14 @@ sol! {
         uint64 fulfilledAt,
         uint64 cancelledAt
     );
-    function fulfillNextRedeem() external returns (uint256 requestId, uint256 assets);
+    function fulfillRedeem(uint256 requestId) external returns (uint256 assets);
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HyperliquidSettlementStatus {
+    InProgress,
+    Partial,
     Succeeded,
     Skipped,
     Failed,
@@ -56,6 +67,12 @@ pub struct HyperliquidSettlementAttempt {
     pub fulfilled_assets: String,
     pub stopped_reason: String,
     pub tx_hashes: Vec<String>,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub next_retry_after: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub in_progress_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,6 +84,9 @@ pub struct HyperliquidSettlementState {
     pub current_epoch: DateTime<Utc>,
     pub cutoff_secs: i64,
     pub idle_buffer_bps: u32,
+    pub max_fulfillments_per_run: u32,
+    pub retry_backoff_secs: i64,
+    pub settlement_lock_ttl_secs: i64,
     pub idle_buffer_target: Option<String>,
     pub cash_needed: Option<String>,
     pub queued_shares: Option<String>,
@@ -81,9 +101,32 @@ pub struct HyperliquidSettlementState {
 #[derive(Clone, Debug)]
 struct WithdrawalRequestState {
     created_at: DateTime<Utc>,
+    eligible_at: DateTime<Utc>,
     shares: U256,
+    assets: U256,
     fulfilled_at: u64,
     cancelled_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SettleableRequest {
+    request_id: u64,
+    assets: U256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SettleableRequestSelection {
+    Selected(SettleableRequest),
+    Empty,
+    NotYetEligible {
+        request_id: u64,
+        eligible_at: DateTime<Utc>,
+    },
+    InsufficientLiquidity {
+        request_id: Option<u64>,
+        assets: U256,
+        available: U256,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -126,17 +169,14 @@ pub fn latest_attempt_for_bot(
         .map_err(|e| e.to_string())
 }
 
-fn attempt_for_epoch(
-    bot_id: &str,
-    epoch: DateTime<Utc>,
-) -> Result<Option<HyperliquidSettlementAttempt>, String> {
-    settlement_attempts()?
-        .get(&epoch_attempt_key(bot_id, epoch))
-        .map_err(|e| e.to_string())
+fn record_attempt(attempt: HyperliquidSettlementAttempt) -> Result<(), String> {
+    record_attempt_in_store(settlement_attempts()?, attempt)
 }
 
-fn record_attempt(attempt: HyperliquidSettlementAttempt) -> Result<(), String> {
-    let store = settlement_attempts()?;
+fn record_attempt_in_store(
+    store: &PersistentStore<HyperliquidSettlementAttempt>,
+    attempt: HyperliquidSettlementAttempt,
+) -> Result<(), String> {
     store
         .insert(latest_attempt_key(&attempt.bot_id), attempt.clone())
         .map_err(|e| e.to_string())?;
@@ -145,13 +185,20 @@ fn record_attempt(attempt: HyperliquidSettlementAttempt) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn reservation_lock_for_bot(bot_id: &str) -> Arc<Mutex<()>> {
+    SETTLEMENT_RESERVATION_LOCKS
+        .entry(bot_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 pub async fn settlement_state(
     bot: &BotContext,
 ) -> Result<HyperliquidSettlementState, (StatusCode, String)> {
     let provider = provider_for_bot(bot)?;
     let vault = parse_concrete_address(&bot.vault_address, "vault address")?;
     let now = Utc::now();
-    let schedule = settlement_schedule(now, cutoff_secs(bot));
+    let schedule = settlement_schedule_for_bot(bot, now);
     let last_attempt =
         latest_attempt_for_bot(&bot.bot_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -169,21 +216,12 @@ pub async fn settlement_state(
             .ok(),
         _ => None,
     };
-    let next_request_assets = match next_request.as_ref() {
-        Some(request) if request.shares > U256::ZERO => eth_call_u256(
-            &provider,
-            vault,
-            convertToAssetsCall {
-                shares: request.shares,
-            }
-            .abi_encode(),
-        )
-        .await
-        .ok(),
-        _ => None,
-    };
+    let next_request_assets = next_request.as_ref().map(|request| request.assets);
 
     let idle_buffer_bps = min_idle_usdc_bps(bot);
+    let max_fulfillments_per_run = max_settlement_fulfillments(bot);
+    let retry_backoff_secs = settlement_retry_backoff_secs(bot);
+    let settlement_lock_ttl_secs = settlement_lock_ttl_secs(bot);
     let idle_buffer_target = vault_state
         .as_ref()
         .map(|state| min_idle_assets(state.total_assets, idle_buffer_bps).to_string());
@@ -197,16 +235,19 @@ pub async fn settlement_state(
     };
     let next_request_eligible = next_request
         .as_ref()
-        .map(|request| request_is_eligible(request.created_at, schedule.next_cutoff));
+        .map(|request| request_is_eligible(request.eligible_at, now));
 
     Ok(HyperliquidSettlementState {
         bot_id: bot.bot_id.clone(),
-        settlement_cron: withdrawal_settlement_cron(bot),
+        settlement_cron: CONTRACT_WITHDRAWAL_SETTLEMENT_CRON.to_string(),
         next_settlement_time: schedule.next_settlement,
         cutoff_time: schedule.next_cutoff,
         current_epoch: schedule.current_epoch,
         cutoff_secs: schedule.cutoff_secs,
         idle_buffer_bps,
+        max_fulfillments_per_run,
+        retry_backoff_secs,
+        settlement_lock_ttl_secs,
         idle_buffer_target,
         cash_needed,
         queued_shares: vault_state
@@ -218,9 +259,7 @@ pub async fn settlement_state(
         next_request_created_at: next_request.as_ref().map(|request| request.created_at),
         next_request_eligible,
         eligible_pending_request_count: match vault_state.as_ref() {
-            Some(state) => {
-                Some(eligible_pending_count(&provider, vault, state, schedule.next_cutoff).await?)
-            }
+            Some(state) => Some(eligible_pending_count(&provider, vault, state, now).await?),
             None => None,
         },
         rollover: last_attempt.as_ref().is_some_and(|attempt| {
@@ -246,18 +285,95 @@ async fn run_settlement_inner(
     force: bool,
 ) -> Result<HyperliquidSettlementAttempt, (StatusCode, String)> {
     let now = Utc::now();
-    let schedule = settlement_schedule(now, cutoff_secs(bot));
-    if !force
-        && attempt_for_epoch(&bot.bot_id, schedule.current_epoch)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-            .is_some()
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            "Hyperliquid settlement already ran for the current UTC epoch".to_string(),
-        ));
-    }
+    let schedule = settlement_schedule_for_bot(bot, now);
+    let max_fulfillments = max_settlement_fulfillments(bot);
+    let reservation = reserve_settlement_epoch(bot, schedule.current_epoch, now, force)?;
 
+    let result = run_reserved_settlement(state, bot, &schedule, now, max_fulfillments).await;
+    let attempt = match result {
+        Ok(mut attempt) => {
+            attempt.retry_count = reservation.retry_count;
+            attempt.next_retry_after = retry_after_for_status(
+                &attempt.last_status,
+                &attempt.stopped_reason,
+                attempt.last_attempt_at,
+                bot,
+            );
+            attempt
+        }
+        Err((status, err)) => {
+            let attempt = settlement_attempt(
+                bot,
+                schedule.current_epoch,
+                HyperliquidSettlementStatus::Failed,
+                0,
+                U256::ZERO,
+                format!("settlement_failed: {err}"),
+                vec![],
+                reservation.retry_count,
+            );
+            record_attempt(attempt).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            return Err((status, err));
+        }
+    };
+    record_attempt(attempt.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(attempt)
+}
+
+fn reserve_settlement_epoch(
+    bot: &BotContext,
+    epoch: DateTime<Utc>,
+    now: DateTime<Utc>,
+    force: bool,
+) -> Result<HyperliquidSettlementAttempt, (StatusCode, String)> {
+    let lock = reservation_lock_for_bot(&bot.bot_id);
+    let _guard = lock.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Hyperliquid settlement reservation lock is poisoned".to_string(),
+        )
+    })?;
+    let store =
+        settlement_attempts().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    reserve_settlement_epoch_in_store(store, bot, epoch, now, force)
+}
+
+fn reserve_settlement_epoch_in_store(
+    store: &PersistentStore<HyperliquidSettlementAttempt>,
+    bot: &BotContext,
+    epoch: DateTime<Utc>,
+    now: DateTime<Utc>,
+    force: bool,
+) -> Result<HyperliquidSettlementAttempt, (StatusCode, String)> {
+    let existing = store
+        .get(&epoch_attempt_key(&bot.bot_id, epoch))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let retry_count = match existing.as_ref() {
+        Some(attempt) if !force => {
+            settlement_attempt_is_retryable(
+                attempt,
+                now,
+                settlement_retry_backoff_secs(bot),
+                settlement_lock_ttl_secs(bot),
+            )?;
+            attempt.retry_count.saturating_add(1)
+        }
+        Some(attempt) => attempt.retry_count.saturating_add(1),
+        None => 0,
+    };
+    let reservation = in_progress_attempt(bot, epoch, now, retry_count);
+    record_attempt_in_store(store, reservation.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(reservation)
+}
+
+async fn run_reserved_settlement(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    schedule: &SettlementSchedule,
+    now: DateTime<Utc>,
+    max_fulfillments: u32,
+) -> Result<HyperliquidSettlementAttempt, (StatusCode, String)> {
     let mut nav = match hyperliquid_nav::reconcile_hyperliquid_nav(state, bot).await {
         Ok(snapshot) => snapshot,
         Err((status, err)) => {
@@ -269,9 +385,9 @@ async fn run_settlement_inner(
                 U256::ZERO,
                 format!("nav_refresh_failed: {err}"),
                 vec![],
+                0,
             );
-            record_attempt(attempt.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-            return Err((status, err));
+            return Err((status, attempt.stopped_reason));
         }
     };
     if nav.is_stale_at(now) {
@@ -283,8 +399,8 @@ async fn run_settlement_inner(
             U256::ZERO,
             "nav_stale".to_string(),
             vec![],
+            0,
         );
-        record_attempt(attempt.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
         return Ok(attempt);
     }
 
@@ -312,6 +428,11 @@ async fn run_settlement_inner(
     let stopped_reason;
 
     loop {
+        if fulfilled_count >= max_fulfillments {
+            stopped_reason = "max_fulfillments_reached".to_string();
+            break;
+        }
+
         let vault_state = read_vault_state(&provider, vault).await?;
         if vault_state.pending_redeem_shares == U256::ZERO {
             stopped_reason = "queue_empty".to_string();
@@ -322,46 +443,33 @@ async fn run_settlement_inner(
             break;
         }
 
-        let Some((request_id, _last_id)) = eligible_pending_request_id_bounds(&vault_state)? else {
-            stopped_reason = "queue_empty".to_string();
-            break;
-        };
-
-        let request = read_withdrawal_request(&provider, vault, U256::from(request_id)).await?;
-        if request.fulfilled_at != 0 || request.cancelled_at != 0 || request.shares == U256::ZERO {
-            stopped_reason = "request_not_pending".to_string();
-            break;
-        }
-        if !request_is_eligible(request.created_at, schedule.current_cutoff) {
-            stopped_reason = "request_after_cutoff".to_string();
-            break;
-        }
-
         nav = latest_fresh_nav_or_stop(bot, now)?;
         if nav.is_stale_at(now) {
             stopped_reason = "nav_stale".to_string();
             break;
         }
 
-        let assets = eth_call_u256(
-            &provider,
-            vault,
-            convertToAssetsCall {
-                shares: request.shares,
-            }
-            .abi_encode(),
-        )
-        .await?;
-        let buffer = min_idle_assets(vault_state.total_assets, idle_buffer_bps);
-        let available = available_after_buffer(vault_state.idle_assets, buffer);
-        if assets > available {
-            stopped_reason = "insufficient_liquidity".to_string();
-            break;
-        }
+        let request =
+            match find_settleable_request(&provider, vault, &vault_state, now, idle_buffer_bps)
+                .await?
+            {
+                SettleableRequestSelection::Selected(request) => request,
+                SettleableRequestSelection::Empty => {
+                    stopped_reason = "queue_empty".to_string();
+                    break;
+                }
+                SettleableRequestSelection::NotYetEligible { .. } => {
+                    stopped_reason = "request_not_eligible".to_string();
+                    break;
+                }
+                SettleableRequestSelection::InsufficientLiquidity { .. } => {
+                    stopped_reason = "insufficient_liquidity".to_string();
+                    break;
+                }
+            };
+        let assets = request.assets;
 
-        let tx = TransactionRequest::default()
-            .to(vault)
-            .input(Bytes::from(fulfillNextRedeemCall {}.abi_encode()).into());
+        let tx = fulfill_redeem_transaction(vault, request.request_id);
         let pending = chain_client
             .provider
             .send_transaction(tx)
@@ -389,11 +497,7 @@ async fn run_settlement_inner(
         fulfilled_assets = fulfilled_assets.saturating_add(assets);
     }
 
-    let status = if fulfilled_count > 0 {
-        HyperliquidSettlementStatus::Succeeded
-    } else {
-        HyperliquidSettlementStatus::Skipped
-    };
+    let status = settlement_status_for_result(fulfilled_count, &stopped_reason);
     let attempt = settlement_attempt(
         bot,
         schedule.current_epoch,
@@ -402,8 +506,8 @@ async fn run_settlement_inner(
         fulfilled_assets,
         stopped_reason,
         tx_hashes,
+        0,
     );
-    record_attempt(attempt.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(attempt)
 }
 
@@ -415,16 +519,126 @@ fn settlement_attempt(
     fulfilled_assets: U256,
     stopped_reason: String,
     tx_hashes: Vec<String>,
+    retry_count: u32,
 ) -> HyperliquidSettlementAttempt {
+    let last_attempt_at = Utc::now();
+    let next_retry_after = retry_after_for_status(&status, &stopped_reason, last_attempt_at, bot);
     HyperliquidSettlementAttempt {
         bot_id: bot.bot_id.clone(),
         epoch,
-        last_attempt_at: Utc::now(),
+        last_attempt_at,
         last_status: status,
         fulfilled_count,
         fulfilled_assets: fulfilled_assets.to_string(),
         stopped_reason,
         tx_hashes,
+        retry_count,
+        next_retry_after,
+        in_progress_expires_at: None,
+    }
+}
+
+fn in_progress_attempt(
+    bot: &BotContext,
+    epoch: DateTime<Utc>,
+    now: DateTime<Utc>,
+    retry_count: u32,
+) -> HyperliquidSettlementAttempt {
+    HyperliquidSettlementAttempt {
+        bot_id: bot.bot_id.clone(),
+        epoch,
+        last_attempt_at: now,
+        last_status: HyperliquidSettlementStatus::InProgress,
+        fulfilled_count: 0,
+        fulfilled_assets: U256::ZERO.to_string(),
+        stopped_reason: "reserved".to_string(),
+        tx_hashes: vec![],
+        retry_count,
+        next_retry_after: None,
+        in_progress_expires_at: Some(
+            now + chrono::Duration::seconds(settlement_lock_ttl_secs(bot)),
+        ),
+    }
+}
+
+fn retry_after_for_status(
+    status: &HyperliquidSettlementStatus,
+    stopped_reason: &str,
+    attempted_at: DateTime<Utc>,
+    bot: &BotContext,
+) -> Option<DateTime<Utc>> {
+    if settlement_attempt_closes_epoch(status, stopped_reason) {
+        return None;
+    }
+    if matches!(status, HyperliquidSettlementStatus::InProgress) {
+        return None;
+    }
+    Some(attempted_at + chrono::Duration::seconds(settlement_retry_backoff_secs(bot)))
+}
+
+fn settlement_attempt_closes_epoch(
+    status: &HyperliquidSettlementStatus,
+    stopped_reason: &str,
+) -> bool {
+    matches!(status, HyperliquidSettlementStatus::Succeeded)
+        || matches!(status, HyperliquidSettlementStatus::Skipped)
+            && matches!(stopped_reason, "queue_empty" | "request_after_cutoff")
+}
+
+fn settlement_attempt_is_retryable(
+    attempt: &HyperliquidSettlementAttempt,
+    now: DateTime<Utc>,
+    retry_backoff_secs: i64,
+    lock_ttl_secs: i64,
+) -> Result<(), (StatusCode, String)> {
+    if settlement_attempt_closes_epoch(&attempt.last_status, &attempt.stopped_reason) {
+        return Err((
+            StatusCode::CONFLICT,
+            "Hyperliquid settlement already completed for the current epoch".to_string(),
+        ));
+    }
+
+    if matches!(attempt.last_status, HyperliquidSettlementStatus::InProgress) {
+        let expires_at = attempt
+            .in_progress_expires_at
+            .unwrap_or(attempt.last_attempt_at + chrono::Duration::seconds(lock_ttl_secs.max(1)));
+        if expires_at <= now {
+            return Ok(());
+        }
+        return Err((
+            StatusCode::CONFLICT,
+            "Hyperliquid settlement is already in progress for the current epoch".to_string(),
+        ));
+    }
+
+    let next_retry_after = attempt
+        .next_retry_after
+        .unwrap_or(attempt.last_attempt_at + chrono::Duration::seconds(retry_backoff_secs));
+    if now < next_retry_after {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("Hyperliquid settlement retry is blocked until {next_retry_after}"),
+        ));
+    }
+    Ok(())
+}
+
+fn settlement_status_for_result(
+    fulfilled_count: u32,
+    stopped_reason: &str,
+) -> HyperliquidSettlementStatus {
+    if matches!(stopped_reason, "queue_empty" | "request_after_cutoff") {
+        if fulfilled_count > 0 {
+            HyperliquidSettlementStatus::Succeeded
+        } else {
+            HyperliquidSettlementStatus::Skipped
+        }
+    } else if stopped_reason.starts_with("tx_failed:") {
+        HyperliquidSettlementStatus::Failed
+    } else if fulfilled_count > 0 {
+        HyperliquidSettlementStatus::Partial
+    } else {
+        HyperliquidSettlementStatus::Skipped
     }
 }
 
@@ -453,7 +667,7 @@ async fn eligible_pending_count(
     provider: &impl Provider,
     vault: Address,
     state: &VaultSettlementState,
-    cutoff: DateTime<Utc>,
+    now: DateTime<Utc>,
 ) -> Result<u32, (StatusCode, String)> {
     let Some((mut request_id, last_id)) = eligible_pending_request_id_bounds(state)? else {
         return Ok(0);
@@ -465,13 +679,93 @@ async fn eligible_pending_count(
         if request.fulfilled_at == 0
             && request.cancelled_at == 0
             && request.shares > U256::ZERO
-            && request_is_eligible(request.created_at, cutoff)
+            && request_is_eligible(request.eligible_at, now)
         {
             count = count.saturating_add(1);
         }
         request_id = request_id.saturating_add(1);
     }
     Ok(count)
+}
+
+async fn find_settleable_request(
+    provider: &impl Provider,
+    vault: Address,
+    state: &VaultSettlementState,
+    now: DateTime<Utc>,
+    idle_buffer_bps: u32,
+) -> Result<SettleableRequestSelection, (StatusCode, String)> {
+    let Some((mut request_id, last_id)) = eligible_pending_request_id_bounds(state)? else {
+        return Ok(SettleableRequestSelection::Empty);
+    };
+
+    let buffer = min_idle_assets(state.total_assets, idle_buffer_bps);
+    let available = available_after_buffer(state.idle_assets, buffer);
+    let mut requests = Vec::new();
+    while request_id != 0 && request_id <= last_id {
+        let request = read_withdrawal_request(provider, vault, U256::from(request_id)).await?;
+        requests.push((request_id, request));
+        request_id = request_id.saturating_add(1);
+    }
+
+    Ok(select_settleable_request(
+        requests
+            .iter()
+            .map(|(request_id, request)| (*request_id, request)),
+        now,
+        state.idle_assets,
+        available,
+    ))
+}
+
+fn select_settleable_request<'a>(
+    requests: impl IntoIterator<Item = (u64, &'a WithdrawalRequestState)>,
+    now: DateTime<Utc>,
+    contract_liquid_assets: U256,
+    available_after_buffer: U256,
+) -> SettleableRequestSelection {
+    let mut skipped_illiquid: Option<(u64, U256)> = None;
+
+    for (request_id, request) in requests {
+        if request.fulfilled_at != 0 || request.cancelled_at != 0 || request.shares == U256::ZERO {
+            continue;
+        }
+
+        if !request_is_eligible(request.eligible_at, now) {
+            return SettleableRequestSelection::NotYetEligible {
+                request_id,
+                eligible_at: request.eligible_at,
+            };
+        }
+
+        if request.assets > contract_liquid_assets {
+            skipped_illiquid.get_or_insert((request_id, request.assets));
+            continue;
+        }
+
+        if request.assets > available_after_buffer {
+            return SettleableRequestSelection::InsufficientLiquidity {
+                request_id: Some(request_id),
+                assets: request.assets,
+                available: available_after_buffer,
+            };
+        }
+
+        return SettleableRequestSelection::Selected(SettleableRequest {
+            request_id,
+            assets: request.assets,
+        });
+    }
+
+    if let Some((request_id, assets)) = skipped_illiquid {
+        return SettleableRequestSelection::InsufficientLiquidity {
+            request_id: Some(request_id),
+            assets,
+            available: available_after_buffer,
+        };
+    }
+
+    SettleableRequestSelection::Empty
 }
 
 fn eligible_pending_request_id_bounds(
@@ -542,9 +836,29 @@ async fn read_withdrawal_request(
             format!("Failed to decode withdrawal request: {e}"),
         )
     })?;
+    let assets = eth_call_u256(
+        provider,
+        vault,
+        withdrawalRequestAssetsCall {
+            requestId: request_id,
+        }
+        .abi_encode(),
+    )
+    .await?;
+    let eligible_at = eth_call_u64(
+        provider,
+        vault,
+        withdrawalRequestEligibleAtCall {
+            requestId: request_id,
+        }
+        .abi_encode(),
+    )
+    .await?;
     Ok(WithdrawalRequestState {
         created_at: timestamp_to_utc(decoded.createdAt),
+        eligible_at: timestamp_to_utc(eligible_at),
         shares: decoded.shares,
+        assets,
         fulfilled_at: decoded.fulfilledAt,
         cancelled_at: decoded.cancelledAt,
     })
@@ -589,6 +903,20 @@ async fn eth_call_bool(
     })
 }
 
+async fn eth_call_u64(
+    provider: &impl Provider,
+    to: Address,
+    data: Vec<u8>,
+) -> Result<u64, (StatusCode, String)> {
+    let result = eth_call(provider, to, data).await?;
+    u64::abi_decode(&result).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to decode Hyperliquid settlement u64 response: {e}"),
+        )
+    })
+}
+
 async fn eth_call(
     provider: &impl Provider,
     to: Address,
@@ -605,34 +933,26 @@ async fn eth_call(
     })
 }
 
-fn withdrawal_settlement_cron(bot: &BotContext) -> String {
-    read_string_setting(bot, "withdrawal_settlement_cron")
-        .unwrap_or_else(|| DEFAULT_WITHDRAWAL_SETTLEMENT_CRON.to_string())
-}
-
-fn cutoff_secs(bot: &BotContext) -> i64 {
-    read_positive_i64_setting(bot, "withdrawal_cutoff_secs")
-        .unwrap_or(DEFAULT_WITHDRAWAL_CUTOFF_SECS)
-}
-
 fn min_idle_usdc_bps(bot: &BotContext) -> u32 {
     read_positive_u32_setting(bot, "min_idle_usdc_bps")
         .map(|value| value.min(10_000))
         .unwrap_or(DEFAULT_MIN_IDLE_USDC_BPS)
 }
 
-fn read_string_setting(bot: &BotContext, key: &str) -> Option<String> {
-    bot.risk_params
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            bot.strategy_config
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+fn max_settlement_fulfillments(bot: &BotContext) -> u32 {
+    read_positive_u32_setting(bot, "withdrawal_settlement_max_fulfillments")
+        .map(|value| value.min(MAX_SETTLEMENT_FULFILLMENTS_CAP))
+        .unwrap_or(DEFAULT_MAX_SETTLEMENT_FULFILLMENTS)
+}
+
+fn settlement_retry_backoff_secs(bot: &BotContext) -> i64 {
+    read_positive_i64_setting(bot, "withdrawal_settlement_retry_backoff_secs")
+        .unwrap_or(DEFAULT_SETTLEMENT_RETRY_BACKOFF_SECS)
+}
+
+fn settlement_lock_ttl_secs(bot: &BotContext) -> i64 {
+    read_positive_i64_setting(bot, "withdrawal_settlement_lock_ttl_secs")
+        .unwrap_or(DEFAULT_SETTLEMENT_LOCK_TTL_SECS)
 }
 
 fn read_positive_i64_setting(bot: &BotContext, key: &str) -> Option<i64> {
@@ -658,23 +978,29 @@ fn read_positive_u64_setting(bot: &BotContext, key: &str) -> Option<u64> {
 
 struct SettlementSchedule {
     current_epoch: DateTime<Utc>,
+    #[allow(dead_code)]
     current_cutoff: DateTime<Utc>,
     next_settlement: DateTime<Utc>,
     next_cutoff: DateTime<Utc>,
     cutoff_secs: i64,
 }
 
-fn settlement_schedule(now: DateTime<Utc>, cutoff_secs: i64) -> SettlementSchedule {
-    let epoch_secs = now.timestamp().div_euclid(86_400) * 86_400;
-    let current_epoch = timestamp_to_utc(epoch_secs as u64);
+fn settlement_schedule_for_bot(_bot: &BotContext, now: DateTime<Utc>) -> SettlementSchedule {
+    settlement_schedule(now)
+}
+
+fn settlement_schedule(now: DateTime<Utc>) -> SettlementSchedule {
+    let now_timestamp = now.timestamp().max(0);
+    let current_epoch_timestamp = now_timestamp - now_timestamp.rem_euclid(86_400);
+    let current_epoch = timestamp_to_utc(current_epoch_timestamp as u64);
     let next_settlement = current_epoch + chrono::Duration::days(1);
-    let cutoff = chrono::Duration::seconds(cutoff_secs);
+    let cutoff = chrono::Duration::seconds(CONTRACT_WITHDRAWAL_CUTOFF_SECS);
     SettlementSchedule {
         current_epoch,
         current_cutoff: current_epoch - cutoff,
         next_settlement,
         next_cutoff: next_settlement - cutoff,
-        cutoff_secs,
+        cutoff_secs: CONTRACT_WITHDRAWAL_CUTOFF_SECS,
     }
 }
 
@@ -684,8 +1010,8 @@ fn timestamp_to_utc(timestamp: u64) -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
-fn request_is_eligible(created_at: DateTime<Utc>, cutoff: DateTime<Utc>) -> bool {
-    created_at <= cutoff
+fn request_is_eligible(eligible_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    eligible_at <= now
 }
 
 fn min_idle_assets(total_assets: U256, bps: u32) -> U256 {
@@ -694,6 +1020,18 @@ fn min_idle_assets(total_assets: U256, bps: u32) -> U256 {
 
 fn available_after_buffer(idle_assets: U256, buffer: U256) -> U256 {
     idle_assets.saturating_sub(buffer)
+}
+
+fn fulfill_redeem_transaction(vault: Address, request_id: u64) -> TransactionRequest {
+    TransactionRequest::default().to(vault).input(
+        Bytes::from(
+            fulfillRedeemCall {
+                requestId: U256::from(request_id),
+            }
+            .abi_encode(),
+        )
+        .into(),
+    )
 }
 
 fn request_id_to_u64(value: U256, field: &str) -> Result<u64, (StatusCode, String)> {
@@ -760,25 +1098,69 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cutoff_logic_separates_current_epoch_eligible_and_rollforward_requests() {
-        let cutoff = Utc.with_ymd_and_hms(2026, 5, 18, 23, 0, 0).unwrap();
+    fn withdrawal_request(
+        created_at: DateTime<Utc>,
+        eligible_at: DateTime<Utc>,
+        shares: u64,
+        assets: u64,
+    ) -> WithdrawalRequestState {
+        WithdrawalRequestState {
+            created_at,
+            eligible_at,
+            shares: U256::from(shares),
+            assets: U256::from(assets),
+            fulfilled_at: 0,
+            cancelled_at: 0,
+        }
+    }
 
-        assert!(request_is_eligible(
-            cutoff - chrono::Duration::seconds(1),
-            cutoff
-        ));
-        assert!(request_is_eligible(cutoff, cutoff));
+    fn temp_attempt_store() -> (
+        PersistentStore<HyperliquidSettlementAttempt>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersistentStore::open(dir.path().join("attempts.json")).unwrap();
+        (store, dir)
+    }
+
+    fn stored_attempt(
+        bot: &BotContext,
+        epoch: DateTime<Utc>,
+        last_status: HyperliquidSettlementStatus,
+        stopped_reason: &str,
+        last_attempt_at: DateTime<Utc>,
+    ) -> HyperliquidSettlementAttempt {
+        HyperliquidSettlementAttempt {
+            bot_id: bot.bot_id.clone(),
+            epoch,
+            last_attempt_at,
+            last_status,
+            fulfilled_count: 0,
+            fulfilled_assets: U256::ZERO.to_string(),
+            stopped_reason: stopped_reason.to_string(),
+            tx_hashes: vec![],
+            retry_count: 0,
+            next_retry_after: None,
+            in_progress_expires_at: None,
+        }
+    }
+
+    #[test]
+    fn stored_eligibility_separates_eligible_and_future_requests() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+
+        assert!(request_is_eligible(now - chrono::Duration::seconds(1), now));
+        assert!(request_is_eligible(now, now));
         assert!(!request_is_eligible(
-            cutoff + chrono::Duration::seconds(1),
-            cutoff
+            now + chrono::Duration::seconds(1),
+            now
         ));
     }
 
     #[test]
     fn settlement_schedule_uses_daily_utc_epoch_and_one_hour_cutoff() {
         let now = Utc.with_ymd_and_hms(2026, 5, 19, 12, 30, 0).unwrap();
-        let schedule = settlement_schedule(now, DEFAULT_WITHDRAWAL_CUTOFF_SECS);
+        let schedule = settlement_schedule(now);
 
         assert_eq!(
             schedule.current_epoch,
@@ -799,6 +1181,38 @@ mod tests {
     }
 
     #[test]
+    fn settlement_schedule_ignores_divergent_bot_schedule_config() {
+        let bot = bot(
+            serde_json::json!({
+                "withdrawal_cutoff_secs": 7200
+            }),
+            serde_json::json!({
+                "withdrawal_settlement_cron": "0 0 8 * * *"
+            }),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 5, 19, 12, 30, 0).unwrap();
+        let schedule = settlement_schedule_for_bot(&bot, now);
+
+        assert_eq!(
+            schedule.current_epoch,
+            Utc.with_ymd_and_hms(2026, 5, 19, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            schedule.current_cutoff,
+            Utc.with_ymd_and_hms(2026, 5, 18, 23, 0, 0).unwrap()
+        );
+        assert_eq!(
+            schedule.next_settlement,
+            Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            schedule.next_cutoff,
+            Utc.with_ymd_and_hms(2026, 5, 19, 23, 0, 0).unwrap()
+        );
+        assert_eq!(schedule.cutoff_secs, CONTRACT_WITHDRAWAL_CUTOFF_SECS);
+    }
+
+    #[test]
     fn buffer_preservation_keeps_default_fifteen_percent_idle() {
         let total = U256::from(100_000_000_000u64);
         let idle = U256::from(20_000_000_000u64);
@@ -808,6 +1222,111 @@ mod tests {
         assert_eq!(
             available_after_buffer(idle, buffer),
             U256::from(5_000_000_000u64)
+        );
+    }
+
+    #[test]
+    fn selector_uses_stored_assets_and_skips_contract_illiquid_head() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let eligible_at = now - chrono::Duration::seconds(1);
+        let created_at = eligible_at - chrono::Duration::hours(1);
+        let head = withdrawal_request(created_at, eligible_at, 100, 9_000);
+        let later = withdrawal_request(created_at, eligible_at, 10_000, 4_000);
+
+        let selected = select_settleable_request(
+            [(1, &head), (2, &later)],
+            now,
+            U256::from(5_000u64),
+            U256::from(5_000u64),
+        );
+
+        assert_eq!(
+            selected,
+            SettleableRequestSelection::Selected(SettleableRequest {
+                request_id: 2,
+                assets: U256::from(4_000u64)
+            })
+        );
+    }
+
+    #[test]
+    fn selector_does_not_convert_current_shares_for_fixed_claim_amounts() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let eligible_at = now;
+        let request = withdrawal_request(now - chrono::Duration::hours(1), eligible_at, 1, 4_000);
+
+        let selected = select_settleable_request(
+            [(7, &request)],
+            now,
+            U256::from(5_000u64),
+            U256::from(5_000u64),
+        );
+
+        assert_eq!(
+            selected,
+            SettleableRequestSelection::Selected(SettleableRequest {
+                request_id: 7,
+                assets: U256::from(4_000u64)
+            })
+        );
+    }
+
+    #[test]
+    fn fulfillment_calldata_is_keyed_by_selected_request_id() {
+        let calldata = fulfillRedeemCall {
+            requestId: U256::from(7u64),
+        }
+        .abi_encode();
+
+        assert_eq!(calldata.len(), 36);
+        assert_eq!(&calldata[..4], fulfillRedeemCall::SELECTOR);
+        assert_eq!(&calldata[4..], U256::from(7u64).abi_encode().as_slice());
+    }
+
+    #[test]
+    fn selector_uses_stored_eligibility_not_created_at_cutoff() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let created_at = now - chrono::Duration::days(1);
+        let eligible_at = now + chrono::Duration::seconds(1);
+        let request = withdrawal_request(created_at, eligible_at, 100, 1_000);
+
+        let selected = select_settleable_request(
+            [(1, &request)],
+            now,
+            U256::from(5_000u64),
+            U256::from(5_000u64),
+        );
+
+        assert_eq!(
+            selected,
+            SettleableRequestSelection::NotYetEligible {
+                request_id: 1,
+                eligible_at
+            }
+        );
+    }
+
+    #[test]
+    fn selector_stops_when_buffer_blocks_request_contract_would_fulfill() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let eligible_at = now;
+        let head = withdrawal_request(now - chrono::Duration::hours(1), eligible_at, 100, 4_500);
+        let later = withdrawal_request(now - chrono::Duration::hours(1), eligible_at, 100, 1_000);
+
+        let selected = select_settleable_request(
+            [(1, &head), (2, &later)],
+            now,
+            U256::from(5_000u64),
+            U256::from(4_000u64),
+        );
+
+        assert_eq!(
+            selected,
+            SettleableRequestSelection::InsufficientLiquidity {
+                request_id: Some(1),
+                assets: U256::from(4_500u64),
+                available: U256::from(4_000u64)
+            }
         );
     }
 
@@ -871,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_prefer_risk_params_then_strategy_config() {
+    fn settings_keep_operational_knobs_but_ignore_schedule_config() {
         let bot = bot(
             serde_json::json!({
                 "withdrawal_cutoff_secs": 7200,
@@ -884,8 +1403,154 @@ mod tests {
             }),
         );
 
-        assert_eq!(cutoff_secs(&bot), 7200);
         assert_eq!(min_idle_usdc_bps(&bot), 1600);
-        assert_eq!(withdrawal_settlement_cron(&bot), "0 0 1 * * *");
+        assert_eq!(
+            max_settlement_fulfillments(&bot),
+            DEFAULT_MAX_SETTLEMENT_FULFILLMENTS
+        );
+
+        let schedule =
+            settlement_schedule_for_bot(&bot, Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap());
+        assert_eq!(schedule.cutoff_secs, CONTRACT_WITHDRAWAL_CUTOFF_SECS);
+        assert_eq!(
+            schedule.current_epoch,
+            Utc.with_ymd_and_hms(2026, 5, 19, 0, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn fulfillment_bound_is_configurable_and_capped() {
+        let bot = bot(
+            serde_json::json!({
+                "withdrawal_settlement_max_fulfillments": 10_000
+            }),
+            serde_json::json!({}),
+        );
+
+        assert_eq!(
+            max_settlement_fulfillments(&bot),
+            MAX_SETTLEMENT_FULFILLMENTS_CAP
+        );
+    }
+
+    #[test]
+    fn reservation_records_in_progress_and_blocks_concurrent_retry() {
+        let (store, _dir) = temp_attempt_store();
+        let bot = bot(serde_json::json!({}), serde_json::json!({}));
+        let epoch = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 5, 20, 0, 5, 0).unwrap();
+
+        let reserved = reserve_settlement_epoch_in_store(&store, &bot, epoch, now, false).unwrap();
+        assert_eq!(
+            reserved.last_status,
+            HyperliquidSettlementStatus::InProgress
+        );
+        assert_eq!(
+            reserved.in_progress_expires_at,
+            Some(now + chrono::Duration::seconds(DEFAULT_SETTLEMENT_LOCK_TTL_SECS))
+        );
+
+        let blocked = reserve_settlement_epoch_in_store(&store, &bot, epoch, now, false)
+            .expect_err("fresh in-progress reservation should block");
+        assert_eq!(blocked.0, StatusCode::CONFLICT);
+        assert!(blocked.1.contains("already in progress"));
+    }
+
+    #[test]
+    fn stale_in_progress_reservation_can_be_recovered() {
+        let (store, _dir) = temp_attempt_store();
+        let bot = bot(serde_json::json!({}), serde_json::json!({}));
+        let epoch = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let first = Utc.with_ymd_and_hms(2026, 5, 20, 0, 5, 0).unwrap();
+        let now = first + chrono::Duration::seconds(DEFAULT_SETTLEMENT_LOCK_TTL_SECS + 1);
+        let mut existing = stored_attempt(
+            &bot,
+            epoch,
+            HyperliquidSettlementStatus::InProgress,
+            "reserved",
+            first,
+        );
+        existing.in_progress_expires_at =
+            Some(first + chrono::Duration::seconds(DEFAULT_SETTLEMENT_LOCK_TTL_SECS));
+        record_attempt_in_store(&store, existing).unwrap();
+
+        let recovered = reserve_settlement_epoch_in_store(&store, &bot, epoch, now, false).unwrap();
+
+        assert_eq!(
+            recovered.last_status,
+            HyperliquidSettlementStatus::InProgress
+        );
+        assert_eq!(recovered.retry_count, 1);
+        assert_eq!(
+            recovered.in_progress_expires_at,
+            Some(now + chrono::Duration::seconds(DEFAULT_SETTLEMENT_LOCK_TTL_SECS))
+        );
+    }
+
+    #[test]
+    fn retryable_skip_respects_backoff_then_reserves_again() {
+        let (store, _dir) = temp_attempt_store();
+        let bot = bot(serde_json::json!({}), serde_json::json!({}));
+        let epoch = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let first = Utc.with_ymd_and_hms(2026, 5, 20, 0, 5, 0).unwrap();
+        let mut existing = stored_attempt(
+            &bot,
+            epoch,
+            HyperliquidSettlementStatus::Skipped,
+            "nav_stale",
+            first,
+        );
+        existing.next_retry_after =
+            Some(first + chrono::Duration::seconds(DEFAULT_SETTLEMENT_RETRY_BACKOFF_SECS));
+        record_attempt_in_store(&store, existing).unwrap();
+
+        let blocked = reserve_settlement_epoch_in_store(
+            &store,
+            &bot,
+            epoch,
+            first + chrono::Duration::seconds(60),
+            false,
+        )
+        .expect_err("retry before backoff should be rejected");
+        assert_eq!(blocked.0, StatusCode::TOO_MANY_REQUESTS);
+
+        let retried = reserve_settlement_epoch_in_store(
+            &store,
+            &bot,
+            epoch,
+            first + chrono::Duration::seconds(DEFAULT_SETTLEMENT_RETRY_BACKOFF_SECS + 1),
+            false,
+        )
+        .unwrap();
+        assert_eq!(retried.last_status, HyperliquidSettlementStatus::InProgress);
+        assert_eq!(retried.retry_count, 1);
+    }
+
+    #[test]
+    fn completed_settlement_closes_epoch_against_retry() {
+        let (store, _dir) = temp_attempt_store();
+        let bot = bot(serde_json::json!({}), serde_json::json!({}));
+        let epoch = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
+        let finished_at = Utc.with_ymd_and_hms(2026, 5, 20, 0, 5, 0).unwrap();
+        let existing = stored_attempt(
+            &bot,
+            epoch,
+            HyperliquidSettlementStatus::Succeeded,
+            "queue_empty",
+            finished_at,
+        );
+        record_attempt_in_store(&store, existing).unwrap();
+
+        let blocked = reserve_settlement_epoch_in_store(
+            &store,
+            &bot,
+            epoch,
+            finished_at + chrono::Duration::seconds(DEFAULT_SETTLEMENT_RETRY_BACKOFF_SECS + 1),
+            false,
+        )
+        .expect_err("completed settlement should close the epoch");
+
+        assert_eq!(blocked.0, StatusCode::CONFLICT);
+        assert!(blocked.1.contains("already completed"));
     }
 }

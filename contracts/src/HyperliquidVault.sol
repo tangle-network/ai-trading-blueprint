@@ -35,6 +35,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     uint8 public constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
     uint8 public constant HYPEREVM_USDC_DECIMALS = 6;
     uint256 public constant HYPERLIQUID_VIRTUAL_OFFSET = 10 ** HYPEREVM_USDC_DECIMALS;
+    uint64 public constant WITHDRAWAL_EPOCH_SECONDS = 1 days;
+    uint64 public constant WITHDRAWAL_CUTOFF_SECONDS = 1 hours;
     uint256 public constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
     bytes32 public constant HYPERLIQUID_FUND_MOVEMENT_TYPEHASH = keccak256(
         "HyperliquidFundMovement(address vault,uint256 chainId,uint24 actionType,address destination,uint64 token,uint64 amount,bool direction,uint256 nonce,uint256 deadline,uint256 leverageCap,uint256 maxTradesPerHour,uint256 maxSlippageBps)"
@@ -50,6 +52,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     uint256 public maxSlippageBps;
     bool private _initialized;
     uint256 private _pendingRedeemShares;
+    uint256 private _pendingRedeemAssets;
     uint256 public nextWithdrawalRequestId;
     uint256 public nextFulfillableWithdrawalRequestId;
 
@@ -70,6 +73,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     }
 
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
+    mapping(uint256 => uint256) public withdrawalRequestAssets;
+    mapping(uint256 => uint64) public withdrawalRequestEligibleAt;
     mapping(uint256 nonce => bool used) public fundMovementNonceUsed;
 
     event HyperliquidApiWalletApprovalSubmitted(address indexed agentWallet, string agentName, bytes action);
@@ -93,6 +98,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     error InvalidWithdrawalRequest();
     error WithdrawalAlreadyFinalized();
     error WithdrawalQueueOutOfOrder(uint256 expectedRequestId, uint256 actualRequestId);
+    error NoSettleableWithdrawalRequest();
+    error WithdrawalRequestNotEligible(uint256 requestId, uint64 eligibleAt, uint64 currentTime);
     error ValidatorApprovalRequired();
     error ValidatorApprovalRejected();
     error FundMovementNonceAlreadyUsed(uint256 nonce);
@@ -149,12 +156,28 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         return _pendingRedeemShares;
     }
 
+    function pendingRedeemAssets() external view returns (uint256) {
+        return _pendingRedeemAssets;
+    }
+
     function accountingShareSupply() public view returns (uint256) {
-        return shareToken.totalSupply() + _pendingRedeemShares;
+        return shareToken.totalSupply();
+    }
+
+    function accountingAssets() public view returns (uint256) {
+        uint256 assets = totalAssets();
+        uint256 pendingAssets = _pendingRedeemAssets;
+        return assets > pendingAssets ? assets - pendingAssets : 0;
     }
 
     function idleAssets() public view returns (uint256) {
         return _asset.balanceOf(address(this));
+    }
+
+    function availableIdleAssets() public view returns (uint256) {
+        uint256 liquid = idleAssets();
+        uint256 pendingAssets = _pendingRedeemAssets;
+        return liquid > pendingAssets ? liquid - pendingAssets : 0;
     }
 
     function hyperliquidAccountAssets() public view returns (uint256 assets) {
@@ -200,13 +223,13 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
 
     function convertToShares(uint256 assets) public view override returns (uint256) {
         uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
-        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = accountingAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
         return assets * supply / nav;
     }
 
     function convertToAssets(uint256 shares) public view override returns (uint256) {
         uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
-        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = accountingAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
         return shares * nav / supply;
     }
 
@@ -240,13 +263,13 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     function maxWithdraw(address owner) external view override returns (uint256) {
         if (!isAccountingFresh()) return 0;
         uint256 assets = convertToAssets(shareToken.balanceOf(owner));
-        uint256 liquid = idleAssets();
+        uint256 liquid = availableIdleAssets();
         return assets < liquid ? assets : liquid;
     }
 
     function previewWithdraw(uint256 assets) public view override returns (uint256 shares) {
         uint256 supply = accountingShareSupply() + HYPERLIQUID_VIRTUAL_OFFSET;
-        uint256 nav = totalAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
+        uint256 nav = accountingAssets() + HYPERLIQUID_VIRTUAL_OFFSET;
         return (assets * supply + nav - 1) / nav;
     }
 
@@ -260,7 +283,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         if (assets == 0) revert ZeroAmount();
         if (receiver == address(0) || owner == address(0)) revert ZeroAddress();
         _requireFreshAccounting();
-        uint256 liquid = idleAssets();
+        uint256 liquid = availableIdleAssets();
         if (assets > liquid) revert InsufficientLiquidity(assets, liquid);
 
         shares = previewWithdraw(assets);
@@ -276,7 +299,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     function maxRedeem(address owner) external view override returns (uint256) {
         if (!isAccountingFresh()) return 0;
         uint256 ownerShares = shareToken.balanceOf(owner);
-        uint256 liquidShares = convertToShares(idleAssets());
+        uint256 liquidShares = convertToShares(availableIdleAssets());
         return ownerShares < liquidShares ? ownerShares : liquidShares;
     }
 
@@ -296,7 +319,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         _requireFreshAccounting();
 
         assets = convertToAssets(shares);
-        uint256 liquid = idleAssets();
+        uint256 liquid = availableIdleAssets();
         if (assets > liquid) revert InsufficientLiquidity(assets, liquid);
         if (msg.sender != owner) {
             shareToken.spendAllowance(owner, msg.sender, shares);
@@ -320,12 +343,16 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
             shareToken.spendAllowance(owner, msg.sender, shares);
         }
 
+        uint256 assets = convertToAssets(shares);
+        if (assets == 0) revert ZeroAmount();
         shareToken.burn(owner, shares);
         _pendingRedeemShares += shares;
+        _pendingRedeemAssets += assets;
         requestId = ++nextWithdrawalRequestId;
         if (nextFulfillableWithdrawalRequestId == 0) {
             nextFulfillableWithdrawalRequestId = requestId;
         }
+        uint64 eligibleAt = _withdrawalEligibleAt(uint64(block.timestamp));
         withdrawalRequests[requestId] = WithdrawalRequest({
             owner: owner,
             receiver: receiver,
@@ -334,6 +361,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
             fulfilledAt: 0,
             cancelledAt: 0
         });
+        withdrawalRequestAssets[requestId] = assets;
+        withdrawalRequestEligibleAt[requestId] = eligibleAt;
 
         emit WithdrawalQueued(requestId, owner, receiver, shares);
     }
@@ -347,19 +376,24 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         }
 
         shares = request.shares;
+        uint256 assets = withdrawalRequestAssets[requestId];
+        uint256 refundShares = convertToShares(assets);
+        if (refundShares == 0) revert ZeroShares();
         request.cancelledAt = uint64(block.timestamp);
         _pendingRedeemShares -= shares;
-        shareToken.mint(request.owner, shares);
+        _pendingRedeemAssets -= assets;
+        shareToken.mint(request.owner, refundShares);
         _advanceNextFulfillableWithdrawalRequestId();
 
         emit WithdrawalCancelled(requestId, request.owner, shares);
+        return refundShares;
     }
 
     function fulfillNextRedeem() external nonReentrant whenNotPaused returns (uint256 requestId, uint256 assets) {
         _requireFreshAccounting();
-        _advanceNextFulfillableWithdrawalRequestId();
-        requestId = nextFulfillableWithdrawalRequestId;
-        if (requestId == 0 || requestId > nextWithdrawalRequestId) revert InvalidWithdrawalRequest();
+        _requireSettlementCaller();
+        requestId = _nextSettleableWithdrawalRequestId();
+        if (requestId == 0) revert NoSettleableWithdrawalRequest();
         assets = _fulfillRedeem(requestId);
     }
 
@@ -368,9 +402,10 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         WithdrawalRequest storage request = withdrawalRequests[requestId];
         if (request.owner == address(0)) revert InvalidWithdrawalRequest();
         if (request.fulfilledAt != 0 || request.cancelledAt != 0) revert WithdrawalAlreadyFinalized();
-        _advanceNextFulfillableWithdrawalRequestId();
-        if (requestId != nextFulfillableWithdrawalRequestId) {
-            revert WithdrawalQueueOutOfOrder(nextFulfillableWithdrawalRequestId, requestId);
+        _requireSettlementCaller();
+        uint256 expectedRequestId = _nextSettleableWithdrawalRequestId();
+        if (requestId != expectedRequestId) {
+            revert WithdrawalQueueOutOfOrder(expectedRequestId, requestId);
         }
         assets = _fulfillRedeem(requestId);
     }
@@ -380,17 +415,47 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         if (request.owner == address(0)) revert InvalidWithdrawalRequest();
         if (request.fulfilledAt != 0 || request.cancelledAt != 0) revert WithdrawalAlreadyFinalized();
 
-        assets = convertToAssets(request.shares);
+        uint64 eligibleAt = withdrawalRequestEligibleAt[requestId];
+        if (block.timestamp < eligibleAt) {
+            revert WithdrawalRequestNotEligible(requestId, eligibleAt, uint64(block.timestamp));
+        }
+
+        assets = withdrawalRequestAssets[requestId];
         uint256 liquid = idleAssets();
         if (assets > liquid) revert InsufficientLiquidity(assets, liquid);
 
         request.fulfilledAt = uint64(block.timestamp);
         _pendingRedeemShares -= request.shares;
+        _pendingRedeemAssets -= assets;
         _asset.safeTransfer(request.receiver, assets);
         _advanceNextFulfillableWithdrawalRequestId();
 
         emit WithdrawalFulfilled(requestId, request.owner, request.receiver, request.shares, assets);
         emit Withdraw(msg.sender, request.receiver, request.owner, assets, request.shares);
+    }
+
+    function isWithdrawalRequestEligible(uint256 requestId) public view returns (bool) {
+        WithdrawalRequest storage request = withdrawalRequests[requestId];
+        return request.owner != address(0) && request.fulfilledAt == 0 && request.cancelledAt == 0
+            && block.timestamp >= withdrawalRequestEligibleAt[requestId];
+    }
+
+    function _nextSettleableWithdrawalRequestId() internal returns (uint256) {
+        _advanceNextFulfillableWithdrawalRequestId();
+        uint256 liquid = idleAssets();
+        uint256 requestId = nextFulfillableWithdrawalRequestId;
+        while (requestId != 0 && requestId <= nextWithdrawalRequestId) {
+            WithdrawalRequest storage request = withdrawalRequests[requestId];
+            if (request.owner != address(0) && request.fulfilledAt == 0 && request.cancelledAt == 0) {
+                uint64 eligibleAt = withdrawalRequestEligibleAt[requestId];
+                if (block.timestamp < eligibleAt) return 0;
+                if (withdrawalRequestAssets[requestId] <= liquid) return requestId;
+            }
+            unchecked {
+                requestId++;
+            }
+        }
+        return 0;
     }
 
     function _advanceNextFulfillableWithdrawalRequestId() internal {
@@ -405,6 +470,19 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
             }
         }
         nextFulfillableWithdrawalRequestId = requestId;
+    }
+
+    function _withdrawalEligibleAt(uint64 createdAt) internal pure returns (uint64) {
+        uint256 nextEpoch = ((uint256(createdAt) / WITHDRAWAL_EPOCH_SECONDS) + 1) * WITHDRAWAL_EPOCH_SECONDS;
+        uint256 cutoff = nextEpoch - WITHDRAWAL_CUTOFF_SECONDS;
+        if (createdAt <= cutoff) return uint64(nextEpoch);
+        return uint64(nextEpoch + WITHDRAWAL_EPOCH_SECONDS);
+    }
+
+    function _requireSettlementCaller() internal view {
+        if (!hasRole(OPERATOR_ROLE, msg.sender) && !hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, OPERATOR_ROLE);
+        }
     }
 
     function approveHyperliquidApiWallet(address agentWallet, string calldata agentName)

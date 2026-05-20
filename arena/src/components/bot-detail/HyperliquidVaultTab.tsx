@@ -81,7 +81,7 @@ interface HyperliquidModeResponse {
 interface HyperliquidSettlementAttempt {
   epoch: string;
   last_attempt_at: string;
-  last_status: 'succeeded' | 'skipped' | 'failed';
+  last_status: 'succeeded' | 'skipped' | 'failed' | 'in_progress' | 'partial';
   fulfilled_count: number;
   fulfilled_assets: string;
   stopped_reason: string;
@@ -207,6 +207,21 @@ function modeClassName(mode: HyperliquidBotMode | undefined): string {
       return 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300';
     default:
       return 'border-arena-elements-borderColor/70 bg-muted/20 text-muted-foreground';
+  }
+}
+
+function settlementStatusLabel(status: HyperliquidSettlementAttempt['last_status']): string {
+  switch (status) {
+    case 'succeeded':
+      return 'Succeeded';
+    case 'skipped':
+      return 'Skipped';
+    case 'failed':
+      return 'Failed';
+    case 'in_progress':
+      return 'In progress';
+    case 'partial':
+      return 'Partial';
   }
 }
 
@@ -507,7 +522,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
           <div>Liquidity mode threshold: {formatPercentBps(mode?.thresholds.liquidity_mode_queue_bps)}</div>
           <div>Emergency queue threshold: {formatPercentBps(mode?.thresholds.emergency_queue_bps)}</div>
           <div>Settlement rollover: {settlement?.rollover == null ? 'N/A' : settlement.rollover ? 'yes' : 'no'}</div>
-          <div>Last settlement: {settlement?.last_attempt ? `${settlement.last_attempt.last_status} (${settlement.last_attempt.stopped_reason})` : 'None recorded'}</div>
+          <div>Last settlement: {settlement?.last_attempt ? `${settlementStatusLabel(settlement.last_attempt.last_status)} (${settlement.last_attempt.stopped_reason})` : 'None recorded'}</div>
         </div>
 
         {snapshot?.warnings?.length ? (

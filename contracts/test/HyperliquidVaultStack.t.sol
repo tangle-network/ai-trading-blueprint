@@ -351,7 +351,7 @@ contract HyperliquidVaultStackTest is Test {
         assertTrue(vault.isAccountingFresh());
     }
 
-    function test_queuedRedeemLocksSharesAndFulfillsAtFreshNavFifo() public {
+    function test_queuedRedeemLocksSharesAndStoresRequestPriceAndEligibility() public {
         (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("queued-redeem-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         VaultShare share = VaultShare(shareAddr);
@@ -373,8 +373,10 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.accountingShareSupply(), 2_000e6);
         assertEq(vault.totalAssets(), 10_000e6);
 
+        uint256 aliceRequestAssets = vault.convertToAssets(500e6);
         vm.prank(alice);
         uint256 aliceRequest = vault.requestRedeem(500e6, alice, alice);
+        uint256 bobRequestAssets = vault.convertToAssets(100e6);
         vm.prank(bob);
         uint256 bobRequest = vault.requestRedeem(100e6, bob, bob);
 
@@ -383,27 +385,144 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(share.balanceOf(alice), 500e6);
         assertEq(share.balanceOf(bob), 900e6);
         assertEq(vault.pendingRedeemShares(), 600e6);
-        assertEq(vault.accountingShareSupply(), 2_000e6);
+        assertEq(vault.pendingRedeemAssets(), aliceRequestAssets + bobRequestAssets);
+        assertEq(vault.withdrawalRequestAssets(aliceRequest), aliceRequestAssets);
+        assertEq(vault.withdrawalRequestAssets(bobRequest), bobRequestAssets);
+        assertEq(vault.accountingShareSupply(), 1_400e6);
         assertEq(vault.nextFulfillableWithdrawalRequestId(), 1);
+        assertFalse(vault.isWithdrawalRequestEligible(aliceRequest));
+        assertEq(vault.withdrawalRequestEligibleAt(aliceRequest), vault.WITHDRAWAL_EPOCH_SECONDS());
+        assertEq(vault.withdrawalRequestEligibleAt(bobRequest), vault.WITHDRAWAL_EPOCH_SECONDS());
+    }
 
-        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.WithdrawalQueueOutOfOrder.selector, 1, 2));
-        vault.fulfillRedeem(bobRequest);
+    function test_directFulfillCannotBypassRoleEligibilityOrEarlierSettleableRequest() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("direct-bypass-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
 
-        uint256 aliceRequestAssets = vault.convertToAssets(500e6);
-        vm.expectRevert(
-            abi.encodeWithSelector(HyperliquidVault.InsufficientLiquidity.selector, aliceRequestAssets, 2_000e6)
-        );
+        usdc.mint(alice, 1_000e6);
+        usdc.mint(bob, 1_000e6);
+        vm.startPrank(alice);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, alice);
+        uint256 aliceRequest = vault.requestRedeem(500e6, alice, alice);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, bob);
+        uint256 bobRequest = vault.requestRedeem(100e6, bob, bob);
+        vm.stopPrank();
+
+        vm.prank(operator);
+        vm.expectRevert(HyperliquidVault.NoSettleableWithdrawalRequest.selector);
+        vault.fulfillNextRedeem();
+
+        vm.warp(vault.withdrawalRequestEligibleAt(aliceRequest));
+        assertTrue(vault.isWithdrawalRequestEligible(aliceRequest));
+        assertTrue(vault.isWithdrawalRequestEligible(bobRequest));
+
+        vm.prank(alice);
+        vm.expectRevert();
         vault.fulfillRedeem(aliceRequest);
 
-        usdc.mint(vaultAddr, 3_000e6);
-        _mockHyperCoreAccount(vaultAddr, 0, 5_000e6);
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(HyperliquidVault.WithdrawalQueueOutOfOrder.selector, 1, 2));
+        vault.fulfillRedeem(bobRequest);
+    }
 
-        uint256 aliceBalanceBefore = usdc.balanceOf(alice);
-        uint256 fulfilledAssets = vault.fulfillRedeem(aliceRequest);
-        assertEq(fulfilledAssets, aliceRequestAssets);
-        assertEq(usdc.balanceOf(alice), aliceBalanceBefore + aliceRequestAssets);
-        assertEq(vault.pendingRedeemShares(), 100e6);
-        assertEq(vault.nextFulfillableWithdrawalRequestId(), 2);
+    function test_fulfillNextSkipsIlliquidHeadAndPaysLaterEligibleRequest() public {
+        (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("skip-illiquid-head-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        VaultShare share = VaultShare(shareAddr);
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
+
+        usdc.mint(alice, 1_000e6);
+        usdc.mint(bob, 1_000e6);
+        vm.startPrank(alice);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, alice);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, bob);
+        vm.stopPrank();
+
+        _mockHyperCoreAccount(vaultAddr, 0, 8_000e6);
+        vm.prank(alice);
+        uint256 aliceRequest = vault.requestRedeem(500e6, alice, alice);
+        vm.prank(bob);
+        uint256 bobRequest = vault.requestRedeem(100e6, bob, bob);
+        uint256 aliceRequestAssets = vault.withdrawalRequestAssets(aliceRequest);
+        uint256 bobRequestAssets = vault.withdrawalRequestAssets(bobRequest);
+        assertGt(aliceRequestAssets, vault.idleAssets());
+        assertLe(bobRequestAssets, vault.idleAssets());
+
+        vm.warp(vault.withdrawalRequestEligibleAt(aliceRequest));
+        uint256 bobBalanceBefore = usdc.balanceOf(bob);
+        vm.prank(operator);
+        (uint256 fulfilledRequestId, uint256 fulfilledAssets) = vault.fulfillNextRedeem();
+
+        assertEq(fulfilledRequestId, bobRequest);
+        assertEq(fulfilledAssets, bobRequestAssets);
+        assertEq(usdc.balanceOf(bob), bobBalanceBefore + bobRequestAssets);
+        assertEq(vault.pendingRedeemShares(), 500e6);
+        assertEq(vault.pendingRedeemAssets(), aliceRequestAssets);
+        assertEq(vault.nextFulfillableWithdrawalRequestId(), aliceRequest);
+        assertEq(share.balanceOf(alice), 500e6);
+    }
+
+    function test_queuedRedeemFulfillsAtRequestPriceAfterNavChange() public {
+        (address vaultAddr,) = _createBotVault(1, bytes32("request-price-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+
+        usdc.mint(user, 1_000e6);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, user);
+        uint256 requestId = vault.requestRedeem(500e6, user, user);
+        vm.stopPrank();
+        uint256 requestAssets = vault.withdrawalRequestAssets(requestId);
+        assertEq(requestAssets, 500e6);
+
+        usdc.mint(vaultAddr, 1_000e6);
+        assertGt(vault.convertToAssets(500e6), requestAssets);
+
+        vm.warp(vault.withdrawalRequestEligibleAt(requestId));
+        vm.prank(operator);
+        uint256 fulfilledAssets = vault.fulfillRedeem(requestId);
+
+        assertEq(fulfilledAssets, requestAssets);
+        assertEq(usdc.balanceOf(user), requestAssets);
+        assertEq(vault.pendingRedeemAssets(), 0);
+    }
+
+    function test_adminCancelAfterNavChangeReturnsCurrentEquivalentShares() public {
+        (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("admin-cancel-nav-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        VaultShare share = VaultShare(shareAddr);
+
+        usdc.mint(user, 1_000e6);
+        vm.startPrank(user);
+        usdc.approve(vaultAddr, 1_000e6);
+        vault.deposit(1_000e6, user);
+        uint256 requestId = vault.requestRedeem(500e6, user, user);
+        vm.stopPrank();
+        uint256 requestAssets = vault.withdrawalRequestAssets(requestId);
+        assertEq(share.balanceOf(user), 500e6);
+
+        _mockHyperCoreAccount(vaultAddr, 0, 1_000e6);
+        uint256 expectedRefundShares = vault.convertToShares(requestAssets);
+        assertLt(expectedRefundShares, 500e6);
+
+        vm.prank(admin);
+        uint256 refundShares = vault.cancelRedeem(requestId);
+
+        assertEq(refundShares, expectedRefundShares);
+        assertEq(share.balanceOf(user), 500e6 + refundShares);
+        assertEq(vault.pendingRedeemShares(), 0);
+        assertEq(vault.pendingRedeemAssets(), 0);
     }
 
     function test_queuedRedeemCanBeCancelledBeforeFulfillment() public {
