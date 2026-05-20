@@ -64,6 +64,9 @@ function ssrBrowserShim(): Plugin {
     `MutationObserver:function(){return{observe:function(){},disconnect:function(){}}},`,
     `IntersectionObserver:function(){return{observe:function(){},unobserve:function(){},disconnect:function(){}}}};`,
     `for(var __k in __ws){if(!(__k in globalThis)){try{globalThis[__k]=__ws[__k]}catch(e){}}}}`,
+    // storage
+    `if(typeof localStorage==='undefined'){globalThis.localStorage={getItem:function(){return null},setItem:function(){},removeItem:function(){},clear:function(){},key:function(){return null},length:0}}`,
+    `if(typeof sessionStorage==='undefined'){globalThis.sessionStorage={getItem:function(){return null},setItem:function(){},removeItem:function(){},clear:function(){},key:function(){return null},length:0}}`,
     // navigator
     `if(typeof navigator==='undefined'){globalThis.navigator={userAgent:'node',language:'en',languages:['en'],platform:'linux',`,
     `clipboard:{writeText:function(){return Promise.resolve()},readText:function(){return Promise.resolve('')}},onLine:true}}`,
@@ -87,7 +90,9 @@ function ssrBrowserShim(): Plugin {
         !code.includes('document') &&
         !code.includes('window') &&
         !code.includes('navigator') &&
-        !code.includes('HTMLElement')
+        !code.includes('HTMLElement') &&
+        !code.includes('localStorage') &&
+        !code.includes('sessionStorage')
       )
         return;
       return { code: shim + code, map: null };
