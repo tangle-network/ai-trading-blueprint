@@ -7054,6 +7054,257 @@ async fn test_self_improvement_loop_generates_candidate_gates_and_persists_run()
 }
 
 #[tokio::test]
+async fn test_self_improvement_records_sandbox_lineage_and_survives_rollback() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-sandbox-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..72 {
+        let base = if i < 36 {
+            140.0 - i as f64 * 1.1
+        } else {
+            100.0 + (i - 36) as f64 * 1.05
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.2),
+            "low": format!("{:.2}", base - 0.8),
+            "close": format!("{:.2}", base + 0.35),
+            "volume": "120000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let snapshot_body = serde_json::json!({
+        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+        "base_ref": "linh/feat/hype-perp",
+        "base_commit": "cc4b514",
+        "base_image_digest": "sha256:base-image",
+        "workspace_digest": "sha256:workspace-v0",
+        "workspace_path": "/workspace/bot"
+    });
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(snapshot_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap().to_string();
+
+    let candidate = backtest_config();
+    let first_body = serde_json::json!({
+        "user_intent": "Rewrite the local sandbox strategy runner to test a safer entry threshold.",
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7,
+        "sandbox_mutation": {
+            "base_snapshot_id": snapshot_id,
+            "patch": "diff --git a/trading-runtime/src/backtest/runner.rs b/trading-runtime/src/backtest/runner.rs\n+// safer threshold experiment\n",
+            "files_changed": ["trading-runtime/src/backtest/runner.rs"],
+            "tests": ["cargo test -p trading-runtime --lib"]
+        }
+    });
+    let first_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(first_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = first_resp.status();
+    let bytes = first_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let first_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = first_json["run"]["candidate_hash"].as_str().unwrap();
+    let first_revision_id = first_json["run"]["sandbox_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(first_json["run"]["base_snapshot_id"], snapshot_id);
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": candidate_hash,
+            "paper_pnl_pct": "0.1",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 10.0))
+        }));
+        let exec_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", &format!("Bearer {bot_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = exec_resp.status();
+        let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    }
+
+    let second_body = serde_json::json!({
+        "user_intent": "Continue the same sandbox experiment after paper trading evidence exists.",
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7,
+        "sandbox_mutation": {
+            "base_snapshot_id": snapshot_id,
+            "parent_revision_id": first_revision_id,
+            "patch": "diff --git a/trading-http-api/src/routes/evolution.rs b/trading-http-api/src/routes/evolution.rs\n+// persist paper evidence linkage\n",
+            "files_changed": ["trading-http-api/src/routes/evolution.rs"],
+            "tests": ["cargo test -p trading-http-api evolution --test api_tests"]
+        }
+    });
+    let second_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(second_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = second_resp.status();
+    let bytes = second_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let second_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(second_json["run"]["paper_evidence"]["trades"], 20);
+    let second_revision_id = second_json["run"]["sandbox_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{second_revision_id}/activate"
+                ))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "passed paper evidence"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let rollback_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/rollback")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "target_revision_id": first_revision_id,
+                        "reason": "regression detected"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = rollback_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let rollback: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(rollback["revision_id"], first_revision_id);
+    assert_eq!(rollback["rollback_from"], second_revision_id);
+
+    let lineage_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/sandbox/lineage")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = lineage_resp.into_body().collect().await.unwrap().to_bytes();
+    let lineage: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(lineage["snapshots"].as_array().unwrap().len(), 1);
+    assert_eq!(lineage["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(lineage["active_revision"]["revision_id"], first_revision_id);
+    assert_eq!(
+        lineage["active_revision"]["rollback_from"],
+        second_revision_id
+    );
+    assert!(
+        lineage["revisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|revision| {
+                revision["run_id"] == second_json["run"]["run_id"]
+                    && revision["parent_revision_id"] == first_revision_id
+            })
+    );
+}
+
+#[tokio::test]
 async fn test_self_improvement_rejects_short_intent_before_artifacting() {
     let mock = MockServer::start().await;
     let bot_id = format!("self-improve-short-{}", uuid::Uuid::new_v4());

@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use trading_runtime::backtest::{BacktestConfig, BacktestEngine, ExitRule, WalkForwardResult};
 
 use crate::candle_store::{self, CandleQuery};
-use crate::{MultiBotTradingState, TradingApiState, evolution_store, trade_store};
+use crate::{MultiBotTradingState, TradingApiState, evolution_store, sandbox_store, trade_store};
 
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
@@ -20,6 +20,17 @@ pub fn router() -> Router<Arc<TradingApiState>> {
             "/evolution/self-improve/runs",
             get(list_self_improvement_runs),
         )
+        .route("/evolution/sandbox/snapshot", post(create_sandbox_snapshot))
+        .route(
+            "/evolution/sandbox/revisions",
+            post(create_sandbox_revision),
+        )
+        .route(
+            "/evolution/sandbox/revisions/{revision_id}/activate",
+            post(activate_sandbox_revision),
+        )
+        .route("/evolution/sandbox/rollback", post(rollback_sandbox))
+        .route("/evolution/sandbox/lineage", get(get_sandbox_lineage))
         .route("/evolution/status", get(get_status))
 }
 
@@ -31,6 +42,26 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route(
             "/evolution/self-improve/runs",
             get(list_self_improvement_runs_multi_bot),
+        )
+        .route(
+            "/evolution/sandbox/snapshot",
+            post(create_sandbox_snapshot_multi_bot),
+        )
+        .route(
+            "/evolution/sandbox/revisions",
+            post(create_sandbox_revision_multi_bot),
+        )
+        .route(
+            "/evolution/sandbox/revisions/{revision_id}/activate",
+            post(activate_sandbox_revision_multi_bot),
+        )
+        .route(
+            "/evolution/sandbox/rollback",
+            post(rollback_sandbox_multi_bot),
+        )
+        .route(
+            "/evolution/sandbox/lineage",
+            get(get_sandbox_lineage_multi_bot),
         )
         .route("/evolution/status", get(get_status_multi_bot))
 }
@@ -119,12 +150,65 @@ pub struct SelfImproveRequest {
     pub min_paper_trades: u64,
     #[serde(default = "default_max_paper_drawdown_pct")]
     pub max_paper_drawdown_pct: f64,
+    #[serde(default)]
+    pub sandbox_mutation: Option<SandboxMutationRequest>,
 }
 
 #[derive(Serialize)]
 pub struct SelfImproveResponse {
     pub run: evolution_store::SelfImprovementRun,
     pub promotion: PromotionGateResponse,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SandboxMutationRequest {
+    pub base_snapshot_id: String,
+    #[serde(default)]
+    pub parent_revision_id: Option<String>,
+    pub patch: String,
+    #[serde(default)]
+    pub patch_sha256: Option<String>,
+    #[serde(default)]
+    pub files_changed: Vec<String>,
+    #[serde(default)]
+    pub tests: Vec<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSandboxSnapshotRequest {
+    pub base_repo: String,
+    pub base_ref: String,
+    pub base_commit: String,
+    pub base_image_digest: String,
+    pub workspace_digest: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSandboxRevisionRequest {
+    #[serde(flatten)]
+    pub mutation: SandboxMutationRequest,
+    pub user_intent: String,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivateSandboxRevisionRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollbackSandboxRequest {
+    pub target_revision_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 async fn run_evolution(
@@ -377,6 +461,7 @@ async fn self_improve_inner(
         )
     })?;
     let candidate_hash = hash_json(&candidate_json)?;
+    let sandbox_mutation = req.sandbox_mutation;
 
     let promotion = promotion_gate_inner(
         bot_id,
@@ -393,8 +478,20 @@ async fn self_improve_inner(
     .await?
     .0;
 
+    let run_id = format!("sir-{}", uuid::Uuid::new_v4());
+    let sandbox_revision = match sandbox_mutation {
+        Some(mutation) => {
+            let revision =
+                build_sandbox_revision(bot_id, user_intent, Some(run_id.clone()), mutation)?;
+            sandbox_store::insert_revision(revision.clone())
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            Some(revision)
+        }
+        None => None,
+    };
+
     let run = evolution_store::SelfImprovementRun {
-        run_id: format!("sir-{}", uuid::Uuid::new_v4()),
+        run_id,
         bot_id: bot_id.to_string(),
         created_at: chrono::Utc::now().timestamp(),
         user_intent: user_intent.to_string(),
@@ -413,6 +510,12 @@ async fn self_improve_inner(
             .paper
             .as_ref()
             .and_then(|paper| serde_json::to_value(paper).ok()),
+        base_snapshot_id: sandbox_revision
+            .as_ref()
+            .map(|revision| revision.base_snapshot_id.clone()),
+        sandbox_revision_id: sandbox_revision
+            .as_ref()
+            .map(|revision| revision.revision_id.clone()),
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -438,6 +541,252 @@ async fn list_self_improvement_runs_inner(
     let runs = evolution_store::list_for_bot(bot_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(runs))
+}
+
+async fn create_sandbox_snapshot(
+    State(state): State<Arc<TradingApiState>>,
+    Json(req): Json<CreateSandboxSnapshotRequest>,
+) -> Result<Json<sandbox_store::SandboxSnapshot>, (StatusCode, String)> {
+    create_sandbox_snapshot_inner(&state.bot_id, req).await
+}
+
+async fn create_sandbox_snapshot_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Json(req): Json<CreateSandboxSnapshotRequest>,
+) -> Result<Json<sandbox_store::SandboxSnapshot>, (StatusCode, String)> {
+    create_sandbox_snapshot_inner(&bot.bot_id, req).await
+}
+
+async fn create_sandbox_snapshot_inner(
+    bot_id: &str,
+    req: CreateSandboxSnapshotRequest,
+) -> Result<Json<sandbox_store::SandboxSnapshot>, (StatusCode, String)> {
+    require_nonempty("base_repo", &req.base_repo)?;
+    require_nonempty("base_ref", &req.base_ref)?;
+    require_nonempty("base_commit", &req.base_commit)?;
+    require_nonempty("base_image_digest", &req.base_image_digest)?;
+    require_nonempty("workspace_digest", &req.workspace_digest)?;
+
+    let snapshot = sandbox_store::SandboxSnapshot {
+        snapshot_id: format!("ss-{}", uuid::Uuid::new_v4()),
+        bot_id: bot_id.to_string(),
+        created_at: chrono::Utc::now(),
+        base_repo: req.base_repo.trim().to_string(),
+        base_ref: req.base_ref.trim().to_string(),
+        base_commit: req.base_commit.trim().to_string(),
+        base_image_digest: req.base_image_digest.trim().to_string(),
+        workspace_digest: req.workspace_digest.trim().to_string(),
+        workspace_path: req
+            .workspace_path
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty()),
+        notes: req
+            .notes
+            .map(|notes| notes.trim().to_string())
+            .filter(|notes| !notes.is_empty()),
+    };
+    sandbox_store::insert_snapshot(snapshot.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(snapshot))
+}
+
+async fn create_sandbox_revision(
+    State(state): State<Arc<TradingApiState>>,
+    Json(req): Json<CreateSandboxRevisionRequest>,
+) -> Result<Json<sandbox_store::SandboxRevision>, (StatusCode, String)> {
+    create_sandbox_revision_inner(&state.bot_id, req).await
+}
+
+async fn create_sandbox_revision_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Json(req): Json<CreateSandboxRevisionRequest>,
+) -> Result<Json<sandbox_store::SandboxRevision>, (StatusCode, String)> {
+    create_sandbox_revision_inner(&bot.bot_id, req).await
+}
+
+async fn create_sandbox_revision_inner(
+    bot_id: &str,
+    req: CreateSandboxRevisionRequest,
+) -> Result<Json<sandbox_store::SandboxRevision>, (StatusCode, String)> {
+    let revision =
+        build_sandbox_revision(bot_id, req.user_intent.trim(), req.run_id, req.mutation)?;
+    sandbox_store::insert_revision(revision.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(revision))
+}
+
+async fn activate_sandbox_revision(
+    State(state): State<Arc<TradingApiState>>,
+    Path(revision_id): Path<String>,
+    Json(req): Json<ActivateSandboxRevisionRequest>,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    activate_sandbox_revision_inner(&state.bot_id, &revision_id, req.reason, None).await
+}
+
+async fn activate_sandbox_revision_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Path(revision_id): Path<String>,
+    Json(req): Json<ActivateSandboxRevisionRequest>,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    activate_sandbox_revision_inner(&bot.bot_id, &revision_id, req.reason, None).await
+}
+
+async fn rollback_sandbox(
+    State(state): State<Arc<TradingApiState>>,
+    Json(req): Json<RollbackSandboxRequest>,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    rollback_sandbox_inner(&state.bot_id, req).await
+}
+
+async fn rollback_sandbox_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Json(req): Json<RollbackSandboxRequest>,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    rollback_sandbox_inner(&bot.bot_id, req).await
+}
+
+async fn rollback_sandbox_inner(
+    bot_id: &str,
+    req: RollbackSandboxRequest,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    let prior = sandbox_store::active_revision(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .map(|active| active.revision_id);
+    activate_sandbox_revision_inner(
+        bot_id,
+        &req.target_revision_id,
+        req.reason.or_else(|| Some("rollback".to_string())),
+        prior,
+    )
+    .await
+}
+
+async fn activate_sandbox_revision_inner(
+    bot_id: &str,
+    revision_id: &str,
+    reason: Option<String>,
+    rollback_from: Option<String>,
+) -> Result<Json<sandbox_store::ActiveSandboxRevision>, (StatusCode, String)> {
+    let revision = sandbox_store::get_revision(bot_id, revision_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("unknown sandbox revision '{revision_id}' for bot"),
+            )
+        })?;
+    let active = sandbox_store::ActiveSandboxRevision {
+        bot_id: bot_id.to_string(),
+        revision_id: revision.revision_id,
+        activated_at: chrono::Utc::now(),
+        reason: reason
+            .map(|reason| reason.trim().to_string())
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or_else(|| "activate".to_string()),
+        rollback_from,
+    };
+    sandbox_store::set_active_revision(active.clone())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(active))
+}
+
+async fn get_sandbox_lineage(
+    State(state): State<Arc<TradingApiState>>,
+) -> Result<Json<sandbox_store::SandboxLineage>, (StatusCode, String)> {
+    get_sandbox_lineage_inner(&state.bot_id).await
+}
+
+async fn get_sandbox_lineage_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+) -> Result<Json<sandbox_store::SandboxLineage>, (StatusCode, String)> {
+    get_sandbox_lineage_inner(&bot.bot_id).await
+}
+
+async fn get_sandbox_lineage_inner(
+    bot_id: &str,
+) -> Result<Json<sandbox_store::SandboxLineage>, (StatusCode, String)> {
+    let lineage =
+        sandbox_store::lineage(bot_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(lineage))
+}
+
+fn build_sandbox_revision(
+    bot_id: &str,
+    user_intent: &str,
+    run_id: Option<String>,
+    mutation: SandboxMutationRequest,
+) -> Result<sandbox_store::SandboxRevision, (StatusCode, String)> {
+    if user_intent.len() < 12 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "sandbox revision user_intent must be at least 12 non-whitespace characters"
+                .to_string(),
+        ));
+    }
+    require_nonempty("base_snapshot_id", &mutation.base_snapshot_id)?;
+    require_nonempty("patch", &mutation.patch)?;
+    if sandbox_store::get_snapshot(bot_id, &mutation.base_snapshot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "base_snapshot_id '{}' does not exist for bot",
+                mutation.base_snapshot_id
+            ),
+        ));
+    }
+    if let Some(parent_revision_id) = mutation.parent_revision_id.as_ref()
+        && sandbox_store::get_revision(bot_id, parent_revision_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("parent_revision_id '{parent_revision_id}' does not exist for bot"),
+        ));
+    }
+
+    let patch_sha256 = mutation
+        .patch_sha256
+        .map(|hash| hash.trim().to_string())
+        .filter(|hash| !hash.is_empty())
+        .unwrap_or_else(|| hash_bytes(mutation.patch.as_bytes()));
+
+    Ok(sandbox_store::SandboxRevision {
+        revision_id: format!("sr-{}", uuid::Uuid::new_v4()),
+        bot_id: bot_id.to_string(),
+        created_at: chrono::Utc::now(),
+        base_snapshot_id: mutation.base_snapshot_id,
+        parent_revision_id: mutation.parent_revision_id,
+        run_id,
+        user_intent: user_intent.to_string(),
+        patch_sha256,
+        patch: mutation.patch,
+        files_changed: mutation.files_changed,
+        tests: mutation.tests,
+        status: mutation
+            .status
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .unwrap_or_else(|| "candidate".to_string()),
+    })
+}
+
+fn require_nonempty(label: &str, value: &str) -> Result<(), (StatusCode, String)> {
+    if value.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{label} must not be empty"),
+        ));
+    }
+    Ok(())
 }
 
 fn propose_candidate(
@@ -493,6 +842,12 @@ fn hash_json(value: &serde_json::Value) -> Result<String, (StatusCode, String)> 
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 #[derive(Serialize)]
