@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use axum::body::Body;
 use axum::http::StatusCode;
+use axum::{Router, body::Body};
 use http_body_util::BodyExt;
 use hyper::Request;
 use tower::ServiceExt;
@@ -6198,6 +6198,116 @@ fn backtest_config() -> serde_json::Value {
     })
 }
 
+async fn record_evolution_candles(app: &Router, auth_token: &str) {
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+async fn create_sandbox_revision(
+    app: &Router,
+    auth_token: &str,
+    parent_revision_id: Option<&str>,
+) -> String {
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let mut body = serde_json::json!({
+        "user_intent": "Create exact revision-scoped paper evidence candidate.",
+        "base_snapshot_id": snapshot_id,
+        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// revision-scoped evidence\n",
+        "files_changed": ["strategy.rs"],
+        "tests": ["cargo test -p trading-runtime --lib"],
+        "status": "candidate"
+    });
+    if let Some(parent_revision_id) = parent_revision_id {
+        body["parent_revision_id"] = serde_json::Value::String(parent_revision_id.to_string());
+    }
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    revision["revision_id"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
 async fn test_backtest_run_returns_trades_and_stats() {
     let mock = MockServer::start().await;
@@ -7009,6 +7119,179 @@ async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_can
             || blocker.contains("missing pnl")
             || blocker.contains("missing equity")
     }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_does_not_leak_revision_evidence_across_bots() {
+    let mock = MockServer::start().await;
+    let bot_a = format!("evo-isolation-a-{}", uuid::Uuid::new_v4());
+    let bot_b = format!("evo-isolation-b-{}", uuid::Uuid::new_v4());
+    let app_a = build_router(test_state_with_bot_id(&mock.uri(), &bot_a).await);
+    let app_b = build_router(test_state_with_bot_id(&mock.uri(), &bot_b).await);
+    record_evolution_candles(&app_a, &bot_a).await;
+    record_evolution_candles(&app_b, &bot_b).await;
+
+    let probe_body = serde_json::json!({
+        "user_intent": "Probe shared candidate hash for bot isolation evidence.",
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+    let probe_resp = app_a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", format!("Bearer {bot_a}"))
+                .header("content-type", "application/json")
+                .body(Body::from(probe_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(probe_resp.status(), 200);
+    let bytes = probe_resp.into_body().collect().await.unwrap().to_bytes();
+    let probe_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = probe_json["run"]["candidate_hash"].as_str().unwrap();
+    let revision_id_a = create_sandbox_revision(&app_a, &bot_a, None).await;
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": candidate_hash,
+            "revision_id": revision_id_a,
+            "paper_pnl_pct": "0.2",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 20.0))
+        }));
+        let exec_resp = app_a
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", format!("Bearer {bot_a}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exec_resp.status(), 200);
+    }
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "revision_id": revision_id_a,
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+    let gate_resp = app_b
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", format!("Bearer {bot_b}"))
+                .header("content-type", "application/json")
+                .body(Body::from(gate_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["paper"], serde_json::Value::Null);
+    assert!(json["blockers"].as_array().unwrap().iter().any(|blocker| {
+        blocker
+            .as_str()
+            .unwrap()
+            .contains("missing persisted paper trading evidence")
+    }));
+}
+
+#[tokio::test]
+async fn test_execute_rejects_stale_live_revision_after_rollback() {
+    let market = MockServer::start().await;
+    let rpc = MockServer::start().await;
+    let state = live_test_state(&market.uri(), &rpc.uri()).await;
+    let app = build_router(state);
+
+    let first_revision_id = create_sandbox_revision(&app, TEST_TOKEN, None).await;
+    let second_revision_id =
+        create_sandbox_revision(&app, TEST_TOKEN, Some(&first_revision_id)).await;
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{second_revision_id}/activate"
+                ))
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "candidate passed paper evidence"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let rollback_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/rollback")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "target_revision_id": first_revision_id,
+                        "reason": "candidate failed canary"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rollback_resp.status(), 200);
+
+    let exec_body = execute_body_with_metadata(serde_json::json!({
+        "test_nonce": uuid::Uuid::new_v4().to_string(),
+        "revision_id": second_revision_id
+    }));
+    let exec_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(exec_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = exec_resp.status();
+    let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("not the active live revision"),
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
 }
 
 #[tokio::test]
