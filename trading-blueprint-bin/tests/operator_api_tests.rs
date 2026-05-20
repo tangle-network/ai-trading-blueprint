@@ -60,7 +60,7 @@ fn seed_sandbox_record(id: &str) {
         snapshot_s3_url: None,
         container_removed_at: None,
         image_removed_at: None,
-        original_image: "tangle-sidecar:local".to_string(),
+        original_image: "blueprint-sidecar:all-harness".to_string(),
         base_env_json: "{}".to_string(),
         user_env_json: String::new(),
         snapshot_destination: None,

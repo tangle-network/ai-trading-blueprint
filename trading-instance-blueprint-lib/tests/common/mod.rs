@@ -47,12 +47,12 @@ pub fn init_test_env() -> &'static tempfile::TempDir {
 
 /// Set up environment for the sidecar runtime config.
 ///
-/// Always forces `tangle-sidecar:local` — the local Docker image built for
+/// Always forces `blueprint-sidecar:all-harness` — the local Docker image built for
 /// testing. The `.env` file may have the remote image which doesn't exist
 /// locally.
 pub fn setup_sidecar_env() {
     unsafe {
-        std::env::set_var("SIDECAR_IMAGE", "tangle-sidecar:local");
+        std::env::set_var("SIDECAR_IMAGE", "blueprint-sidecar:all-harness");
         std::env::set_var("SIDECAR_PULL_IMAGE", "false");
         std::env::set_var("SIDECAR_PUBLIC_HOST", "127.0.0.1");
         std::env::set_var("REQUEST_TIMEOUT_SECS", "60");

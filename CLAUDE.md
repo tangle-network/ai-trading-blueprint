@@ -77,7 +77,7 @@ PR gate before merging UI changes:
 ## Running E2E Tests
 
 ### Prerequisites
-- Docker running with `tangle-sidecar:local` image built
+- Docker running with `blueprint-sidecar:all-harness` image built
 - Forge contracts compiled: `cd contracts && forge build`
 - For AI tests: `ZAI_API_KEY` set (from `.env` or environment)
 
