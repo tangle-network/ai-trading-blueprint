@@ -1,0 +1,56 @@
+name: Warm Nix Cache
+
+# Re-builds the toolchain profile on a daily cadence so Cachix entries
+# don't fall out of the LRU window between PRs. Triggered on demand
+# from the Actions UI for one-off refreshes (e.g. after a nixpkgs
+# channel bump or rust-toolchain change).
+#
+
+on:
+  schedule:
+    # Daily at 6am UTC — keeps store paths warm before the day's PRs.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: warm-nix-cache
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    name: Warm Nix Profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift \
+                      /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get -y clean
+          docker system prune -af || true
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: tangle-sandbox
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build + push universal profile
+        run: |
+          PROFILE=$(nix build .#default --print-out-paths)
+          echo "::notice ::Built profile: $PROFILE"
+          nix path-info --recursive "$PROFILE" | cachix push tangle-sandbox
+
+      - name: Build + push sub-profiles
+        run: |
+          for p in rust foundry; do
+            echo "::group::Pushing $p profile"
+            P=$(nix build .#$p --print-out-paths)
+            nix path-info --recursive "$P" | cachix push tangle-sandbox
+            echo "::endgroup::"
+          done
