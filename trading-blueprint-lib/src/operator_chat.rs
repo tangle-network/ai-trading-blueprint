@@ -128,14 +128,13 @@ async fn send_chat_request(
                     query,
                 )
                 .await
-                .map_err(|retry_error| {
+                .inspect_err(|retry_error| {
                     tracing::warn!(
                         sandbox_id = %target.sandbox_id,
                         initial = %initial_error.1,
                         retry = %retry_error.1,
                         "chat sidecar retry failed after recovery attempt"
                     );
-                    retry_error
                 });
             }
             Err(initial_error)
@@ -158,11 +157,11 @@ async fn send_chat_request_once(
         &format!("/{path}")
     };
     let mut url = format!("{base}{path}");
-    if let Some(q) = query {
-        if !q.is_empty() {
-            url.push('?');
-            url.push_str(q);
-        }
+    if let Some(q) = query
+        && !q.is_empty()
+    {
+        url.push('?');
+        url.push_str(q);
     }
 
     let mut req = client.request(method, &url);
@@ -317,14 +316,13 @@ pub async fn proxy_chat_events(
                 .ok_or_else(|| initial_error.clone())?;
             connect_chat_events_once(&client, &recovered_target, session_id.as_deref())
                 .await
-                .map_err(|retry_error| {
+                .inspect_err(|retry_error| {
                     tracing::warn!(
                         sandbox_id = %target.sandbox_id,
                         initial = %initial_error.1,
                         retry = %retry_error.1,
                         "chat SSE retry failed after recovery attempt"
                     );
-                    retry_error
                 })?
         }
     };
@@ -348,10 +346,10 @@ async fn connect_chat_events_once(
     session_id: Option<&str>,
 ) -> Result<reqwest::Response, (StatusCode, String)> {
     let mut url = format!("{}/agents/events", target.sidecar_url.trim_end_matches('/'));
-    if let Some(sid) = session_id {
-        if !sid.is_empty() {
-            url.push_str(&format!("?sessionId={sid}"));
-        }
+    if let Some(sid) = session_id
+        && !sid.is_empty()
+    {
+        url.push_str(&format!("?sessionId={sid}"));
     }
 
     let mut req = client.get(&url);

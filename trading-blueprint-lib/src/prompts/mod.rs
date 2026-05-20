@@ -457,6 +457,11 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          Keep the cycle small:\n\
          - Test one existing relevant tool, or\n\
          - Propose one HarnessConfig mutation and backtest it.\n\n\
+         First run the package-backed self-improvement status check:\n\
+         ```\n\
+         node /home/agent/tools/self-improvement-loop.mjs status\n\
+         ```\n\
+         If the Tangle packages are unavailable, run `npm install` or `pnpm install` from /home/agent before attempting a code-changing loop.\n\n\
          Correct candle workflow:\n\
          ```\n\
          curl -X POST {api_url}/market-data/candles/fetch -H 'Authorization: Bearer {token}' \\\n\
@@ -472,7 +477,12 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          ## 4. Promote or discard\n\
          If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
          If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
-         ## 5. Update memory\n\
+         ## 5. Record the self-improvement run\n\
+         For any code, prompt, tool, or harness mutation, record the sandbox snapshot, findings, knowledge, and promotion gate through:\n\
+         ```\n\
+         node /home/agent/tools/self-improvement-loop.mjs run \"<one sentence intent and mutation summary>\"\n\
+         ```\n\n\
+         ## 6. Update memory\n\
          Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
          Report: what you analyzed, what you changed, backtest results.",
         api_url = api_url,

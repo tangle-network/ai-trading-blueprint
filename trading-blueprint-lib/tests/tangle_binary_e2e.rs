@@ -405,16 +405,15 @@ async fn run_trade_pipeline(
             .header("Authorization", format!("Bearer {session_token}"))
             .send()
             .await
+            && resp.status().is_success()
         {
-            if resp.status().is_success() {
-                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                if let Some(bots) = body["bots"].as_array() {
-                    if let Some(first) = bots.first() {
-                        bot_id = first["id"].as_str().unwrap_or("").to_string();
-                        eprintln!("        Found bot: {bot_id} (attempt {attempt})");
-                        break;
-                    }
-                }
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if let Some(bots) = body["bots"].as_array()
+                && let Some(first) = bots.first()
+            {
+                bot_id = first["id"].as_str().unwrap_or("").to_string();
+                eprintln!("        Found bot: {bot_id} (attempt {attempt})");
+                break;
             }
         }
         if attempt % 10 == 0 {

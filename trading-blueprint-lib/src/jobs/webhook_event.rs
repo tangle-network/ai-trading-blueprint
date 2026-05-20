@@ -80,10 +80,10 @@ pub(crate) fn build_event_prompt_for_bot(
     data: &Value,
 ) -> String {
     // Try provider-specific event prompt
-    if let Some(pack) = packs::get_pack(&bot.strategy_type) {
-        if let Some(prompt) = pack.build_event_prompt(event_type, data, bot) {
-            return prompt;
-        }
+    if let Some(pack) = packs::get_pack(&bot.strategy_type)
+        && let Some(prompt) = pack.build_event_prompt(event_type, data, bot)
+    {
+        return prompt;
     }
 
     // Fallback: generic event prompt with strategy context

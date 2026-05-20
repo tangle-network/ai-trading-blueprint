@@ -253,13 +253,12 @@ fn apply_strategy_defaults(
     let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
     let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
 
-    if !strategy_config.contains_key("protocol_chain_id") {
-        if protocol_chain_id != execution_chain_id {
-            strategy_config.insert(
-                "protocol_chain_id".to_string(),
-                Value::Number(protocol_chain_id.into()),
-            );
-        }
+    if !strategy_config.contains_key("protocol_chain_id") && protocol_chain_id != execution_chain_id
+    {
+        strategy_config.insert(
+            "protocol_chain_id".to_string(),
+            Value::Number(protocol_chain_id.into()),
+        );
     }
 
     if let Some(default_protocol) = default_protocol_for_strategy(&request.strategy_type) {
@@ -635,7 +634,7 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
         );
     }
 
-    let floor = U256::from(((signer_count * 2) + 2) / 3);
+    let floor = U256::from((signer_count * 2).div_ceil(3));
     let required = if requested < floor { floor } else { requested };
     if required > U256::from(signer_count as u64) {
         return Err(format!(

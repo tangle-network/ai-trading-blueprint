@@ -21,6 +21,28 @@ use crate::state::{
 pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
     "/home/agent/.opencode/profile-instructions.md";
 
+fn trading_agent_package_json() -> String {
+    json!({
+        "name": "trading-agent",
+        "version": "1.0.0",
+        "private": true,
+        "scripts": {
+            "serve": "opencode serve",
+            "self-improve": "node /home/agent/tools/self-improvement-loop.mjs run",
+            "self-improve:status": "node /home/agent/tools/self-improvement-loop.mjs status"
+        },
+        "dependencies": {
+            "@tangle-network/agent-eval": "^0.29.1",
+            "@tangle-network/agent-knowledge": "^1.3.0",
+            "@tangle-network/agent-runtime": "^0.10.0"
+        },
+        "engines": {
+            "node": ">=20"
+        }
+    })
+    .to_string()
+}
+
 /// Per-bot mutex preventing concurrent activate/wipe operations.
 /// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
 static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
@@ -189,10 +211,10 @@ pub struct ActivateResult {
 }
 
 pub(crate) fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
-    if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL") {
-        if !explicit.trim().is_empty() {
-            return explicit;
-        }
+    if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL")
+        && !explicit.trim().is_empty()
+    {
+        return explicit;
     }
 
     let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
@@ -227,10 +249,10 @@ pub(crate) fn build_sidecar_bot_config(bot: &TradingBotRecord) -> TradingBotReco
 }
 
 pub(crate) fn resolve_sidecar_rpc_url(rpc_url: &str) -> String {
-    if let Ok(explicit) = std::env::var("SIDECAR_RPC_URL") {
-        if !explicit.trim().is_empty() {
-            return explicit;
-        }
+    if let Ok(explicit) = std::env::var("SIDECAR_RPC_URL")
+        && !explicit.trim().is_empty()
+    {
+        return explicit;
     }
 
     let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
@@ -347,14 +369,14 @@ pub async fn activate_bot_with_secrets(
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
-    if let Some(ref s) = sandbox {
-        if s.has_user_secrets() {
-            clear_activation(bot_id);
-            return Err(
-                "Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure."
-                    .to_string(),
-            );
-        }
+    if let Some(ref s) = sandbox
+        && s.has_user_secrets()
+    {
+        clear_activation(bot_id);
+        return Err(
+            "Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure."
+                .to_string(),
+        );
     }
 
     // 2. Inject user secrets into sandbox (sandbox-runtime merges base + user internally)
@@ -776,6 +798,7 @@ pub(crate) async fn sync_profile_instructions(
 /// Writes smart, self-contained tools that do the heavy lifting so the agent
 /// can focus on decision-making. Common tools for all strategies + strategy-specific tools.
 /// Also writes `/home/agent/config/api.json` so tools can call the Trading HTTP API.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_prebuilt_tools(
     sidecar_url: &str,
     token: &str,
@@ -789,12 +812,12 @@ pub(crate) async fn write_prebuilt_tools(
     operator_address: &str,
     strategy_config: &serde_json::Value,
 ) -> Result<(), String> {
-    // Write workspace package.json with serve script for OpenCode agent
+    // Write workspace package.json with OpenCode plus Tangle self-improvement packages.
     write_file_to_sidecar(
         sidecar_url,
         token,
         "/home/agent/package.json",
-        r#"{"name":"trading-agent","version":"1.0.0","private":true,"scripts":{"serve":"opencode serve"}}"#,
+        &trading_agent_package_json(),
     )
     .await?;
 
@@ -942,6 +965,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/self-improvement-loop.mjs",
+        include_str!("../prompts/tools/self_improvement_loop.mjs"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/record-candle.js",
         include_str!("../prompts/tools/record_candle.js"),
     )
@@ -1006,6 +1036,7 @@ pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(),
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -1052,6 +1083,35 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn trading_agent_package_installs_tangle_self_improvement_packages() {
+        let package: serde_json::Value =
+            serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
+        assert_eq!(package["scripts"]["serve"], "opencode serve");
+        assert_eq!(
+            package["scripts"]["self-improve:status"],
+            "node /home/agent/tools/self-improvement-loop.mjs status"
+        );
+        assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
+        assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
+        assert!(package["dependencies"]["@tangle-network/agent-knowledge"].is_string());
+        assert_eq!(package["engines"]["node"], ">=20");
+    }
+
+    #[test]
+    fn self_improvement_loop_uses_tangle_agent_packages_and_existing_api() {
+        let tool = include_str!("../prompts/tools/self_improvement_loop.mjs");
+        assert!(tool.contains("@tangle-network/agent-eval"));
+        assert!(tool.contains("@tangle-network/agent-runtime/analyst-loop"));
+        assert!(tool.contains("@tangle-network/agent-knowledge"));
+        assert!(tool.contains("/evolution/sandbox/snapshot"));
+        assert!(tool.contains("/evolution/self-improve"));
+        assert!(tool.contains("FindingsStore"));
+        assert!(tool.contains("runAnalystLoop"));
+        assert!(tool.contains("proposeFromFindings"));
+        assert!(tool.contains("applyKnowledgeWriteBlocks"));
+    }
 }
 
 /// Remove secrets from a bot: stop workflow, wipe user secrets from sidecar.
@@ -1073,18 +1133,18 @@ pub async fn wipe_bot_secrets(
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
-    if let Some(ref s) = sandbox {
-        if !s.has_user_secrets() {
-            return Err("Bot has no secrets to wipe".to_string());
-        }
+    if let Some(ref s) = sandbox
+        && !s.has_user_secrets()
+    {
+        return Err("Bot has no secrets to wipe".to_string());
     }
 
     // Remove all three split-tick workflows (fast=base, research=base+1, conversation=base+2).
     // Also sweep by name prefix to catch any stale workflows from a prior activation.
-    if let Some(wf_id) = bot.workflow_id {
-        if let Err(err) = remove_bot_workflows(&bot.id, wf_id) {
-            tracing::warn!("Failed to remove workflows for bot {}: {err}", bot.id);
-        }
+    if let Some(wf_id) = bot.workflow_id
+        && let Err(err) = remove_bot_workflows(&bot.id, wf_id)
+    {
+        tracing::warn!("Failed to remove workflows for bot {}: {err}", bot.id);
     }
 
     // Wipe user secrets — sandbox-runtime preserves base env automatically
