@@ -4,6 +4,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use trading_runtime::backtest::{BacktestConfig, BacktestEngine, ExitRule, WalkForwardResult};
@@ -31,6 +32,7 @@ pub fn router() -> Router<Arc<TradingApiState>> {
         )
         .route("/evolution/sandbox/rollback", post(rollback_sandbox))
         .route("/evolution/sandbox/lineage", get(get_sandbox_lineage))
+        .route("/evolution/revision-arena", get(get_revision_arena))
         .route("/evolution/status", get(get_status))
 }
 
@@ -62,6 +64,10 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route(
             "/evolution/sandbox/lineage",
             get(get_sandbox_lineage_multi_bot),
+        )
+        .route(
+            "/evolution/revision-arena",
+            get(get_revision_arena_multi_bot),
         )
         .route("/evolution/status", get(get_status_multi_bot))
 }
@@ -158,6 +164,63 @@ pub struct SelfImproveRequest {
 pub struct SelfImproveResponse {
     pub run: evolution_store::SelfImprovementRun,
     pub promotion: PromotionGateResponse,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionRunMode {
+    Live,
+    Canary,
+    Paper,
+    Shadow,
+    Backtest,
+    Research,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RevisionModeCapability {
+    pub mode: RevisionRunMode,
+    pub can_touch_funds: bool,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RevisionArenaEntry {
+    pub revision_id: String,
+    pub display_name: String,
+    pub source: String,
+    pub status: String,
+    pub run_mode: RevisionRunMode,
+    pub can_execute_live: bool,
+    #[serde(default)]
+    pub parent_revision_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    pub user_intent: String,
+    #[serde(default)]
+    pub patch_sha256: Option<String>,
+    #[serde(default)]
+    pub files_changed: Vec<String>,
+    #[serde(default)]
+    pub tests: Vec<String>,
+    #[serde(default)]
+    pub promotion_approved: Option<bool>,
+    #[serde(default)]
+    pub promotion_blockers: Vec<String>,
+    #[serde(default)]
+    pub paper_evidence: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RevisionArenaResponse {
+    pub bot_id: String,
+    pub invariant: &'static str,
+    pub active_revision_id: String,
+    pub live_revision_id: Option<String>,
+    pub revisions: Vec<RevisionArenaEntry>,
+    pub modes: Vec<RevisionModeCapability>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -713,6 +776,186 @@ async fn get_sandbox_lineage_inner(
     let lineage =
         sandbox_store::lineage(bot_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(lineage))
+}
+
+async fn get_revision_arena(
+    State(state): State<Arc<TradingApiState>>,
+) -> Result<Json<RevisionArenaResponse>, (StatusCode, String)> {
+    get_revision_arena_inner(&state.bot_id, state.paper_trade).await
+}
+
+async fn get_revision_arena_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+) -> Result<Json<RevisionArenaResponse>, (StatusCode, String)> {
+    get_revision_arena_inner(&bot.bot_id, bot.paper_trade).await
+}
+
+async fn get_revision_arena_inner(
+    bot_id: &str,
+    paper_trade: bool,
+) -> Result<Json<RevisionArenaResponse>, (StatusCode, String)> {
+    let lineage =
+        sandbox_store::lineage(bot_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let runs = evolution_store::list_for_bot(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(build_revision_arena(
+        bot_id,
+        paper_trade,
+        lineage,
+        runs,
+    )))
+}
+
+fn build_revision_arena(
+    bot_id: &str,
+    paper_trade: bool,
+    lineage: sandbox_store::SandboxLineage,
+    runs: Vec<evolution_store::SelfImprovementRun>,
+) -> RevisionArenaResponse {
+    let active_revision_id = lineage
+        .active_revision
+        .as_ref()
+        .map(|active| active.revision_id.clone())
+        .unwrap_or_else(|| "rev-0".to_string());
+    let live_revision_id = if paper_trade {
+        None
+    } else {
+        Some(active_revision_id.clone())
+    };
+    let run_by_revision: HashMap<String, evolution_store::SelfImprovementRun> = runs
+        .into_iter()
+        .filter_map(|run| {
+            run.sandbox_revision_id
+                .clone()
+                .map(|revision_id| (revision_id, run))
+        })
+        .collect();
+
+    let mut revisions = Vec::with_capacity(lineage.revisions.len() + 1);
+    revisions.push(RevisionArenaEntry {
+        revision_id: "rev-0".to_string(),
+        display_name: "Revision 0".to_string(),
+        source: "initial_baseline".to_string(),
+        status: if active_revision_id == "rev-0" {
+            "active".to_string()
+        } else {
+            "superseded".to_string()
+        },
+        run_mode: if paper_trade {
+            RevisionRunMode::Paper
+        } else {
+            RevisionRunMode::Live
+        },
+        can_execute_live: !paper_trade && active_revision_id == "rev-0",
+        parent_revision_id: None,
+        run_id: None,
+        created_at: lineage
+            .snapshots
+            .first()
+            .map(|snapshot| snapshot.created_at.to_rfc3339()),
+        user_intent: "Initial activated bot code, config, prompt, and memory baseline.".to_string(),
+        patch_sha256: None,
+        files_changed: Vec::new(),
+        tests: Vec::new(),
+        promotion_approved: Some(true),
+        promotion_blockers: Vec::new(),
+        paper_evidence: None,
+    });
+
+    for (index, revision) in lineage.revisions.iter().enumerate() {
+        let run = revision
+            .run_id
+            .as_ref()
+            .and_then(|_| run_by_revision.get(&revision.revision_id));
+        let is_active = active_revision_id == revision.revision_id;
+        let promotion_approved = run.map(|run| run.approved);
+        let promotion_blockers = run.map(|run| run.blockers.clone()).unwrap_or_default();
+        let status = if is_active {
+            "active".to_string()
+        } else if let Some(run) = run {
+            if run.approved {
+                "staged".to_string()
+            } else {
+                "blocked".to_string()
+            }
+        } else {
+            revision.status.clone()
+        };
+        let run_mode = if is_active {
+            if paper_trade {
+                RevisionRunMode::Paper
+            } else {
+                RevisionRunMode::Live
+            }
+        } else if promotion_approved == Some(true) {
+            RevisionRunMode::Paper
+        } else {
+            RevisionRunMode::Research
+        };
+
+        revisions.push(RevisionArenaEntry {
+            revision_id: revision.revision_id.clone(),
+            display_name: format!("Revision {}", index + 1),
+            source: "mcp_candidate".to_string(),
+            status,
+            run_mode,
+            can_execute_live: !paper_trade && is_active,
+            parent_revision_id: revision
+                .parent_revision_id
+                .clone()
+                .or_else(|| Some("rev-0".to_string())),
+            run_id: revision.run_id.clone(),
+            created_at: Some(revision.created_at.to_rfc3339()),
+            user_intent: revision.user_intent.clone(),
+            patch_sha256: Some(revision.patch_sha256.clone()),
+            files_changed: revision.files_changed.clone(),
+            tests: revision.tests.clone(),
+            promotion_approved,
+            promotion_blockers,
+            paper_evidence: run.and_then(|run| run.paper_evidence.clone()),
+        });
+    }
+
+    RevisionArenaResponse {
+        bot_id: bot_id.to_string(),
+        invariant: "Only the active live/canary revision may touch execution keys or vault funds; candidate revisions are paper, shadow, backtest, or research only.",
+        active_revision_id,
+        live_revision_id,
+        revisions,
+        modes: vec![
+            RevisionModeCapability {
+                mode: RevisionRunMode::Live,
+                can_touch_funds: true,
+                description: "Active approved revision with normal execution authority.",
+            },
+            RevisionModeCapability {
+                mode: RevisionRunMode::Canary,
+                can_touch_funds: true,
+                description: "Approved revision with capped live exposure and rollback triggers.",
+            },
+            RevisionModeCapability {
+                mode: RevisionRunMode::Paper,
+                can_touch_funds: false,
+                description: "Paper ledger execution only; no live keys or vault movement.",
+            },
+            RevisionModeCapability {
+                mode: RevisionRunMode::Shadow,
+                can_touch_funds: false,
+                description: "Consumes live feed and records intended trades without execution.",
+            },
+            RevisionModeCapability {
+                mode: RevisionRunMode::Backtest,
+                can_touch_funds: false,
+                description: "Historical replay against fixed market data.",
+            },
+            RevisionModeCapability {
+                mode: RevisionRunMode::Research,
+                can_touch_funds: false,
+                description: "Code, prompt, and strategy research before promotion evidence.",
+            },
+        ],
+    }
 }
 
 fn build_sandbox_revision(

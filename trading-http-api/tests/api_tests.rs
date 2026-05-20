@@ -7305,6 +7305,158 @@ async fn test_self_improvement_records_sandbox_lineage_and_survives_rollback() {
 }
 
 #[tokio::test]
+async fn test_revision_arena_projects_revision_zero_and_active_candidate() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("revision-arena-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let initial_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/revision-arena")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initial_resp.status(), 200);
+    let bytes = initial_resp.into_body().collect().await.unwrap().to_bytes();
+    let initial: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(initial["active_revision_id"], "rev-0");
+    assert_eq!(initial["live_revision_id"], serde_json::Value::Null);
+    assert_eq!(initial["revisions"].as_array().unwrap().len(), 1);
+    assert_eq!(initial["revisions"][0]["revision_id"], "rev-0");
+    assert_eq!(initial["revisions"][0]["run_mode"], "paper");
+    assert_eq!(initial["revisions"][0]["can_execute_live"], false);
+    assert!(
+        initial["invariant"]
+            .as_str()
+            .unwrap()
+            .contains("Only the active live/canary revision")
+    );
+
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "user_intent": "Create a paper-only revision arena candidate.",
+                        "base_snapshot_id": snapshot_id,
+                        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// candidate\n",
+                        "files_changed": ["strategy.rs"],
+                        "tests": ["cargo test -p trading-runtime --lib"],
+                        "status": "candidate"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let revision_id = revision["revision_id"].as_str().unwrap();
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{revision_id}/activate"
+                ))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "paper promotion accepted"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let arena_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/revision-arena")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(arena_resp.status(), 200);
+    let bytes = arena_resp.into_body().collect().await.unwrap().to_bytes();
+    let arena: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(arena["active_revision_id"], revision_id);
+    assert_eq!(arena["live_revision_id"], serde_json::Value::Null);
+    assert_eq!(arena["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(arena["revisions"][0]["status"], "superseded");
+    assert_eq!(arena["revisions"][1]["revision_id"], revision_id);
+    assert_eq!(arena["revisions"][1]["status"], "active");
+    assert_eq!(arena["revisions"][1]["run_mode"], "paper");
+    assert_eq!(arena["revisions"][1]["can_execute_live"], false);
+    assert_eq!(arena["revisions"][1]["parent_revision_id"], "rev-0");
+    assert_eq!(arena["revisions"][1]["files_changed"][0], "strategy.rs");
+    assert!(
+        arena["modes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|mode| mode["mode"] == "live" && mode["can_touch_funds"] == true)
+    );
+}
+
+#[tokio::test]
 async fn test_self_improvement_rejects_short_intent_before_artifacting() {
     let mock = MockServer::start().await;
     let bot_id = format!("self-improve-short-{}", uuid::Uuid::new_v4());
