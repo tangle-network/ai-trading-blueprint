@@ -32,7 +32,8 @@ const STATE_DIR = join(ROOT, '.evolve', 'mcp-self-improvement');
 const TASKS_DIR = join(STATE_DIR, 'tasks');
 const WORKTREE_DIR = join(STATE_DIR, 'worktrees');
 const DEFAULT_CODING_COMMAND =
-  process.env.SELF_IMPROVEMENT_CODING_COMMAND || 'opencode run --print';
+  process.env.SELF_IMPROVEMENT_CODING_COMMAND
+  || 'sh -lc \'opencode run --dangerously-skip-permissions "$(cat)"\'';
 const DEFAULT_REVIEW_COMMAND = process.env.SELF_IMPROVEMENT_REVIEW_COMMAND || '';
 const DEFAULT_TESTS = [
   'cargo fmt --check',
@@ -245,15 +246,21 @@ function runCodingAgent(task, variant, round) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     activeTasks.get(task.task_id).children.set(variant.variant_id, child);
+    const timeout = setTimeout(() => {
+      appendLog(task.task_id, `${variant.variant_id}: coding timed out after ${task.coding_timeout_ms}ms`);
+      child.kill('SIGTERM');
+    }, task.coding_timeout_ms);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('close', (code) => {
-      appendLog(task.task_id, `${variant.variant_id}: coding exited ${code}`);
+    child.on('close', (code, signal) => {
+      clearTimeout(timeout);
+      activeTasks.get(task.task_id)?.children.delete(variant.variant_id);
+      appendLog(task.task_id, `${variant.variant_id}: coding exited ${code ?? signal ?? 'unknown'}`);
       if (stdout.trim()) appendLog(task.task_id, `${variant.variant_id}: stdout\n${stdout.slice(-10000)}`);
       if (stderr.trim()) appendLog(task.task_id, `${variant.variant_id}: stderr\n${stderr.slice(-10000)}`);
-      resolve({ ok: code === 0, code, stdout, stderr });
+      resolve({ ok: code === 0, code: code ?? signal, stdout, stderr });
     });
     child.stdin.write(prompt);
     child.stdin.end();
@@ -332,6 +339,8 @@ function buildFeedback(coding, tests, review, variant) {
 }
 
 function updateVariantFromDiff(variant) {
+  git('add -N .', variant.worktree_path);
+  git('reset -q -- .self-improvement-prompt.md .self-improvement-spec.md', variant.worktree_path);
   const stats = diffStats(variant);
   const patch = diffPatch(variant);
   variant.diff_additions = stats.additions;
@@ -488,6 +497,7 @@ function createTask(args) {
       : Array.isArray(args.test_commands) && args.test_commands.length > 0
         ? args.test_commands.map(String)
         : DEFAULT_TESTS,
+    coding_timeout_ms: Number(args.coding_timeout_ms || 15 * 60 * 1000),
     test_timeout_ms: Number(args.test_timeout_ms || 20 * 60 * 1000),
     reviewer_command: args.reviewer_command ? String(args.reviewer_command) : DEFAULT_REVIEW_COMMAND,
     review_timeout_ms: Number(args.review_timeout_ms || 15 * 60 * 1000),
@@ -532,18 +542,26 @@ function statusTask(args) {
   return loadTask(String(args.task_id));
 }
 
-function listTasks() {
+function listTasks(args = {}) {
   ensureDir(TASKS_DIR);
-  return readdirSync(TASKS_DIR)
+  const maxResults = Math.min(
+    Math.max(1, Number(args.max_results || 50)),
+    200,
+  );
+  const out = [];
+  const names = readdirSync(TASKS_DIR)
     .filter((name) => name.endsWith('.json'))
-    .map((name) => {
-      try {
-        return summarizeTask(loadTask(name.replace(/\.json$/, '')));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+    .sort()
+    .reverse();
+  for (const name of names) {
+    try {
+      out.push(summarizeTask(loadTask(name.replace(/\.json$/, ''))));
+    } catch {
+      continue;
+    }
+    if (out.length >= maxResults) break;
+  }
+  return out;
 }
 
 function logsTask(args) {
@@ -626,6 +644,7 @@ const tools = {
         selection: { type: 'string' },
         tests: { type: 'array', items: { type: 'string' } },
         test_commands: { type: 'array', items: { type: 'string' } },
+        coding_timeout_ms: { type: 'number' },
         reviewer_command: { type: 'string' },
         harnesses: {
           type: 'array',
@@ -650,7 +669,7 @@ const tools = {
     handler: createTask,
   },
   'self_improvement.status': { description: 'Get full task status.', inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] }, handler: statusTask },
-  'self_improvement.list_tasks': { description: 'List task summaries.', inputSchema: { type: 'object', properties: {} }, handler: listTasks },
+  'self_improvement.list_tasks': { description: 'List task summaries, newest first.', inputSchema: { type: 'object', properties: { max_results: { type: 'number' } } }, handler: listTasks },
   'self_improvement.logs': { description: 'Read task logs.', inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] }, handler: logsTask },
   'self_improvement.patch': { description: 'Read winner or variant patch.', inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, variant_id: { type: 'string' } }, required: ['task_id'] }, handler: patchTask },
   'self_improvement.cancel': { description: 'Cancel an active task.', inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] }, handler: cancelTask },

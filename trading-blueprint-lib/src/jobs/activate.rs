@@ -1156,14 +1156,18 @@ mod tests {
         assert!(tool.contains("auto-dev-style"));
         assert!(tool.contains("variants"));
         assert!(tool.contains("reviewer_command"));
+        assert!(tool.contains("coding_timeout_ms"));
         assert!(tool.contains("selectWinner"));
         assert!(tool.contains("highest_readiness"));
         assert!(tool.contains("self_improvement.create_task"));
         assert!(tool.contains("self_improvement.list_tasks"));
+        assert!(tool.contains("max_results"));
         assert!(tool.contains("git worktree add"));
         assert!(tool.contains("max_shots"));
         assert!(tool.contains("runCodingAgent"));
         assert!(tool.contains("runTests"));
+        assert!(tool.contains("add -N ."));
+        assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
         assert!(tool.contains("self_improvement.cancel"));
         assert!(tool.contains("self_improvement.promote_candidate"));
     }
