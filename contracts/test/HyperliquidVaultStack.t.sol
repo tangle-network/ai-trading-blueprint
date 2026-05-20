@@ -58,6 +58,19 @@ contract HyperliquidVaultStackTest is Test {
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
+    function test_implementationInitializeRevertsButFactoryCloneInitializes() public {
+        vm.expectRevert(HyperliquidVault.AlreadyInitialized.selector);
+        implementation.initialize(address(usdc), VaultShare(address(0)), tradeValidator, admin, operator);
+
+        (address vaultAddr, address shareAddr) = _createBotVault(1, bytes32("implementation-lock-salt"));
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+
+        assertEq(vault.asset(), address(usdc));
+        assertEq(vault.share(), shareAddr);
+        assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
+        assertTrue(vault.hasRole(vault.OPERATOR_ROLE(), operator));
+    }
+
     function test_createBotVault_emitsCompatibleEventAndTracksVault() public {
         vm.recordLogs();
 

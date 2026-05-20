@@ -31,7 +31,7 @@ pub fn encode_add_api_wallet_action(
     agent_address: Address,
     agent_name: impl AsRef<str>,
 ) -> Result<Bytes, String> {
-    let payload = SolValue::abi_encode(&(agent_address, agent_name.as_ref().to_string()));
+    let payload = (agent_address, agent_name.as_ref().to_string()).abi_encode_params();
     encode_corewriter_action(ACTION_ADD_API_WALLET, payload)
 }
 
@@ -40,12 +40,12 @@ pub fn encode_spot_send_action(
     token: u64,
     wei: u64,
 ) -> Result<Bytes, String> {
-    let payload = SolValue::abi_encode(&(destination, token, wei));
+    let payload = (destination, token, wei).abi_encode_params();
     encode_corewriter_action(ACTION_SPOT_SEND, payload)
 }
 
 pub fn encode_usd_class_transfer_action(ntl: u64, to_perp: bool) -> Result<Bytes, String> {
-    let payload = SolValue::abi_encode(&(ntl, to_perp));
+    let payload = (ntl, to_perp).abi_encode_params();
     encode_corewriter_action(ACTION_USD_CLASS_TRANSFER, payload)
 }
 

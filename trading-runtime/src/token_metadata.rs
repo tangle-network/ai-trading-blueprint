@@ -1,6 +1,9 @@
 use crate::aave_v3_registry::{
     AAVE_V3_MARKETS, AaveReserve, reserve_by_any_token, reserve_by_symbol,
 };
+use alloy::primitives::Address;
+use std::str::FromStr;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenMetadata {
@@ -104,6 +107,11 @@ const HYPEREVM_TESTNET_USDC: TokenMetadata = TokenMetadata {
     coingecko_id: Some("usd-coin"),
     aliases: USDC_ALIASES,
 };
+const HYPEREVM_MAINNET_USDC_ENV_KEYS: &[&str] = &[
+    "HYPEREVM_MAINNET_USDC_ASSET_TOKEN",
+    "VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN",
+];
+static CONFIGURED_ADDRESS_INTERNER: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
 
 const ETHEREUM_TOKENS: &[TokenMetadata] = &[
     ETHEREUM_WETH,
@@ -130,6 +138,7 @@ pub fn chain_display_name(chain_id: u64) -> &'static str {
         10 => "Optimism",
         43114 => "Avalanche",
         998 => "HyperEVM testnet",
+        999 => "HyperEVM mainnet",
         1 => "Ethereum mainnet",
         31337 => "Ethereum fork",
         31338 | 31339 => "Ethereum local fork",
@@ -151,6 +160,10 @@ pub fn tokens_for_chain(chain_id: u64) -> &'static [TokenMetadata] {
 pub fn token_metadata_for_chain(chain_id: Option<u64>, token: &str) -> Option<TokenMetadata> {
     let chain_id = chain_id?;
     let key = normalize_token_key(token);
+    if let Some(metadata) = configured_token_metadata_for_chain(chain_id, &key) {
+        return Some(metadata);
+    }
+
     tokens_for_chain(chain_id)
         .iter()
         .find(|metadata| token_matches(metadata, &key))
@@ -165,6 +178,10 @@ pub fn token_metadata_for_chain(chain_id: Option<u64>, token: &str) -> Option<To
 
 pub fn token_address_for_symbol(chain_id: u64, symbol: &str) -> Option<&'static str> {
     let key = normalize_token_key(symbol);
+    if let Some(metadata) = configured_token_metadata_for_chain(chain_id, &key) {
+        return Some(metadata.address);
+    }
+
     tokens_for_chain(chain_id)
         .iter()
         .find(|metadata| key == metadata.symbol.to_ascii_lowercase())
@@ -233,6 +250,50 @@ fn token_metadata_across_known_chains(token: &str) -> Option<TokenMetadata> {
         })
 }
 
+fn configured_token_metadata_for_chain(chain_id: u64, key: &str) -> Option<TokenMetadata> {
+    match chain_id {
+        999 => configured_hyperevm_mainnet_usdc().filter(|metadata| token_matches(metadata, key)),
+        _ => None,
+    }
+}
+
+fn configured_hyperevm_mainnet_usdc() -> Option<TokenMetadata> {
+    // HyperEVM mainnet USDC is intentionally configured instead of hardcoded:
+    // this repo only commits the testnet address, while Arena exposes chain
+    // 999 through VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN.
+    configured_address(HYPEREVM_MAINNET_USDC_ENV_KEYS).map(|address| TokenMetadata {
+        symbol: "USDC",
+        address,
+        decimals: 6,
+        coingecko_id: Some("usd-coin"),
+        aliases: USDC_ALIASES,
+    })
+}
+
+fn configured_address(env_keys: &[&str]) -> Option<&'static str> {
+    env_keys
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty() && Address::from_str(value).is_ok())
+        .map(intern_configured_address)
+}
+
+fn intern_configured_address(value: String) -> &'static str {
+    let interner = CONFIGURED_ADDRESS_INTERNER.get_or_init(|| Mutex::new(Vec::new()));
+    let mut values = interner.lock().expect("configured address interner lock");
+    if let Some(existing) = values
+        .iter()
+        .find(|existing| existing.eq_ignore_ascii_case(&value))
+    {
+        return existing;
+    }
+
+    let leaked = Box::leak(value.into_boxed_str()) as &'static str;
+    values.push(leaked);
+    leaked
+}
+
 fn token_matches(metadata: &TokenMetadata, key: &str) -> bool {
     key == metadata.address.to_ascii_lowercase()
         || key == metadata.symbol.to_ascii_lowercase()
@@ -253,7 +314,7 @@ fn token_metadata_from_aave_reserve(reserve: &AaveReserve) -> TokenMetadata {
 }
 
 fn known_chain_ids() -> Vec<u64> {
-    let mut ids = vec![998_u64, 84532, 8453, 42161, 1, 31337, 31338, 31339];
+    let mut ids = vec![999_u64, 998, 84532, 8453, 42161, 1, 31337, 31338, 31339];
     ids.extend(AAVE_V3_MARKETS.iter().map(|market| market.chain_id));
     ids.sort_unstable();
     ids.dedup();

@@ -72,7 +72,9 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     error WithdrawalAlreadyFinalized();
     error WithdrawalQueueOutOfOrder(uint256 expectedRequestId, uint256 actualRequestId);
 
-    constructor() {}
+    constructor() {
+        _initialized = true;
+    }
 
     function initialize(
         address assetToken,
