@@ -7,8 +7,10 @@ import { toast } from 'sonner';
 import { useRedeem, useRedeemInKind, useRequestRedeem } from '~/lib/hooks/useVaultWrite';
 import { erc20Abi, tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { isKnownExternalHyperEvmChainId } from '~/lib/contracts/chains';
 import { addTx } from '@tangle-network/blueprint-ui';
 import { formatNumber } from '~/lib/format';
+import { ConfirmVaultActionDialog } from './ConfirmVaultActionDialog';
 
 interface WithdrawFormProps {
   vaultAddress: Address;
@@ -49,10 +51,11 @@ export function WithdrawForm({
   const [basePreviewAmount, setBasePreviewAmount] = useState<bigint | undefined>();
   const [baseMaxRedeemShares, setBaseMaxRedeemShares] = useState<bigint | undefined>();
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const redeemInKind = useRedeemInKind();
   const redeem = useRedeem();
   const requestRedeem = useRequestRedeem();
-  const isHyperEvmVault = targetChainId === Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
+  const isHyperEvmVault = isKnownExternalHyperEvmChainId(targetChainId);
 
   const sharesNumber = Number(shares);
   let parsedShares = 0n;
@@ -216,23 +219,27 @@ export function WithdrawForm({
     }
   }, [errorMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleClick = () => {
+  const validateSubmission = () => {
     if (!shares || invalidShares || sharesNumber <= 0) {
       toast.error('Enter a valid number of shares');
-      return;
+      return false;
     }
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
-      return;
+      return false;
     }
     if (paused) {
       toast.error('Vault is paused');
-      return;
+      return false;
     }
     if (insufficientShares) {
       toast.error('Insufficient shares');
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const submitWithdrawal = () => {
     if (isHyperEvmVault) {
       const shouldQueue = baseMaxRedeemShares != null && parsedShares > baseMaxRedeemShares;
       const action = shouldQueue ? requestRedeem.requestRedeem : redeem.redeem;
@@ -260,6 +267,11 @@ export function WithdrawForm({
       },
     };
     redeemInKind.redeemInKind(vaultAddress, shares, shareDecimals, targetChainId, callbacks);
+  };
+
+  const handleClick = () => {
+    if (!validateSubmission()) return;
+    setConfirmOpen(true);
   };
 
   const isPending = redeemInKind.isPending
@@ -308,6 +320,7 @@ export function WithdrawForm({
   }
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
@@ -391,5 +404,22 @@ export function WithdrawForm({
         </div>
       </CardContent>
     </Card>
+    <ConfirmVaultActionDialog
+      open={confirmOpen}
+      title={willQueue ? 'Confirm withdrawal request' : 'Confirm withdrawal'}
+      description={`${willQueue ? 'Queue' : 'Submit'} ${shares || '0'} vault shares on ${targetChainName}.`}
+      confirmLabel={willQueue ? 'Request withdrawal' : 'Withdraw'}
+      pending={isPending}
+      onOpenChange={setConfirmOpen}
+      onConfirm={() => {
+        if (!validateSubmission()) {
+          setConfirmOpen(false);
+          return;
+        }
+        setConfirmOpen(false);
+        submitWithdrawal();
+      }}
+    />
+    </>
   );
 }

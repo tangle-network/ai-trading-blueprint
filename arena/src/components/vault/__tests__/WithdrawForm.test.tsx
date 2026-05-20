@@ -39,6 +39,11 @@ vi.mock('@tangle-network/blueprint-ui/components', () => ({
   CardContent: ({ children }: any) => <div>{children}</div>,
   CardHeader: ({ children }: any) => <div>{children}</div>,
   CardTitle: ({ children }: any) => <div>{children}</div>,
+  Dialog: ({ children, open }: any) => (open ? <div>{children}</div> : null),
+  DialogContent: ({ children }: any) => <div>{children}</div>,
+  DialogDescription: ({ children }: any) => <p>{children}</p>,
+  DialogHeader: ({ children }: any) => <div>{children}</div>,
+  DialogTitle: ({ children }: any) => <h2>{children}</h2>,
   Input: (props: any) => <input {...props} />,
 }));
 
@@ -46,6 +51,10 @@ vi.mock('~/lib/contracts/chainClients', () => ({
   getChainPublicClient: () => ({
     readContract: mocks.readContract,
   }),
+}));
+
+vi.mock('~/lib/contracts/chains', () => ({
+  isKnownExternalHyperEvmChainId: (chainId: number) => chainId === 998 || chainId === 999,
 }));
 
 vi.mock('~/lib/hooks/useVaultWrite', () => ({
@@ -120,6 +129,9 @@ describe('WithdrawForm', () => {
       expect(screen.getByRole('button', { name: 'Request Withdrawal' })).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Request Withdrawal' }));
+    expect(mocks.requestRedeem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Request withdrawal' }));
 
     expect(mocks.requestRedeem).toHaveBeenCalledWith(
       baseProps.vaultAddress,
@@ -146,6 +158,9 @@ describe('WithdrawForm', () => {
       );
     });
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw Basket' }));
+    expect(mocks.redeemInKind).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
 
     expect(mocks.redeemInKind).toHaveBeenCalledWith(
       baseProps.vaultAddress,

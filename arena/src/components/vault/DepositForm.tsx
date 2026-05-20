@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { useApprove, useDeposit } from '~/lib/hooks/useVaultWrite';
 import { addTx } from '@tangle-network/blueprint-ui';
 import { formatNumber } from '~/lib/format';
+import { ConfirmVaultActionDialog } from './ConfirmVaultActionDialog';
 
 interface DepositFormProps {
   vaultAddress: Address;
@@ -42,6 +43,7 @@ export function DepositForm({
   const { isConnected, chainId } = useAccount();
   const isReady = isConnected && chainId === targetChainId;
   const [amount, setAmount] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingDepositAfterApprovalRef = useRef<{ amount: string } | null>(null);
 
   const approve = useApprove();
@@ -118,33 +120,42 @@ export function DepositForm({
     if (deposit.hash) addTx(deposit.hash, `Deposit ${amount || '?'} ${assetSymbol}`, targetChainId);
   }, [deposit.hash, assetSymbol, targetChainId]);
 
-  const handleClick = () => {
+  const validateSubmission = () => {
     if (!amount || invalidAmount || amountNumber <= 0) {
       toast.error('Enter a valid amount');
-      return;
+      return false;
     }
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
-      return;
+      return false;
     }
     if (paused) {
       toast.error('Vault is paused');
-      return;
+      return false;
     }
     if (insufficientBalance) {
       toast.error('Insufficient balance');
-      return;
+      return false;
     }
     if (exceedsMaxDeposit) {
       toast.error('Amount is above this vault deposit limit');
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const submitDeposit = () => {
     if (needsApproval && assetToken) {
       pendingDepositAfterApprovalRef.current = { amount };
       approve.approve(assetToken, vaultAddress, parsedAmount, targetChainId);
     } else {
       deposit.deposit(vaultAddress, amount, assetDecimals, targetChainId);
     }
+  };
+
+  const handleClick = () => {
+    if (!validateSubmission()) return;
+    setConfirmOpen(true);
   };
 
   const isPending = approve.isPending || approve.isConfirming || deposit.isPending || deposit.isConfirming;
@@ -192,6 +203,7 @@ export function DepositForm({
   }
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
@@ -253,5 +265,22 @@ export function DepositForm({
         </div>
       </CardContent>
     </Card>
+    <ConfirmVaultActionDialog
+      open={confirmOpen}
+      title={needsApproval ? 'Confirm approval and deposit' : 'Confirm deposit'}
+      description={`Submit ${amount || '0'} ${assetSymbol} to ${targetChainName}.`}
+      confirmLabel={needsApproval ? 'Approve and deposit' : 'Deposit'}
+      pending={isPending}
+      onOpenChange={setConfirmOpen}
+      onConfirm={() => {
+        if (!validateSubmission()) {
+          setConfirmOpen(false);
+          return;
+        }
+        setConfirmOpen(false);
+        submitDeposit();
+      }}
+    />
+    </>
   );
 }

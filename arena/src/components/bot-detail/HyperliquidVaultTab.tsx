@@ -21,6 +21,7 @@ import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { OPERATOR_API_URL } from '~/lib/operator/meta';
 import { formatNumber } from '~/lib/format';
+import { ConfirmVaultActionDialog } from '~/components/vault/ConfirmVaultActionDialog';
 
 interface HyperliquidVaultTabProps {
   bot: Bot;
@@ -127,7 +128,7 @@ interface WithdrawalRequestView {
   cancelledAt: bigint;
 }
 
-const HYPEREVM_TESTNET_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
+const DEFAULT_HYPEREVM_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID);
 
 const usdFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -229,11 +230,14 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
   const { address: userAddress, chainId, isConnected } = useAccount();
   const apiUrl = bot.operatorApiUrl ?? OPERATOR_API_URL;
   const auth = useOperatorAuth(apiUrl);
-  const targetChainId = bot.chainId ?? HYPEREVM_TESTNET_CHAIN_ID;
-  const targetChainName = networks[targetChainId]?.label ?? networks[targetChainId]?.chain.name ?? `Chain ${targetChainId}`;
+  const targetChainId = bot.chainId ?? (Number.isFinite(DEFAULT_HYPEREVM_CHAIN_ID) ? DEFAULT_HYPEREVM_CHAIN_ID : undefined);
+  const targetChainName = targetChainId != null
+    ? networks[targetChainId]?.label ?? networks[targetChainId]?.chain.name ?? `Chain ${targetChainId}`
+    : 'Unconfigured HyperEVM';
   const vaultAddress = isAddress(bot.vaultAddress) ? (bot.vaultAddress as Address) : undefined;
   const isReady = isConnected && chainId === targetChainId;
-  const vault = useVaultRead(vaultAddress, targetChainId);
+  const configuredVaultAddress = targetChainId != null && networks[targetChainId] ? vaultAddress : undefined;
+  const vault = useVaultRead(configuredVaultAddress, targetChainId ?? 0);
   const shareUnitDecimals = vault.assetDecimals;
 
   const navQuery = useQuery({
@@ -274,20 +278,20 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
 
   const accountingQuery = useQuery({
     queryKey: ['hyperliquid-vault-accounting', vaultAddress, targetChainId],
-    enabled: Boolean(vaultAddress),
+    enabled: Boolean(configuredVaultAddress),
     refetchInterval: 15_000,
     queryFn: async (): Promise<HyperliquidAccountingState> => {
-      if (!vaultAddress) return {};
+      if (!configuredVaultAddress || targetChainId == null) return {};
       const client = getChainPublicClient(targetChainId);
       const results = await client.multicall({
         contracts: [
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'idleAssets' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'hyperliquidAccountAssets' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'pendingRedeemShares' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'accountingShareSupply' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'isAccountingFresh' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'nextWithdrawalRequestId' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'nextFulfillableWithdrawalRequestId' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'idleAssets' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'hyperliquidAccountAssets' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'pendingRedeemShares' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'accountingShareSupply' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'isAccountingFresh' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'nextWithdrawalRequestId' },
+          { address: configuredVaultAddress, abi: tradingVaultAbi, functionName: 'nextFulfillableWithdrawalRequestId' },
         ],
         allowFailure: true,
       });
@@ -312,10 +316,10 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
       userAddress?.toLowerCase(),
       accountingQuery.data?.nextWithdrawalRequestId?.toString(),
     ],
-    enabled: Boolean(vaultAddress && userAddress && accountingQuery.data?.nextWithdrawalRequestId),
+    enabled: Boolean(configuredVaultAddress && userAddress && accountingQuery.data?.nextWithdrawalRequestId),
     refetchInterval: 15_000,
     queryFn: async (): Promise<WithdrawalRequestView[]> => {
-      if (!vaultAddress || !userAddress) return [];
+      if (!configuredVaultAddress || !userAddress || targetChainId == null) return [];
       const latest = accountingQuery.data?.nextWithdrawalRequestId ?? 0n;
       if (latest === 0n) return [];
       const first = latest > 100n ? latest - 99n : 1n;
@@ -326,7 +330,7 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
       }
       const results = await client.multicall({
         contracts: ids.map((id) => ({
-          address: vaultAddress,
+          address: configuredVaultAddress,
           abi: tradingVaultAbi,
           functionName: 'withdrawalRequests',
           args: [id],
@@ -374,6 +378,17 @@ export function HyperliquidVaultTab({ bot }: HyperliquidVaultTabProps) {
       <section className="rounded-lg border bg-card p-4">
         <h3 className="mb-2 text-sm font-semibold">Hyperliquid vault</h3>
         <p className="text-sm text-red-500">This bot does not have a valid vault address.</p>
+      </section>
+    );
+  }
+
+  if (targetChainId == null || !networks[targetChainId]) {
+    return (
+      <section className="rounded-lg border bg-card p-4">
+        <h3 className="mb-2 text-sm font-semibold">Hyperliquid vault</h3>
+        <p className="text-sm text-red-500">
+          HyperEVM is not configured for this bot. Set the matching VITE_HYPEREVM_* chain and RPC env before using vault controls.
+        </p>
       </section>
     );
   }
@@ -563,6 +578,7 @@ function RedeemPanel({
   const requestRedeem = useRequestRedeem();
   const confirmedRef = useRef(false);
   const queuedConfirmedRef = useRef(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const parsedShares = useMemo(() => {
     if (!shares.trim()) return 0n;
@@ -620,28 +636,31 @@ function RedeemPanel({
     }
   }, [onSuccess, requestRedeem]);
 
-  const handleRedeem = () => {
+  const validateRedeem = () => {
     if (parsedShares === null || parsedShares === 0n || !Number.isFinite(sharesNumber) || sharesNumber <= 0) {
       toast.error('Enter a valid number of shares');
-      return;
+      return false;
     }
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
-      return;
+      return false;
     }
     if (paused) {
       toast.error('Vault is paused');
-      return;
+      return false;
     }
     if (accountingFresh === false) {
       toast.error('Vault accounting is stale');
-      return;
+      return false;
     }
     if (insufficientShares) {
       toast.error('Insufficient shares');
-      return;
+      return false;
     }
+    return true;
+  };
 
+  const submitRedeem = () => {
     const action = willBeInstant ? redeem.redeem : requestRedeem.requestRedeem;
     const label = willBeInstant ? 'Request instant withdrawal' : 'Request queued withdrawal';
     action(vaultAddress, shares, shareUnitDecimals, targetChainId, {
@@ -654,6 +673,11 @@ function RedeemPanel({
         requestRedeem.reset();
       },
     });
+  };
+
+  const handleRedeem = () => {
+    if (!validateRedeem()) return;
+    setConfirmOpen(true);
   };
 
   const buttonText = !isConnected
@@ -673,6 +697,7 @@ function RedeemPanel({
     : 'Request Withdrawal';
 
   return (
+    <>
     <section className="rounded-lg border bg-card p-4">
       <h3 className="text-sm font-semibold">Redeem shares</h3>
       <p className="mt-1 text-xs text-muted-foreground">
@@ -739,6 +764,23 @@ function RedeemPanel({
         {buttonText}
       </Button>
     </section>
+    <ConfirmVaultActionDialog
+      open={confirmOpen}
+      title={willBeInstant ? 'Confirm instant withdrawal' : 'Confirm withdrawal request'}
+      description={`${willBeInstant ? 'Redeem' : 'Queue'} ${shares || '0'} Hyperliquid vault shares on ${targetChainName}.`}
+      confirmLabel={willBeInstant ? `Withdraw ${assetSymbol}` : 'Request withdrawal'}
+      pending={isPending}
+      onOpenChange={setConfirmOpen}
+      onConfirm={() => {
+        if (!validateRedeem()) {
+          setConfirmOpen(false);
+          return;
+        }
+        setConfirmOpen(false);
+        submitRedeem();
+      }}
+    />
+    </>
   );
 }
 
@@ -769,6 +811,8 @@ function QueuePanel({
   const fulfillNext = useFulfillNextRedeem();
   const cancelConfirmedRef = useRef(false);
   const fulfillConfirmedRef = useRef(false);
+  const [cancelRequestId, setCancelRequestId] = useState<bigint | null>(null);
+  const [fulfillConfirmOpen, setFulfillConfirmOpen] = useState(false);
   const hasFulfillable = nextFulfillableWithdrawalRequestId != null && nextFulfillableWithdrawalRequestId > 0n;
   const showAdminControls = import.meta.env.VITE_SHOW_HYPERLIQUID_ADMIN_CONTROLS === 'true';
 
@@ -796,7 +840,7 @@ function QueuePanel({
     }
   }, [fulfillNext, onSuccess]);
 
-  const onCancel = (requestId: bigint) => {
+  const submitCancel = (requestId: bigint) => {
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
       return;
@@ -810,7 +854,7 @@ function QueuePanel({
     });
   };
 
-  const onFulfillNext = () => {
+  const submitFulfillNext = () => {
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
       return;
@@ -825,6 +869,7 @@ function QueuePanel({
   };
 
   return (
+    <>
     <section className="rounded-lg border bg-card p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -839,7 +884,7 @@ function QueuePanel({
             variant="outline"
             size="sm"
             disabled={!isReady || !hasFulfillable || fulfillNext.isPending || fulfillNext.isConfirming}
-            onClick={onFulfillNext}
+            onClick={() => setFulfillConfirmOpen(true)}
           >
             {fulfillNext.isPending || fulfillNext.isConfirming ? 'Fulfilling...' : 'Admin fulfill next'}
           </Button>
@@ -885,7 +930,7 @@ function QueuePanel({
                         variant="outline"
                         size="sm"
                         disabled={!isReady || !canCancel}
-                        onClick={() => onCancel(request.id)}
+                        onClick={() => setCancelRequestId(request.id)}
                       >
                         Cancel
                       </Button>
@@ -898,6 +943,35 @@ function QueuePanel({
         )}
       </div>
     </section>
+    <ConfirmVaultActionDialog
+      open={cancelRequestId != null}
+      title="Confirm cancellation"
+      description={`Cancel withdrawal request #${cancelRequestId?.toString() ?? ''} on ${targetChainName}.`}
+      confirmLabel="Cancel request"
+      pending={cancelRedeem.isPending || cancelRedeem.isConfirming}
+      onOpenChange={(open) => {
+        if (!open) setCancelRequestId(null);
+      }}
+      onConfirm={() => {
+        if (cancelRequestId == null) return;
+        const requestId = cancelRequestId;
+        setCancelRequestId(null);
+        submitCancel(requestId);
+      }}
+    />
+    <ConfirmVaultActionDialog
+      open={fulfillConfirmOpen}
+      title="Confirm admin fulfill"
+      description={`Fulfill the next eligible Hyperliquid withdrawal request on ${targetChainName}.`}
+      confirmLabel="Fulfill next"
+      pending={fulfillNext.isPending || fulfillNext.isConfirming}
+      onOpenChange={setFulfillConfirmOpen}
+      onConfirm={() => {
+        setFulfillConfirmOpen(false);
+        submitFulfillNext();
+      }}
+    />
+    </>
   );
 }
 

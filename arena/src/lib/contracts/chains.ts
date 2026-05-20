@@ -15,6 +15,11 @@ const executionForkChainId = Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?
 const executionForkRpcUrl = import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? rpcUrl;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+export const KNOWN_EXTERNAL_HYPEREVM_CHAIN_IDS = [998, 999] as const;
+
+export function isKnownExternalHyperEvmChainId(chainId: number): boolean {
+  return (KNOWN_EXTERNAL_HYPEREVM_CHAIN_IDS as readonly number[]).includes(chainId);
+}
 
 function isLocalRpcUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -24,6 +29,17 @@ function isLocalRpcUrl(value: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+function nonEmptyEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function nonZeroAddressEnv(value: string | undefined): Address | undefined {
+  const trimmed = nonEmptyEnv(value);
+  if (!trimmed || trimmed.toLowerCase() === ZERO_ADDRESS) return undefined;
+  return trimmed as Address;
 }
 
 const includeLocalExecutionFork =
@@ -128,16 +144,59 @@ export const baseSepolia = defineChain({
 });
 
 const hyperEvmTestnetEnabled = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED === 'true';
-const hyperEvmTestnetChainId = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
-const hyperEvmTestnetRpcUrl =
-  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL ?? 'https://rpc.hyperliquid-testnet.xyz/evm';
+const configuredHyperEvmTestnetChainId = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID);
+const hyperEvmTestnetChainId = Number.isFinite(configuredHyperEvmTestnetChainId) && configuredHyperEvmTestnetChainId > 0
+  ? configuredHyperEvmTestnetChainId
+  : 998;
+const hyperEvmTestnetRpcUrl = nonEmptyEnv(import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL);
+const hyperEvmTestnetAssetToken = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN);
+const hyperEvmTestnetVaultFactory = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS);
+const hyperEvmTestnetVault = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS);
+export const hyperEvmTestnetConfigured =
+  hyperEvmTestnetEnabled &&
+  Number.isFinite(configuredHyperEvmTestnetChainId) &&
+  configuredHyperEvmTestnetChainId > 0 &&
+  Boolean(
+    hyperEvmTestnetRpcUrl &&
+      hyperEvmTestnetAssetToken &&
+      hyperEvmTestnetVaultFactory &&
+      hyperEvmTestnetVault,
+  );
 
 export const hyperEvmTestnet = defineChain({
   id: hyperEvmTestnetChainId,
   name: 'HyperEVM Testnet',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [hyperEvmTestnetRpcUrl] } },
+  rpcUrls: { default: { http: [hyperEvmTestnetRpcUrl ?? ''] } },
   blockExplorers: { default: { name: 'HyperEVM Testnet', url: '' } },
+});
+
+const hyperEvmMainnetEnabled = import.meta.env.VITE_HYPEREVM_MAINNET_ENABLED === 'true';
+const configuredHyperEvmMainnetChainId = Number(import.meta.env.VITE_HYPEREVM_MAINNET_CHAIN_ID);
+const hyperEvmMainnetChainId = Number.isFinite(configuredHyperEvmMainnetChainId) && configuredHyperEvmMainnetChainId > 0
+  ? configuredHyperEvmMainnetChainId
+  : 999;
+const hyperEvmMainnetRpcUrl = nonEmptyEnv(import.meta.env.VITE_HYPEREVM_MAINNET_RPC_URL);
+const hyperEvmMainnetAssetToken = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN);
+const hyperEvmMainnetVaultFactory = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS);
+const hyperEvmMainnetVault = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS);
+export const hyperEvmMainnetConfigured =
+  hyperEvmMainnetEnabled &&
+  Number.isFinite(configuredHyperEvmMainnetChainId) &&
+  configuredHyperEvmMainnetChainId > 0 &&
+  Boolean(
+    hyperEvmMainnetRpcUrl &&
+      hyperEvmMainnetAssetToken &&
+      hyperEvmMainnetVaultFactory &&
+      hyperEvmMainnetVault,
+  );
+
+export const hyperEvmMainnet = defineChain({
+  id: hyperEvmMainnetChainId,
+  name: 'HyperEVM Mainnet',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [hyperEvmMainnetRpcUrl ?? ''] } },
+  blockExplorers: { default: { name: 'HyperEVM', url: '' } },
 });
 
 export {
@@ -353,7 +412,7 @@ configureNetworks<ArenaAddresses>({
       tradingVault: baseSepoliaEnvelopeV3.tradingVault,
     },
   },
-  ...(hyperEvmTestnetEnabled
+  ...(hyperEvmTestnetConfigured
     ? {
         [hyperEvmTestnet.id]: {
           chain: hyperEvmTestnet,
@@ -364,10 +423,29 @@ configureNetworks<ArenaAddresses>({
             jobs: ZERO_ADDRESS,
             services: ZERO_ADDRESS,
             tangle: ZERO_ADDRESS,
-            vaultFactory: (import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS ?? ZERO_ADDRESS) as Address,
+            vaultFactory: hyperEvmTestnetVaultFactory!,
             tradingBlueprint: ZERO_ADDRESS,
             tradeValidator: ZERO_ADDRESS,
-            tradingVault: (import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS ?? ZERO_ADDRESS) as Address,
+            tradingVault: hyperEvmTestnetVault!,
+          },
+        },
+      }
+    : {}),
+  ...(hyperEvmMainnetConfigured
+    ? {
+        [hyperEvmMainnet.id]: {
+          chain: hyperEvmMainnet,
+          rpcUrl: hyperEvmMainnet.rpcUrls.default.http[0] ?? '',
+          label: 'HyperEVM Mainnet',
+          shortLabel: 'HyperEVM',
+          addresses: {
+            jobs: ZERO_ADDRESS,
+            services: ZERO_ADDRESS,
+            tangle: ZERO_ADDRESS,
+            vaultFactory: hyperEvmMainnetVaultFactory!,
+            tradingBlueprint: ZERO_ADDRESS,
+            tradeValidator: ZERO_ADDRESS,
+            tradingVault: hyperEvmMainnetVault!,
           },
         },
       }

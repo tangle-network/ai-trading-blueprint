@@ -1,7 +1,12 @@
 import { createPublicClient, defineChain, http } from 'viem';
 import type { PublicClient } from 'viem';
 import { mainnet } from 'viem/chains';
-import { executionForkChain, networks, rpcUrl } from '~/lib/contracts/chains';
+import {
+  executionForkChain,
+  isKnownExternalHyperEvmChainId,
+  networks,
+  rpcUrl,
+} from '~/lib/contracts/chains';
 
 const clientCache = new Map<number, PublicClient>();
 
@@ -31,6 +36,9 @@ export function getChainPublicClient(chainId: number): PublicClient {
   if (cached) return cached;
 
   const network = networks[chainId];
+  if ((!network || !network.rpcUrl) && isKnownExternalHyperEvmChainId(chainId)) {
+    throw new Error(`HyperEVM chain ${chainId} is not configured. Set the matching VITE_HYPEREVM_*_RPC_URL before reading this vault.`);
+  }
   const chain = network?.chain ?? fallbackChain(chainId);
   const transportUrl = network?.rpcUrl ?? fallbackRpcUrl(chainId);
   const client = createPublicClient({ chain, transport: http(transportUrl) });

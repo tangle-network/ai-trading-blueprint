@@ -178,6 +178,7 @@ vi.mock('~/lib/contracts/chains', () => ({
       },
     },
   },
+  isKnownExternalHyperEvmChainId: (chainId: number) => chainId === 998 || chainId === 999,
 }));
 
 vi.mock('@tangle-network/blueprint-ui/components', () => ({

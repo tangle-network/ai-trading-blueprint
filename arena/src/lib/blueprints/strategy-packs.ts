@@ -346,7 +346,7 @@ When funding rates diverge between GMX and Vertex:
     providers: ['Hyperliquid', 'CoinGecko'],
     description: 'Native Hyperliquid perpetual futures using a bot-bound HyperEVM vault account.',
     executionMode: 'single-chain',
-    supportedChainIds: [998],
+    supportedChainIds: [998, 999],
     cron: '0 */2 * * * *',
     conversationCron: CONVERSATION_CRON_5_MIN,
     researchCron: RESEARCH_CRON_2_HOURS,

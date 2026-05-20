@@ -4,6 +4,7 @@ import { formatUnits, zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { isKnownExternalHyperEvmChainId } from '~/lib/contracts/chains';
 
 interface VaultReadState {
   tvl?: number;
@@ -37,10 +38,8 @@ interface VaultReadState {
   error?: Error;
 }
 
-const HYPEREVM_TESTNET_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
-
 function usesAssetUnitShares(targetChainId: number): boolean {
-  return targetChainId === HYPEREVM_TESTNET_CHAIN_ID;
+  return isKnownExternalHyperEvmChainId(targetChainId);
 }
 
 /** Read all vault on-chain state using a standalone viem client. */

@@ -49,6 +49,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   networks: {
     0: { chain: { id: 0, name: 'Testnet' } },
   },
+  isKnownExternalHyperEvmChainId: (chainId: number) => chainId === 998 || chainId === 999,
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({
@@ -163,7 +164,7 @@ vi.mock('~/lib/blueprints', () => ({
       description: 'Hyperliquid perp strategy',
       providers: ['Hyperliquid'],
       executionMode: 'single-chain',
-      supportedChainIds: [998],
+      supportedChainIds: [998, 999],
       cron: '* * * * *',
       maxTurns: 1,
       timeoutMs: 1000,
@@ -242,9 +243,15 @@ describe('provision runtime backend helpers', () => {
     );
   });
 
-  it('falls back to the first configured network when the selected chain is unsupported', async () => {
+  it('falls back to the first configured network when a regular selected chain is unsupported', async () => {
     const { resolveSelectedProvisionNetwork } = await import('../provision');
     expect(resolveSelectedProvisionNetwork(31339)?.chain.id).toBe(0);
+  });
+
+  it('does not fall back to local config for unconfigured external HyperEVM chains', async () => {
+    const { resolveSelectedProvisionNetwork } = await import('../provision');
+    expect(resolveSelectedProvisionNetwork(998)).toBeUndefined();
+    expect(resolveSelectedProvisionNetwork(999)).toBeUndefined();
   });
 
   it('propagates normalized runtime and overrides into strategy config payload', async () => {
@@ -731,6 +738,13 @@ describe('provision runtime backend helpers', () => {
         enabled: true,
         chainId: 998,
       },
+      {
+        id: 'hyperevm-mainnet',
+        label: 'HyperEVM Mainnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 999,
+      },
     ] as const;
 
     expect(
@@ -752,7 +766,7 @@ describe('provision runtime backend helpers', () => {
       executionTargetsForStrategy('hyperliquid_perp', [...targets]).map(
         (target) => target.id,
       ),
-    ).toEqual(['hyperevm-testnet']);
+    ).toEqual(['hyperevm-testnet', 'hyperevm-mainnet']);
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
   });
 
@@ -792,6 +806,15 @@ describe('provision runtime backend helpers', () => {
         description: 'HyperEVM',
         enabled: true,
         chainId: 998,
+      }),
+    ).toEqual(['hyperliquid']);
+    expect(
+      availableProtocolsForStrategyTarget('hyperliquid_perp', {
+        id: 'hyperevm-mainnet',
+        label: 'HyperEVM Mainnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 999,
       }),
     ).toEqual(['hyperliquid']);
   });

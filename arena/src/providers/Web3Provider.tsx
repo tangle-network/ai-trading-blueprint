@@ -4,7 +4,14 @@ import { type ReactNode } from 'react';
 import type { Chain } from 'viem';
 import { defaultConnectKitOptions, getTangleWalletChains } from '@tangle-network/blueprint-ui';
 import { Web3Shell } from '@tangle-network/blueprint-ui/components';
-import { executionForkChain, hyperEvmTestnet, tangleLocal } from '~/lib/contracts/chains';
+import {
+  executionForkChain,
+  hyperEvmMainnet,
+  hyperEvmMainnetConfigured,
+  hyperEvmTestnet,
+  hyperEvmTestnetConfigured,
+  tangleLocal,
+} from '~/lib/contracts/chains';
 import { http } from 'wagmi';
 
 function isLocalRpcUrl(rpcUrl: string | undefined): boolean {
@@ -36,12 +43,12 @@ function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
     import.meta.env.VITE_DEX_ETHEREUM_ENABLED !== 'false' &&
     executionForkChain.id !== tangleLocal.id &&
     isLocalRpcUrl(executionForkRpc);
-  const shouldIncludeHyperEvmTestnet = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED === 'true';
 
   return dedupeChains([
     tangleLocal,
     ...(shouldIncludeLocalExecutionFork ? [executionForkChain] : []),
-    ...(shouldIncludeHyperEvmTestnet ? [hyperEvmTestnet] : []),
+    ...(hyperEvmTestnetConfigured ? [hyperEvmTestnet] : []),
+    ...(hyperEvmMainnetConfigured ? [hyperEvmMainnet] : []),
     ...tangleChains.slice(1),
   ]);
 }

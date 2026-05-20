@@ -27,7 +27,7 @@ import {
   tradingBlueprintAbi,
 } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { networks } from '~/lib/contracts/chains';
+import { isKnownExternalHyperEvmChainId, networks } from '~/lib/contracts/chains';
 import {
   publicClient,
   selectedChainIdStore,
@@ -169,6 +169,7 @@ type DexExecutionTargetId =
   | 'arbitrum'
   | 'arbitrum-one'
   | 'hyperevm-testnet'
+  | 'hyperevm-mainnet'
   | 'polygon'
   | 'optimism';
 
@@ -238,8 +239,6 @@ const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const POLYGON_USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const OPTIMISM_USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
 const ARBITRUM_USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
-const HYPEREVM_TESTNET_USDC_ADDRESS = '0x2B3370eE501B4a559b57D449569354196457D8Ab';
-
 const CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',
   10: 'Optimism',
@@ -271,6 +270,13 @@ function resolveEnvPositiveNumber(
 ): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveEnvPositiveNumberOptional(
+  value: string | undefined,
+): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -461,29 +467,88 @@ const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
   ),
 };
 
+const hyperEvmTestnetTargetEnabled = resolveEnvBoolean(
+  import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED,
+  false,
+);
+const hyperEvmTestnetTargetChainId = resolveEnvPositiveNumberOptional(
+  import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID,
+);
+const hyperEvmTestnetTargetRpcUrl =
+  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL?.trim() || undefined;
+const hyperEvmTestnetAssetToken = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN,
+);
+const hyperEvmTestnetVaultFactory = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS,
+);
+const hyperEvmTestnetVault = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS,
+);
+
 const DEFAULT_HYPEREVM_TESTNET_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'hyperevm-testnet',
   label: 'HyperEVM Testnet',
   description: 'Uses a bot-bound HyperEVM vault account for native Hyperliquid perps.',
   modeLabel: 'Hyperliquid perps',
-  enabled: resolveEnvBoolean(
-    import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED,
-    true,
-  ),
-  chainId: resolveEnvPositiveNumber(
-    import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID,
-    998,
-  ),
-  rpcUrl:
-    import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL ??
-    'https://rpc.hyperliquid-testnet.xyz/evm',
-  vaultFactoryAddress: import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS,
-  vaultAddress: import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS,
-  assetToken:
-    import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN ??
-    HYPEREVM_TESTNET_USDC_ADDRESS,
+  enabled: hyperEvmTestnetTargetEnabled &&
+    Boolean(
+      hyperEvmTestnetTargetChainId &&
+        hyperEvmTestnetTargetRpcUrl &&
+        hyperEvmTestnetAssetToken &&
+        hyperEvmTestnetVaultFactory &&
+        hyperEvmTestnetVault,
+    ),
+  chainId: hyperEvmTestnetTargetChainId,
+  rpcUrl: hyperEvmTestnetTargetRpcUrl,
+  vaultFactoryAddress: hyperEvmTestnetVaultFactory,
+  vaultAddress: hyperEvmTestnetVault,
+  assetToken: hyperEvmTestnetAssetToken,
   paperTrade: resolveEnvBoolean(
     import.meta.env.VITE_HYPEREVM_TESTNET_PAPER_TRADE,
+    false,
+  ),
+};
+
+const hyperEvmMainnetTargetEnabled = resolveEnvBoolean(
+  import.meta.env.VITE_HYPEREVM_MAINNET_ENABLED,
+  false,
+);
+const hyperEvmMainnetTargetChainId = resolveEnvPositiveNumberOptional(
+  import.meta.env.VITE_HYPEREVM_MAINNET_CHAIN_ID,
+);
+const hyperEvmMainnetTargetRpcUrl =
+  import.meta.env.VITE_HYPEREVM_MAINNET_RPC_URL?.trim() || undefined;
+const hyperEvmMainnetAssetToken = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN,
+);
+const hyperEvmMainnetVaultFactory = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS,
+);
+const hyperEvmMainnetVault = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS,
+);
+
+const DEFAULT_HYPEREVM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'hyperevm-mainnet',
+  label: 'HyperEVM Mainnet',
+  description: 'Uses a bot-bound HyperEVM vault account for native Hyperliquid perps.',
+  modeLabel: 'Hyperliquid perps',
+  enabled: hyperEvmMainnetTargetEnabled &&
+    Boolean(
+      hyperEvmMainnetTargetChainId &&
+        hyperEvmMainnetTargetRpcUrl &&
+        hyperEvmMainnetAssetToken &&
+        hyperEvmMainnetVaultFactory &&
+        hyperEvmMainnetVault,
+    ),
+  chainId: hyperEvmMainnetTargetChainId,
+  rpcUrl: hyperEvmMainnetTargetRpcUrl,
+  vaultFactoryAddress: hyperEvmMainnetVaultFactory,
+  vaultAddress: hyperEvmMainnetVault,
+  assetToken: hyperEvmMainnetAssetToken,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_HYPEREVM_MAINNET_PAPER_TRADE,
     false,
   ),
 };
@@ -527,6 +592,14 @@ const DEFAULT_OPTIMISM_EXECUTION_TARGET: DexExecutionTargetOption = {
 export function resolveSelectedProvisionNetwork(
   selectedChainId: number | undefined | null,
 ) {
+  if (
+    selectedChainId != null &&
+    isKnownExternalHyperEvmChainId(selectedChainId) &&
+    !networks[selectedChainId]
+  ) {
+    return undefined;
+  }
+
   const configuredNetworks = Object.values(networks);
   return (
     (selectedChainId != null ? networks[selectedChainId] : undefined) ??
@@ -795,6 +868,7 @@ export function resolveExecutionTargetProvisionConfig(
 ): ExecutionTargetProvisionConfig | null {
   const configuredFactoryAddress = nonZeroAddress(target?.vaultFactoryAddress);
   const configuredVaultAddress = nonZeroAddress(target?.vaultAddress);
+  const configuredAssetAddress = nonZeroAddress(target?.assetToken);
   const hasDistinctFactory =
     configuredFactoryAddress &&
     (!configuredVaultAddress ||
@@ -812,7 +886,7 @@ export function resolveExecutionTargetProvisionConfig(
     target.chainId == null ||
     !target.rpcUrl ||
     !provisionVaultAddress ||
-    !target.assetToken
+    !configuredAssetAddress
   ) {
     return null;
   }
@@ -827,16 +901,17 @@ export function resolveExecutionTargetProvisionConfig(
       configuredVaultAddress ??
       configuredFactoryAddress ??
       provisionVaultAddress,
-    assetAddress: target.assetToken as Address,
+    assetAddress: configuredAssetAddress,
     paperTrade: target.paperTrade ?? false,
     protocolChainId: target.protocolChainId,
   };
 }
 
 function nonZeroAddress(value: string | undefined | null): Address | undefined {
-  if (typeof value !== 'string' || value.toLowerCase() === ZERO_ADDRESS)
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === ZERO_ADDRESS)
     return undefined;
-  return value as Address;
+  return trimmed as Address;
 }
 
 function sameAddress(a: string, b: string): boolean {
@@ -1189,6 +1264,7 @@ export default function ProvisionPage() {
       DEFAULT_ARBITRUM_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET,
       DEFAULT_HYPEREVM_TESTNET_EXECUTION_TARGET,
+      DEFAULT_HYPEREVM_MAINNET_EXECUTION_TARGET,
       DEFAULT_POLYGON_EXECUTION_TARGET,
       DEFAULT_OPTIMISM_EXECUTION_TARGET,
     ];

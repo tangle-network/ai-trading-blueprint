@@ -5,6 +5,7 @@ import { useAccount } from 'wagmi';
 import { Skeleton } from '@tangle-network/blueprint-ui/components';
 import { tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { isKnownExternalHyperEvmChainId } from '~/lib/contracts/chains';
 import { timeAgo, truncateAddress } from '~/lib/format';
 
 type VaultActivityType = 'deposit' | 'withdraw' | 'redeem_in_kind';
@@ -39,7 +40,6 @@ const LOCAL_BOOTSTRAP_SCAN_BLOCKS = 500n;
 const MAX_ACTIVITY_ITEMS = 20;
 const LOCAL_CHAIN_IDS = new Set([31337, 31338, 31339]);
 const CHUNK_CONCURRENCY = 16;
-const HYPEREVM_TESTNET_CHAIN_ID = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? 998);
 const HYPEREVM_RECENT_BLOCK_WINDOW = 9n;
 
 const erc20TransferEvent = {
@@ -177,7 +177,7 @@ async function getVaultLogs(
   targetChainId: number,
 ) {
   const currentBlock = await client.getBlockNumber();
-  if (targetChainId === HYPEREVM_TESTNET_CHAIN_ID) {
+  if (isKnownExternalHyperEvmChainId(targetChainId)) {
     const fromBlock = currentBlock > HYPEREVM_RECENT_BLOCK_WINDOW
       ? currentBlock - HYPEREVM_RECENT_BLOCK_WINDOW
       : 0n;
