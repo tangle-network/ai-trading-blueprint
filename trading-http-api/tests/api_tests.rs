@@ -4713,6 +4713,17 @@ fn validate_body() -> String {
     .unwrap()
 }
 
+async fn multi_bot_hyperliquid_validator_state(
+    validator_uris: Vec<String>,
+) -> (Arc<MultiBotTradingState>, MockServer) {
+    let rpc_mock = MockServer::start().await;
+    let mut bot = live_bot_with_trust("bot-validators", trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = validator_uris;
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    (multi_bot_state_for_bot("bot-token-abc", bot), rpc_mock)
+}
+
 #[tokio::test]
 async fn test_multi_bot_validate_live_vault_trade_requires_simulation() {
     let state = multi_bot_state_with_validators(vec![]);
@@ -4778,7 +4789,7 @@ async fn test_multi_bot_validate_with_mock_validators() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4855,7 +4866,7 @@ async fn test_multi_bot_validate_below_threshold() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4906,7 +4917,8 @@ async fn test_multi_bot_validate_partial_failure() {
         .mount(&v_fail)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v_ok.uri(), v_fail.uri()]);
+    let (state, _rpc_mock) =
+        multi_bot_hyperliquid_validator_state(vec![v_ok.uri(), v_fail.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4957,7 +4969,7 @@ async fn test_multi_bot_validate_all_fail() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -6213,7 +6225,7 @@ async fn test_backtest_run_returns_trades_and_stats() {
     // Verify response structure
     let result = &json["result"];
     assert!(result["candles_processed"].as_u64().unwrap() > 0);
-    assert!(result["equity_curve"].as_array().unwrap().len() > 0);
+    assert!(!result["equity_curve"].as_array().unwrap().is_empty());
     assert!(result["stats"].is_object());
     assert!(result["stats"]["sharpe_ratio"].is_number());
     assert!(result["stats"]["max_drawdown_pct"].is_number());
@@ -7511,15 +7523,15 @@ impl Drop for CexEnvGuard {
     }
 }
 
-fn cex_env_lock() -> &'static std::sync::Mutex<()> {
+fn cex_env_lock() -> &'static tokio::sync::Mutex<()> {
     use std::sync::OnceLock;
-    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::const_new(()))
 }
 
 #[tokio::test]
 async fn test_cex_unknown_venue_returns_404() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
 
@@ -7540,7 +7552,7 @@ async fn test_cex_unknown_venue_returns_404() {
 
 #[tokio::test]
 async fn test_cex_live_direct_route_rejected_for_live_bot() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     ensure_state_dir();
     let bot_id = format!("bot-direct-cex-{}", uuid::Uuid::new_v4());
     let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
@@ -7573,7 +7585,7 @@ async fn test_cex_live_direct_route_rejected_for_live_bot() {
 
 #[tokio::test]
 async fn test_cex_binance_paper_order_through_mock() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -7643,7 +7655,7 @@ async fn test_cex_binance_paper_order_through_mock() {
 
 #[tokio::test]
 async fn test_cex_binance_account_endpoint() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -7691,7 +7703,7 @@ async fn test_cex_binance_account_endpoint() {
 
 #[tokio::test]
 async fn test_cex_binance_translates_insufficient_balance_to_402() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -7738,7 +7750,7 @@ async fn test_cex_binance_translates_insufficient_balance_to_402() {
 
 #[tokio::test]
 async fn test_cex_coinbase_paper_order_through_mock() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -7799,7 +7811,7 @@ async fn test_cex_coinbase_paper_order_through_mock() {
 
 #[tokio::test]
 async fn test_cex_coinbase_misconfigured_key_returns_503() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let _env = CexEnvGuard::set(&[
         ("COINBASE_BASE_URL", "http://127.0.0.1:1"),
         (

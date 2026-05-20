@@ -65,13 +65,13 @@ pub fn set_signed_envelope(bot_id: &str, env: &SignedEnvelope) -> Result<(), Set
         .lock()
         .map_err(|_| SetEnvelopeError::Internal("envelope mutex poisoned".into()))?;
 
-    if let Some(current) = get_signed_envelope(bot_id) {
-        if env.nonce <= current.nonce {
-            return Err(SetEnvelopeError::NonceConflict {
-                current: current.nonce,
-                attempted: env.nonce,
-            });
-        }
+    if let Some(current) = get_signed_envelope(bot_id)
+        && env.nonce <= current.nonce
+    {
+        return Err(SetEnvelopeError::NonceConflict {
+            current: current.nonce,
+            attempted: env.nonce,
+        });
     }
 
     std::fs::create_dir_all(envelope_dir())

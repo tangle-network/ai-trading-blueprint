@@ -951,14 +951,13 @@ fn bind_hyperliquid_account_metadata(
             if let Some(supplied) = map
                 .get("hyperliquid_account_address")
                 .and_then(serde_json::Value::as_str)
+                && !supplied.trim().eq_ignore_ascii_case(account)
             {
-                if !supplied.trim().eq_ignore_ascii_case(account) {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        "Hyperliquid account metadata does not match the provisioned bot account"
-                            .to_string(),
-                    ));
-                }
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Hyperliquid account metadata does not match the provisioned bot account"
+                        .to_string(),
+                ));
             }
             map.insert(
                 "hyperliquid_account_address".to_string(),
@@ -1096,23 +1095,23 @@ async fn resolve_market_valuation(
             price.price_usd,
         )),
         Err(error) => {
-            if let Some(live_input) = live_input {
-                if let Some(amount_raw) = amount_out_raw(intent) {
-                    let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
-                    if let Some(valuation) = resolve_live_token_usd_valuation(
-                        live_input,
-                        &intent.token_out,
-                        amount_raw,
-                        decimals,
-                    )
-                    .await
-                    {
-                        return Ok(TradeValuationSnapshot::priced(
-                            position_size,
-                            amount_out,
-                            valuation.price_usd,
-                        ));
-                    }
+            if let Some(live_input) = live_input
+                && let Some(amount_raw) = amount_out_raw(intent)
+            {
+                let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+                if let Some(valuation) = resolve_live_token_usd_valuation(
+                    live_input,
+                    &intent.token_out,
+                    amount_raw,
+                    decimals,
+                )
+                .await
+                {
+                    return Ok(TradeValuationSnapshot::priced(
+                        position_size,
+                        amount_out,
+                        valuation.price_usd,
+                    ));
                 }
             }
             tracing::warn!(
@@ -1156,20 +1155,15 @@ async fn resolve_swap_valuation(
         .await
         .ok()
         .map(|price| price.price_usd);
-    if token_out_price.is_none() {
-        if let (Some(live_input), Ok(amount_raw)) =
+    if token_out_price.is_none()
+        && let (Some(live_input), Ok(amount_raw)) =
             (live_input, U256::from_str(&intent.min_amount_out))
-        {
-            let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
-            token_out_price = resolve_live_token_usd_valuation(
-                live_input,
-                &intent.token_out,
-                amount_raw,
-                decimals,
-            )
-            .await
-            .map(|valuation| valuation.price_usd);
-        }
+    {
+        let decimals = known_token_decimals(chain_id, &intent.token_out).unwrap_or(18);
+        token_out_price =
+            resolve_live_token_usd_valuation(live_input, &intent.token_out, amount_raw, decimals)
+                .await
+                .map(|valuation| valuation.price_usd);
     }
     let estimated_amount_out = match (
         market_client
@@ -2354,12 +2348,10 @@ async fn execute_real_trade_inner(
         token_out_addr,
         min_out_u256,
         outcome.output_gained,
-    ) {
-        if let Some(bps) =
-            crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
-        {
-            crate::learning_store::record_fill(bot_id, tin, tout, bps);
-        }
+    ) && let Some(bps) =
+        crate::learning_store::observed_slippage_bps(u256_to_f64(min_out), u256_to_f64(actual))
+    {
+        crate::learning_store::record_fill(bot_id, tin, tout, bps);
     }
 
     let trade_id = uuid::Uuid::new_v4().to_string();
@@ -2565,28 +2557,26 @@ async fn execute_hyperliquid_trade(
                 | trading_runtime::types::Action::OpenShort
                 | trading_runtime::types::Action::Buy
         );
-    if is_open {
-        if let Some(signed_envelope) = signed_envelope {
-            let account = hl_client
-                .get_account_for(Some(&account_address))
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_GATEWAY,
-                        format!("HL account lookup failed for {account_address}: {e}"),
-                    )
-                })?;
-            let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
-            let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
-            let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
-            apply_envelope_checks(
-                signed_envelope,
-                &req.intent,
-                size_usd,
-                current_exposure,
-                true,
-            )?;
-        }
+    if is_open && let Some(signed_envelope) = signed_envelope {
+        let account = hl_client
+            .get_account_for(Some(&account_address))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("HL account lookup failed for {account_address}: {e}"),
+                )
+            })?;
+        let current_exposure_f64 = current_hyperliquid_exposure_usd(&account)?;
+        let current_exposure = Decimal::try_from(current_exposure_f64).unwrap_or(Decimal::ZERO);
+        let size_usd = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+        apply_envelope_checks(
+            signed_envelope,
+            &req.intent,
+            size_usd,
+            current_exposure,
+            true,
+        )?;
     }
     let is_buy = matches!(
         action,
@@ -3091,6 +3081,13 @@ async fn execute_multi_bot(
     }
 
     if !bot.paper_trade {
+        if bot.validation_trust == ValidationTrust::SelfOperated {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Live SelfOperated trust mode is disabled until exact-action production authorization is implemented".into(),
+            ));
+        }
+
         if normalized_req.intent.target_protocol == "hyperliquid" {
             crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action(
                 &bot,
@@ -3123,12 +3120,7 @@ async fn execute_multi_bot(
             ValidationTrust::Envelope => {
                 // Loaded and verified above; signed_envelope is already set.
             }
-            ValidationTrust::SelfOperated => {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "Live SelfOperated trust mode is disabled until exact-action production authorization is implemented".into(),
-                ));
-            }
+            ValidationTrust::SelfOperated => unreachable!("handled before external live checks"),
         }
 
         if check_and_insert_intent(&canonical_intent_hash) {
@@ -3173,18 +3165,18 @@ async fn execute_multi_bot(
 
     // For paper envelope trades, enforce constraints now (no live HL account data available).
     // Live HL trades re-check with real account exposure inside execute_hyperliquid_trade.
-    if bot.paper_trade {
-        if let Some(ref env) = signed_envelope {
-            let is_open = is_open_action(&normalized_req.intent.action);
-            let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
-            apply_envelope_checks(
-                env,
-                &normalized_req.intent,
-                size_usd,
-                Decimal::ZERO,
-                is_open,
-            )?;
-        }
+    if bot.paper_trade
+        && let Some(ref env) = signed_envelope
+    {
+        let is_open = is_open_action(&normalized_req.intent.action);
+        let size_usd: Decimal = valuation.notional_usd.unwrap_or(Decimal::ZERO);
+        apply_envelope_checks(
+            env,
+            &normalized_req.intent,
+            size_usd,
+            Decimal::ZERO,
+            is_open,
+        )?;
     }
 
     if bot.paper_trade && is_clob_trade {
@@ -3338,32 +3330,32 @@ async fn execute_multi_bot(
     };
 
     // Envelope-mode dispatch for vault-routed protocols.
-    if let Some(ref env) = signed_envelope {
-        if env.enforcement.is_some() {
-            let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
-            let response = execute_real_envelope_trade(
-                &bot.bot_id,
-                &executor,
-                &intent,
-                env,
-                &normalized_req,
-                stored_validation,
-                &valuation,
-                intent_hash_b256,
-                &state.alert_sink,
-            )
-            .await?;
-            if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
-                &bot,
-                Some(&state),
-                &state.market_data_base_url,
-            )
-            .await
-            {
-                tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
-            }
-            return Ok(response);
+    if let Some(ref env) = signed_envelope
+        && env.enforcement.is_some()
+    {
+        let intent_hash_b256 = B256::from(parse_intent_hash_bytes(&canonical_intent_hash)?);
+        let response = execute_real_envelope_trade(
+            &bot.bot_id,
+            &executor,
+            &intent,
+            env,
+            &normalized_req,
+            stored_validation,
+            &valuation,
+            intent_hash_b256,
+            &state.alert_sink,
+        )
+        .await?;
+        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+            &bot,
+            Some(&state),
+            &state.market_data_base_url,
+        )
+        .await
+        {
+            tracing::warn!(bot_id = %bot.bot_id, %error, "metrics snapshot failed after envelope trade");
         }
+        return Ok(response);
     }
 
     let response = execute_real_trade(RealTradeExecution {

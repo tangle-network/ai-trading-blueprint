@@ -1250,10 +1250,6 @@ mod tests {
 
         let mut candles = downtrend("ETH", 20, 2000.0, 30.0);
         candles.extend(downtrend("BTC", 20, 40000.0, 500.0));
-        // Sync timestamps
-        for c in &mut candles[20..] {
-            // BTC candles get same timestamps as ETH
-        }
 
         let engine = BacktestEngine::new(config);
         let result = engine.run(&candles, &[]).unwrap();
@@ -2278,7 +2274,7 @@ mod tests {
                 volume: Decimal::new(1_000_000, 0),
             },
             Candle {
-                timestamp: 1 * 3600,
+                timestamp: 3600,
                 token: "ETH".into(),
                 open: Decimal::new(100, 0),
                 high: Decimal::new(101, 0),

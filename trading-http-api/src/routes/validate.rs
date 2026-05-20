@@ -405,14 +405,13 @@ fn bind_hyperliquid_account_metadata(
             if let Some(supplied) = map
                 .get("hyperliquid_account_address")
                 .and_then(serde_json::Value::as_str)
+                && !supplied.trim().eq_ignore_ascii_case(account)
             {
-                if !supplied.trim().eq_ignore_ascii_case(account) {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        "Hyperliquid account metadata does not match the provisioned bot account"
-                            .to_string(),
-                    ));
-                }
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Hyperliquid account metadata does not match the provisioned bot account"
+                        .to_string(),
+                ));
             }
             map.insert(
                 "hyperliquid_account_address".to_string(),

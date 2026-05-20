@@ -143,12 +143,11 @@ async fn fill_configured_asset_price_gaps(
             continue;
         }
 
-        if let Some(live_input) = live_input {
-            if let Some(entry) =
+        if let Some(live_input) = live_input
+            && let Some(entry) =
                 price_configured_asset_from_live_valuation(live_input, requested, asset).await
-            {
-                entries.push(entry);
-            }
+        {
+            entries.push(entry);
         }
     }
 
