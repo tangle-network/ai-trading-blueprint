@@ -462,6 +462,7 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          node /home/agent/tools/self-improvement-loop.mjs status\n\
          ```\n\
          If the Tangle packages are unavailable, run `npm install` or `pnpm install` from /home/agent before attempting a code-changing loop.\n\n\
+         For code/tool changes, prefer the local MCP server over manual shell editing. It is registered at `/home/agent/config/self-improvement-mcp.json` and exposes `self_improvement.create_task`, `self_improvement.status`, `self_improvement.logs`, `self_improvement.patch`, `self_improvement.backtest`, and `self_improvement.promote_candidate`. The MCP creates an isolated worktree, drives multiple coding-agent shots, and only completes after tests pass.\n\n\
          Correct candle workflow:\n\
          ```\n\
          curl -X POST {api_url}/market-data/candles/fetch -H 'Authorization: Bearer {token}' \\\n\

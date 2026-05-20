@@ -29,7 +29,8 @@ fn trading_agent_package_json() -> String {
         "scripts": {
             "serve": "opencode serve",
             "self-improve": "node /home/agent/tools/self-improvement-loop.mjs run",
-            "self-improve:status": "node /home/agent/tools/self-improvement-loop.mjs status"
+            "self-improve:status": "node /home/agent/tools/self-improvement-loop.mjs status",
+            "mcp:self-improvement": "node /home/agent/tools/self-improvement-mcp-server.mjs"
         },
         "dependencies": {
             "@tangle-network/agent-eval": "^0.29.1",
@@ -972,6 +973,34 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/self-improvement-mcp-server.mjs",
+        include_str!("../prompts/tools/self_improvement_mcp_server.mjs"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/self-improvement-mcp.json",
+        &json!({
+            "name": "trading-self-improvement",
+            "transport": "stdio",
+            "command": "node",
+            "args": ["/home/agent/tools/self-improvement-mcp-server.mjs"],
+            "tools": [
+                "self_improvement.create_task",
+                "self_improvement.status",
+                "self_improvement.logs",
+                "self_improvement.patch",
+                "self_improvement.backtest",
+                "self_improvement.promote_candidate"
+            ]
+        })
+        .to_string(),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/record-candle.js",
         include_str!("../prompts/tools/record_candle.js"),
     )
@@ -1093,6 +1122,10 @@ mod tests {
             package["scripts"]["self-improve:status"],
             "node /home/agent/tools/self-improvement-loop.mjs status"
         );
+        assert_eq!(
+            package["scripts"]["mcp:self-improvement"],
+            "node /home/agent/tools/self-improvement-mcp-server.mjs"
+        );
         assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
         assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
         assert!(package["dependencies"]["@tangle-network/agent-knowledge"].is_string());
@@ -1111,6 +1144,19 @@ mod tests {
         assert!(tool.contains("runAnalystLoop"));
         assert!(tool.contains("proposeFromFindings"));
         assert!(tool.contains("applyKnowledgeWriteBlocks"));
+    }
+
+    #[test]
+    fn self_improvement_mcp_server_exposes_multishot_task_tools() {
+        let tool = include_str!("../prompts/tools/self_improvement_mcp_server.mjs");
+        assert!(tool.contains("tools/list"));
+        assert!(tool.contains("tools/call"));
+        assert!(tool.contains("self_improvement.create_task"));
+        assert!(tool.contains("git worktree add"));
+        assert!(tool.contains("max_shots"));
+        assert!(tool.contains("runCodingAgent"));
+        assert!(tool.contains("runTests"));
+        assert!(tool.contains("self_improvement.promote_candidate"));
     }
 }
 
