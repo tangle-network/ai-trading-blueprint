@@ -16063,6 +16063,7 @@ dependencies = [
  "sandbox-runtime",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solana-sdk",
  "tempfile",
  "tokio",

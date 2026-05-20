@@ -148,6 +148,10 @@ impl HyperliquidClient {
         })
     }
 
+    pub fn wallet_address(&self) -> String {
+        format!("{:#x}", self.wallet.address())
+    }
+
     pub async fn resolve_asset(&self, id: &AssetId) -> Result<u32, String> {
         match id {
             AssetId::Index(i) => Ok(*i),

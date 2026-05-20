@@ -818,8 +818,9 @@ fn expected_validation_hashes(
 
     if intent.target_protocol == "hyperliquid" {
         let order = hyperliquid_order_from_intent(intent);
+        let account = hyperliquid_account_from_intent(intent)?;
         let execution_hash =
-            hash_hyperliquid_order(&order, intent_hash, deadline, execution_chain_id);
+            hash_hyperliquid_order(&order, &account, intent_hash, deadline, execution_chain_id);
         return Ok((expected_intent_hash, format_b256(execution_hash)));
     }
 
@@ -926,6 +927,64 @@ fn metadata_with_execution_deadline(
         }
         _ => serde_json::json!({ "execution_deadline": deadline }),
     }
+}
+
+fn bind_hyperliquid_account_metadata(
+    protocol: &str,
+    metadata: &serde_json::Value,
+    account: &str,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    if protocol != "hyperliquid" {
+        return Ok(metadata.clone());
+    }
+    let account = account.trim();
+    if account.is_empty() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid execution requires an authoritative account address".to_string(),
+        ));
+    }
+
+    let mut metadata = metadata.clone();
+    match metadata {
+        serde_json::Value::Object(ref mut map) => {
+            if let Some(supplied) = map
+                .get("hyperliquid_account_address")
+                .and_then(serde_json::Value::as_str)
+            {
+                if !supplied.trim().eq_ignore_ascii_case(account) {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "Hyperliquid account metadata does not match the provisioned bot account"
+                            .to_string(),
+                    ));
+                }
+            }
+            map.insert(
+                "hyperliquid_account_address".to_string(),
+                serde_json::Value::String(account.to_string()),
+            );
+            Ok(metadata)
+        }
+        _ => Ok(serde_json::json!({ "hyperliquid_account_address": account })),
+    }
+}
+
+fn hyperliquid_account_from_intent(intent: &TradeIntent) -> Result<String, (StatusCode, String)> {
+    intent
+        .metadata
+        .get("hyperliquid_account_address")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Hyperliquid execution hash requires hyperliquid_account_address metadata"
+                    .to_string(),
+            )
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -2467,6 +2526,7 @@ async fn execute_hyperliquid_trade(
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
+    super::hyperliquid::require_hyperliquid_execution_ready(state, bot)?;
     let hl_client = super::hyperliquid::get_hl_client(state)?;
     let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
 
@@ -2684,6 +2744,26 @@ async fn execute(
         &normalized_request.intent.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let authoritative_hyperliquid_account =
+        if normalized_request.intent.target_protocol == "hyperliquid" {
+            super::hyperliquid::hyperliquid_account_address_from_config(
+                &state.strategy_config,
+                &state.vault_address,
+            )
+            .ok_or_else(|| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Hyperliquid execution requires an authoritative account address".to_string(),
+                )
+            })?
+        } else {
+            String::new()
+        };
+    normalized_request.intent.metadata = bind_hyperliquid_account_metadata(
+        &normalized_request.intent.target_protocol,
+        &normalized_request.intent.metadata,
+        &authoritative_hyperliquid_account,
+    )?;
     crate::validate_morpho_protocol_request(
         &serde_json::Value::Null,
         protocol_chain_id.unwrap_or(state.chain_id.unwrap_or(42161)),
@@ -2915,6 +2995,17 @@ async fn execute_multi_bot(
         &normalized_req.intent.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let authoritative_hyperliquid_account =
+        if normalized_req.intent.target_protocol == "hyperliquid" {
+            super::hyperliquid::require_hyperliquid_account_address(&bot)?
+        } else {
+            String::new()
+        };
+    normalized_req.intent.metadata = bind_hyperliquid_account_metadata(
+        &normalized_req.intent.target_protocol,
+        &normalized_req.intent.metadata,
+        &authoritative_hyperliquid_account,
+    )?;
     crate::validate_morpho_protocol_request(
         &bot.strategy_config,
         protocol_chain_id,
@@ -3029,6 +3120,7 @@ async fn execute_multi_bot(
 
         let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
+            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot)?;
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
             let clob = state.clob_client.as_ref().ok_or_else(|| {
@@ -3648,13 +3740,15 @@ mod tests {
         req.intent.min_amount_out = "0".to_string();
         req.intent.metadata = serde_json::json!({
             "asset": "ETH",
-            "limit_price": "3000"
+            "limit_price": "3000",
+            "hyperliquid_account_address": "0x0000000000000000000000000000000000000001"
         });
         attach_expected_hashes(&mut req, Some(42161), 42161);
 
         req.intent.metadata = serde_json::json!({
             "asset": "ETH",
-            "limit_price": "3100"
+            "limit_price": "3100",
+            "hyperliquid_account_address": "0x0000000000000000000000000000000000000001"
         });
         let intent = parse_execute_request(&req, Some(42161)).expect("intent");
 

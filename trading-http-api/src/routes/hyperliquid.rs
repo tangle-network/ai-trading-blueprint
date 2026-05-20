@@ -32,24 +32,51 @@ pub(crate) fn get_hl_client(
     if let Some(client) = HL_CLIENT.get() {
         return Ok(client);
     }
-    let key = &state.operator_private_key;
+    let key = hyperliquid_api_wallet_private_key(state)?;
     if key.is_empty() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "EXECUTOR_PRIVATE_KEY not set".into(),
+            "HYPERLIQUID_API_WALLET_PRIVATE_KEY is required for Hyperliquid signing".into(),
         ));
     }
     let is_testnet = std::env::var("HYPERLIQUID_TESTNET").is_ok_and(|v| v == "1" || v == "true");
     let client = if is_testnet {
-        HyperliquidClient::testnet(key)
+        HyperliquidClient::testnet(&key)
     } else {
-        HyperliquidClient::new(key)
+        HyperliquidClient::new(&key)
     }
     .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("HL init: {e}")))?;
     let _ = HL_CLIENT.set(client);
     HL_CLIENT
         .get()
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "HL client race".into()))
+}
+
+fn hyperliquid_api_wallet_private_key(
+    state: &MultiBotTradingState,
+) -> Result<String, (StatusCode, String)> {
+    if let Ok(key) = std::env::var("HYPERLIQUID_API_WALLET_PRIVATE_KEY") {
+        let key = key.trim().to_string();
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+    if let Ok(key) = std::env::var("HYPERLIQUID_API_PRIVATE_KEY") {
+        let key = key.trim().to_string();
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+    if std::env::var("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        return Ok(state.operator_private_key.trim().to_string());
+    }
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Hyperliquid signing requires HYPERLIQUID_API_WALLET_PRIVATE_KEY; refusing to reuse the operator key"
+            .to_string(),
+    ))
 }
 
 fn config_string(config: &serde_json::Value, key: &str) -> Option<String> {
@@ -74,9 +101,16 @@ fn usable_account_address(raw: &str) -> Option<String> {
 }
 
 pub(crate) fn hyperliquid_account_address(bot: &BotContext) -> Option<String> {
-    config_string(&bot.strategy_config, "hyperliquid_account_address")
-        .or_else(|| config_string(&bot.strategy_config, "hyperliquid_account"))
-        .or_else(|| usable_account_address(&bot.vault_address))
+    hyperliquid_account_address_from_config(&bot.strategy_config, &bot.vault_address)
+}
+
+pub(crate) fn hyperliquid_account_address_from_config(
+    strategy_config: &serde_json::Value,
+    vault_address: &str,
+) -> Option<String> {
+    config_string(strategy_config, "hyperliquid_account_address")
+        .or_else(|| config_string(strategy_config, "hyperliquid_account"))
+        .or_else(|| usable_account_address(vault_address))
 }
 
 pub(crate) fn require_hyperliquid_account_address(
@@ -88,6 +122,64 @@ pub(crate) fn require_hyperliquid_account_address(
             "Hyperliquid live execution requires strategy_config.hyperliquid_account_address or a concrete bot vault address".to_string(),
         )
     })
+}
+
+pub(crate) fn require_hyperliquid_execution_ready(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+) -> Result<(), (StatusCode, String)> {
+    if bot.paper_trade {
+        return Ok(());
+    }
+    if config_bool(&bot.strategy_config, "hyperliquid_execution_disabled")
+        || config_bool(&bot.strategy_config, "hyperliquid_trading_disabled")
+        || config_bool(&bot.strategy_config, "hyperliquid_kill_switch")
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Hyperliquid execution is disabled for this bot".to_string(),
+        ));
+    }
+
+    if hyperliquid_requires_api_wallet_approval(&bot.strategy_config) {
+        let status = config_string(
+            &bot.strategy_config,
+            "hyperliquid_api_wallet_approval_status",
+        )
+        .unwrap_or_default();
+        if !status.eq_ignore_ascii_case("submitted_corewriter_approval") {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Hyperliquid API wallet approval is not submitted for this vault".to_string(),
+            ));
+        }
+    }
+
+    if let Some(expected) = config_string(&bot.strategy_config, "hyperliquid_api_wallet_address") {
+        let actual = get_hl_client(state)?.wallet_address();
+        if !expected.trim().eq_ignore_ascii_case(actual.trim()) {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Configured Hyperliquid API wallet does not match the executor signing key"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn config_bool(config: &serde_json::Value, key: &str) -> bool {
+    config
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn hyperliquid_requires_api_wallet_approval(config: &serde_json::Value) -> bool {
+    config_string(config, "hyperliquid_account_source")
+        .is_some_and(|source| source.eq_ignore_ascii_case("hyperevm_vault_contract"))
+        || config.get("hyperliquid_api_wallet_approval").is_some()
 }
 
 fn reject_live_direct_hyperliquid(bot: &BotContext) -> Result<(), (StatusCode, String)> {
@@ -235,6 +327,26 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
 mod tests {
     use super::*;
 
+    fn state() -> MultiBotTradingState {
+        MultiBotTradingState {
+            operator_private_key:
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            market_data_base_url: "http://localhost:1234".to_string(),
+            validation_deadline_secs: 300,
+            min_validator_score: 50,
+            resolve_bot: Box::new(|_| None),
+            list_envelope_bots: None,
+            clob_client: None,
+            chain_client: None,
+            chain_client_rpc_url: None,
+            chain_client_chain_id: None,
+            alert_sink: crate::alerts::AlertSink::new(None, None),
+            key_provider: trading_runtime::cex::default_provider(),
+            rate_limiter: std::sync::Arc::new(crate::rate_limit::PerBotRateLimiter::default()),
+            nav_stream_config: None,
+        }
+    }
+
     fn bot(vault_address: &str, strategy_config: serde_json::Value) -> BotContext {
         BotContext {
             bot_id: "bot-1".to_string(),
@@ -285,5 +397,59 @@ mod tests {
         );
 
         assert_eq!(hyperliquid_account_address(&bot), None);
+    }
+
+    #[test]
+    fn execution_ready_rejects_kill_switch() {
+        let state = state();
+        let bot = bot(
+            "0x1111111111111111111111111111111111111111",
+            serde_json::json!({ "hyperliquid_kill_switch": true }),
+        );
+
+        assert_eq!(
+            require_hyperliquid_execution_ready(&state, &bot)
+                .expect_err("kill switch should block")
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn execution_ready_requires_submitted_api_wallet_approval_for_hyperevm_vault() {
+        let state = state();
+        let bot = bot(
+            "0x1111111111111111111111111111111111111111",
+            serde_json::json!({
+                "hyperliquid_account_source": "hyperevm_vault_contract",
+                "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+            }),
+        );
+
+        assert_eq!(
+            require_hyperliquid_execution_ready(&state, &bot)
+                .expect_err("pending API wallet approval should block")
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn hyperliquid_key_requires_dedicated_env_without_escape_hatch() {
+        let state = state();
+
+        // SAFETY: this unit test does not spawn threads or depend on concurrent env access.
+        unsafe {
+            std::env::remove_var("HYPERLIQUID_API_WALLET_PRIVATE_KEY");
+            std::env::remove_var("HYPERLIQUID_API_PRIVATE_KEY");
+            std::env::remove_var("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID");
+        }
+
+        assert_eq!(
+            hyperliquid_api_wallet_private_key(&state)
+                .expect_err("operator key reuse should be rejected")
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 }

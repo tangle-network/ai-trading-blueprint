@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable2Step.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./HyperliquidVault.sol";
 import "./HyperliquidVaultDeployer.sol";
+import "./ITradeValidator.sol";
 import "./VaultShare.sol";
 import "./VaultShareDeployer.sol";
 
@@ -12,7 +11,7 @@ import "./VaultShareDeployer.sol";
 /// @notice Deploys lightweight per-bot Hyperliquid vault accounts on HyperEVM.
 /// @dev Preserves the backend-facing `VaultFactory.createBotVault` ABI and
 ///      `VaultCreated` event while excluding universal EVM trade execution.
-contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
+contract HyperliquidVaultFactory {
     struct PolicyConfig {
         uint256 leverageCap;
         uint256 maxTradesPerHour;
@@ -25,16 +24,12 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
         uint256 validatorFeeShareBps;
     }
 
-    struct SignerConfig {
-        uint256 requiredSignatures;
-        uint256 signerCount;
-    }
-
     error ZeroAddress();
     error InvalidSignerConfig();
     error NotAuthorized();
     error VaultDeployerAlreadySet();
     error VaultDeployerNotSet();
+    error Reentrancy();
 
     event VaultCreated(
         uint64 indexed serviceId,
@@ -46,21 +41,62 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
     );
     event ShareTokenCreated(uint64 indexed serviceId, address indexed shareToken);
     event AuthorizedCallerUpdated(address indexed caller, bool authorized);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     mapping(uint64 serviceId => address[]) public serviceVaults;
     mapping(address vault => uint64) public vaultServiceId;
     mapping(address => bool) public authorizedCallers;
-    mapping(address vault => SignerConfig) public signerConfigs;
 
+    address public owner;
+    address public pendingOwner;
+    ITradeValidator public immutable tradeValidator;
     HyperliquidVaultDeployer public deployer;
     VaultShareDeployer public shareDeployer;
+    uint256 private _entered;
 
-    modifier onlyAuthorized() {
-        if (msg.sender != owner() && !authorizedCallers[msg.sender]) revert NotAuthorized();
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotAuthorized();
         _;
     }
 
-    constructor() Ownable(msg.sender) {}
+    modifier onlyAuthorized() {
+        if (msg.sender != owner && !authorizedCallers[msg.sender]) revert NotAuthorized();
+        _;
+    }
+
+    modifier nonReentrant() {
+        if (_entered == 1) revert Reentrancy();
+        _entered = 1;
+        _;
+        _entered = 0;
+    }
+
+    constructor(ITradeValidator _tradeValidator) {
+        if (address(_tradeValidator) == address(0)) revert ZeroAddress();
+        owner = msg.sender;
+        tradeValidator = _tradeValidator;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotAuthorized();
+        address previousOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(previousOwner, msg.sender);
+    }
+
+    /// @notice Accept pending ownership of the shared TradeValidator.
+    function acceptDependencyOwnership() external onlyOwner {
+        tradeValidator.acceptOwnership();
+    }
 
     function setVaultDeployers(HyperliquidVaultDeployer _deployer, VaultShareDeployer _shareDeployer)
         external
@@ -117,15 +153,16 @@ contract HyperliquidVaultFactory is Ownable2Step, ReentrancyGuard {
         emit ShareTokenCreated(serviceId, shareAddr);
 
         bytes32 vaultSalt = keccak256(abi.encodePacked(serviceId, assetToken, admin, "hyperliquid-vault", salt));
-        HyperliquidVault v = vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, admin, operator);
+        HyperliquidVault v =
+            vaultDeployer.deployVault(vaultSalt, assetToken, shareToken, tradeValidator, admin, operator);
         vault = address(v);
 
         serviceVaults[serviceId].push(vault);
         vaultServiceId[vault] = serviceId;
-        signerConfigs[vault] = SignerConfig({requiredSignatures: requiredSigs, signerCount: signers.length});
 
         shareToken.grantRole(shareToken.MINTER_ROLE(), vault);
         shareToken.linkVault(vault);
+        tradeValidator.configureVault(vault, signers, requiredSigs);
 
         emit VaultCreated(serviceId, vault, shareAddr, assetToken, admin, operator);
     }

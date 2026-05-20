@@ -11,7 +11,7 @@ const HEALTH_FACTOR_PAYLOAD_TYPE: &str = "HealthFactorPayload(address target,byt
 const APPROVAL_CALL_TYPE: &str = "ApprovalCall(address token,address spender,uint256 amount)";
 const COLLATERAL_RELEASE_TYPE: &str = "CollateralRelease(uint256 amount,address recipient,bytes32 intentHash,uint256 deadline,uint256 chainId)";
 const CLOB_ORDER_TYPE: &str = "ClobOrder(bytes32 tokenIdHash,bytes32 sideHash,bytes32 priceHash,bytes32 sizeHash,bytes32 orderTypeHash,uint256 expiration,bytes32 intentHash,uint256 deadline,uint256 chainId)";
-const HYPERLIQUID_ORDER_TYPE: &str = "HyperliquidOrder(bytes32 assetHash,bool isBuy,bytes32 sizeHash,bytes32 orderTypeHash,bool reduceOnly,bytes32 cloidHash,bytes32 intentHash,uint256 deadline,uint256 chainId)";
+const HYPERLIQUID_ORDER_TYPE: &str = "HyperliquidOrder(bytes32 accountHash,bytes32 assetHash,bool isBuy,bytes32 sizeHash,bytes32 orderTypeHash,bool reduceOnly,bytes32 cloidHash,bytes32 intentHash,uint256 deadline,uint256 chainId)";
 
 pub const ACTION_KIND_VAULT_EXECUTE: u64 = 0;
 pub const ACTION_KIND_COLLATERAL_RELEASE: u64 = 1;
@@ -268,11 +268,13 @@ pub fn hash_clob_order_parts(
 
 pub fn hash_hyperliquid_order(
     request: &PlaceOrderRequest,
+    account: &str,
     intent_hash: B256,
     deadline: U256,
     chain_id: u64,
 ) -> B256 {
     hash_hyperliquid_order_parts(
+        account,
         &hyperliquid_asset_key(&request.asset),
         request.is_buy,
         &request.size,
@@ -287,6 +289,7 @@ pub fn hash_hyperliquid_order(
 
 #[allow(clippy::too_many_arguments)]
 pub fn hash_hyperliquid_order_parts(
+    account: &str,
     asset: &str,
     is_buy: bool,
     size: &str,
@@ -299,6 +302,7 @@ pub fn hash_hyperliquid_order_parts(
 ) -> B256 {
     keccak256(SolValue::abi_encode(&(
         hyperliquid_order_typehash(),
+        keccak256(account.trim().to_ascii_lowercase().as_bytes()),
         keccak256(asset.as_bytes()),
         is_buy,
         keccak256(size.as_bytes()),
@@ -465,8 +469,37 @@ mod tests {
         changed_hl.reduce_only = true;
 
         assert_ne!(
-            hash_hyperliquid_order(&hl, B256::ZERO, U256::from(100), 42161),
-            hash_hyperliquid_order(&changed_hl, B256::ZERO, U256::from(100), 42161)
+            hash_hyperliquid_order(
+                &hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            ),
+            hash_hyperliquid_order(
+                &changed_hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            )
+        );
+
+        assert_ne!(
+            hash_hyperliquid_order(
+                &hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            ),
+            hash_hyperliquid_order(
+                &hl,
+                "0x2222222222222222222222222222222222222222",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            )
         );
     }
 }

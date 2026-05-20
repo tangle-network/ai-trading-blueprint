@@ -1,10 +1,11 @@
 {
-  "mode": "pursue",
-  "status": "deploying",
+  "mode": "harden",
+  "status": "clean",
   "generation": 11,
   "activePursuit": "2026-04-19-fund-safety.md",
   "critical": 0,
   "high": 0,
-  "updatedAt": "2026-04-19T18:00:00Z",
-  "note": "Gen 9-11 shipped (HL perps, fund safety, unified pipeline). Hetzner server ready (178.104.232.124). cargo-tangle building on server. Blocked on Tangle testnet contract deployment (other agent). Next: go-live.sh end-to-end."
+  "activeHarden": "2026-05-20-report.md",
+  "updatedAt": "2026-05-20T00:00:00Z",
+  "note": "Hyperliquid safety and autonomous promotion gates hardened; remaining live venue tests require funded Hyperliquid testnet credentials."
 }

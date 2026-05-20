@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./VaultShare.sol";
+import "./ITradeValidator.sol";
 import "./interfaces/IERC7575.sol";
 
 interface IHyperliquidCoreWriterMinimal {
@@ -36,6 +37,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
 
     IERC20 private _asset;
     VaultShare public shareToken;
+    ITradeValidator public tradeValidator;
     bool private _initialized;
     uint256 private _pendingRedeemShares;
     uint256 public nextWithdrawalRequestId;
@@ -72,15 +74,25 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
 
     constructor() {}
 
-    function initialize(address assetToken, VaultShare _shareToken, address admin, address operator) external {
+    function initialize(
+        address assetToken,
+        VaultShare _shareToken,
+        ITradeValidator _tradeValidator,
+        address admin,
+        address operator
+    ) external {
         if (_initialized) revert AlreadyInitialized();
-        if (assetToken == address(0) || address(_shareToken) == address(0) || admin == address(0)) {
+        if (
+            assetToken == address(0) || address(_shareToken) == address(0) || address(_tradeValidator) == address(0)
+                || admin == address(0)
+        ) {
             revert ZeroAddress();
         }
 
         _initialized = true;
         _asset = IERC20(assetToken);
         shareToken = _shareToken;
+        tradeValidator = _tradeValidator;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         if (operator != address(0)) {
@@ -393,7 +405,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
 
     function returnSpotLiquidity(address destination, uint64 token, uint64 weiAmount)
         external
-        onlyRole(OPERATOR_ROLE)
+        onlyRole(DEFAULT_ADMIN_ROLE)
         nonReentrant
     {
         if (destination == address(0)) revert ZeroAddress();
