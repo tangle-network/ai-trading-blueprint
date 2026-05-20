@@ -26,6 +26,7 @@ Current personas:
 - `evm_portfolio_manager_base`
 - `risk_on_arbitrage_bot`
 - `protocol_researcher`
+- `second_order_game_theory_bot`
 
 Each scenario defines:
 
@@ -35,6 +36,15 @@ Each scenario defines:
 - specialist candidate strategy config
 - adversarial market regime candles/funding snapshots
 - deterministic score gates and agent-eval-style findings
+
+The second-order game-theory scenarios currently cover:
+
+- crowded breakout flow: simple bots chase visible highs; the candidate must
+  learn from the flow without oversized crowd exposure
+- stop-cascade flow: levered bots trigger forced selling; the candidate must
+  join confirmed flow briefly and avoid late reversal exposure
+- AMM rebalancer flow: inventory-management bots create predictable
+  oscillations after shocks; the candidate must avoid toxic first prints
 
 Scoring is 90 points today because the subjective reasoning judge is not wired
 yet:
@@ -111,7 +121,7 @@ Useful overrides:
 
 ```bash
 POLYMARKET_CLOB_TOKEN_ID=<token-id> \
-POLYMARKET_PRICE_INTERVAL=1w \
+POLYMARKET_PRICE_INTERVAL=1m \
 POLYMARKET_PRICE_FIDELITY=60 \
   ./scripts/eval-polymarket-real-price-history.sh
 ```

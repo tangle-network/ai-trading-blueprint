@@ -59,11 +59,11 @@ struct RealPolymarketEvalReport {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out: Option<PathBuf> = None;
-    let mut interval = env::var("POLYMARKET_PRICE_INTERVAL").unwrap_or_else(|_| "1d".into());
+    let mut interval = env::var("POLYMARKET_PRICE_INTERVAL").unwrap_or_else(|_| "1m".into());
     let mut fidelity_minutes = env::var("POLYMARKET_PRICE_FIDELITY")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(5);
+        .unwrap_or(60);
     let mut token_id = env::var("POLYMARKET_CLOB_TOKEN_ID").ok();
 
     let mut args = env::args().skip(1);
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--token-id" => token_id = Some(args.next().ok_or("--token-id requires an id")?),
             "--help" | "-h" => {
                 eprintln!(
-                    "usage: cargo run -p trading-runtime --example polymarket_real_price_eval -- [--out <path>] [--interval 1d] [--fidelity 5] [--token-id <clob-token-id>]"
+                    "usage: cargo run -p trading-runtime --example polymarket_real_price_eval -- [--out <path>] [--interval 1m] [--fidelity 60] [--token-id <clob-token-id>]"
                 );
                 return Ok(());
             }

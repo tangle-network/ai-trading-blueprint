@@ -139,6 +139,9 @@ pub fn default_scenarios() -> Vec<TradingEvalScenario> {
         evm_base_portfolio_manager(),
         risk_on_arbitrage_trader(),
         protocol_research_adapter(),
+        second_order_crowded_breakout_fade(),
+        second_order_stop_cascade_recovery(),
+        second_order_amm_rebalancer_flow(),
     ]
 }
 
@@ -460,6 +463,69 @@ fn protocol_research_adapter() -> TradingEvalScenario {
     }
 }
 
+fn second_order_crowded_breakout_fade() -> TradingEvalScenario {
+    let candles = crowded_breakout_candles("POLY-CROWDED-BREAKOUT-YES", 240, 0.48);
+    TradingEvalScenario {
+        id: "second_order_crowded_breakout_fade".to_string(),
+        split: "dev".to_string(),
+        objective: "Learn from predictable breakout-chasing bots, ride confirmed flow briefly, and avoid oversizing into the visible crowd.".to_string(),
+        market_regime: "crowded_breakout_then_mean_reversion".to_string(),
+        persona: mandate(
+            "second_order_game_theory_bot",
+            "Second-Order Market-Structure Trader",
+            &["polymarket_clob", "hyperliquid", "uniswap_v3"],
+            &["polygon", "hyperliquid", "base"],
+            limits(12.0, 10.0, 2, 80),
+        ),
+        baseline: config(default_harness(), 80, 40, 1),
+        candidate: config(rsi_ema_harness(0.12, 5.0, 8.0), 10, 4, 0),
+        candles,
+        funding: vec![],
+    }
+}
+
+fn second_order_stop_cascade_recovery() -> TradingEvalScenario {
+    let candles = stop_cascade_candles("HL-STOP-CASCADE-PERP", 260, 2_800.0);
+    TradingEvalScenario {
+        id: "second_order_stop_cascade_recovery".to_string(),
+        split: "dev".to_string(),
+        objective: "Detect liquidation/stop-loss cascades caused by simple levered bots, join confirmed forced flow only briefly, and avoid late reversal exposure.".to_string(),
+        market_regime: "stop_cascade_forced_selling_then_recovery".to_string(),
+        persona: mandate(
+            "second_order_game_theory_bot",
+            "Second-Order Market-Structure Trader",
+            &["hyperliquid", "polymarket_clob"],
+            &["hyperliquid", "polygon"],
+            limits(4.0, 14.0, 2, 70),
+        ),
+        baseline: config(default_harness(), 12, 6, 0),
+        candidate: config(momentum_harness(0.04, 4.0, 8.0), 8, 3, 0),
+        candles,
+        funding: funding_wave("HL-STOP-CASCADE-PERP", 260, 0.00012),
+    }
+}
+
+fn second_order_amm_rebalancer_flow() -> TradingEvalScenario {
+    let candles = amm_rebalancer_candles("BASE-AMM-REBALANCER-FLOW", 240, 3_400.0);
+    TradingEvalScenario {
+        id: "second_order_amm_rebalancer_flow".to_string(),
+        split: "dev".to_string(),
+        objective: "Exploit predictable AMM/rebalancer bot flow after inventory shocks while avoiding chasing the first toxic print.".to_string(),
+        market_regime: "amm_inventory_rebalance_oscillation".to_string(),
+        persona: mandate(
+            "second_order_game_theory_bot",
+            "Second-Order Market-Structure Trader",
+            &["uniswap_v3", "aave_v3"],
+            &["base", "ethereum"],
+            limits(4.0, 12.0, 2, 80),
+        ),
+        baseline: config(momentum_harness(0.06, 4.0, 8.0), 18, 10, 2),
+        candidate: config(mean_reversion_harness(0.035, 10, 1.2, 5.0, 8.0), 12, 5, 2),
+        candles,
+        funding: vec![],
+    }
+}
+
 fn mandate(
     id: &str,
     role: &str,
@@ -514,6 +580,18 @@ fn default_harness() -> HarnessConfig {
     HarnessConfig::default()
 }
 
+fn rsi_ema_harness(fraction: f64, stop_loss: f64, take_profit: f64) -> HarnessConfig {
+    HarnessConfig {
+        position_sizing: PositionSizing::FixedFraction { fraction },
+        exit_rules: vec![
+            ExitRule::StopLoss { pct: stop_loss },
+            ExitRule::TakeProfit { pct: take_profit },
+            ExitRule::TimeLimit { max_candles: 20 },
+        ],
+        ..HarnessConfig::default()
+    }
+}
+
 fn momentum_harness(fraction: f64, stop_loss: f64, take_profit: f64) -> HarnessConfig {
     HarnessConfig {
         version: 1,
@@ -536,6 +614,38 @@ fn momentum_harness(fraction: f64, stop_loss: f64, take_profit: f64) -> HarnessC
         position_sizing: PositionSizing::FixedFraction { fraction },
         entry_threshold: 0.6,
         max_positions: 3,
+    }
+}
+
+fn mean_reversion_harness(
+    fraction: f64,
+    lookback_candles: usize,
+    z_score_threshold: f64,
+    stop_loss: f64,
+    take_profit: f64,
+) -> HarnessConfig {
+    HarnessConfig {
+        version: 1,
+        entry_rules: vec![EntryRule {
+            signal: SignalType::MeanReversion {
+                lookback_candles,
+                z_score_threshold,
+            },
+            condition: EntryCondition::Positive,
+            weight: 1.0,
+            tokens: vec![],
+        }],
+        exit_rules: vec![
+            ExitRule::StopLoss { pct: stop_loss },
+            ExitRule::TakeProfit { pct: take_profit },
+            ExitRule::TimeLimit { max_candles: 18 },
+        ],
+        filters: vec![Filter::MinVolume {
+            threshold: Decimal::new(100, 0),
+        }],
+        position_sizing: PositionSizing::FixedFraction { fraction },
+        entry_threshold: 0.6,
+        max_positions: 2,
     }
 }
 
@@ -581,6 +691,71 @@ fn dislocation_candles(token: &str, n: usize, start: f64) -> Vec<Candle> {
         .collect()
 }
 
+fn crowded_breakout_candles(token: &str, n: usize, center: f64) -> Vec<Candle> {
+    (0..n)
+        .map(|i| {
+            let cycle = (i % 32) as f64;
+            let bot_chase = if (7.0..11.0).contains(&cycle) {
+                0.09 * ((cycle - 7.0) / 4.0)
+            } else if (11.0..20.0).contains(&cycle) {
+                0.09 * (1.0 - ((cycle - 11.0) / 9.0))
+            } else {
+                0.0
+            };
+            let passive_fade = 0.035 * (cycle / 5.0).sin();
+            let close = (center + passive_fade + bot_chase).clamp(0.05, 0.95);
+            bot_pattern_candle(token, i, close, 0.01, cycle)
+        })
+        .collect()
+}
+
+fn stop_cascade_candles(token: &str, n: usize, start: f64) -> Vec<Candle> {
+    (0..n)
+        .map(|i| {
+            let cycle = (i % 52) as f64;
+            let slow_drift = start * (1.0002_f64).powf(i as f64);
+            let cascade = if (16.0..23.0).contains(&cycle) {
+                -0.075 * ((cycle - 16.0) / 7.0)
+            } else if (23.0..36.0).contains(&cycle) {
+                -0.075 * (1.0 - ((cycle - 23.0) / 13.0))
+            } else {
+                0.0
+            };
+            let close = slow_drift * (1.0 + cascade + 0.012 * (cycle / 4.0).sin());
+            bot_pattern_candle(token, i, close, 0.018, cycle)
+        })
+        .collect()
+}
+
+fn amm_rebalancer_candles(token: &str, n: usize, center: f64) -> Vec<Candle> {
+    (0..n)
+        .map(|i| {
+            let cycle = (i % 40) as f64;
+            let inventory_shock = if (10.0..15.0).contains(&cycle) {
+                0.045
+            } else if (15.0..28.0).contains(&cycle) {
+                0.045 * (1.0 - ((cycle - 15.0) / 13.0))
+            } else {
+                0.0
+            };
+            let rebalancer_oscillation = 0.018 * (cycle / 3.5).sin();
+            let close = center * (1.0 + inventory_shock + rebalancer_oscillation);
+            bot_pattern_candle(token, i, close, 0.014, cycle)
+        })
+        .collect()
+}
+
+fn bot_pattern_candle(token: &str, idx: usize, close: f64, range: f64, cycle: f64) -> Candle {
+    let mut c = candle(token, idx, close, range);
+    let burst = if (8.0..18.0).contains(&cycle) {
+        3_000_000.0
+    } else {
+        750_000.0
+    };
+    c.volume = dec(burst + idx as f64 * 500.0);
+    c
+}
+
 fn funding_wave(token: &str, n: usize, max_rate: f64) -> Vec<FundingSnapshot> {
     (0..n)
         .map(|i| FundingSnapshot {
@@ -615,7 +790,7 @@ mod tests {
     #[test]
     fn persona_eval_suite_has_required_coverage_and_passes() {
         let report = run_persona_eval_suite().expect("suite runs");
-        assert_eq!(report.total, 6);
+        assert_eq!(report.total, 9);
         assert_eq!(report.failed, 0, "{report:#?}");
         assert!(report.min_score >= 70, "{report:#?}");
         let ids: Vec<&str> = report
@@ -630,6 +805,7 @@ mod tests {
             "evm_portfolio_manager_base",
             "risk_on_arbitrage_bot",
             "protocol_researcher",
+            "second_order_game_theory_bot",
         ] {
             assert!(ids.contains(&required), "missing persona {required}");
         }
