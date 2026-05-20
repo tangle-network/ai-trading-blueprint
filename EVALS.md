@@ -1,11 +1,13 @@
 # Trading Agent Evals
 
-This repo has three eval layers:
+This repo has four eval layers:
 
 - `scripts/e2e-eval.sh` exercises the customer journey against a running
   operator/trading API.
 - `scripts/eval-self-improvement-mcp.mjs` exercises the sandbox
   self-improvement MCP with real git worktrees and command execution.
+- `scripts/eval-polymarket-real-price-history.sh` fetches live Polymarket
+  Gamma/CLOB price history and runs the real Rust walk-forward backtester.
 - `scripts/eval-trading-personas.sh` runs the trading-domain persona suite
   added for market makers, portfolio managers, protocol researchers, and
   arbitrage agents.
@@ -89,6 +91,41 @@ For CI or local debugging:
 cargo test -p trading-runtime persona_eval_suite_has_required_coverage_and_passes
 cargo run -p trading-runtime --example agent_persona_eval -- --out /tmp/trading-agent-personas.json
 ```
+
+## Live Polymarket Price-History Eval
+
+The fastest real-data path is:
+
+```bash
+./scripts/eval-polymarket-real-price-history.sh
+```
+
+This pulls an active market from `gamma-api.polymarket.com`, fetches YES-token
+history from `clob.polymarket.com/prices-history`, converts each point into a
+single-price candle, and runs `BacktestEngine::walk_forward_compare`. It is a
+real data eval, but not a full fill-simulation eval: it validates market-data
+ingestion, train/test split behavior, and promotion discipline against live
+Polymarket prices. Full execution realism needs trade-print or L2 book fixtures.
+
+Useful overrides:
+
+```bash
+POLYMARKET_CLOB_TOKEN_ID=<token-id> \
+POLYMARKET_PRICE_INTERVAL=1w \
+POLYMARKET_PRICE_FIDELITY=60 \
+  ./scripts/eval-polymarket-real-price-history.sh
+```
+
+Current higher-fidelity data options:
+
+- `SII-WANGZJ/Polymarket_data`: MIT, Hugging Face parquet dataset with
+  `orderfilled.parquet`, `trades.parquet`, `markets.parquet`, `quant.parquet`,
+  and `users.parquet`. Best next fit for this repo because `quant.parquet`
+  maps cleanly into OHLCV candles grouped by `market_id`.
+- `evan-kolberg/prediction-market-backtesting`: strong reference for PMXT and
+  Telonex L2 order-book replay, but active code is mixed MIT/LGPL and depends
+  on NautilusTrader. Treat it as a reference or optional external oracle, not
+  something to vendor into `trading-runtime`.
 
 ## Agent-Eval Boundary
 
