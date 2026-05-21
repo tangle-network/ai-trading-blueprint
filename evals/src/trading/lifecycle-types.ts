@@ -54,6 +54,11 @@ export interface StrategyRevision {
     candlesUsed?: number
     arenaActiveRevisionId?: string
     arenaRevisionCount?: number
+    arenaRevisionParentId?: string
+    arenaRevisionStatus?: string
+    arenaRevisionRunId?: string
+    arenaRevisionCanExecuteLive?: boolean
+    parentRevisionId?: string
   }
 }
 

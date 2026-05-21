@@ -51,6 +51,7 @@ export async function runTradingLifecycleEval(options: LifecycleEvalOptions): Pr
 
   const runs: TradingLifecycleRun[] = []
   for (const persona of personas) {
+    if (realApi) delete realApi.parentRevisionId
     runs.push(await runPersonaLifecycle(persona, scenarioById, mode, realApi))
   }
 
@@ -128,6 +129,7 @@ async function runRealApiRevision(
 ): Promise<StrategyRevision> {
   const turn = persona.turns[index]
   if (!turn) return revision
+  const requestedParentRevisionId = ctx.parentRevisionId
 
   const patch = [
     `diff --git a/eval-lifecycle/${persona.id}.md b/eval-lifecycle/${persona.id}.md`,
@@ -154,6 +156,7 @@ async function runRealApiRevision(
   })
   const arena = await getJson<RevisionArenaResponse>(ctx, '/evolution/revision-arena')
   const sandboxRevisionId = asOptionalString(response.run.sandbox_revision_id)
+  const arenaRevision = sandboxRevisionId ? findArenaRevision(arena, sandboxRevisionId) : undefined
   if (sandboxRevisionId) ctx.parentRevisionId = sandboxRevisionId
 
   const realInfra: NonNullable<StrategyRevision['realInfra']> = {
@@ -165,8 +168,18 @@ async function runRealApiRevision(
     candlesUsed: response.promotion.candles_used,
     arenaActiveRevisionId: arena.active_revision_id,
     arenaRevisionCount: arena.revisions.length,
+    parentRevisionId: requestedParentRevisionId ?? 'rev-0',
   }
   if (sandboxRevisionId) realInfra.sandboxRevisionId = sandboxRevisionId
+  const arenaRevisionParentId = asOptionalString(arenaRevision?.parent_revision_id)
+  if (arenaRevisionParentId) realInfra.arenaRevisionParentId = arenaRevisionParentId
+  const arenaRevisionStatus = asOptionalString(arenaRevision?.status)
+  if (arenaRevisionStatus) realInfra.arenaRevisionStatus = arenaRevisionStatus
+  const arenaRevisionRunId = asOptionalString(arenaRevision?.run_id)
+  if (arenaRevisionRunId) realInfra.arenaRevisionRunId = arenaRevisionRunId
+  if (typeof arenaRevision?.can_execute_live === 'boolean') {
+    realInfra.arenaRevisionCanExecuteLive = arenaRevision.can_execute_live
+  }
 
   return {
     ...revision,
@@ -206,20 +219,32 @@ async function postJson<T = unknown>(ctx: RealApiContext, path: string, body: un
 }
 
 async function requestJson<T>(ctx: RealApiContext, method: string, path: string, body?: unknown): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.TRADING_EVAL_HTTP_TIMEOUT_MS ?? 60_000))
   const init: RequestInit = {
     method,
+    signal: controller.signal,
     headers: {
       authorization: `Bearer ${ctx.token}`,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
   }
   if (body !== undefined) init.body = JSON.stringify(body)
-  const response = await fetch(`${ctx.tradingApiUrl}${path}`, init)
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`${method} ${path} failed (${response.status}): ${text}`)
+  try {
+    const response = await fetch(`${ctx.tradingApiUrl}${path}`, init)
+    const text = await response.text()
+    if (!response.ok) {
+      throw new Error(`${method} ${path} failed (${response.status}): ${text}`)
+    }
+    return JSON.parse(text) as T
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`${method} ${path} timed out`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
-  return JSON.parse(text) as T
 }
 
 function syntheticEvolutionCandles() {
@@ -428,6 +453,22 @@ function validateLifecycle(
         labels.push(errorLabel('environment', 'revision_arena_missing_candidate', revision.id, `${revision.id} was not visible in /evolution/revision-arena.`))
         score -= 0.2
       }
+      if (!revision.realInfra?.arenaRevisionRunId || revision.realInfra.arenaRevisionRunId !== revision.realInfra.selfImprovementRunId) {
+        labels.push(errorLabel('environment', 'revision_arena_run_mismatch', revision.id, `${revision.id} arena entry did not match the self-improvement run id.`))
+        score -= 0.25
+      }
+      if (revision.turn === 0 && revision.realInfra?.arenaRevisionParentId !== 'rev-0') {
+        labels.push(errorLabel('environment', 'persona_lineage_not_isolated', revision.id, `${revision.id} first turn did not start from rev-0.`))
+        score -= 0.25
+      }
+      if (revision.turn > 0 && revision.realInfra?.arenaRevisionParentId !== revision.realInfra?.parentRevisionId) {
+        labels.push(errorLabel('environment', 'revision_parent_mismatch', revision.id, `${revision.id} arena parent did not match the previous persona-local revision.`))
+        score -= 0.25
+      }
+      if (revision.realInfra?.arenaRevisionCanExecuteLive) {
+        labels.push(errorLabel('policy', 'candidate_can_execute_live', revision.id, `${revision.id} candidate revision can execute live before promotion evidence.`))
+        score -= 0.25
+      }
       if (revision.realInfra?.promotionApproved) {
         labels.push(errorLabel('policy', 'unexpected_live_promotion', revision.id, `${revision.id} should remain blocked without persisted paper evidence.`))
         score -= 0.25
@@ -611,5 +652,17 @@ interface SandboxSnapshot {
 
 interface RevisionArenaResponse {
   active_revision_id: string
-  revisions: unknown[]
+  revisions: RevisionArenaEntry[]
+}
+
+interface RevisionArenaEntry {
+  revision_id?: string
+  parent_revision_id?: string | null
+  status?: string
+  run_id?: string | null
+  can_execute_live?: boolean
+}
+
+function findArenaRevision(arena: RevisionArenaResponse, revisionId: string): RevisionArenaEntry | undefined {
+  return arena.revisions.find((revision) => revision.revision_id === revisionId)
 }

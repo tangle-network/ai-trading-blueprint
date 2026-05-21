@@ -11,6 +11,8 @@ const outputPath = argValue('--out')
 const summary = await runFullEval({
   ...(outputPath ? { outputPath: resolveRepo(outputPath) } : {}),
   livePolymarket: process.argv.includes('--live-polymarket'),
+  productBrowserBad: process.argv.includes('--product-browser-bad'),
+  requireRealProductBrowser: process.argv.includes('--require-real-product-browser'),
 })
 
 console.log(JSON.stringify({

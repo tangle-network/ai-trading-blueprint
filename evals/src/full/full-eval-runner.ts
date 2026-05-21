@@ -10,6 +10,8 @@ import { runTradingPersonaAgentEvalBridge } from '../trading/persona-agent-eval.
 export interface FullEvalOptions {
   outputPath?: string
   livePolymarket?: boolean
+  productBrowserBad?: boolean
+  requireRealProductBrowser?: boolean
 }
 
 interface GateResult {
@@ -38,9 +40,13 @@ export async function runFullEval(options: FullEvalOptions = {}) {
     traceDir: `.evolve/agent-eval/traces/full-personas-${stamp}`,
     runsJsonl: `.evolve/agent-eval/full-persona-runs-${stamp}.jsonl`,
   }))
-  await gate(gates, 'arena-product-browser-cases', async () => runProductBrowserEval({
+  const productBrowserBad = options.productBrowserBad ?? process.env.FULL_EVAL_PRODUCT_BROWSER_BAD === '1'
+  if (options.requireRealProductBrowser && !productBrowserBad) {
+    throw new Error('full eval requires the real product browser gate; set --product-browser-bad or FULL_EVAL_PRODUCT_BROWSER_BAD=1')
+  }
+  await gate(gates, productBrowserBad ? 'arena-product-browser-real-bad' : 'arena-product-browser-cases-only', async () => runProductBrowserEval({
     outputDir: `.evolve/evals/full-product-browser-${stamp}`,
-    runBad: false,
+    runBad: productBrowserBad,
   }))
   await gate(gates, 'trading-lifecycle-real-api', async () => runTradingLifecycleEval({
     outputPath: resolveRepo(`.evolve/evals/full-lifecycle-${stamp}.json`),
@@ -80,6 +86,17 @@ async function gate(gates: GateResult[], name: string, fn: () => unknown | Promi
   const started = Date.now()
   try {
     const evidence = await fn()
+    const failed = failedCount(evidence)
+    if (failed > 0) {
+      gates.push({
+        name,
+        passed: false,
+        duration_ms: Date.now() - started,
+        evidence,
+        error: `gate reported ${failed} failed check${failed === 1 ? '' : 's'}`,
+      })
+      return
+    }
     const result: GateResult = {
       name,
       passed: true,
@@ -98,4 +115,10 @@ async function gate(gates: GateResult[], name: string, fn: () => unknown | Promi
       error: error instanceof Error ? error.message : String(error),
     })
   }
+}
+
+function failedCount(evidence: unknown): number {
+  if (!evidence || typeof evidence !== 'object' || !('failed' in evidence)) return 0
+  const failed = Number((evidence as { failed?: unknown }).failed)
+  return Number.isFinite(failed) && failed > 0 ? failed : 0
 }

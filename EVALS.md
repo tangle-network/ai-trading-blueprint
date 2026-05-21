@@ -244,9 +244,10 @@ The agentic product eval forces BAD's text/DOM mode (`--no-vision`) because
 router-backed DeepSeek v4 currently rejects BAD's multimodal `image_url` content
 parts.
 It also uses `fast-explore`, disables BAD memory, and skips BAD's secondary
-goal verifier so the product gate measures the live browser trajectory and
-agent terminal report instead of spending extra verifier/scout calls through
-the same model.
+goal verifier so the product gate measures the live browser trajectory without
+spending extra verifier/scout calls through the same model. The eval runner then
+performs deterministic post-run checks over BAD's JSON reports, so an agent
+terminal report alone is not enough to pass.
 Each case runs in its own BAD process/output directory so a browser teardown or
 failure in one product story cannot poison the remaining stories.
 
@@ -272,8 +273,9 @@ It also fails if no router key is present in `TANGLE_API_KEY`,
 `BAD_TANGLE_ROUTER_API_KEY`. The canonical local source for this repo's
 DeepSeek v4 browser eval is `~/company/devops/secrets/agent-state.env`;
 `~/company/devops/secrets/tangle-router.env` is the router service/upstream-key
-vault and is not the right source for this product eval. Cases-only mode is a
-contract/build gate, not browser proof.
+vault and is not the right source for this product eval. The router key is
+passed to BAD through a minimal child environment, not argv. Cases-only mode is
+a contract/build gate, not browser proof.
 
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
@@ -291,6 +293,18 @@ This runs deterministic build/test gates, emits `agent-eval` records where
 available, generates the Arena product browser-driver cases, requires the real
 API lifecycle gate above, and launches the real self-improvement MCP with
 `opencode`. Artifact-only strategy generation is not part of the full gate.
+
+To make the full gate include the live BAD/browser product proof, run:
+
+```bash
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  FULL_EVAL_PRODUCT_BROWSER_BAD=1 \
+  npm run eval:full
+```
+
+Use `-- --require-real-product-browser` when a release run must fail instead of
+falling back to cases-only product coverage.
 
 When `--live-polymarket` is enabled, the separate live price-history gate
 requires a fixed candidate to pass multi-market replay through

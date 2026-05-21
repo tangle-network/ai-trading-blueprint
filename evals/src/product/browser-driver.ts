@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { repoRoot } from '../lib/repo.js'
@@ -42,6 +42,8 @@ export interface ProductBrowserEvalReport {
     runs: Array<{
       case_id: string
       status: number
+      evidence_passed: boolean
+      evidence: ProductEvidence
       stdout_tail: string
       stderr_tail: string
     }>
@@ -61,6 +63,14 @@ interface BadLlmConfig {
   provider_adapter: 'openai-compatible'
   model: string
   base_url: string
+}
+
+interface ProductEvidence {
+  report_path: string
+  visited_urls: string[]
+  matched_terms: string[]
+  missing_terms: string[]
+  errors: string[]
 }
 
 export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): ProductBrowserEvalReport {
@@ -133,12 +143,17 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 50 * 1024 * 1024,
       env: badRunEnv(llm),
+      timeout: Number(process.env.BAD_CASE_TIMEOUT_MS ?? 12 * 60 * 1000),
     })
+    const evidence = verifyBadEvidence(testCase, caseDir)
+    const status = result.error || result.status !== 0 || !evidencePasses(evidence) ? 1 : 0
     return {
       case_id: testCase.id,
-      status: result.status ?? 1,
+      status,
+      evidence_passed: evidencePasses(evidence),
+      evidence,
       stdout_tail: tail(result.stdout ?? ''),
-      stderr_tail: tail(result.stderr ?? ''),
+      stderr_tail: tail([result.stderr ?? '', result.error ? String(result.error) : ''].filter(Boolean).join('\n')),
     }
   })
   const status = runs.every((run) => run.status === 0) ? 0 : 1
@@ -169,8 +184,6 @@ function badRunArgs(casesPath: string, outputDir: string, llm: { apiKey: string;
     llm.model,
     '--base-url',
     llm.base_url,
-    '--api-key',
-    llm.apiKey,
     '--no-vision',
     '--vision-strategy',
     'never',
@@ -181,14 +194,105 @@ function badRunArgs(casesPath: string, outputDir: string, llm: { apiKey: string;
 }
 
 function badRunEnv(llm: { apiKey: string; base_url: string }): NodeJS.ProcessEnv {
+  const allowlistedEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => [
+    'PATH',
+    'HOME',
+    'SHELL',
+    'TERM',
+    'TMPDIR',
+    'USER',
+    'LOGNAME',
+    'PLAYWRIGHT_BROWSERS_PATH',
+    'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD',
+    'BROWSER',
+    'CHROME_PATH',
+    'BAD_DISABLE_TELEMETRY',
+    'BAD_DEBUG',
+    'NO_COLOR',
+    'CI',
+  ].includes(key)))
   return {
-    ...process.env,
+    ...allowlistedEnv,
     LLM_BASE_URL: llm.base_url,
     OPENAI_API_KEY: llm.apiKey,
     TANGLE_API_KEY: llm.apiKey,
     TANGLE_ROUTER_API_KEY: llm.apiKey,
     TANGLE_ROUTER_BASE_URL: llm.base_url,
     TANGLE_ROUTER_URL: llm.base_url,
+  }
+}
+
+function verifyBadEvidence(testCase: BadCase, caseDir: string): ProductEvidence {
+  const reportPath = resolve(caseDir, 'report.json')
+  const suiteReportPath = resolve(caseDir, 'suite', 'report.json')
+  const candidates = [reportPath, suiteReportPath].filter(existsSync)
+  const evidence: ProductEvidence = {
+    report_path: candidates[0] ?? reportPath,
+    visited_urls: [],
+    matched_terms: [],
+    missing_terms: [],
+    errors: [],
+  }
+  if (candidates.length === 0) {
+    evidence.errors.push('BAD report.json missing')
+    return evidence
+  }
+
+  const texts: string[] = []
+  for (const path of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+      collectEvidence(parsed, texts, evidence.visited_urls)
+    } catch (error) {
+      evidence.errors.push(`${path}: ${String(error instanceof Error ? error.message : error)}`)
+    }
+  }
+  const haystack = texts.join('\n').toLowerCase()
+  const requiredTerms = requiredEvidenceTerms(testCase)
+  evidence.matched_terms = requiredTerms.filter((term) => haystack.includes(term.toLowerCase()))
+  evidence.missing_terms = requiredTerms.filter((term) => !haystack.includes(term.toLowerCase()))
+  if (evidence.missing_terms.length > 0) {
+    evidence.errors.push(`missing required evidence terms: ${evidence.missing_terms.join(', ')}`)
+  }
+  return evidence
+}
+
+function evidencePasses(evidence: ProductEvidence): boolean {
+  return evidence.errors.length === 0 && evidence.missing_terms.length === 0
+}
+
+function collectEvidence(value: unknown, texts: string[], urls: string[]): void {
+  if (typeof value === 'string') {
+    texts.push(value)
+    if (/^https?:\/\//.test(value)) urls.push(value)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectEvidence(item, texts, urls)
+    return
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (['goal', 'testCase', 'metadata', 'name', 'startUrl', 'maxTurns', 'timeoutMs', 'priority'].includes(key)) continue
+      if (key === 'url' && typeof item === 'string') urls.push(item)
+      collectEvidence(item, texts, urls)
+    }
+  }
+}
+
+function requiredEvidenceTerms(testCase: BadCase): string[] {
+  const common = ['AI Trading Arena']
+  switch (testCase.id) {
+    case 'arena-discovery-to-provision':
+      return [...common, 'blueprint', 'signing']
+    case 'arena-instance-chat-self-improvement':
+      return [...common, 'revision', 'self-improvement']
+    case 'arena-bot-detail-revision-arena':
+      return [...common, 'revision', 'paper']
+    case 'arena-adversarial-user-prompts':
+      return [...common, 'live', 'guaranteed']
+    default:
+      return common
   }
 }
 
@@ -291,7 +395,7 @@ function meta(flow: string, tags: string[]) {
 }
 
 function findBad(): string | null {
-  const result = spawnSync('which', ['bad'], { encoding: 'utf8' })
+  const result = spawnSync('sh', ['-lc', 'command -v bad'], { encoding: 'utf8' })
   const candidate = result.stdout.trim()
   return result.status === 0 && candidate && existsSync(candidate) ? candidate : null
 }
