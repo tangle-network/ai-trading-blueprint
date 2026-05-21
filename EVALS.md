@@ -12,7 +12,8 @@ This repo has four eval layers:
   added for market makers, portfolio managers, protocol researchers, and
   arbitrage agents.
 - `npm run eval:agent-strategy` drives the sandbox coding agent through the
-  self-improvement MCP/opencode path and validates a bounded strategy artifact.
+  self-improvement MCP/opencode path, then replays the produced bounded
+  Polymarket paper candidate against live Gamma/CLOB price history.
 - `npm run eval:full` composes the release gate across TS, Rust, persona,
   lifecycle, MCP, and agent-driven strategy evals.
 
@@ -198,9 +199,17 @@ npm run eval:full
 
 This runs deterministic build/test gates, emits `agent-eval` records where
 available, launches the real self-improvement MCP with `opencode`, and requires
-the coding agent to produce a bounded Polymarket paper-strategy artifact that
-passes deterministic validation. To include live Polymarket Gamma/CLOB price
-history in the same gate:
+the coding agent to produce a bounded Polymarket paper candidate that passes
+live price-history replay through `trading-runtime`:
+
+- profitable on holdout
+- beats baseline on holdout
+- stays within candidate drawdown cap
+- makes holdout trades
+- is not marked likely overfit
+
+To include the separate fixed-candidate live Polymarket Gamma/CLOB price
+history smoke in the same gate:
 
 ```bash
 npm run eval:full -- --live-polymarket

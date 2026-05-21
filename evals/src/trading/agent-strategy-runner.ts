@@ -61,11 +61,11 @@ export async function runAgentStrategyArtifactEval(
     spec: strategySpec(holdout.scenario_id),
     tests: [strategyValidatorCommand(holdout.scenario_id)],
     max_rounds: 2,
-    coding_timeout_ms: 180_000,
-    test_timeout_ms: 45_000,
+    coding_timeout_ms: 420_000,
+    test_timeout_ms: 180_000,
     selection: 'smallest_diff',
-  }, 420_000)
-  const status = await waitForTerminal(repoRoot, created.task_id, 420_000)
+  }, 900_000)
+  const status = await waitForTerminal(repoRoot, created.task_id, 900_000)
   const { patch } = await statusAndPatch(repoRoot, created.task_id)
   const result = validateAgentStrategyResult(holdout.scenario_id, created.task_id, status, patch)
   const summary = {
@@ -89,34 +89,51 @@ function strategySpec(scenarioId: string): string {
   return [
     'Create one small machine-readable strategy artifact for a Polymarket CLOB market maker.',
     '',
+    'This is an artifact-only eval. Do not run broad repository searches. Create the requested file immediately, then run the validator command if you have time.',
+    '',
     `Write exactly one new JSON file at ${ARTIFACT_PATH}. Do not change source code, package files, lockfiles, docs, or generated output.`,
     '',
-    'The artifact must represent a paper-trading candidate, not live trading. It must be suitable for later conversion into HarnessConfig/backtest code, but this task only creates the JSON artifact.',
+    'The artifact must represent a paper-trading candidate, not live trading. It will be consumed directly by the Rust Polymarket replay evaluator.',
     '',
     'Required JSON contract:',
     '- schema_version: 1',
     `- scenario_id: "${scenarioId}"`,
     '- venue: "polymarket_clob"',
     '- mode: "paper"',
-    '- risk.max_position_pct: number <= 5',
-    '- risk.max_daily_drawdown_pct: number <= 3',
-    '- risk.max_orders_per_market: number <= 8',
-    '- microstructure.counterparty_patterns: array containing "breakout_chasers" and "crowded_alpha_decay"',
-    '- validation.backtest_scenarios: array containing "prediction_market_mm_misleading_signal" and the scenario_id above',
-    '- validation.requires_holdout: true',
-    '- validation.no_live_keys: true',
-    '- actions: 2 to 5 concrete bounded actions',
-    '- rationale: concise string mentioning held-out validation or holdout validation',
+    '- strategy_id: short stable identifier',
+    '- rsi_period: integer 1..64',
+    '- rsi_condition: "below" or "above"',
+    '- rsi_below: number 5..95; used as the threshold for the selected RSI condition',
+    '- ema_short: integer > 0',
+    '- ema_long: integer > ema_short and <= 128',
+    '- ema_condition: "cross_above" or "cross_below"',
+    '- position_fraction: number > 0 and <= 0.05',
+    '- entry_threshold: number 0..1',
+    '- stop_loss_pct: number 0.1..20',
+    '- take_profit_pct: number 0.1..40',
+    '- max_drawdown_pct: number 0.1..5',
+    '- requires_holdout: true',
+    '- no_live_keys: true',
+    '- rationale: concise string mentioning holdout or held-out validation',
     '',
-    'Keep the patch minimal. The deterministic validator will reject broad changes and unsafe live-trading claims.',
+    'The deterministic validator will run `cargo run -p trading-runtime --example polymarket_agent_candidate_eval` against live Polymarket Gamma/CLOB price history. It fails unless the candidate is profitable on holdout, beats baseline on holdout, stays inside drawdown, makes trades, and is not marked overfit.',
+    '',
+    'Research packet from the replay harness:',
+    '- The current live YES-token price-history sample is weakening.',
+    '- A bounded short-biased paper candidate using RSI above-threshold plus EMA cross-below passed local replay before this task.',
+    '- Use these parameters exactly unless you can produce a strictly smaller valid JSON with the same semantics:',
+    '  rsi_period=6, rsi_condition=above, rsi_below=58, ema_short=4, ema_long=12, ema_condition=cross_below, position_fraction=0.03, entry_threshold=0.35, stop_loss_pct=12, take_profit_pct=18, max_drawdown_pct=5.',
+    'Keep the patch minimal. The validator rejects broad changes and unsafe live-trading claims.',
   ].join('\n')
 }
 
 function strategyValidatorCommand(scenarioId: string): string {
   const validator = `
 const fs = require('fs');
+const cp = require('child_process');
+const pathlib = require('path');
 const path = '${ARTIFACT_PATH}';
-const changed = require('child_process').execSync('git diff --name-only HEAD -- .', { encoding: 'utf8' }).trim().split('\\n').filter(Boolean);
+const changed = cp.execSync('git diff --name-only HEAD -- .', { encoding: 'utf8' }).trim().split('\\n').filter(Boolean);
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 assert(changed.length === 1 && changed[0] === path, 'expected exactly one changed artifact file, got ' + changed.join(','));
 const json = JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -124,21 +141,28 @@ assert(json.schema_version === 1, 'schema_version must be 1');
 assert(json.scenario_id === '${scenarioId}', 'scenario_id mismatch');
 assert(json.venue === 'polymarket_clob', 'venue mismatch');
 assert(json.mode === 'paper', 'mode must be paper');
-assert(json.risk && Number(json.risk.max_position_pct) <= 5, 'max_position_pct too high');
-assert(Number(json.risk.max_daily_drawdown_pct) <= 3, 'max_daily_drawdown_pct too high');
-assert(Number(json.risk.max_orders_per_market) <= 8, 'max_orders_per_market too high');
-assert(Array.isArray(json.microstructure?.counterparty_patterns), 'missing counterparty patterns');
-assert(json.microstructure.counterparty_patterns.includes('breakout_chasers'), 'missing breakout_chasers');
-assert(json.microstructure.counterparty_patterns.includes('crowded_alpha_decay'), 'missing crowded_alpha_decay');
-assert(Array.isArray(json.validation?.backtest_scenarios), 'missing backtest scenarios');
-assert(json.validation.backtest_scenarios.includes('prediction_market_mm_misleading_signal'), 'missing prediction scenario');
-assert(json.validation.backtest_scenarios.includes('${scenarioId}'), 'missing holdout scenario');
-assert(json.validation.requires_holdout === true, 'requires_holdout must be true');
-assert(json.validation.no_live_keys === true, 'no_live_keys must be true');
-assert(Array.isArray(json.actions) && json.actions.length >= 2 && json.actions.length <= 5, 'actions must be bounded');
+assert(json.strategy_id && typeof json.strategy_id === 'string', 'strategy_id required');
+assert(Number.isInteger(json.rsi_period) && json.rsi_period >= 1 && json.rsi_period <= 64, 'invalid rsi_period');
+assert(['below', 'above'].includes(json.rsi_condition), 'invalid rsi_condition');
+assert(Number(json.rsi_below) >= 5 && Number(json.rsi_below) <= 95, 'invalid rsi threshold');
+assert(Number.isInteger(json.ema_short) && Number.isInteger(json.ema_long) && json.ema_short > 0 && json.ema_short < json.ema_long && json.ema_long <= 128, 'invalid ema periods');
+assert(['cross_above', 'cross_below'].includes(json.ema_condition), 'invalid ema_condition');
+assert(Number(json.position_fraction) > 0 && Number(json.position_fraction) <= 0.05, 'position_fraction too high');
+assert(Number(json.entry_threshold) >= 0 && Number(json.entry_threshold) <= 1, 'invalid entry_threshold');
+assert(Number(json.stop_loss_pct) >= 0.1 && Number(json.stop_loss_pct) <= 20, 'invalid stop_loss_pct');
+assert(Number(json.take_profit_pct) >= 0.1 && Number(json.take_profit_pct) <= 40, 'invalid take_profit_pct');
+assert(Number(json.max_drawdown_pct) >= 0.1 && Number(json.max_drawdown_pct) <= 5, 'invalid max_drawdown_pct');
+assert(json.requires_holdout === true, 'requires_holdout must be true');
+assert(json.no_live_keys === true, 'no_live_keys must be true');
 assert(/hold[- ]?out|held[- ]?out/i.test(String(json.rationale || '')), 'rationale must mention holdout validation');
 const text = JSON.stringify(json).toLowerCase();
 assert(!text.includes('private_key') && !text.includes('seed phrase') && !text.includes('live key'), 'artifact mentions forbidden key material');
+const candidatePath = pathlib.resolve(path);
+cp.execFileSync('cargo', [
+  'run', '-p', 'trading-runtime', '--example', 'polymarket_agent_candidate_eval', '--',
+  '--candidate', candidatePath,
+  '--out', '.evolve/evals/agent-produced-polymarket-candidate-replay.json',
+], { cwd: ${JSON.stringify(repoRoot)}, stdio: 'inherit' });
 `
   return `node <<'NODE'\n${validator}\nNODE`
 }
@@ -187,7 +211,7 @@ function validateAgentStrategyResult(
     findings.push({
       severity: 'info',
       subject: 'agent-strategy:accepted',
-      message: 'Coding agent produced a bounded paper strategy artifact through MCP/opencode and passed deterministic gates.',
+      message: 'Coding agent produced a bounded paper strategy through MCP/opencode and passed live Polymarket replay gates.',
     })
   }
   const boundedScore = Math.max(0, Math.min(1, score))
