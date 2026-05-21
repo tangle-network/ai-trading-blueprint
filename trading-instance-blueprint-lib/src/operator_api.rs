@@ -1394,7 +1394,13 @@ async fn list_chat_messages(
             if response.status() == StatusCode::NOT_FOUND
                 && let Some(run) = replayable_run_for_session(&bot, &session_id)?
             {
-                return run_transcript_fallback_response(&run, &transcript_query);
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Ok(response)
@@ -1403,7 +1409,13 @@ async fn list_chat_messages(
             if error.0 == StatusCode::BAD_GATEWAY
                 && let Some(run) = replayable_run_for_session(&bot, &session_id)?
             {
-                return run_transcript_fallback_response(&run, &transcript_query);
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Err(error)
@@ -2090,6 +2102,63 @@ fn replayable_run_for_session(
     Ok(Some(run))
 }
 
+fn workflow_session_base_for_run(run: &WorkflowRunRecord) -> Option<String> {
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(run.workflow_id);
+    let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .ok()?
+        .get(&key)
+        .ok()??;
+    let workflow_json: serde_json::Value = serde_json::from_str(&entry.workflow_json).ok()?;
+    workflow_json
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+}
+
+fn timestamped_session_candidate(base: &str, session_id: String) -> Option<(u64, String)> {
+    let suffix = session_id.strip_prefix(&format!("{base}-"))?;
+    let started_at = suffix.parse::<u64>().ok()?;
+    Some((started_at, session_id))
+}
+
+async fn resolve_run_transcript_session_alias(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+) -> Option<String> {
+    let base = workflow_session_base_for_run(run)?;
+    let cutoff = run.completed_at.unwrap_or(run.started_at);
+    let sessions = trading_blueprint_lib::operator_chat::list_chat_session_ids(target)
+        .await
+        .ok()?;
+
+    sessions
+        .into_iter()
+        .filter_map(|session_id| timestamped_session_candidate(&base, session_id))
+        .filter(|(started_at, _)| *started_at <= cutoff)
+        .max_by_key(|(started_at, _)| *started_at)
+        .map(|(_, session_id)| session_id)
+}
+
+async fn live_run_transcript_alias_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+    query: Option<&str>,
+) -> Option<Response> {
+    let session_id = resolve_run_transcript_session_alias(target, run).await?;
+    let response = trading_blueprint_lib::operator_chat::proxy_chat_request(
+        target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}/messages"),
+        None,
+        query,
+    )
+    .await
+    .ok()?;
+
+    response.status().is_success().then_some(response)
+}
+
 fn parse_transcript_cursor(cursor: &str) -> Option<usize> {
     cursor.parse::<usize>().ok()
 }
@@ -2124,16 +2193,22 @@ fn replay_transcript_messages_response(
     }
 }
 
-fn run_transcript_fallback_response(
+async fn run_transcript_fallback_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
+    raw_query: Option<&str>,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
         trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let messages = match transcript {
-        Some(record) => record.messages,
-        None => synthesize_run_transcript_messages(run),
+    let messages = if let Some(record) = transcript {
+        record.messages
+    } else if let Some(response) = live_run_transcript_alias_response(target, run, raw_query).await
+    {
+        return Ok(response);
+    } else {
+        synthesize_run_transcript_messages(run)
     };
 
     Ok(replay_transcript_messages_response(messages, query))

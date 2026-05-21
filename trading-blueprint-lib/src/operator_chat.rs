@@ -303,6 +303,49 @@ pub async fn list_chat_sessions(
     Ok((status, [(CONTENT_TYPE, "application/json")], body).into_response())
 }
 
+pub async fn list_chat_session_ids(
+    target: &SidecarChatTarget,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    let resp =
+        send_chat_request(target, reqwest::Method::GET, "/agents/sessions", None, None).await?;
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = resp.bytes().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read sidecar response: {e}"),
+        )
+    })?;
+
+    if !status.is_success() {
+        return Err((status, String::from_utf8_lossy(&bytes).into_owned()));
+    }
+
+    let payload: Value = serde_json::from_slice(&bytes).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to decode sidecar session list: {e}"),
+        )
+    })?;
+
+    let entries: Vec<Value> = match payload {
+        Value::Array(values) => values,
+        Value::Object(mut map) => map
+            .remove("sessions")
+            .and_then(|sessions| sessions.as_array().cloned())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Value::Object(map) => map.get("id").and_then(Value::as_str).map(str::to_string),
+            _ => None,
+        })
+        .collect())
+}
+
 pub async fn proxy_chat_events(
     target: SidecarChatTarget,
     session_id: Option<String>,

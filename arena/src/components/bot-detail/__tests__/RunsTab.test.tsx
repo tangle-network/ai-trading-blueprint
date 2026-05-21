@@ -11,17 +11,21 @@ const authState = {
   error: null as string | null,
 };
 
+const useBotSessionStreamMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    messages: [],
+    partMap: new Map(),
+    isStreaming: false,
+    error: null,
+  })),
+);
+
 vi.mock("~/lib/hooks/useOperatorAuth", () => ({
   useOperatorAuth: () => authState,
 }));
 
 vi.mock("~/lib/hooks/useBotSessionStream", () => ({
-  useBotSessionStream: () => ({
-    messages: [],
-    partMap: new Map(),
-    isStreaming: false,
-    error: null,
-  }),
+  useBotSessionStream: useBotSessionStreamMock,
 }));
 
 vi.mock("~/components/bot-detail/chat/ChatTranscript", () => ({
@@ -88,6 +92,7 @@ describe("RunsTab", () => {
     authState.isAuthenticating = false;
     authState.error = null;
     authState.authenticate.mockReset();
+    useBotSessionStreamMock.mockClear();
 
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -186,5 +191,57 @@ describe("RunsTab", () => {
     });
     expect(await screen.findByText("Research Run")).toBeInTheDocument();
     expect(screen.getByText("latest result")).toBeInTheDocument();
+  });
+
+  it("uses stored ses run ids so the operator can recover archived transcripts", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-with-sidecar-id",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_849_924,
+              session_id: "ses_1b67cbb3cffey7L46b5A1X15w6",
+              transcript_available: true,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "summary",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
+      0,
+    );
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "ses_1b67cbb3cffey7L46b5A1X15w6",
+        }),
+      );
+    });
   });
 });

@@ -282,11 +282,11 @@ function resolveTranscriptSessionId(botId: string, run: BotRun | null): string {
     return "";
   }
 
-  if (run.sessionId && !run.sessionId.startsWith("ses_")) {
+  if (run.sessionId) {
     return run.sessionId;
   }
 
-  return deriveTranscriptSessionId(botId, run) ?? run.sessionId ?? "";
+  return deriveTranscriptSessionId(botId, run) ?? "";
 }
 
 function RunsStatus({ status }: { status: "idle" | "running" | "error" }) {

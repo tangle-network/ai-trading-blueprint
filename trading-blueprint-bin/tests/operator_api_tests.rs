@@ -644,6 +644,70 @@ async fn spawn_mock_chat_sidecar_with_message_status(
     format!("http://{addr}")
 }
 
+async fn spawn_mock_chat_sidecar_with_run_alias(actual_session_id: &str) -> String {
+    let actual_session_id = actual_session_id.to_string();
+    let sessions_session_id = actual_session_id.clone();
+    let messages_session_id = actual_session_id.clone();
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let sessions_session_id = sessions_session_id.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": sessions_session_id}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(move |Path(id): Path<String>| {
+                let messages_session_id = messages_session_id.clone();
+                async move {
+                    if id == messages_session_id {
+                        (
+                            StatusCode::OK,
+                            Json(json!([
+                                {
+                                    "info": {
+                                        "id": "aliased-msg",
+                                        "role": "assistant",
+                                        "timestamp": "2026-04-24T07:12:00.000Z"
+                                    },
+                                    "parts": [{ "type": "text", "text": "full aliased transcript" }]
+                                }
+                            ])),
+                        )
+                    } else {
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({
+                                "success": false,
+                                "error": {
+                                    "code": "SESSION_NOT_FOUND",
+                                    "message": format!("Session {id} not found")
+                                }
+                            })),
+                        )
+                    }
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
+    });
+    format!("http://{addr}")
+}
+
 // ---------------------------------------------------------------------------
 // Auth endpoint tests
 // ---------------------------------------------------------------------------
@@ -1471,6 +1535,57 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     let cursor_json: serde_json::Value = serde_json::from_slice(&cursor_body).unwrap();
     assert_eq!(cursor_json["messages"][0]["info"]["id"], "msg-1");
     assert!(cursor_json["next_cursor"].is_null());
+}
+
+#[tokio::test]
+async fn test_archived_run_messages_recover_sidecar_session_alias() {
+    let _ = init_test_env();
+    let workflow_id = 9_100_251;
+    let bot = seed_bot_with_workflow("runs-alias-bot", "dex", true, Some(workflow_id));
+    let auth = test_auth_header(SUBMITTER);
+    let actual_session_id = format!("wf-{workflow_id}-1775824000");
+    let sidecar_url = spawn_mock_chat_sidecar_with_run_alias(&actual_session_id).await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-alias".to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: "run-alias".to_string(),
+                workflow_id,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_000,
+                completed_at: Some(1_775_824_060),
+                session_id: Some("ses_wrong_sidecar_session".to_string()),
+                trace_id: None,
+                duration_ms: 60_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some("summary only".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert completed run");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/ses_wrong_sidecar_session/messages?limit=200",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["info"]["id"], "aliased-msg");
+    assert_eq!(json[0]["parts"][0]["text"], "full aliased transcript");
 }
 
 #[tokio::test]
