@@ -116,11 +116,12 @@ function strategySpec(scenarioId: string): string {
     '- no_live_keys: true',
     '- rationale: concise string mentioning holdout or held-out validation',
     '',
-    'The deterministic validator will run `cargo run -p trading-runtime --example polymarket_agent_candidate_eval` against live Polymarket Gamma/CLOB price history. It fails unless the candidate is profitable on holdout, beats baseline on holdout, stays inside drawdown, makes trades, and is not marked overfit.',
+    'The deterministic validator will run `cargo run -p trading-runtime --example polymarket_agent_candidate_eval` against a live sample of active Polymarket Gamma/CLOB markets. It fails unless enough markets are profitable on holdout, beat baseline on holdout, stay inside drawdown, make trades, and are not marked overfit.',
     '',
     'Research packet from the replay harness:',
     '- The current live YES-token price-history sample is weakening.',
     '- A bounded short-biased paper candidate using RSI above-threshold plus EMA cross-below passed local replay before this task.',
+    '- The validator now checks a live multi-market sample, so keep the candidate conservative and general rather than tuned to one market.',
     '- Use these parameters exactly unless you can produce a strictly smaller valid JSON with the same semantics:',
     '  rsi_period=6, rsi_condition=above, rsi_below=58, ema_short=4, ema_long=12, ema_condition=cross_below, position_fraction=0.03, entry_threshold=0.35, stop_loss_pct=12, take_profit_pct=18, max_drawdown_pct=5.',
     'Keep the patch minimal. The validator rejects broad changes and unsafe live-trading claims.',
@@ -162,6 +163,8 @@ cp.execFileSync('cargo', [
   'run', '-p', 'trading-runtime', '--example', 'polymarket_agent_candidate_eval', '--',
   '--candidate', candidatePath,
   '--out', '.evolve/evals/agent-produced-polymarket-candidate-replay.json',
+  '--market-limit', '4',
+  '--min-pass-markets', '2',
 ], { cwd: ${JSON.stringify(repoRoot)}, stdio: 'inherit' });
 `
   return `node <<'NODE'\n${validator}\nNODE`

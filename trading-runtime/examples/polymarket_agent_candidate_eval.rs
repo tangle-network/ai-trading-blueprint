@@ -58,14 +58,28 @@ struct PricePoint {
 struct AgentCandidateReplayReport {
     suite: String,
     source: String,
+    strategy_id: String,
+    interval: String,
+    fidelity_minutes: u32,
+    markets_requested: usize,
+    markets_evaluated: usize,
+    markets_passed: usize,
+    min_pass_markets: usize,
+    total_holdout_trades: u64,
+    median_holdout_return_pct: f64,
+    median_return_delta_pct: f64,
+    pass: bool,
+    failure_reasons: Vec<String>,
+    markets: Vec<MarketReplayReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct MarketReplayReport {
     market_id: String,
     condition_id: String,
     slug: String,
     question: String,
     clob_token_id: String,
-    strategy_id: String,
-    interval: String,
-    fidelity_minutes: u32,
     candles: usize,
     train_candles: usize,
     test_candles: usize,
@@ -92,6 +106,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(60);
     let mut token_id = env::var("POLYMARKET_CLOB_TOKEN_ID").ok();
+    let mut market_limit = env::var("POLYMARKET_MARKET_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let mut min_pass_markets = env::var("POLYMARKET_MIN_PASS_MARKETS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -110,9 +132,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .parse::<u32>()?;
             }
             "--token-id" => token_id = Some(args.next().ok_or("--token-id requires an id")?),
+            "--market-limit" => {
+                market_limit = args
+                    .next()
+                    .ok_or("--market-limit requires a count")?
+                    .parse::<usize>()?;
+            }
+            "--min-pass-markets" => {
+                min_pass_markets = args
+                    .next()
+                    .ok_or("--min-pass-markets requires a count")?
+                    .parse::<usize>()?;
+            }
             "--help" | "-h" => {
                 eprintln!(
-                    "usage: cargo run -p trading-runtime --example polymarket_agent_candidate_eval -- --candidate <path> [--out <path>] [--interval 1m] [--fidelity 60] [--token-id <clob-token-id>]"
+                    "usage: cargo run -p trading-runtime --example polymarket_agent_candidate_eval -- --candidate <path> [--out <path>] [--interval 1m] [--fidelity 60] [--market-limit 4] [--min-pass-markets 2] [--token-id <clob-token-id>]"
                 );
                 return Ok(());
             }
@@ -125,23 +159,194 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_candidate_spec(&candidate)?;
 
     let client = reqwest::Client::new();
-    let market = fetch_market(&client).await?;
-    let selected_token = token_id.unwrap_or_else(|| first_clob_token(&market.clob_token_ids));
-    if selected_token.is_empty() {
-        return Err("market has no CLOB token ids".into());
+    let single_token_mode = token_id.is_some();
+    let markets_requested = if single_token_mode { 1 } else { market_limit };
+    let markets = if single_token_mode {
+        vec![fetch_market(&client).await?]
+    } else {
+        fetch_markets(&client, market_limit).await?
+    };
+    market_limit = markets.len();
+    if market_limit == 0 {
+        return Err("no active Polymarket CLOB markets returned".into());
+    }
+    if single_token_mode && min_pass_markets > market_limit {
+        min_pass_markets = market_limit;
+    }
+    if min_pass_markets == 0 || min_pass_markets > market_limit {
+        return Err(format!(
+            "min_pass_markets must be in 1..={market_limit}, got {min_pass_markets}"
+        )
+        .into());
     }
 
-    let candles = fetch_price_history(&client, &selected_token, &interval, fidelity_minutes)
+    let mut market_reports = Vec::new();
+    let selected_token_id = token_id.take();
+    for market in markets {
+        let selected_token = selected_token_id
+            .clone()
+            .unwrap_or_else(|| first_clob_token(&market.clob_token_ids));
+        if selected_token.is_empty() {
+            continue;
+        }
+        match evaluate_market(
+            &client,
+            &candidate,
+            market,
+            selected_token,
+            &interval,
+            fidelity_minutes,
+        )
+        .await
+        {
+            Ok(report) => market_reports.push(report),
+            Err(err) => market_reports.push(MarketReplayReport {
+                market_id: String::new(),
+                condition_id: String::new(),
+                slug: String::new(),
+                question: String::new(),
+                clob_token_id: String::new(),
+                candles: 0,
+                train_candles: 0,
+                test_candles: 0,
+                train_candidate_return_pct: 0.0,
+                test_current_return_pct: 0.0,
+                test_candidate_return_pct: 0.0,
+                test_return_delta_pct: 0.0,
+                test_candidate_sharpe: 0.0,
+                test_candidate_max_drawdown_pct: 0.0,
+                test_candidate_trades: 0,
+                should_promote: false,
+                likely_overfit: false,
+                pass: false,
+                failure_reasons: vec![err.to_string()],
+            }),
+        }
+    }
+
+    let markets_passed = market_reports.iter().filter(|report| report.pass).count();
+    let markets_evaluated = market_reports
+        .iter()
+        .filter(|report| report.candles >= 64)
+        .count();
+    let total_holdout_trades = market_reports
+        .iter()
+        .map(|report| report.test_candidate_trades)
+        .sum();
+    let median_holdout_return_pct = median(
+        market_reports
+            .iter()
+            .filter(|report| report.candles >= 64)
+            .map(|report| report.test_candidate_return_pct)
+            .collect(),
+    );
+    let median_return_delta_pct = median(
+        market_reports
+            .iter()
+            .filter(|report| report.candles >= 64)
+            .map(|report| report.test_return_delta_pct)
+            .collect(),
+    );
+    let mut failure_reasons = Vec::new();
+    if markets_evaluated < min_pass_markets {
+        failure_reasons.push(format!(
+            "only {markets_evaluated} markets had enough price history; need at least {min_pass_markets}"
+        ));
+    }
+    if markets_passed < min_pass_markets {
+        failure_reasons.push(format!(
+            "only {markets_passed}/{market_limit} markets passed; need at least {min_pass_markets}"
+        ));
+    }
+    if median_holdout_return_pct <= 0.0 {
+        failure_reasons.push(format!(
+            "median holdout return is not profitable: {median_holdout_return_pct:.4}%"
+        ));
+    }
+    if median_return_delta_pct <= 0.0 {
+        failure_reasons.push(format!(
+            "median return delta does not beat baseline: {median_return_delta_pct:.4}%"
+        ));
+    }
+
+    let report = AgentCandidateReplayReport {
+        suite: "polymarket-agent-candidate-replay".into(),
+        source: "gamma-api.polymarket.com + clob.polymarket.com/prices-history".into(),
+        strategy_id: candidate.strategy_id,
+        interval,
+        fidelity_minutes,
+        markets_requested,
+        markets_evaluated,
+        markets_passed,
+        min_pass_markets,
+        total_holdout_trades,
+        median_holdout_return_pct,
+        median_return_delta_pct,
+        pass: failure_reasons.is_empty(),
+        failure_reasons,
+        markets: market_reports,
+    };
+
+    let json = serde_json::to_string_pretty(&report)?;
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, format!("{json}\n"))?;
+        println!("{}", path.display());
+    } else {
+        println!("{json}");
+    }
+
+    if !report.pass {
+        return Err(format!(
+            "agent candidate replay failed: {}",
+            report.failure_reasons.join("; ")
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+async fn evaluate_market(
+    client: &reqwest::Client,
+    candidate: &CandidateSpec,
+    market: GammaMarket,
+    selected_token: String,
+    interval: &str,
+    fidelity_minutes: u32,
+) -> Result<MarketReplayReport, Box<dyn std::error::Error>> {
+    let candles = fetch_price_history(client, &selected_token, interval, fidelity_minutes)
         .await?
         .into_iter()
         .filter_map(|p| candle_from_point(&market.slug, p))
         .collect::<Vec<_>>();
     if candles.len() < 64 {
-        return Err(format!(
-            "insufficient Polymarket price history: {} points",
-            candles.len()
-        )
-        .into());
+        return Ok(MarketReplayReport {
+            market_id: market.id,
+            condition_id: market.condition_id,
+            slug: market.slug,
+            question: market.question,
+            clob_token_id: selected_token,
+            candles: candles.len(),
+            train_candles: 0,
+            test_candles: 0,
+            train_candidate_return_pct: 0.0,
+            test_current_return_pct: 0.0,
+            test_candidate_return_pct: 0.0,
+            test_return_delta_pct: 0.0,
+            test_candidate_sharpe: 0.0,
+            test_candidate_max_drawdown_pct: 0.0,
+            test_candidate_trades: 0,
+            should_promote: false,
+            likely_overfit: false,
+            pass: false,
+            failure_reasons: vec![format!(
+                "insufficient Polymarket price history: {} points",
+                candles.len()
+            )],
+        });
     }
 
     let current = BacktestConfig {
@@ -160,7 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     signal: SignalType::Rsi {
                         period: candidate.rsi_period,
                     },
-                    condition: rsi_condition(&candidate),
+                    condition: rsi_condition(candidate),
                     weight: 0.55,
                     tokens: vec![],
                 },
@@ -169,7 +374,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         short_period: candidate.ema_short,
                         long_period: candidate.ema_long,
                     },
-                    condition: ema_condition(&candidate),
+                    condition: ema_condition(candidate),
                     weight: 0.45,
                     tokens: vec![],
                 },
@@ -222,17 +427,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         failure_reasons.push("candidate made no holdout trades".to_string());
     }
 
-    let report = AgentCandidateReplayReport {
-        suite: "polymarket-agent-candidate-replay".into(),
-        source: "gamma-api.polymarket.com + clob.polymarket.com/prices-history".into(),
+    Ok(MarketReplayReport {
         market_id: market.id,
         condition_id: market.condition_id,
         slug: market.slug,
         question: market.question,
         clob_token_id: selected_token,
-        strategy_id: candidate.strategy_id,
-        interval,
-        fidelity_minutes,
         candles: candles.len(),
         train_candles: walk.train_candles,
         test_candles: walk.test_candles,
@@ -248,28 +448,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         likely_overfit: walk.likely_overfit,
         pass: failure_reasons.is_empty(),
         failure_reasons,
-    };
-
-    let json = serde_json::to_string_pretty(&report)?;
-    if let Some(path) = out {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, format!("{json}\n"))?;
-        println!("{}", path.display());
-    } else {
-        println!("{json}");
-    }
-
-    if !report.pass {
-        return Err(format!(
-            "agent candidate replay failed: {}",
-            report.failure_reasons.join("; ")
-        )
-        .into());
-    }
-
-    Ok(())
+    })
 }
 
 fn validate_candidate_spec(candidate: &CandidateSpec) -> Result<(), Box<dyn std::error::Error>> {
@@ -356,18 +535,34 @@ fn ema_condition(candidate: &CandidateSpec) -> EntryCondition {
 }
 
 async fn fetch_market(client: &reqwest::Client) -> Result<GammaMarket, Box<dyn std::error::Error>> {
+    fetch_markets(client, 20)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no active Polymarket CLOB markets returned".into())
+}
+
+async fn fetch_markets(
+    client: &reqwest::Client,
+    limit: usize,
+) -> Result<Vec<GammaMarket>, Box<dyn std::error::Error>> {
     let markets = client
         .get("https://gamma-api.polymarket.com/markets")
-        .query(&[("closed", "false"), ("active", "true"), ("limit", "20")])
+        .query(&[
+            ("closed", "false"),
+            ("active", "true"),
+            ("limit", &limit.max(1).to_string()),
+        ])
         .send()
         .await?
         .error_for_status()?
         .json::<Vec<GammaMarket>>()
         .await?;
-    markets
+    Ok(markets
         .into_iter()
-        .find(|m| !first_clob_token(&m.clob_token_ids).is_empty())
-        .ok_or_else(|| "no active Polymarket CLOB markets returned".into())
+        .filter(|m| !first_clob_token(&m.clob_token_ids).is_empty())
+        .take(limit)
+        .collect())
 }
 
 async fn fetch_price_history(
@@ -412,4 +607,17 @@ fn first_clob_token(raw: &str) -> String {
         .ok()
         .and_then(|tokens| tokens.into_iter().next())
         .unwrap_or_else(|| raw.trim_matches(['[', ']', '"']).to_string())
+}
+
+fn median(mut values: Vec<f64>) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[middle - 1] + values[middle]) / 2.0
+    } else {
+        values[middle]
+    }
 }
