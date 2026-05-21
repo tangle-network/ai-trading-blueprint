@@ -1,0 +1,10 @@
+{
+  "chainId": 998,
+  "deployer": "0xb607A500574fE29afb0d0681f1dC3E82f79f4877",
+  "assetToken": "0x2B3370eE501B4a559b57D449569354196457D8Ab",
+  "vaultFactory": "0x83902d44dE701581906A13fa2Fc1DF9f2a363863",
+  "vaultImplementation": "0x81a375Ce8a0f909aA3140755A21C9d0803D6eA1f",
+  "vaultDeployer": "0x06686Fd845D8CBcbD5EBFB48a70998B9D07C16AF",
+  "vaultShareDeployer": "0xc3eedA3FFd548fB4A1Eb364a9EBDBc214830c0f7",
+  "tradeValidator": "0xd20afF6DE9FDE57514D37400bF0b1dc902200158"
+}
