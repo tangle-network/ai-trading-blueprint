@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { run, runShell } from '../lib/process.js'
 import { isoStamp, resolveRepo } from '../lib/repo.js'
 import { runSelfImprovementMcpEval } from '../self-improvement/mcp-eval.js'
+import { runProductBrowserEval } from '../product/browser-driver.js'
 import { runTradingLifecycleEval } from '../trading/lifecycle-runner.js'
 import { runTradingPersonaAgentEvalBridge } from '../trading/persona-agent-eval.js'
 
@@ -37,10 +38,15 @@ export async function runFullEval(options: FullEvalOptions = {}) {
     traceDir: `.evolve/agent-eval/traces/full-personas-${stamp}`,
     runsJsonl: `.evolve/agent-eval/full-persona-runs-${stamp}.jsonl`,
   }))
+  await gate(gates, 'arena-product-browser-cases', async () => runProductBrowserEval({
+    outputDir: `.evolve/evals/full-product-browser-${stamp}`,
+    runBad: false,
+  }))
   await gate(gates, 'trading-lifecycle-real-api', async () => runTradingLifecycleEval({
     outputPath: resolveRepo(`.evolve/evals/full-lifecycle-${stamp}.json`),
     personaReportPath: resolveRepo(`.evolve/evals/full-lifecycle-personas-${stamp}.json`),
     feedbackJsonlPath: resolveRepo(`.evolve/agent-eval/full-lifecycle-feedback-${stamp}.jsonl`),
+    traceJsonlPath: resolveRepo(`.evolve/agent-eval/full-lifecycle-traces-${stamp}.jsonl`),
     mode: 'real-api',
   }))
   await gate(gates, 'self-improvement-mcp-real-opencode', async () => runSelfImprovementMcpEval({

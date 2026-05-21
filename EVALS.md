@@ -6,6 +6,9 @@ This repo has four eval layers:
   operator/trading API.
 - `npm run eval:self-improvement-mcp` exercises the sandbox
   self-improvement MCP with real git worktrees and command execution.
+- `npm run eval:product-browser` generates the Arena product-surface BAD
+  browser-driver cases; add `-- --run-bad` to drive a real browser against a
+  running Arena URL.
 - `scripts/eval-polymarket-real-price-history.sh` fetches live Polymarket
   Gamma/CLOB price history and runs the real Rust walk-forward backtester.
 - `scripts/eval-trading-personas.sh` runs the trading-domain persona suite
@@ -177,11 +180,13 @@ that candidate through this same suite.
 
 The lifecycle eval has two intentionally different modes.
 
-The default deterministic mode is a fast local guard. It simulates multi-turn
-user feedback such as "make the strategy more risk-off", "review
-microstructure", and "find adjacent pairs", then links each revision to
-concrete backtest scenarios and emits durable feedback trajectory JSONL
-records.
+The default deterministic mode is a fast local guard. It simulates focused
+multi-turn user feedback across separate product stories: risk adjustment,
+microstructure review, adjacent-market search, paper/shadow comparison,
+rollback, unsupported cross-chain requests, live-promotion pressure, conflicting
+instructions, and profitability overclaim checks. Each revision links to
+concrete backtest scenarios and emits durable feedback trajectory JSONL plus
+trace JSONL records.
 
 ```bash
 npm run eval:trading-lifecycle
@@ -209,6 +214,39 @@ trading loop. The real lifecycle gate must produce API evidence: self-
 improvement run ids, sandbox revision ids, candle counts, promotion blockers,
 and revision arena entries.
 
+## Arena Product Browser Eval
+
+The product browser eval defines BAD/browser-agent-driver cases for the user
+facing Arena surface. It is intentionally separate from lifecycle and backtest
+evals: this checks whether a real user can navigate the product, see safe
+provisioning paths, inspect bot detail/revision state, and pressure the UI/agent
+with unsafe requests without spending funds.
+
+Generate the case file:
+
+```bash
+npm run eval:product-browser
+```
+
+Run deterministic browser snapshots against a live Arena app with BAD
+installed. This uses real headless browser loading and requires no LLM provider:
+
+```bash
+ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+npm run eval:product-browser -- --snapshot
+```
+
+Run the full agentic browser-driver cases against a live Arena app with BAD and
+an LLM provider configured:
+
+```bash
+ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+npm run eval:product-browser -- --run-bad
+```
+
+The runner fails loudly if `--run-bad` is requested and `bad` is unavailable.
+Cases-only mode is a contract/build gate, not browser proof.
+
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
 `scripts/` are compatibility wrappers only.
@@ -222,9 +260,9 @@ npm run eval:full
 ```
 
 This runs deterministic build/test gates, emits `agent-eval` records where
-available, requires the real API lifecycle gate above, and launches the real
-self-improvement MCP with `opencode`. Artifact-only strategy generation is not
-part of the full gate.
+available, generates the Arena product browser-driver cases, requires the real
+API lifecycle gate above, and launches the real self-improvement MCP with
+`opencode`. Artifact-only strategy generation is not part of the full gate.
 
 When `--live-polymarket` is enabled, the separate live price-history gate
 requires a fixed candidate to pass multi-market replay through

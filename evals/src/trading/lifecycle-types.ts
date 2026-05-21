@@ -3,6 +3,12 @@ export type LifecycleUserIntent =
   | 'risk_adjustment'
   | 'find_new_pairs'
   | 'microstructure_review'
+  | 'unsupported_market_request'
+  | 'unsafe_live_pressure'
+  | 'conflicting_instruction'
+  | 'rollback_request'
+  | 'paper_shadow_request'
+  | 'profitability_claim_check'
 
 export interface SimulatedUserTurn {
   day: number
