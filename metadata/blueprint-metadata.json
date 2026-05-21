@@ -11,13 +11,18 @@
   "blueprintUi": {
     "displayName": "AI Trading Desk",
     "description": "Operate sandboxed trading bots with strategy packs, validator status, vault controls, and execution history rendered by the secure shared host.",
+    "slug": "ai-trading",
     "requestedSlug": "ai-trading",
     "publisher": {
       "name": "Tangle Network",
       "namespace": "tangle",
-      "verified": false
+      "verified": true,
+      "verification": "verified"
     },
     "resources": {
+      "serviceNoun": "trading instance",
+      "resourceNoun": "bot",
+      "resourceRoute": "bots",
       "serviceLabel": "Trading fleet",
       "itemLabel": "Bot",
       "itemRoute": "bots"
