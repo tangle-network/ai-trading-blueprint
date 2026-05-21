@@ -159,8 +159,7 @@ export const hyperEvmTestnetConfigured =
   Boolean(
     hyperEvmTestnetRpcUrl &&
       hyperEvmTestnetAssetToken &&
-      hyperEvmTestnetVaultFactory &&
-      hyperEvmTestnetVault,
+      (hyperEvmTestnetVaultFactory || hyperEvmTestnetVault),
   );
 
 export const hyperEvmTestnet = defineChain({
@@ -187,8 +186,7 @@ export const hyperEvmMainnetConfigured =
   Boolean(
     hyperEvmMainnetRpcUrl &&
       hyperEvmMainnetAssetToken &&
-      hyperEvmMainnetVaultFactory &&
-      hyperEvmMainnetVault,
+      (hyperEvmMainnetVaultFactory || hyperEvmMainnetVault),
   );
 
 export const hyperEvmMainnet = defineChain({
@@ -423,10 +421,10 @@ configureNetworks<ArenaAddresses>({
             jobs: ZERO_ADDRESS,
             services: ZERO_ADDRESS,
             tangle: ZERO_ADDRESS,
-            vaultFactory: hyperEvmTestnetVaultFactory!,
+            vaultFactory: hyperEvmTestnetVaultFactory ?? ZERO_ADDRESS,
             tradingBlueprint: ZERO_ADDRESS,
             tradeValidator: ZERO_ADDRESS,
-            tradingVault: hyperEvmTestnetVault!,
+            tradingVault: hyperEvmTestnetVault ?? ZERO_ADDRESS,
           },
         },
       }
@@ -442,10 +440,10 @@ configureNetworks<ArenaAddresses>({
             jobs: ZERO_ADDRESS,
             services: ZERO_ADDRESS,
             tangle: ZERO_ADDRESS,
-            vaultFactory: hyperEvmMainnetVaultFactory!,
+            vaultFactory: hyperEvmMainnetVaultFactory ?? ZERO_ADDRESS,
             tradingBlueprint: ZERO_ADDRESS,
             tradeValidator: ZERO_ADDRESS,
-            tradingVault: hyperEvmMainnetVault!,
+            tradingVault: hyperEvmMainnetVault ?? ZERO_ADDRESS,
           },
         },
       }

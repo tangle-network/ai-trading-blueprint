@@ -496,8 +496,7 @@ const DEFAULT_HYPEREVM_TESTNET_EXECUTION_TARGET: DexExecutionTargetOption = {
       hyperEvmTestnetTargetChainId &&
         hyperEvmTestnetTargetRpcUrl &&
         hyperEvmTestnetAssetToken &&
-        hyperEvmTestnetVaultFactory &&
-        hyperEvmTestnetVault,
+        (hyperEvmTestnetVaultFactory || hyperEvmTestnetVault),
     ),
   chainId: hyperEvmTestnetTargetChainId,
   rpcUrl: hyperEvmTestnetTargetRpcUrl,
@@ -539,8 +538,7 @@ const DEFAULT_HYPEREVM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
       hyperEvmMainnetTargetChainId &&
         hyperEvmMainnetTargetRpcUrl &&
         hyperEvmMainnetAssetToken &&
-        hyperEvmMainnetVaultFactory &&
-        hyperEvmMainnetVault,
+        (hyperEvmMainnetVaultFactory || hyperEvmMainnetVault),
     ),
   chainId: hyperEvmMainnetTargetChainId,
   rpcUrl: hyperEvmMainnetTargetRpcUrl,
