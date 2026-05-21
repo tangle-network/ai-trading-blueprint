@@ -240,6 +240,15 @@ Run the full agentic browser-driver cases against a live Arena app with BAD and
 Tangle Router configured. This intentionally routes BAD through the router's
 OpenAI-compatible adapter while using DeepSeek v4 by default; it refuses direct
 provider endpoints and OpenAI model ids.
+The agentic product eval forces BAD's text/DOM mode (`--no-vision`) because
+router-backed DeepSeek v4 currently rejects BAD's multimodal `image_url` content
+parts.
+It also uses `fast-explore`, disables BAD memory, and skips BAD's secondary
+goal verifier so the product gate measures the live browser trajectory and
+agent terminal report instead of spending extra verifier/scout calls through
+the same model.
+Each case runs in its own BAD process/output directory so a browser teardown or
+failure in one product story cannot poison the remaining stories.
 
 ```bash
 export TANGLE_API_KEY=<router-key>

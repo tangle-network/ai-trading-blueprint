@@ -39,6 +39,12 @@ export interface ProductBrowserEvalReport {
   bad?: {
     llm: BadLlmConfig
     status: number
+    runs: Array<{
+      case_id: string
+      status: number
+      stdout_tail: string
+      stderr_tail: string
+    }>
     stdout_tail: string
     stderr_tail: string
   }
@@ -116,14 +122,47 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
     throw new Error('Product browser eval requires `bad` on PATH. Install @tangle-network/browser-agent-driver or run without --run-bad to generate cases only.')
   }
   const llm = resolveBadLlmConfig(options)
-  const result = spawnSync(badPath, [
+  const runs = cases.map((testCase) => {
+    const caseDir = resolve(outputDir, testCase.id)
+    const casePath = resolve(caseDir, 'case.json')
+    mkdirSync(caseDir, { recursive: true })
+    writeFileSync(casePath, `${JSON.stringify([testCase], null, 2)}\n`, 'utf8')
+    const result = spawnSync(badPath, badRunArgs(casePath, caseDir, llm), {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 50 * 1024 * 1024,
+      env: badRunEnv(llm),
+    })
+    return {
+      case_id: testCase.id,
+      status: result.status ?? 1,
+      stdout_tail: tail(result.stdout ?? ''),
+      stderr_tail: tail(result.stderr ?? ''),
+    }
+  })
+  const status = runs.every((run) => run.status === 0) ? 0 : 1
+  report.bad = {
+    llm: llm.publicConfig,
+    runs,
+    status,
+    stdout_tail: tail(runs.map((run) => `== ${run.case_id} ==\n${run.stdout_tail}`).join('\n')),
+    stderr_tail: tail(runs.map((run) => `== ${run.case_id} ==\n${run.stderr_tail}`).join('\n')),
+  }
+  report.passed = runs.filter((run) => run.status === 0).length
+  report.failed = report.total - report.passed
+  return report
+}
+
+function badRunArgs(casesPath: string, outputDir: string, llm: { apiKey: string; model: string; base_url: string }): string[] {
+  return [
     'run',
     '--cases',
     casesPath,
     '--sink',
     outputDir,
     '--mode',
-    'full-evidence',
+    'fast-explore',
     '--provider',
     'openai',
     '--model',
@@ -132,32 +171,25 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
     llm.base_url,
     '--api-key',
     llm.apiKey,
+    '--no-vision',
+    '--vision-strategy',
+    'never',
+    '--no-memory',
+    '--no-goal-verification',
     '--json',
-  ], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 50 * 1024 * 1024,
-    env: {
-      ...process.env,
-      LLM_BASE_URL: llm.base_url,
-      OPENAI_API_KEY: llm.apiKey,
-      TANGLE_API_KEY: llm.apiKey,
-      TANGLE_ROUTER_API_KEY: llm.apiKey,
-      TANGLE_ROUTER_BASE_URL: llm.base_url,
-      TANGLE_ROUTER_URL: llm.base_url,
-    },
-  })
-  const status = result.status ?? 1
-  report.bad = {
-    llm: llm.publicConfig,
-    status,
-    stdout_tail: tail(result.stdout ?? ''),
-    stderr_tail: tail(result.stderr ?? ''),
+  ]
+}
+
+function badRunEnv(llm: { apiKey: string; base_url: string }): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    LLM_BASE_URL: llm.base_url,
+    OPENAI_API_KEY: llm.apiKey,
+    TANGLE_API_KEY: llm.apiKey,
+    TANGLE_ROUTER_API_KEY: llm.apiKey,
+    TANGLE_ROUTER_BASE_URL: llm.base_url,
+    TANGLE_ROUTER_URL: llm.base_url,
   }
-  report.passed = status === 0 ? cases.length : 0
-  report.failed = status === 0 ? 0 : cases.length
-  return report
 }
 
 function resolveBadLlmConfig(options: ProductBrowserEvalOptions): BadLlmConfig & { apiKey: string; publicConfig: BadLlmConfig } {
