@@ -37,14 +37,26 @@ contract RegisterBlueprint is Script {
     // Anvil well-known keys
     uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
-    // Tangle protocol address (deterministic from Anvil state snapshot)
-    address constant TANGLE = 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9;
+    // Tangle protocol address default (deterministic from Anvil state snapshot).
+    // Overridable per-network via the `TANGLE_CORE` env var (the bash wrapper /
+    // base-sepolia env loader sets this to the live Base Sepolia Tangle proxy).
+    address constant TANGLE_LOCAL_DEFAULT = 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9;
 
     // Test accounts
     address constant USER_ACCOUNT = 0x68FF20459d48917748CA13afCbDA3B265a449D48;
     address constant OPERATOR1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address constant OPERATOR2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
 
+    // ── Supported chain ids ──────────────────────────────────────────
+    uint256 constant CHAIN_ID_LOCAL = 31337;
+    uint256 constant CHAIN_ID_LOCAL_TESTNET = 31338; // anvil w/ Tangle snapshot
+    uint256 constant CHAIN_ID_BASE_SEPOLIA = 84532;
+    uint256 constant CHAIN_ID_MAINNET = 1;
+
+    // ── Ethereum mainnet token + Chainlink USD feeds ─────────────────
+    // Retained only for completeness — RegisterBlueprint targets local +
+    // Base Sepolia. Mainnet entries are surfaced via `_mainnetTokens()` if
+    // someone explicitly opts in by running against chainId 1.
     address constant MAINNET_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
@@ -60,9 +72,54 @@ contract RegisterBlueprint is Script {
     address constant DAI_USD_FEED = 0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9;
     address constant BTC_USD_FEED = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
 
+    // ── Base Sepolia (chainId 84532) ────────────────────────────────
+    // WETH is the canonical Base predeploy (also live on Base Sepolia).
+    // USDC is Circle's official Base Sepolia testnet USDC.
+    // ETH/USD feed comes from the Chainlink Base Sepolia feed list.
+    // USDC/USD has no Base Sepolia Chainlink feed today — set to address(0)
+    // and skip valuator registration on this chain; the BSM does not gate
+    // blueprint creation on token validity.
+    // Tokens with no Base Sepolia equivalent (USDT, DAI, WBTC, aWETH, aUSDC,
+    // aDAI) are set to address(0) and structurally excluded from whitelists +
+    // valuator wiring on chainId 84532.
+    address constant BASE_SEPOLIA_WETH = 0x4200000000000000000000000000000000000006;
+    address constant BASE_SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    address constant BASE_SEPOLIA_ETH_USD_FEED = 0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1;
+
+    /// @notice Per-chain token + Chainlink feed bundle.
+    /// @dev Any address may be `address(0)` to indicate the token / feed is
+    ///      unavailable on this network. Callers must skip address(0) entries
+    ///      when wiring valuators / whitelists.
+    struct TokenSet {
+        address weth;
+        address usdc;
+        address usdt;
+        address dai;
+        address wbtc;
+        address aWeth;
+        address aUsdc;
+        address aDai;
+        address ethUsdFeed;
+        address usdcUsdFeed;
+        address usdtUsdFeed;
+        address daiUsdFeed;
+        address btcUsdFeed;
+    }
+
     function run() external {
         address deployer = vm.addr(DEPLOYER_KEY);
-        ITangle tangle = ITangle(TANGLE);
+
+        // Tangle protocol address is env-overridable so the same script can
+        // target local Anvil (default) or any deployed network (Base Sepolia,
+        // mainnet, etc.). The bash wrappers export TANGLE_CORE; if absent we
+        // fall back to the Anvil-snapshot deterministic address.
+        address tangleAddr = vm.envOr("TANGLE_CORE", TANGLE_LOCAL_DEFAULT);
+        ITangle tangle = ITangle(tangleAddr);
+
+        // Pick the per-chain token / feed set. block.chainid is the source of
+        // truth — `TARGET_NETWORK` env var overrides only when explicitly set
+        // (e.g. dry-run simulations on a different chain).
+        TokenSet memory tokens = _resolveTokenSet();
 
         vm.startBroadcast(DEPLOYER_KEY);
 
@@ -99,16 +156,20 @@ contract RegisterBlueprint is Script {
         IAssetValuator wrappedValuator;
         if (usingExistingAssets) {
             ChainlinkUsdValuator chainlinkValuator = new ChainlinkUsdValuator(deployer);
-            chainlinkValuator.setFeed(MAINNET_WETH, ETH_USD_FEED, 1 days);
-            chainlinkValuator.setFeed(MAINNET_USDC, USDC_USD_FEED, 1 days);
-            chainlinkValuator.setFeed(MAINNET_USDT, USDT_USD_FEED, 1 days);
-            chainlinkValuator.setFeed(MAINNET_DAI, DAI_USD_FEED, 1 days);
-            chainlinkValuator.setFeed(MAINNET_WBTC, BTC_USD_FEED, 1 days);
+            // Only register feeds whose token AND feed address are non-zero on
+            // this chain. ChainlinkUsdValuator.setFeed reverts on address(0),
+            // so Base Sepolia's missing USDC/USD + missing USDT/DAI/WBTC are
+            // simply skipped.
+            _setFeedIfAvailable(chainlinkValuator, tokens.weth, tokens.ethUsdFeed);
+            _setFeedIfAvailable(chainlinkValuator, tokens.usdc, tokens.usdcUsdFeed);
+            _setFeedIfAvailable(chainlinkValuator, tokens.usdt, tokens.usdtUsdFeed);
+            _setFeedIfAvailable(chainlinkValuator, tokens.dai, tokens.daiUsdFeed);
+            _setFeedIfAvailable(chainlinkValuator, tokens.wbtc, tokens.btcUsdFeed);
 
             WrappedAssetValuator wrapperValuator = new WrappedAssetValuator(deployer, chainlinkValuator);
-            wrapperValuator.setUnderlying(AAVE_AWETH, MAINNET_WETH);
-            wrapperValuator.setUnderlying(AAVE_AUSDC, MAINNET_USDC);
-            wrapperValuator.setUnderlying(AAVE_ADAI, MAINNET_DAI);
+            _setUnderlyingIfAvailable(wrapperValuator, tokens.aWeth, tokens.weth);
+            _setUnderlyingIfAvailable(wrapperValuator, tokens.aUsdc, tokens.usdc);
+            _setUnderlyingIfAvailable(wrapperValuator, tokens.aDai, tokens.dai);
 
             primaryValuator = chainlinkValuator;
             wrappedValuator = wrapperValuator;
@@ -130,7 +191,7 @@ contract RegisterBlueprint is Script {
         );
         VaultShareDeployer vaultShareDeployer = new VaultShareDeployer(address(vaultFactory));
         vaultFactory.setVaultDeployers(vaultDeployer, vaultShareDeployer);
-        _configureDefaultWhitelists(vaultFactory, usingExistingAssets, usdcAddress, wethAddress);
+        _configureDefaultWhitelists(vaultFactory, usingExistingAssets, usdcAddress, wethAddress, tokens);
 
         // ── Deploy BSMs ───────────────────────────────────────────────
         // Each variant needs its own BSM instance because onBlueprintCreated
@@ -141,12 +202,17 @@ contract RegisterBlueprint is Script {
         ValidatorBlueprint validatorBsm = new ValidatorBlueprint();
 
         // ── Fund Test Accounts ────────────────────────────────────────
-        payable(USER_ACCOUNT).transfer(100 ether);
-        if (!usingExistingAssets) {
-            MockERC20(usdcAddress).mint(USER_ACCOUNT, 1_000_000 * 1e6);
-            MockERC20(wethAddress).mint(USER_ACCOUNT, 100 ether);
-            MockERC20(usdcAddress).mint(deployer, 1_000_000 * 1e6);
-            MockERC20(wethAddress).mint(deployer, 100 ether);
+        // Only on local Anvil — funding hardcoded test accounts on a live
+        // chain (Base Sepolia, mainnet, …) would either burn real funds or
+        // OOG before completing the deploy.
+        if (_isLocalChain()) {
+            payable(USER_ACCOUNT).transfer(100 ether);
+            if (!usingExistingAssets) {
+                MockERC20(usdcAddress).mint(USER_ACCOUNT, 1_000_000 * 1e6);
+                MockERC20(wethAddress).mint(USER_ACCOUNT, 100 ether);
+                MockERC20(usdcAddress).mint(deployer, 1_000_000 * 1e6);
+                MockERC20(wethAddress).mint(deployer, 100 ether);
+            }
         }
 
         // Fund extra accounts if provided via EXTRA_ACCOUNTS env var
@@ -170,7 +236,8 @@ contract RegisterBlueprint is Script {
                 feeDistributor,
                 usingExistingAssets,
                 primaryValuator,
-                wrappedValuator
+                wrappedValuator,
+                tokens
             );
             teeSingletonVault = _createPrecreatedSingletonVault(
                 singletonAsset,
@@ -182,7 +249,8 @@ contract RegisterBlueprint is Script {
                 feeDistributor,
                 usingExistingAssets,
                 primaryValuator,
-                wrappedValuator
+                wrappedValuator,
+                tokens
             );
         }
 
@@ -272,7 +340,8 @@ contract RegisterBlueprint is Script {
         FeeDistributor feeDistributor,
         bool usingExistingAssets,
         IAssetValuator primaryValuator,
-        IAssetValuator wrappedValuator
+        IAssetValuator wrappedValuator,
+        TokenSet memory tokens
     ) internal returns (address vaultAddress) {
         address[] memory signers = new address[](2);
         signers[0] = OPERATOR1;
@@ -294,7 +363,7 @@ contract RegisterBlueprint is Script {
         policyEngine.setAuthorizedCaller(address(vault), true);
         policyEngine.whitelistToken(address(vault), assetToken, true);
         _configureVaultWhitelistsAndAdapters(
-            address(vault), policyEngine, usingExistingAssets, primaryValuator, wrappedValuator, assetToken
+            address(vault), policyEngine, usingExistingAssets, primaryValuator, wrappedValuator, assetToken, tokens
         );
         feeDistributor.initializeVaultFees(
             address(vault),
@@ -313,17 +382,20 @@ contract RegisterBlueprint is Script {
         VaultFactory vaultFactory,
         bool usingExistingAssets,
         address usdcAddress,
-        address wethAddress
+        address wethAddress,
+        TokenSet memory tokens
     ) internal {
         vaultFactory.setDefaultWhitelistedToken(usdcAddress, true);
         vaultFactory.setDefaultWhitelistedToken(wethAddress, true);
         if (usingExistingAssets) {
-            vaultFactory.setDefaultWhitelistedToken(MAINNET_USDT, true);
-            vaultFactory.setDefaultWhitelistedToken(MAINNET_DAI, true);
-            vaultFactory.setDefaultWhitelistedToken(MAINNET_WBTC, true);
-            vaultFactory.setDefaultWhitelistedToken(AAVE_AWETH, true);
-            vaultFactory.setDefaultWhitelistedToken(AAVE_AUSDC, true);
-            vaultFactory.setDefaultWhitelistedToken(AAVE_ADAI, true);
+            // Skip any token absent on the current chain (address(0)). On
+            // Base Sepolia this collapses the set to just WETH + USDC.
+            _whitelistIfAvailable(vaultFactory, tokens.usdt);
+            _whitelistIfAvailable(vaultFactory, tokens.dai);
+            _whitelistIfAvailable(vaultFactory, tokens.wbtc);
+            _whitelistIfAvailable(vaultFactory, tokens.aWeth);
+            _whitelistIfAvailable(vaultFactory, tokens.aUsdc);
+            _whitelistIfAvailable(vaultFactory, tokens.aDai);
         }
     }
 
@@ -333,23 +405,130 @@ contract RegisterBlueprint is Script {
         bool usingExistingAssets,
         IAssetValuator primaryValuator,
         IAssetValuator wrappedValuator,
-        address assetToken
+        address assetToken,
+        TokenSet memory tokens
     ) internal {
         TradingVault vault = TradingVault(payable(vaultAddress));
         if (usingExistingAssets) {
-            address[5] memory tokens = [MAINNET_WETH, MAINNET_USDC, MAINNET_USDT, MAINNET_DAI, MAINNET_WBTC];
-            for (uint256 i = 0; i < tokens.length; i++) {
-                policyEngine.whitelistToken(vaultAddress, tokens[i], true);
-                vault.setValuationAdapter(tokens[i], address(primaryValuator));
+            address[5] memory primaries = [tokens.weth, tokens.usdc, tokens.usdt, tokens.dai, tokens.wbtc];
+            for (uint256 i = 0; i < primaries.length; i++) {
+                if (primaries[i] == address(0)) continue;
+                policyEngine.whitelistToken(vaultAddress, primaries[i], true);
+                vault.setValuationAdapter(primaries[i], address(primaryValuator));
             }
-            address[3] memory wrappers = [AAVE_AWETH, AAVE_AUSDC, AAVE_ADAI];
+            address[3] memory wrappers = [tokens.aWeth, tokens.aUsdc, tokens.aDai];
             for (uint256 i = 0; i < wrappers.length; i++) {
+                if (wrappers[i] == address(0)) continue;
                 policyEngine.whitelistToken(vaultAddress, wrappers[i], true);
                 vault.setValuationAdapter(wrappers[i], address(wrappedValuator));
             }
         } else {
             vault.setValuationAdapter(assetToken, address(primaryValuator));
         }
+    }
+
+    // ───────────────────────── Token set resolution ──────────────────────────
+
+    /// @notice Pick the address bundle for the current chain.
+    /// @dev `TARGET_NETWORK` env var (values: "local", "base-sepolia",
+    ///      "mainnet") overrides block.chainid for simulations on a different
+    ///      chain. Default: select by block.chainid; revert on unknown chain.
+    function _resolveTokenSet() internal view returns (TokenSet memory) {
+        string memory override_ = vm.envOr("TARGET_NETWORK", string(""));
+        if (bytes(override_).length > 0) {
+            bytes32 h = keccak256(bytes(override_));
+            if (h == keccak256("local") || h == keccak256("local-testnet")) {
+                return _localTokens();
+            }
+            if (h == keccak256("base-sepolia")) {
+                return _sepoliaTokens();
+            }
+            if (h == keccak256("mainnet")) {
+                return _mainnetTokens();
+            }
+            revert(string.concat("RegisterBlueprint: unknown TARGET_NETWORK=", override_));
+        }
+
+        uint256 cid = block.chainid;
+        if (cid == CHAIN_ID_LOCAL || cid == CHAIN_ID_LOCAL_TESTNET) return _localTokens();
+        if (cid == CHAIN_ID_BASE_SEPOLIA) return _sepoliaTokens();
+        if (cid == CHAIN_ID_MAINNET) return _mainnetTokens();
+        revert(
+            string.concat(
+                "RegisterBlueprint: unsupported chain. Set TARGET_NETWORK=local|base-sepolia|mainnet. chainid=",
+                vm.toString(cid)
+            )
+        );
+    }
+
+    /// @dev Local Anvil flow uses freshly minted MockERC20s, so this set is
+    ///      structurally empty — the address(0) sentinels signal "skip" to
+    ///      every downstream wiring helper. Identical behaviour to the
+    ///      pre-refactor `!usingExistingAssets` path.
+    function _localTokens() internal pure returns (TokenSet memory t) {
+        // All fields default to address(0). Returning the zeroed struct keeps
+        // existing anvil flows unchanged (MockERC20 mint path is taken).
+    }
+
+    /// @dev Base Sepolia (chainId 84532). Subset of mainnet tokens — only
+    ///      WETH + USDC + the ETH/USD Chainlink feed are populated. USDC has
+    ///      no Chainlink feed on Base Sepolia, and the legacy stable / wrapped
+    ///      tokens (USDT, DAI, WBTC, aWETH, aUSDC, aDAI) don't exist there.
+    function _sepoliaTokens() internal pure returns (TokenSet memory t) {
+        t.weth = BASE_SEPOLIA_WETH;
+        t.usdc = BASE_SEPOLIA_USDC;
+        t.ethUsdFeed = BASE_SEPOLIA_ETH_USD_FEED;
+        // usdt, dai, wbtc, aWeth, aUsdc, aDai, usdcUsdFeed, usdtUsdFeed,
+        // daiUsdFeed, btcUsdFeed all remain address(0) (default).
+    }
+
+    /// @dev Ethereum mainnet. Original constant set, kept for parity if the
+    ///      script is ever pointed at a mainnet fork. Not exercised by CI.
+    function _mainnetTokens() internal pure returns (TokenSet memory t) {
+        t.weth = MAINNET_WETH;
+        t.usdc = MAINNET_USDC;
+        t.usdt = MAINNET_USDT;
+        t.dai = MAINNET_DAI;
+        t.wbtc = MAINNET_WBTC;
+        t.aWeth = AAVE_AWETH;
+        t.aUsdc = AAVE_AUSDC;
+        t.aDai = AAVE_ADAI;
+        t.ethUsdFeed = ETH_USD_FEED;
+        t.usdcUsdFeed = USDC_USD_FEED;
+        t.usdtUsdFeed = USDT_USD_FEED;
+        t.daiUsdFeed = DAI_USD_FEED;
+        t.btcUsdFeed = BTC_USD_FEED;
+    }
+
+    function _setFeedIfAvailable(ChainlinkUsdValuator valuator, address token, address feed) internal {
+        // ChainlinkUsdValuator.setFeed reverts on address(0) — guard here so
+        // partial chain coverage (e.g. Base Sepolia missing USDC/USD feed) is
+        // tolerated without reverting the deploy.
+        if (token == address(0) || feed == address(0)) return;
+        valuator.setFeed(token, feed, 1 days);
+    }
+
+    function _setUnderlyingIfAvailable(WrappedAssetValuator valuator, address wrapper, address underlying) internal {
+        if (wrapper == address(0) || underlying == address(0)) return;
+        valuator.setUnderlying(wrapper, underlying);
+    }
+
+    function _whitelistIfAvailable(VaultFactory vaultFactory, address token) internal {
+        if (token == address(0)) return;
+        vaultFactory.setDefaultWhitelistedToken(token, true);
+    }
+
+    /// @notice True only when the script is running against a local Anvil
+    ///         chain (31337/31338 or TARGET_NETWORK=local). Used to gate
+    ///         test-account funding so live deploys don't burn real ETH.
+    function _isLocalChain() internal view returns (bool) {
+        string memory override_ = vm.envOr("TARGET_NETWORK", string(""));
+        if (bytes(override_).length > 0) {
+            bytes32 h = keccak256(bytes(override_));
+            return h == keccak256("local") || h == keccak256("local-testnet");
+        }
+        uint256 cid = block.chainid;
+        return cid == CHAIN_ID_LOCAL || cid == CHAIN_ID_LOCAL_TESTNET;
     }
 
     /// @notice Construct a BlueprintDefinition for a specific variant.
