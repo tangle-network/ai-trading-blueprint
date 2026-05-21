@@ -649,6 +649,44 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
     Ok(required)
 }
 
+fn build_trading_sandbox_params(
+    request: &TradingProvisionRequest,
+    env_json: String,
+    runtime_backend: Option<&str>,
+) -> CreateSandboxParams {
+    let mut metadata = Map::new();
+    if let Some(backend) = runtime_backend {
+        metadata.insert(
+            "runtime_backend".to_string(),
+            Value::String(backend.to_string()),
+        );
+    }
+    let metadata_json = Value::Object(metadata).to_string();
+
+    CreateSandboxParams {
+        name: request.name.clone(),
+        image: std::env::var("SIDECAR_IMAGE")
+            .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
+        agent_identifier: format!("trading-{}", request.strategy_type),
+        env_json,
+        metadata_json,
+        capabilities_json: r#"["all_harness"]"#.to_string(),
+        max_lifetime_seconds: {
+            let days = if request.max_lifetime_days == 0 {
+                30
+            } else {
+                request.max_lifetime_days
+            };
+            days * 86400
+        },
+        idle_timeout_seconds: 0, // No idle timeout for trading bots
+        cpu_cores: request.cpu_cores,
+        memory_mb: request.memory_mb,
+        disk_gb: 10,
+        ..Default::default()
+    }
+}
+
 /// Provision core logic, testable without Tangle extractors.
 ///
 /// When `mock_sandbox` is `Some`, skips Docker sidecar creation and uses the
@@ -1062,36 +1100,7 @@ pub async fn provision_core(
         let _ = sandbox_runtime::runtime::sandboxes().map(|s| s.insert(r.id.clone(), r.clone()));
         r
     } else {
-        let mut metadata = Map::new();
-        if let Some(backend) = runtime_backend.as_deref() {
-            metadata.insert(
-                "runtime_backend".to_string(),
-                Value::String(backend.to_string()),
-            );
-        }
-        let metadata_json = Value::Object(metadata).to_string();
-
-        let params = CreateSandboxParams {
-            name: request.name.clone(),
-            image: std::env::var("SIDECAR_IMAGE")
-                .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
-            agent_identifier: format!("trading-{}", request.strategy_type),
-            env_json,
-            metadata_json,
-            max_lifetime_seconds: {
-                let days = if request.max_lifetime_days == 0 {
-                    30
-                } else {
-                    request.max_lifetime_days
-                };
-                days * 86400
-            },
-            idle_timeout_seconds: 0, // No idle timeout for trading bots
-            cpu_cores: request.cpu_cores,
-            memory_mb: request.memory_mb,
-            disk_gb: 10,
-            ..Default::default()
-        };
+        let params = build_trading_sandbox_params(&request, env_json, runtime_backend.as_deref());
 
         let (r, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, tee_backend)
             .await
@@ -1380,6 +1389,27 @@ mod tests {
             max_collateral_bps: U256::ZERO,
             validation_trust: 0,
         }
+    }
+
+    #[test]
+    fn trading_sandbox_params_request_all_harness_runtime() {
+        let request = provision_request("hyperliquid_perp", 998);
+
+        let params = build_trading_sandbox_params(
+            &request,
+            r#"{"TRADING_API_TOKEN":"redacted"}"#.into(),
+            Some("firecracker"),
+        );
+
+        assert_eq!(params.capabilities_json, r#"["all_harness"]"#);
+        assert_eq!(params.agent_identifier, "trading-hyperliquid_perp");
+        assert_eq!(params.idle_timeout_seconds, 0);
+        assert_eq!(params.max_lifetime_seconds, 30 * 86_400);
+        let metadata: Value = serde_json::from_str(&params.metadata_json).unwrap();
+        assert_eq!(
+            metadata.get("runtime_backend").and_then(Value::as_str),
+            Some("firecracker")
+        );
     }
 
     #[test]

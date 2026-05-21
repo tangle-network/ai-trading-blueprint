@@ -1391,19 +1391,19 @@ async fn list_chat_messages(
     .await
     {
         Ok(response) => {
-            if response.status() == StatusCode::NOT_FOUND {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if response.status() == StatusCode::NOT_FOUND
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(&run, &transcript_query);
             }
 
             Ok(response)
         }
         Err(error) => {
-            if error.0 == StatusCode::BAD_GATEWAY {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if error.0 == StatusCode::BAD_GATEWAY
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(&run, &transcript_query);
             }
 
             Err(error)
@@ -2278,22 +2278,22 @@ async fn configure_secrets(
         ];
         let mut found = false;
         for &(env_var, model_provider, model_name, native_key) in providers {
-            if let Ok(key) = std::env::var(env_var) {
-                if !key.is_empty() {
-                    env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
-                    env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
-                    env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-                    if env_var == "TANGLE_ROUTER_API_KEY" {
-                        let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
-                            .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
-                        env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
-                        env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
-                    }
-                    env.insert(native_key.into(), key.into());
-                    found = true;
-                    tracing::info!("Using operator-provided {env_var} for instance bot");
-                    break;
+            if let Ok(key) = std::env::var(env_var)
+                && !key.is_empty()
+            {
+                env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
+                env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
+                env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
+                if env_var == "TANGLE_ROUTER_API_KEY" {
+                    let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
+                        .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
+                    env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
+                    env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
                 }
+                env.insert(native_key.into(), key.into());
+                found = true;
+                tracing::info!("Using operator-provided {env_var} for instance bot");
+                break;
             }
         }
         if !found {
@@ -3117,6 +3117,10 @@ mod tests {
             runner_signal: None,
             agent_reasoning: None,
             harness_version: None,
+            candidate_hash: None,
+            revision_id: None,
+            paper_pnl_pct: None,
+            paper_equity_after: None,
         }
     }
 

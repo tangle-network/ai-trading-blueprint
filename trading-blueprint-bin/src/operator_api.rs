@@ -1822,12 +1822,12 @@ async fn update_config(
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     // Update vault address if provided
-    if let Some(addr) = &body.vault_address {
-        if let Ok(store) = state::bots() {
-            let _ = store.update(&state::bot_key(&bot.id), |b| {
-                b.vault_address.clone_from(addr);
-            });
-        }
+    if let Some(addr) = &body.vault_address
+        && let Ok(store) = state::bots()
+    {
+        let _ = store.update(&state::bot_key(&bot.id), |b| {
+            b.vault_address.clone_from(addr);
+        });
     }
 
     // Persist harness config if provided
@@ -2088,19 +2088,19 @@ async fn list_chat_messages(
     .await
     {
         Ok(response) => {
-            if response.status() == StatusCode::NOT_FOUND {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if response.status() == StatusCode::NOT_FOUND
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(&run, &transcript_query);
             }
 
             Ok(response)
         }
         Err(error) => {
-            if error.0 == StatusCode::BAD_GATEWAY {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if error.0 == StatusCode::BAD_GATEWAY
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(&run, &transcript_query);
             }
 
             Err(error)
@@ -3302,10 +3302,10 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
 }
 
 fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
-    if bot.strategy_type.eq_ignore_ascii_case("dex") {
-        if let Some(portfolio) = synthesize_dex_fallback_portfolio(bot) {
-            return portfolio;
-        }
+    if bot.strategy_type.eq_ignore_ascii_case("dex")
+        && let Some(portfolio) = synthesize_dex_fallback_portfolio(bot)
+    {
+        return portfolio;
     }
 
     let trades = fallback_trade_dataset(bot);

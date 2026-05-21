@@ -1512,6 +1512,10 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");

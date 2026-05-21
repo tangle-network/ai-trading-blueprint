@@ -146,7 +146,7 @@ React 19 + React Router v7 + UnoCSS web app for managing bots, vaults, and provi
 
 - **Rust** 1.80+
 - **Foundry** (forge, anvil, cast)
-- **Docker** with `tangle-sidecar:local` image
+- **Docker** with `blueprint-sidecar:all-harness` image
 - **Node.js** 20+ with pnpm
 
 ### Build

@@ -443,18 +443,18 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     let tangle_config = {
         let mut config = TangleConfig::default();
-        if let Ok(cap_str) = std::env::var("OPERATOR_MAX_CAPACITY") {
-            if let Ok(capacity) = cap_str.parse::<u32>() {
-                tracing::info!("Registering with OPERATOR_MAX_CAPACITY={capacity}");
-                let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
-                let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
-                let inputs = trading_blueprint_lib::registration::trading_registration_payload(
-                    capacity,
-                    &api_endpoint,
-                    &strategies,
-                );
-                config = config.with_registration_inputs(inputs);
-            }
+        if let Ok(cap_str) = std::env::var("OPERATOR_MAX_CAPACITY")
+            && let Ok(capacity) = cap_str.parse::<u32>()
+        {
+            tracing::info!("Registering with OPERATOR_MAX_CAPACITY={capacity}");
+            let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
+            let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
+            let inputs = trading_blueprint_lib::registration::trading_registration_payload(
+                capacity,
+                &api_endpoint,
+                &strategies,
+            );
+            config = config.with_registration_inputs(inputs);
         }
         config
     };
