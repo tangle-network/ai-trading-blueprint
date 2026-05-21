@@ -44,6 +44,7 @@ blueprint-state/
 
 # Node.js / Frontend
 node_modules/
+dist/
 .react-router/
 arena/.react-router.bak.*/
 arena/build/
