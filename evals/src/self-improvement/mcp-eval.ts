@@ -25,7 +25,7 @@ interface SelfImprovementTask {
   task_id: string
 }
 
-interface SelfImprovementStatus {
+export interface SelfImprovementStatus {
   status: string
   failure?: string
   winner_variant_id?: string
@@ -171,7 +171,7 @@ function responseAt(responses: McpResponse[], index: number): McpResponse {
   return response
 }
 
-async function createTask(workspace: string, args: Record<string, unknown>, timeoutMs = 240_000) {
+export async function createTask(workspace: string, args: Record<string, unknown>, timeoutMs = 240_000) {
   const responses = await callMcp(workspace, [{
     jsonrpc: '2.0',
     id: 1,
@@ -181,7 +181,7 @@ async function createTask(workspace: string, args: Record<string, unknown>, time
   return textPayload<SelfImprovementTask>(responseAt(responses, 0))
 }
 
-async function statusAndPatch(workspace: string, taskId: string) {
+export async function statusAndPatch(workspace: string, taskId: string) {
   const responses = await callMcp(workspace, [
     {
       jsonrpc: '2.0',
@@ -202,7 +202,7 @@ async function statusAndPatch(workspace: string, taskId: string) {
   }
 }
 
-async function waitForTerminal(workspace: string, taskId: string, timeoutMs = 240_000): Promise<SelfImprovementStatus> {
+export async function waitForTerminal(workspace: string, taskId: string, timeoutMs = 240_000): Promise<SelfImprovementStatus> {
   const started = Date.now()
   let latest: SelfImprovementStatus | null = null
   while (Date.now() - started < timeoutMs) {

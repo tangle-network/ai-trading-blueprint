@@ -11,6 +11,10 @@ This repo has four eval layers:
 - `scripts/eval-trading-personas.sh` runs the trading-domain persona suite
   added for market makers, portfolio managers, protocol researchers, and
   arbitrage agents.
+- `npm run eval:agent-strategy` drives the sandbox coding agent through the
+  self-improvement MCP/opencode path and validates a bounded strategy artifact.
+- `npm run eval:full` composes the release gate across TS, Rust, persona,
+  lifecycle, MCP, and agent-driven strategy evals.
 
 ## Trading Persona Suite
 
@@ -183,3 +187,21 @@ npm run eval:trading-lifecycle
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
 `scripts/` are compatibility wrappers only.
+
+## Full Gate
+
+Run the professional local gate with:
+
+```bash
+npm run eval:full
+```
+
+This runs deterministic build/test gates, emits `agent-eval` records where
+available, launches the real self-improvement MCP with `opencode`, and requires
+the coding agent to produce a bounded Polymarket paper-strategy artifact that
+passes deterministic validation. To include live Polymarket Gamma/CLOB price
+history in the same gate:
+
+```bash
+npm run eval:full -- --live-polymarket
+```
