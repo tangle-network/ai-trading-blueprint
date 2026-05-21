@@ -1,5 +1,7 @@
+use crate::hyperliquid_nav::HyperliquidNavSnapshot;
 use crate::live_portfolio::{LiveRiskInput, reconcile_live_portfolio};
 use crate::metrics_store;
+use crate::routes::validate::strategy_type_from_config;
 use crate::trade_store;
 use crate::{MultiBotTradingState, TradingApiState};
 use alloy::primitives::{Address, Bytes, U256};
@@ -178,6 +180,16 @@ async fn get_state_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<crate::BotContext>,
 ) -> Result<Json<PortfolioResponse>, (StatusCode, String)> {
+    if !bot.paper_trade
+        && strategy_type_from_config(&bot.strategy_config) == Some("hyperliquid_perp")
+    {
+        let nav = state
+            .hyperliquid_nav_reconciler
+            .reconcile(&state, &bot)
+            .await?;
+        return Ok(Json(portfolio_response_from_hyperliquid_nav(&nav)));
+    }
+
     if !bot.paper_trade {
         let input = LiveRiskInput::from_bot(&bot, &state.market_data_base_url);
         let snapshot = reconcile_live_portfolio(&input).await?;
@@ -187,6 +199,65 @@ async fn get_state_multi_bot(
     Ok(Json(
         build_multi_bot_portfolio_response(&bot, &state.market_data_base_url).await,
     ))
+}
+
+fn portfolio_response_from_hyperliquid_nav(nav: &HyperliquidNavSnapshot) -> PortfolioResponse {
+    let mut positions = Vec::new();
+    let mut has_value_only_positions = false;
+
+    if parse_decimal_maybe(&nav.idle_usdc)
+        .map(|idle| idle > Decimal::ZERO)
+        .unwrap_or(false)
+    {
+        has_value_only_positions = true;
+        positions.push(PositionEntry {
+            token: "USDC".to_string(),
+            amount: nav.idle_usdc.clone(),
+            value_usd: Some(nav.idle_usdc.clone()),
+            entry_price: None,
+            current_price: Some("1".to_string()),
+            unrealized_pnl: None,
+            protocol: "hyperevm_vault".to_string(),
+            position_type: "spot".to_string(),
+            valuation_status: ValuationStatus::ValueOnly,
+        });
+    }
+
+    for position in &nav.positions {
+        has_value_only_positions = true;
+        positions.push(PositionEntry {
+            token: position.asset.clone(),
+            amount: position.size.clone(),
+            value_usd: Some(position.margin_used.clone()),
+            entry_price: Some(position.entry_price.clone()),
+            current_price: None,
+            unrealized_pnl: Some(position.unrealized_pnl.clone()),
+            protocol: "hyperliquid".to_string(),
+            position_type: hyperliquid_position_type(&position.size).to_string(),
+            valuation_status: ValuationStatus::ValueOnly,
+        });
+    }
+
+    PortfolioResponse {
+        positions,
+        total_value_usd: nav.total_nav.clone(),
+        cash_balance: Some(nav.idle_usdc.clone()),
+        unrealized_pnl: nav.unrealized_pnl.clone(),
+        realized_pnl: "0".to_string(),
+        warnings: nav.warnings.clone(),
+        has_unpriced_positions: false,
+        has_value_only_positions,
+        source: Some("hyperliquid_nav".to_string()),
+        observed_at: Some(nav.as_of),
+        stale: nav.is_stale_at(Utc::now()),
+    }
+}
+
+fn hyperliquid_position_type(size: &str) -> &'static str {
+    match parse_decimal_maybe(size) {
+        Some(size) if size.is_sign_negative() => "short_perp",
+        _ => "long_perp",
+    }
 }
 
 pub(crate) async fn build_multi_bot_portfolio_response(

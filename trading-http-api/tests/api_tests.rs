@@ -4776,6 +4776,57 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
 }
 
 #[tokio::test]
+async fn test_multi_bot_portfolio_state_uses_hyperliquid_nav_for_live_perp_bot() {
+    let bot_id = format!("bot-hyperliquid-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.chain_id = 998;
+    bot.strategy_config = serde_json::json!({
+        "strategy_type": "hyperliquid_perp",
+        "hyperliquid_execution_model": "hyperevm_vault_agent"
+    });
+
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hyperliquid-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-hyperliquid-nav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+
+    assert_eq!(json["source"], "hyperliquid_nav");
+    assert_eq!(json["total_value_usd"], "1000");
+    assert_eq!(json["cash_balance"], "500");
+    assert_eq!(json["has_unpriced_positions"], false);
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["token"], "USDC");
+    assert_eq!(positions[0]["amount"], "500");
+    assert_eq!(positions[0]["value_usd"], "500");
+    assert_eq!(positions[0]["current_price"], "1");
+    assert_eq!(positions[0]["protocol"], "hyperevm_vault");
+    assert_eq!(positions[0]["position_type"], "spot");
+    assert_eq!(positions[0]["valuation_status"], "value_only");
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
 async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
     let state = multi_bot_state_with_strategy_config(
         "http://localhost:1234",
