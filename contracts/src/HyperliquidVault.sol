@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
@@ -19,24 +18,25 @@ interface IHyperliquidCoreWriterMinimal {
 /// @dev This intentionally excludes the universal EVM trade execution surface.
 ///      The vault's HyperEVM address is the Hyperliquid account/control surface,
 ///      and CoreWriter actions must be submitted by this vault contract.
-contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
+contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
-    uint8 public constant HYPERLIQUID_CORE_WRITER_VERSION = 1;
+    uint8 private constant HYPERLIQUID_CORE_WRITER_VERSION = 1;
     uint24 public constant HYPERLIQUID_ACTION_SPOT_SEND = 6;
     uint24 public constant HYPERLIQUID_ACTION_USD_CLASS_TRANSFER = 7;
-    uint24 public constant HYPERLIQUID_ACTION_ADD_API_WALLET = 9;
-    address public constant HYPERLIQUID_CORE_WRITER = 0x3333333333333333333333333333333333333333;
-    address public constant HYPERLIQUID_SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
-    address public constant HYPERLIQUID_ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
-    uint32 public constant HYPERLIQUID_DEFAULT_PERP_DEX_INDEX = 0;
-    uint64 public constant HYPERLIQUID_USDC_SPOT_TOKEN = 0;
-    uint8 public constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
-    uint8 public constant HYPEREVM_USDC_DECIMALS = 6;
-    uint256 public constant HYPERLIQUID_VIRTUAL_OFFSET = 10 ** HYPEREVM_USDC_DECIMALS;
+    uint24 private constant HYPERLIQUID_ACTION_ADD_API_WALLET = 9;
+    address private constant HYPERLIQUID_CORE_WRITER = 0x3333333333333333333333333333333333333333;
+    address private constant HYPERLIQUID_SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
+    address private constant HYPERLIQUID_ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
+    uint32 private constant HYPERLIQUID_DEFAULT_PERP_DEX_INDEX = 0;
+    uint64 private constant HYPERLIQUID_USDC_SPOT_TOKEN = 0;
+    uint8 private constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
+    uint8 private constant HYPEREVM_USDC_DECIMALS = 6;
+    uint256 private constant HYPERLIQUID_VIRTUAL_OFFSET = 10 ** HYPEREVM_USDC_DECIMALS;
     uint64 public constant WITHDRAWAL_EPOCH_SECONDS = 1 days;
-    uint64 public constant WITHDRAWAL_CUTOFF_SECONDS = 1 hours;
+    uint64 private constant WITHDRAWAL_CUTOFF_SECONDS = 1 hours;
     uint256 public constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
     bytes32 public constant HYPERLIQUID_FUND_MOVEMENT_TYPEHASH = keccak256(
         "HyperliquidFundMovement(address vault,uint256 chainId,uint24 actionType,address destination,uint64 token,uint64 amount,bool direction,uint256 nonce,uint256 deadline,uint256 leverageCap,uint256 maxTradesPerHour,uint256 maxSlippageBps)"
@@ -55,6 +55,7 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     uint256 private _pendingRedeemAssets;
     uint256 public nextWithdrawalRequestId;
     uint256 public nextFulfillableWithdrawalRequestId;
+    mapping(bytes32 role => mapping(address account => bool granted)) private _roles;
 
     struct WithdrawalRequest {
         address owner;
@@ -83,6 +84,8 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     event HyperliquidFundMovementAuthorized(
         uint24 indexed actionType, uint256 indexed nonce, bytes32 intentHash, bytes32 executionHash
     );
+    event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
     event WithdrawalQueued(uint256 indexed requestId, address indexed owner, address indexed receiver, uint256 shares);
     event WithdrawalCancelled(uint256 indexed requestId, address indexed owner, uint256 shares);
     event WithdrawalFulfilled(
@@ -100,12 +103,19 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
     error WithdrawalQueueOutOfOrder(uint256 expectedRequestId, uint256 actualRequestId);
     error NoSettleableWithdrawalRequest();
     error WithdrawalRequestNotEligible(uint256 requestId, uint64 eligibleAt, uint64 currentTime);
+    error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+    error AccessControlBadConfirmation();
     error ValidatorApprovalRequired();
     error ValidatorApprovalRejected();
     error FundMovementNonceAlreadyUsed(uint256 nonce);
 
     constructor() {
         _initialized = true;
+    }
+
+    modifier onlyRole(bytes32 role) {
+        _checkRole(role, msg.sender);
+        _;
     }
 
     function initialize(
@@ -137,6 +147,49 @@ contract HyperliquidVault is IERC7575, AccessControl, Pausable, ReentrancyGuard 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         if (operator != address(0)) {
             _grantRole(OPERATOR_ROLE, operator);
+        }
+    }
+
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return _roles[role][account];
+    }
+
+    function getRoleAdmin(bytes32) external pure returns (bytes32) {
+        return DEFAULT_ADMIN_ROLE;
+    }
+
+    function grantRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(role, account);
+    }
+
+    function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _revokeRole(role, account);
+    }
+
+    function renounceRole(bytes32 role, address callerConfirmation) external {
+        if (callerConfirmation != msg.sender) revert AccessControlBadConfirmation();
+        _revokeRole(role, callerConfirmation);
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == 0x01ffc9a7 || interfaceId == 0x7965db0b;
+    }
+
+    function _checkRole(bytes32 role, address account) internal view {
+        if (!hasRole(role, account)) revert AccessControlUnauthorizedAccount(account, role);
+    }
+
+    function _grantRole(bytes32 role, address account) internal {
+        if (!_roles[role][account]) {
+            _roles[role][account] = true;
+            emit RoleGranted(role, account, msg.sender);
+        }
+    }
+
+    function _revokeRole(bytes32 role, address account) internal {
+        if (_roles[role][account]) {
+            _roles[role][account] = false;
+            emit RoleRevoked(role, account, msg.sender);
         }
     }
 

@@ -148,7 +148,7 @@ contract HyperliquidVaultStackTest is Test {
 
         usdc.mint(vaultAddr, 1);
         assertEq(vault.totalAssets(), 1);
-        uint256 virtualOffset = vault.HYPERLIQUID_VIRTUAL_OFFSET();
+        uint256 virtualOffset = 1e6;
         uint256 expectedShares = 1_000e6 * virtualOffset / (1 + virtualOffset);
         assertEq(vault.convertToShares(1_000e6), expectedShares);
         assertGt(expectedShares, 0);
@@ -988,11 +988,13 @@ contract HyperliquidVaultStackTest is Test {
 
 contract HyperliquidVaultStackGasTest is Test {
     uint256 internal constant HYPEREVM_GAS_LIMIT = 3_000_000;
+    uint256 internal constant HYPEREVM_SAFE_DEPLOY_TX_GAS_LIMIT = 2_950_000;
 
     function test_hyperliquidStackDeploymentStepsStayUnderHyperevmGasLimit() public {
+        bytes memory vaultCreationCode = type(HyperliquidVault).creationCode;
         uint256 startGas = gasleft();
         HyperliquidVault implementation = new HyperliquidVault();
-        _assertUnderLimit(startGas, "HyperliquidVault implementation deploy");
+        _assertCreateTxUnderSafeLimit(startGas, vaultCreationCode, "HyperliquidVault implementation deploy");
 
         startGas = gasleft();
         HyperliquidTradeValidator tradeValidator = new HyperliquidTradeValidator();
@@ -1053,5 +1055,21 @@ contract HyperliquidVaultStackGasTest is Test {
     function _assertUnderLimit(uint256 startGas, string memory label) internal view {
         uint256 gasUsed = startGas - gasleft();
         assertLt(gasUsed, HYPEREVM_GAS_LIMIT, label);
+    }
+
+    function _assertCreateTxUnderSafeLimit(uint256 startGas, bytes memory creationCode, string memory label)
+        internal
+        view
+    {
+        uint256 createGasUsed = startGas - gasleft();
+        uint256 txLevelGas = createGasUsed + _createTransactionOverhead(creationCode);
+        assertLt(txLevelGas, HYPEREVM_SAFE_DEPLOY_TX_GAS_LIMIT, label);
+    }
+
+    function _createTransactionOverhead(bytes memory creationCode) internal pure returns (uint256 overhead) {
+        overhead = 21_000 + 32_000 + 2 * ((creationCode.length + 31) / 32);
+        for (uint256 i = 0; i < creationCode.length; i++) {
+            overhead += creationCode[i] == 0 ? 4 : 16;
+        }
     }
 }
