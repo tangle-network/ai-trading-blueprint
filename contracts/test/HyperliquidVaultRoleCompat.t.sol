@@ -25,8 +25,7 @@ contract HyperliquidVaultRoleCompatTest is Test {
         HyperliquidVault implementation = new HyperliquidVault();
         tradeValidator = new HyperliquidTradeValidator();
         factory = new HyperliquidVaultFactory(tradeValidator);
-        HyperliquidVaultDeployer vaultDeployer =
-            new HyperliquidVaultDeployer(address(factory), address(implementation));
+        HyperliquidVaultDeployer vaultDeployer = new HyperliquidVaultDeployer(address(factory), address(implementation));
         VaultShareDeployer shareDeployer = new VaultShareDeployer(address(factory));
         tradeValidator.transferOwnership(address(factory));
         factory.acceptDependencyOwnership();
@@ -60,9 +59,7 @@ contract HyperliquidVaultRoleCompatTest is Test {
 
         vm.prank(newOperator);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                HyperliquidVault.AccessControlUnauthorizedAccount.selector, newOperator, adminRole
-            )
+            abi.encodeWithSelector(HyperliquidVault.AccessControlUnauthorizedAccount.selector, newOperator, adminRole)
         );
         vault.grantRole(operatorRole, newOperator);
 
