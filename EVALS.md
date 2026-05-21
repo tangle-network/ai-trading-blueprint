@@ -173,17 +173,41 @@ Next integration step: wrap actual agent runs so each persona scenario can ask
 the sandboxed trading agent to produce a candidate `HarnessConfig`, then score
 that candidate through this same suite.
 
-## Simulated User Lifecycle Eval
+## Trading Lifecycle Eval
 
-The lifecycle eval is a typed TypeScript wrapper around the deterministic
-persona suite. It simulates multi-turn user feedback such as "make the strategy
-more risk-off", "review microstructure", and "find adjacent pairs", then links
-each revision to concrete backtest scenarios and emits durable feedback
-trajectory JSONL records.
+The lifecycle eval has two intentionally different modes.
+
+The default deterministic mode is a fast local guard. It simulates multi-turn
+user feedback such as "make the strategy more risk-off", "review
+microstructure", and "find adjacent pairs", then links each revision to
+concrete backtest scenarios and emits durable feedback trajectory JSONL
+records.
 
 ```bash
 npm run eval:trading-lifecycle
 ```
+
+The product-proof mode drives real trading bot infrastructure. It requires a
+running trading API for a provisioned bot and a recorded candle fixture from
+real market data. It records those candles, creates a sandbox snapshot, calls
+`/evolution/self-improve` once per user turn, chains sandbox revision parents,
+and verifies `/evolution/revision-arena`. It deliberately fails preflight if
+the real service URL/token or recorded candle source are missing.
+
+```bash
+TRADING_EVAL_TRADING_URL=http://localhost:9100 \
+TRADING_EVAL_BOT_TOKEN=<bot-token> \
+TRADING_EVAL_CANDLES_JSON=.evolve/market-data/polymarket-btc-5m.json \
+npm run eval:trading-lifecycle -- --real-api
+```
+
+For route smoke tests only, set `TRADING_EVAL_ALLOW_SYNTHETIC_CANDLES=1`.
+Do not use that flag as evidence for market realism.
+
+Do not treat standalone generated JSON artifacts as proof of the autonomous
+trading loop. The real lifecycle gate must produce API evidence: self-
+improvement run ids, sandbox revision ids, candle counts, promotion blockers,
+and revision arena entries.
 
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
@@ -198,9 +222,13 @@ npm run eval:full
 ```
 
 This runs deterministic build/test gates, emits `agent-eval` records where
-available, launches the real self-improvement MCP with `opencode`, and requires
-the coding agent to produce a bounded Polymarket paper candidate that passes
-live multi-market price-history replay through `trading-runtime`:
+available, requires the real API lifecycle gate above, and launches the real
+self-improvement MCP with `opencode`. Artifact-only strategy generation is not
+part of the full gate.
+
+When `--live-polymarket` is enabled, the separate live price-history gate
+requires a fixed candidate to pass multi-market replay through
+`trading-runtime`:
 
 - profitable on holdout
 - beats baseline on holdout

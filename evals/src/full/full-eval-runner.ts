@@ -3,7 +3,6 @@ import { dirname } from 'node:path'
 import { run, runShell } from '../lib/process.js'
 import { isoStamp, resolveRepo } from '../lib/repo.js'
 import { runSelfImprovementMcpEval } from '../self-improvement/mcp-eval.js'
-import { runAgentStrategyArtifactEval } from '../trading/agent-strategy-runner.js'
 import { runTradingLifecycleEval } from '../trading/lifecycle-runner.js'
 import { runTradingPersonaAgentEvalBridge } from '../trading/persona-agent-eval.js'
 
@@ -38,20 +37,15 @@ export async function runFullEval(options: FullEvalOptions = {}) {
     traceDir: `.evolve/agent-eval/traces/full-personas-${stamp}`,
     runsJsonl: `.evolve/agent-eval/full-persona-runs-${stamp}.jsonl`,
   }))
-  await gate(gates, 'trading-lifecycle-user-simulation', async () => runTradingLifecycleEval({
+  await gate(gates, 'trading-lifecycle-real-api', async () => runTradingLifecycleEval({
     outputPath: resolveRepo(`.evolve/evals/full-lifecycle-${stamp}.json`),
     personaReportPath: resolveRepo(`.evolve/evals/full-lifecycle-personas-${stamp}.json`),
     feedbackJsonlPath: resolveRepo(`.evolve/agent-eval/full-lifecycle-feedback-${stamp}.jsonl`),
+    mode: 'real-api',
   }))
   await gate(gates, 'self-improvement-mcp-real-opencode', async () => runSelfImprovementMcpEval({
     outputPath: resolveRepo(`.evolve/evals/full-self-improvement-mcp-${stamp}.json`),
   }))
-  await gate(gates, 'agent-driven-strategy-artifact', async () => runAgentStrategyArtifactEval({
-    outputPath: resolveRepo(`.evolve/evals/full-agent-strategy-${stamp}.json`),
-    personaReportPath: resolveRepo(`.evolve/evals/full-agent-strategy-personas-${stamp}.json`),
-    runsJsonl: resolveRepo(`.evolve/agent-eval/full-agent-strategy-runs-${stamp}.jsonl`),
-  }))
-
   if (options.livePolymarket) {
     await gate(gates, 'live-polymarket-price-history', async () => {
       const out = resolveRepo(`.evolve/evals/full-real-polymarket-${stamp}.json`)

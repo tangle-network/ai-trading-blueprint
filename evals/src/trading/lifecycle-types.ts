@@ -30,6 +30,25 @@ export interface StrategyRevision {
   riskPosture: 'risk_off' | 'balanced' | 'aggressive'
   testsRun: string[]
   backtestScenarioIds: string[]
+  agentTask?: {
+    taskId: string
+    status: string
+    patchSha256?: string
+    filesChanged: string[]
+    roundsUsed: number
+    testPassed: number
+  }
+  realInfra?: {
+    tradingApiUrl: string
+    snapshotId?: string
+    sandboxRevisionId?: string
+    selfImprovementRunId?: string
+    promotionApproved?: boolean
+    blockers: string[]
+    candlesUsed?: number
+    arenaActiveRevisionId?: string
+    arenaRevisionCount?: number
+  }
 }
 
 export interface LifecycleValidation {

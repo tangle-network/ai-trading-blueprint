@@ -547,6 +547,7 @@ contract RegisterBlueprint is Script {
         bool instanceVariant
     ) internal pure returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmTradingBlueprint";
+        def.metadataHash = keccak256(abi.encodePacked("ai-trading-blueprint:", bpName, ":", binaryName));
         def.manager = manager;
         def.masterManagerRevision = 0;
         def.hasConfig = true;
@@ -631,6 +632,7 @@ contract RegisterBlueprint is Script {
     /// @dev Separate from trading variants: different BSM, different jobs (3 vs 7).
     function _buildValidatorDefinition(address manager) internal pure returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmValidatorBlueprint";
+        def.metadataHash = keccak256("ai-trading-blueprint:validator:trading-validator");
         def.manager = manager;
         def.masterManagerRevision = 0;
         def.hasConfig = true;

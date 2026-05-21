@@ -44,7 +44,7 @@ resolve_anvil_snapshot() {
     return
   fi
 
-  if [[ -n "${BLUEPRINT_ROOT:-}" ]]; then
+  if [[ -n "${EXPLICIT_BLUEPRINT_ROOT:-}" ]]; then
     local blueprint_snapshot="$BLUEPRINT_ROOT/crates/chain-setup/anvil/snapshots/localtestnet-state.json"
     if [[ -f "$blueprint_snapshot" ]]; then
       printf '%s\n' "$blueprint_snapshot"
@@ -53,10 +53,22 @@ resolve_anvil_snapshot() {
   fi
 
   local cargo_snapshot
-  cargo_snapshot="$(find "$HOME/.cargo/git/checkouts" -path '*crates/chain-setup/anvil/snapshots/localtestnet-state.json' 2>/dev/null | head -n 1)"
+  cargo_snapshot="$(
+    find "$HOME/.cargo/git/checkouts" -path '*crates/chain-setup/anvil/snapshots/localtestnet-state.json' -print0 2>/dev/null \
+      | xargs -0 ls -t 2>/dev/null \
+      | head -n 1
+  )"
   if [[ -n "$cargo_snapshot" && -f "$cargo_snapshot" ]]; then
     printf '%s\n' "$cargo_snapshot"
     return
+  fi
+
+  if [[ -n "${BLUEPRINT_ROOT:-}" ]]; then
+    local blueprint_snapshot="$BLUEPRINT_ROOT/crates/chain-setup/anvil/snapshots/localtestnet-state.json"
+    if [[ -f "$blueprint_snapshot" ]]; then
+      printf '%s\n' "$blueprint_snapshot"
+      return
+    fi
   fi
 
   return 1
@@ -242,6 +254,7 @@ ensure_release_binaries() {
   return 0
 }
 
+EXPLICIT_BLUEPRINT_ROOT="${BLUEPRINT_ROOT:-}"
 BLUEPRINT_ROOT="$(resolve_blueprint_root || true)"
 SNAPSHOT="$(resolve_anvil_snapshot || true)"
 ANVIL_PORT="${ANVIL_PORT:-8545}"
