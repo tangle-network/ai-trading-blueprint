@@ -148,7 +148,7 @@ function deterministicFinding(runId, intent, config, packageStatus) {
     recommended_action: packageStatus.available
       ? 'Continue through deterministic backtest, paper-trading, and sandbox revision gates.'
       : 'Install package dependencies from /home/agent/package.json before attempting package-backed analyst loops.',
-    validation_plan: 'Run npm install or pnpm install, then node /home/agent/tools/self-improvement-loop.mjs status.',
+    validation_plan: 'Run npm install or pnpm install, then bun --bun /home/agent/tools/self-improvement-loop.ts status.',
     subject,
     metadata: { run_id: runId, tangle_packages_available: packageStatus.available, missing: packageStatus.missing },
   };
@@ -235,7 +235,7 @@ async function recordSelfImprove(intent, snapshot, analyst) {
       patch,
       patch_sha256: sha256(patch),
       files_changed: changedFiles(),
-      tests: ['node /home/agent/tools/self-improvement-loop.mjs status'],
+      tests: ['bun --bun /home/agent/tools/self-improvement-loop.ts status'],
       status: analyst.mode === 'tangle-agent-packages' ? 'candidate' : 'blocked_dependency_readiness',
     },
   });

@@ -454,7 +454,7 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          - Propose one HarnessConfig mutation and backtest it.\n\n\
          First run the package-backed self-improvement status check:\n\
          ```\n\
-         bun --bun /home/agent/tools/self-improvement-loop.mjs status\n\
+         bun --bun /home/agent/tools/self-improvement-loop.ts status\n\
          ```\n\
          If the Tangle packages are unavailable, run `npm install` or `pnpm install` from /home/agent before attempting a code-changing loop.\n\n\
          For code/tool changes, prefer the local MCP server over manual shell editing. It is registered at `/home/agent/config/self-improvement-mcp.json` and exposes `self_improvement.create_task`, `self_improvement.status`, `self_improvement.list_tasks`, `self_improvement.logs`, `self_improvement.patch`, `self_improvement.cancel`, `self_improvement.backtest`, and `self_improvement.promote_candidate`. The MCP creates isolated worktrees, drives one or more coding-agent variants through multiple feedback rounds, runs deterministic checks, can run an optional reviewer command, and only completes after a candidate passes.\n\n\
@@ -476,7 +476,7 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          ## 5. Record the self-improvement run\n\
          For any code, prompt, tool, or harness mutation, record the sandbox snapshot, findings, knowledge, and promotion gate through:\n\
          ```\n\
-         bun --bun /home/agent/tools/self-improvement-loop.mjs run \"<one sentence intent and mutation summary>\"\n\
+         bun --bun /home/agent/tools/self-improvement-loop.ts run \"<one sentence intent and mutation summary>\"\n\
          ```\n\n\
          ## 6. Update memory\n\
          Update /home/agent/memory/toc.md with findings. Log insights.\n\n\

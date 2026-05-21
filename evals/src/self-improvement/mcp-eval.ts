@@ -51,7 +51,7 @@ export interface SelfImprovementMcpEvalOptions {
   skipOpencode?: boolean
 }
 
-const mcpPath = resolveRepo('trading-blueprint-lib/src/prompts/tools/self_improvement_mcp_server.mjs')
+const mcpPath = resolveRepo('trading-blueprint-lib/src/prompts/tools/self_improvement_mcp_server.ts')
 const results: EvalResult[] = []
 
 export async function runSelfImprovementMcpEval(options: SelfImprovementMcpEvalOptions = {}) {

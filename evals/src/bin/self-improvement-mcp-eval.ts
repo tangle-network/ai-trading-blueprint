@@ -8,7 +8,7 @@ function argValue(name: string): string | undefined {
 }
 
 if (!hasBun()) {
-  throw new Error('bun is required to launch trading-blueprint-lib self_improvement_mcp_server.mjs')
+  throw new Error('bun is required to launch trading-blueprint-lib self_improvement_mcp_server.ts')
 }
 
 const outputPath = argValue('--out')
