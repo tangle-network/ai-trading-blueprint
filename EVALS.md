@@ -4,7 +4,7 @@ This repo has four eval layers:
 
 - `scripts/e2e-eval.sh` exercises the customer journey against a running
   operator/trading API.
-- `scripts/eval-self-improvement-mcp.mjs` exercises the sandbox
+- `npm run eval:self-improvement-mcp` exercises the sandbox
   self-improvement MCP with real git worktrees and command execution.
 - `scripts/eval-polymarket-real-price-history.sh` fetches live Polymarket
   Gamma/CLOB price history and runs the real Rust walk-forward backtester.
@@ -89,7 +89,7 @@ By default this writes:
 To also emit `@tangle-network/agent-eval` RunRecords and traces:
 
 ```bash
-node scripts/agent-eval-trading-personas.mjs
+npm run eval:trading-personas
 ```
 
 That writes:
@@ -106,7 +106,7 @@ deps, point it at a checkout build:
 
 ```bash
 AGENT_EVAL_IMPORT=/Users/drew/webb/agent-eval/dist/index.js \
-  node scripts/agent-eval-trading-personas.mjs
+  npm run eval:trading-personas
 ```
 
 For CI or local debugging:
@@ -154,7 +154,7 @@ Current higher-fidelity data options:
 ## Agent-Eval Boundary
 
 This suite emits JSON with stable scenario ids, persona ids, deterministic
-gates, metrics, and findings. `scripts/agent-eval-trading-personas.mjs` converts
+gates, metrics, and findings. `evals/src/trading/persona-agent-eval.ts` converts
 that report into `@tangle-network/agent-eval` RunRecords and TraceStore rows.
 
 Keep this split:
@@ -167,3 +167,19 @@ Keep this split:
 Next integration step: wrap actual agent runs so each persona scenario can ask
 the sandboxed trading agent to produce a candidate `HarnessConfig`, then score
 that candidate through this same suite.
+
+## Simulated User Lifecycle Eval
+
+The lifecycle eval is a typed TypeScript wrapper around the deterministic
+persona suite. It simulates multi-turn user feedback such as "make the strategy
+more risk-off", "review microstructure", and "find adjacent pairs", then links
+each revision to concrete backtest scenarios and emits durable feedback
+trajectory JSONL records.
+
+```bash
+npm run eval:trading-lifecycle
+```
+
+The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
+and expose repo-level commands through `package.json`; shell scripts in
+`scripts/` are compatibility wrappers only.

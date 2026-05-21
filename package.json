@@ -1,0 +1,20 @@
+{
+  "name": "ai-trading-blueprint",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:evals": "tsc -p evals/tsconfig.json",
+    "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
+    "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",
+    "eval:self-improvement-mcp": "npm run build:evals --silent && node dist/evals/bin/self-improvement-mcp-eval.js",
+    "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
