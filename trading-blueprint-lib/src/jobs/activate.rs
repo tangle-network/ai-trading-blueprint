@@ -21,6 +21,29 @@ use crate::state::{
 pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
     "/home/agent/.opencode/profile-instructions.md";
 
+fn trading_agent_package_json() -> String {
+    json!({
+        "name": "trading-agent",
+        "version": "1.0.0",
+        "private": true,
+        "scripts": {
+            "serve": "opencode serve",
+            "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.mjs run",
+            "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.mjs status",
+            "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
+        },
+        "dependencies": {
+            "@tangle-network/agent-eval": "^0.29.1",
+            "@tangle-network/agent-knowledge": "^1.3.0",
+            "@tangle-network/agent-runtime": "^0.10.0"
+        },
+        "engines": {
+            "node": ">=20"
+        }
+    })
+    .to_string()
+}
+
 /// Per-bot mutex preventing concurrent activate/wipe operations.
 /// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
 static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
@@ -32,6 +55,8 @@ const CONVERSATION_CRON_10_MIN: &str = "0 1,11,21,31,41,51 * * * *";
 const RESEARCH_CRON_1_HOUR: &str = "0 2 * * * *";
 const RESEARCH_CRON_2_HOURS: &str = "0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *";
 const RESEARCH_CRON_6_HOURS: &str = "0 2 0,6,12,18 * * *";
+const DEFAULT_FAST_WORKFLOW_MAX_TURNS: u64 = 5;
+const DEFAULT_FAST_WORKFLOW_TIMEOUT_MS: u64 = 120_000;
 
 fn bot_lifecycle_lock(bot_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let mut map = BOT_LIFECYCLE_LOCKS
@@ -187,10 +212,10 @@ pub struct ActivateResult {
 }
 
 pub(crate) fn resolve_sidecar_trading_api_url(api_url: &str) -> String {
-    if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL") {
-        if !explicit.trim().is_empty() {
-            return explicit;
-        }
+    if let Ok(explicit) = std::env::var("SIDECAR_TRADING_API_URL")
+        && !explicit.trim().is_empty()
+    {
+        return explicit;
     }
 
     let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
@@ -225,10 +250,10 @@ pub(crate) fn build_sidecar_bot_config(bot: &TradingBotRecord) -> TradingBotReco
 }
 
 pub(crate) fn resolve_sidecar_rpc_url(rpc_url: &str) -> String {
-    if let Ok(explicit) = std::env::var("SIDECAR_RPC_URL") {
-        if !explicit.trim().is_empty() {
-            return explicit;
-        }
+    if let Ok(explicit) = std::env::var("SIDECAR_RPC_URL")
+        && !explicit.trim().is_empty()
+    {
+        return explicit;
     }
 
     let host_network = std::env::var("SIDECAR_NETWORK_HOST").is_ok_and(|v| v == "true" || v == "1");
@@ -345,14 +370,14 @@ pub async fn activate_bot_with_secrets(
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
-    if let Some(ref s) = sandbox {
-        if s.has_user_secrets() {
-            clear_activation(bot_id);
-            return Err(
-                "Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure."
-                    .to_string(),
-            );
-        }
+    if let Some(ref s) = sandbox
+        && s.has_user_secrets()
+    {
+        clear_activation(bot_id);
+        return Err(
+            "Bot already has secrets configured. Use wipe_bot_secrets first to reconfigure."
+                .to_string(),
+        );
     }
 
     // 2. Inject user secrets into sandbox (sandbox-runtime merges base + user internally)
@@ -474,13 +499,14 @@ pub async fn activate_bot_with_secrets(
             .map(|p| p.default_cron.clone())
             .unwrap_or_else(|| "0 */5 * * * *".to_string())
     };
+    let (fast_max_turns, fast_timeout_ms) = fast_workflow_budget(pack.as_ref());
 
     let fast_wf = json!({
         "sidecar_url": record.sidecar_url,
         "prompt": fast_prompt,
         "session_id": format!("fast-{bot_id}"),
-        "max_turns": 5,
-        "timeout_ms": 120_000,
+        "max_turns": fast_max_turns,
+        "timeout_ms": fast_timeout_ms,
         "sidecar_token": record.token,
         "backend_profile_json": &profile_json,
     });
@@ -630,6 +656,27 @@ pub async fn activate_bot_with_secrets(
     })
 }
 
+fn fast_workflow_budget(pack: Option<&crate::prompts::packs::StrategyPack>) -> (u64, u64) {
+    match pack {
+        Some(pack) => (
+            if pack.max_turns > 0 {
+                pack.max_turns
+            } else {
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS
+            },
+            if pack.timeout_ms > 0 {
+                pack.timeout_ms
+            } else {
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            },
+        ),
+        None => (
+            DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+            DEFAULT_FAST_WORKFLOW_TIMEOUT_MS,
+        ),
+    }
+}
+
 /// Wait for the sidecar's HTTP server to respond to health checks.
 /// Polls `/health` every second until a 200 response or `max_secs` elapsed.
 async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
@@ -752,6 +799,7 @@ pub(crate) async fn sync_profile_instructions(
 /// Writes smart, self-contained tools that do the heavy lifting so the agent
 /// can focus on decision-making. Common tools for all strategies + strategy-specific tools.
 /// Also writes `/home/agent/config/api.json` so tools can call the Trading HTTP API.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_prebuilt_tools(
     sidecar_url: &str,
     token: &str,
@@ -765,12 +813,12 @@ pub(crate) async fn write_prebuilt_tools(
     operator_address: &str,
     strategy_config: &serde_json::Value,
 ) -> Result<(), String> {
-    // Write workspace package.json with serve script for OpenCode agent
+    // Write workspace package.json with OpenCode plus Tangle self-improvement packages.
     write_file_to_sidecar(
         sidecar_url,
         token,
         "/home/agent/package.json",
-        r#"{"name":"trading-agent","version":"1.0.0","private":true,"scripts":{"serve":"opencode serve"}}"#,
+        &trading_agent_package_json(),
     )
     .await?;
 
@@ -918,6 +966,43 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/self-improvement-loop.mjs",
+        include_str!("../prompts/tools/self_improvement_loop.mjs"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/self-improvement-mcp-server.mjs",
+        include_str!("../prompts/tools/self_improvement_mcp_server.mjs"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/self-improvement-mcp.json",
+        &json!({
+            "name": "trading-self-improvement",
+            "transport": "stdio",
+            "command": "bun",
+            "args": ["--bun", "/home/agent/tools/self-improvement-mcp-server.mjs"],
+            "tools": [
+                "self_improvement.create_task",
+                "self_improvement.status",
+                "self_improvement.list_tasks",
+                "self_improvement.logs",
+                "self_improvement.patch",
+                "self_improvement.cancel",
+                "self_improvement.backtest",
+                "self_improvement.promote_candidate"
+            ]
+        })
+        .to_string(),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/record-candle.js",
         include_str!("../prompts/tools/record_candle.js"),
     )
@@ -982,7 +1067,10 @@ pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(),
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
+    use super::*;
+
     #[test]
     fn submit_trade_tool_preserves_query_strings() {
         let tool = include_str!("../prompts/tools/submit_trade.js");
@@ -997,6 +1085,104 @@ mod tests {
         assert!(tool.contains("Invalid --action. Use buy or sell."));
         assert!(tool.contains("action: action"));
         assert!(tool.contains("estimated_proceeds_usd"));
+    }
+
+    #[test]
+    fn hyperliquid_pack_fast_workflow_uses_pack_budget() {
+        let pack = crate::prompts::packs::get_pack("hyperliquid_perp").unwrap();
+        assert_eq!(fast_workflow_budget(Some(&pack)), (15, 180_000));
+    }
+
+    #[test]
+    fn fast_workflow_budget_keeps_defaults_for_non_pack_and_zero_overrides() {
+        assert_eq!(
+            fast_workflow_budget(None),
+            (
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            )
+        );
+
+        let mut pack = crate::prompts::packs::get_pack("dex").unwrap();
+        pack.max_turns = 0;
+        pack.timeout_ms = 0;
+        assert_eq!(
+            fast_workflow_budget(Some(&pack)),
+            (
+                DEFAULT_FAST_WORKFLOW_MAX_TURNS,
+                DEFAULT_FAST_WORKFLOW_TIMEOUT_MS
+            )
+        );
+    }
+
+    #[test]
+    fn trading_agent_package_installs_tangle_self_improvement_packages() {
+        let package: serde_json::Value =
+            serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
+        assert_eq!(package["scripts"]["serve"], "opencode serve");
+        assert_eq!(
+            package["scripts"]["self-improve:status"],
+            "bun --bun /home/agent/tools/self-improvement-loop.mjs status"
+        );
+        assert_eq!(
+            package["scripts"]["mcp:self-improvement"],
+            "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
+        );
+        assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
+        assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
+        assert!(package["dependencies"]["@tangle-network/agent-knowledge"].is_string());
+        assert_eq!(package["engines"]["node"], ">=20");
+    }
+
+    #[test]
+    fn self_improvement_loop_uses_tangle_agent_packages_and_existing_api() {
+        let tool = include_str!("../prompts/tools/self_improvement_loop.mjs");
+        assert!(tool.contains("@tangle-network/agent-eval"));
+        assert!(tool.contains("@tangle-network/agent-runtime/analyst-loop"));
+        assert!(tool.contains("@tangle-network/agent-knowledge"));
+        assert!(tool.contains("/evolution/sandbox/snapshot"));
+        assert!(tool.contains("/evolution/self-improve"));
+        assert!(tool.contains("FindingsStore"));
+        assert!(tool.contains("runAnalystLoop"));
+        assert!(tool.contains("proposeFromFindings"));
+        assert!(tool.contains("applyKnowledgeWriteBlocks"));
+    }
+
+    #[test]
+    fn self_improvement_mcp_server_exposes_multishot_task_tools() {
+        let tool = include_str!("../prompts/tools/self_improvement_mcp_server.mjs");
+        assert!(tool.contains("tools/list"));
+        assert!(tool.contains("tools/call"));
+        assert!(tool.contains("auto-dev-style"));
+        assert!(tool.contains("principal/L8-level"));
+        assert!(tool.contains("10x IC"));
+        assert!(tool.contains("security-minded coding agent"));
+        assert!(tool.contains("Anti-patterns that fail this task"));
+        assert!(tool.contains("Fake software"));
+        assert!(tool.contains("Fake proof"));
+        assert!(tool.contains("Scope drift"));
+        assert!(tool.contains("real tests/checks run"));
+        assert!(tool.contains("fund isolation"));
+        assert!(tool.contains("chain/domain separation"));
+        assert!(tool.contains("replay resistance"));
+        assert!(tool.contains("Do not weaken validation"));
+        assert!(tool.contains("Completion contract"));
+        assert!(tool.contains("variants"));
+        assert!(tool.contains("reviewer_command"));
+        assert!(tool.contains("coding_timeout_ms"));
+        assert!(tool.contains("selectWinner"));
+        assert!(tool.contains("highest_readiness"));
+        assert!(tool.contains("self_improvement.create_task"));
+        assert!(tool.contains("self_improvement.list_tasks"));
+        assert!(tool.contains("max_results"));
+        assert!(tool.contains("git worktree add"));
+        assert!(tool.contains("max_shots"));
+        assert!(tool.contains("runCodingAgent"));
+        assert!(tool.contains("runTests"));
+        assert!(tool.contains("add -N ."));
+        assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
+        assert!(tool.contains("self_improvement.cancel"));
+        assert!(tool.contains("self_improvement.promote_candidate"));
     }
 }
 
@@ -1019,18 +1205,18 @@ pub async fn wipe_bot_secrets(
 
     // Check sandbox state — secrets_configured is derived from sandbox record
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
-    if let Some(ref s) = sandbox {
-        if !s.has_user_secrets() {
-            return Err("Bot has no secrets to wipe".to_string());
-        }
+    if let Some(ref s) = sandbox
+        && !s.has_user_secrets()
+    {
+        return Err("Bot has no secrets to wipe".to_string());
     }
 
     // Remove all three split-tick workflows (fast=base, research=base+1, conversation=base+2).
     // Also sweep by name prefix to catch any stale workflows from a prior activation.
-    if let Some(wf_id) = bot.workflow_id {
-        if let Err(err) = remove_bot_workflows(&bot.id, wf_id) {
-            tracing::warn!("Failed to remove workflows for bot {}: {err}", bot.id);
-        }
+    if let Some(wf_id) = bot.workflow_id
+        && let Err(err) = remove_bot_workflows(&bot.id, wf_id)
+    {
+        tracing::warn!("Failed to remove workflows for bot {}: {err}", bot.id);
     }
 
     // Wipe user secrets — sandbox-runtime preserves base env automatically

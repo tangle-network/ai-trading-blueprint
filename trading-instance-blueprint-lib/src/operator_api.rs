@@ -1391,19 +1391,31 @@ async fn list_chat_messages(
     .await
     {
         Ok(response) => {
-            if response.status() == StatusCode::NOT_FOUND {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if response.status() == StatusCode::NOT_FOUND
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Ok(response)
         }
         Err(error) => {
-            if error.0 == StatusCode::BAD_GATEWAY {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if error.0 == StatusCode::BAD_GATEWAY
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Err(error)
@@ -1963,6 +1975,17 @@ fn run_precedes_cursor(run: &WorkflowRunRecord, cursor: &(u64, String)) -> bool 
     run.started_at < cursor.0 || (run.started_at == cursor.0 && run.run_id < cursor.1)
 }
 
+fn latest_execution_runs_for_workflows(workflow_ids: &[u64]) -> Vec<WorkflowRunRecord> {
+    workflow_ids
+        .iter()
+        .filter_map(|workflow_id| {
+            trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(*workflow_id)
+                .ok()
+                .flatten()
+        })
+        .collect()
+}
+
 fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
     let transcript_available = run
         .session_id
@@ -2079,6 +2102,63 @@ fn replayable_run_for_session(
     Ok(Some(run))
 }
 
+fn workflow_session_base_for_run(run: &WorkflowRunRecord) -> Option<String> {
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(run.workflow_id);
+    let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .ok()?
+        .get(&key)
+        .ok()??;
+    let workflow_json: serde_json::Value = serde_json::from_str(&entry.workflow_json).ok()?;
+    workflow_json
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+}
+
+fn timestamped_session_candidate(base: &str, session_id: String) -> Option<(u64, String)> {
+    let suffix = session_id.strip_prefix(&format!("{base}-"))?;
+    let started_at = suffix.parse::<u64>().ok()?;
+    Some((started_at, session_id))
+}
+
+async fn resolve_run_transcript_session_alias(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+) -> Option<String> {
+    let base = workflow_session_base_for_run(run)?;
+    let cutoff = run.completed_at.unwrap_or(run.started_at);
+    let sessions = trading_blueprint_lib::operator_chat::list_chat_session_ids(target)
+        .await
+        .ok()?;
+
+    sessions
+        .into_iter()
+        .filter_map(|session_id| timestamped_session_candidate(&base, session_id))
+        .filter(|(started_at, _)| *started_at <= cutoff)
+        .max_by_key(|(started_at, _)| *started_at)
+        .map(|(_, session_id)| session_id)
+}
+
+async fn live_run_transcript_alias_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+    query: Option<&str>,
+) -> Option<Response> {
+    let session_id = resolve_run_transcript_session_alias(target, run).await?;
+    let response = trading_blueprint_lib::operator_chat::proxy_chat_request(
+        target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}/messages"),
+        None,
+        query,
+    )
+    .await
+    .ok()?;
+
+    response.status().is_success().then_some(response)
+}
+
 fn parse_transcript_cursor(cursor: &str) -> Option<usize> {
     cursor.parse::<usize>().ok()
 }
@@ -2113,16 +2193,22 @@ fn replay_transcript_messages_response(
     }
 }
 
-fn run_transcript_fallback_response(
+async fn run_transcript_fallback_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
+    raw_query: Option<&str>,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
         trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let messages = match transcript {
-        Some(record) => record.messages,
-        None => synthesize_run_transcript_messages(run),
+    let messages = if let Some(record) = transcript {
+        record.messages
+    } else if let Some(response) = live_run_transcript_alias_response(target, run, raw_query).await
+    {
+        return Ok(response);
+    } else {
+        synthesize_run_transcript_messages(run)
     };
 
     Ok(replay_transcript_messages_response(messages, query))
@@ -2178,6 +2264,16 @@ async fn list_bot_runs(
     let mut runs =
         trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    for latest_run in latest_execution_runs_for_workflows(&workflow_ids) {
+        if !runs.iter().any(|run| run.run_id == latest_run.run_id) {
+            runs.push(latest_run);
+        }
+    }
+    runs.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.run_id.cmp(&a.run_id))
+    });
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -2207,6 +2303,18 @@ async fn get_bot_run(
         .collect::<HashSet<_>>();
     let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .or_else(|| {
+            workflow_ids
+                .iter()
+                .find_map(|workflow_id| {
+                    trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(
+                        *workflow_id,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .filter(|run| run.run_id == run_id)
+        })
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
     if !workflow_ids.contains(&run.workflow_id) {
@@ -2245,22 +2353,22 @@ async fn configure_secrets(
         ];
         let mut found = false;
         for &(env_var, model_provider, model_name, native_key) in providers {
-            if let Ok(key) = std::env::var(env_var) {
-                if !key.is_empty() {
-                    env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
-                    env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
-                    env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-                    if env_var == "TANGLE_ROUTER_API_KEY" {
-                        let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
-                            .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
-                        env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
-                        env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
-                    }
-                    env.insert(native_key.into(), key.into());
-                    found = true;
-                    tracing::info!("Using operator-provided {env_var} for instance bot");
-                    break;
+            if let Ok(key) = std::env::var(env_var)
+                && !key.is_empty()
+            {
+                env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
+                env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
+                env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
+                if env_var == "TANGLE_ROUTER_API_KEY" {
+                    let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
+                        .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
+                    env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
+                    env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
                 }
+                env.insert(native_key.into(), key.into());
+                found = true;
+                tracing::info!("Using operator-provided {env_var} for instance bot");
+                break;
             }
         }
         if !found {
@@ -2383,9 +2491,70 @@ async fn run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before instance manual run"
+        );
+    }
+
+    let execution = match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+        Ok(execution) => execution,
+        Err(err) => {
+            match ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                workflow_id,
+                err.clone(),
+            ) {
+                Ok(latest_execution) => {
+                    if let Err(persist_err) =
+                        trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                            workflow_id,
+                            latest_execution,
+                        )
+                    {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %persist_err,
+                            "Failed to persist failed instance workflow run history"
+                        );
+                    }
+                }
+                Err(store_err) => {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %store_err,
+                        "Failed to store failed instance workflow latest execution"
+                    );
+                }
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, err));
+        }
+    };
+
+    let latest_execution = execution.latest_execution.clone();
+    if let Err(err) = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+        workflow_id,
+        latest_execution.clone(),
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to store instance workflow latest execution"
+        );
+    }
+    if let Err(err) = trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        latest_execution,
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to persist instance workflow run history"
+        );
+    }
 
     let last_run_at = execution.last_run_at;
     let next_run_at = execution.next_run_at;
@@ -2888,9 +3057,70 @@ async fn debug_run_now(
             )
         })?;
 
-    let execution = ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before instance debug run"
+        );
+    }
+
+    let execution = match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
+        Ok(execution) => execution,
+        Err(err) => {
+            match ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                workflow_id,
+                err.clone(),
+            ) {
+                Ok(latest_execution) => {
+                    if let Err(persist_err) =
+                        trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                            workflow_id,
+                            latest_execution,
+                        )
+                    {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %persist_err,
+                            "Failed to persist failed instance debug workflow run history"
+                        );
+                    }
+                }
+                Err(store_err) => {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %store_err,
+                        "Failed to store failed instance debug workflow latest execution"
+                    );
+                }
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, err));
+        }
+    };
+
+    let latest_execution = execution.latest_execution.clone();
+    if let Err(err) = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+        workflow_id,
+        latest_execution.clone(),
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to store instance debug workflow latest execution"
+        );
+    }
+    if let Err(err) = trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        latest_execution,
+    ) {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to persist instance debug workflow run history"
+        );
+    }
 
     let last_run_at = execution.last_run_at;
     let next_run_at = execution.next_run_at;
@@ -2962,6 +3192,10 @@ mod tests {
             runner_signal: None,
             agent_reasoning: None,
             harness_version: None,
+            candidate_hash: None,
+            revision_id: None,
+            paper_pnl_pct: None,
+            paper_equity_after: None,
         }
     }
 

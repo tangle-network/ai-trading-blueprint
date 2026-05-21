@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use ethers_signers::LocalWallet;
+use ethers_signers::{LocalWallet, Signer};
 use hyperliquid::types::Chain;
 use hyperliquid::types::exchange::request::{
     CancelRequest, Limit, OrderRequest, OrderType, Tif, TpSl, Trigger,
@@ -148,6 +148,10 @@ impl HyperliquidClient {
         })
     }
 
+    pub fn wallet_address(&self) -> String {
+        format!("{:#x}", self.wallet.address())
+    }
+
     pub async fn resolve_asset(&self, id: &AssetId) -> Result<u32, String> {
         match id {
             AssetId::Index(i) => Ok(*i),
@@ -178,7 +182,29 @@ impl HyperliquidClient {
         }
     }
 
+    fn parse_account_address<T>(account_address: Option<&str>) -> Result<Option<T>, String>
+    where
+        T: std::str::FromStr,
+        T::Err: std::fmt::Display,
+    {
+        account_address
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| {
+                raw.parse()
+                    .map_err(|e| format!("invalid HL account address '{raw}': {e}"))
+            })
+            .transpose()
+    }
+
     pub async fn place_order(&self, req: &PlaceOrderRequest) -> Result<HlResponse, String> {
+        self.place_order_for_account(req, None).await
+    }
+
+    pub async fn place_order_for_account(
+        &self,
+        req: &PlaceOrderRequest,
+        account_address: Option<&str>,
+    ) -> Result<HlResponse, String> {
         let asset = self.resolve_asset(&req.asset).await?;
 
         let (limit_px, order_type, reduce_only) = match &req.order_type {
@@ -242,8 +268,10 @@ impl HyperliquidClient {
             cloid,
         };
 
+        let vault_address = Self::parse_account_address(account_address)?;
+
         self.exchange
-            .place_order(self.wallet.clone(), vec![order], None)
+            .place_order(self.wallet.clone(), vec![order], vault_address)
             .await
             .map_err(|e| format!("HL place_order: {e}"))
     }
@@ -254,6 +282,17 @@ impl HyperliquidClient {
         entry: &PlaceOrderRequest,
         stop_loss: Option<&PlaceOrderRequest>,
         take_profit: Option<&PlaceOrderRequest>,
+    ) -> Result<HlResponse, String> {
+        self.place_bracket_for_account(entry, stop_loss, take_profit, None)
+            .await
+    }
+
+    pub async fn place_bracket_for_account(
+        &self,
+        entry: &PlaceOrderRequest,
+        stop_loss: Option<&PlaceOrderRequest>,
+        take_profit: Option<&PlaceOrderRequest>,
+        account_address: Option<&str>,
     ) -> Result<HlResponse, String> {
         let asset = self.resolve_asset(&entry.asset).await?;
         let mut orders = Vec::new();
@@ -327,20 +366,33 @@ impl HyperliquidClient {
             });
         }
 
+        let vault_address = Self::parse_account_address(account_address)?;
+
         if stop_loss.is_some() || take_profit.is_some() {
             self.exchange
-                .normal_tpsl(self.wallet.clone(), orders, None)
+                .normal_tpsl(self.wallet.clone(), orders, vault_address)
                 .await
                 .map_err(|e| format!("HL bracket: {e}"))
         } else {
             self.exchange
-                .place_order(self.wallet.clone(), orders, None)
+                .place_order(self.wallet.clone(), orders, vault_address)
                 .await
                 .map_err(|e| format!("HL order: {e}"))
         }
     }
 
     pub async fn cancel_order(&self, asset: u32, order_id: u64) -> Result<HlResponse, String> {
+        self.cancel_order_for_account(asset, order_id, None).await
+    }
+
+    pub async fn cancel_order_for_account(
+        &self,
+        asset: u32,
+        order_id: u64,
+        account_address: Option<&str>,
+    ) -> Result<HlResponse, String> {
+        let vault_address = Self::parse_account_address(account_address)?;
+
         self.exchange
             .cancel_order(
                 self.wallet.clone(),
@@ -348,7 +400,7 @@ impl HyperliquidClient {
                     asset,
                     oid: order_id,
                 }],
-                None,
+                vault_address,
             )
             .await
             .map_err(|e| format!("HL cancel: {e}"))
@@ -367,8 +419,19 @@ impl HyperliquidClient {
     }
 
     pub async fn get_account(&self) -> Result<AccountInfo, String> {
-        use ethers_signers::Signer;
-        let address = self.wallet.address();
+        self.get_account_for(None).await
+    }
+
+    pub async fn get_account_for(
+        &self,
+        account_address: Option<&str>,
+    ) -> Result<AccountInfo, String> {
+        let address = match account_address.filter(|raw| !raw.trim().is_empty()) {
+            Some(raw) => raw
+                .parse()
+                .map_err(|e| format!("invalid HL account address '{raw}': {e}"))?,
+            None => self.wallet.address(),
+        };
 
         let state = self
             .info

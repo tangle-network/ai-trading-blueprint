@@ -57,10 +57,10 @@ fn resolve_venue(
     };
 
     let key = (bot.bot_id.clone(), static_id);
-    if let Ok(cache) = client_cache().lock() {
-        if let Some(client) = cache.get(&key) {
-            return Ok(client.clone());
-        }
+    if let Ok(cache) = client_cache().lock()
+        && let Some(client) = cache.get(&key)
+    {
+        return Ok(client.clone());
     }
 
     // Audit fix: keys are resolved per-`bot.bot_id` via the configured

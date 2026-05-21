@@ -379,14 +379,13 @@ async fn maybe_fire(
     let now = SystemTime::now();
     {
         let mut guard = debounce.lock().await;
-        if let Some(last) = guard.get(&key) {
-            if now
+        if let Some(last) = guard.get(&key)
+            && now
                 .duration_since(*last)
                 .map(|d| d < ALERT_DEBOUNCE)
                 .unwrap_or(false)
-            {
-                return;
-            }
+        {
+            return;
         }
         guard.insert(key, now);
     }

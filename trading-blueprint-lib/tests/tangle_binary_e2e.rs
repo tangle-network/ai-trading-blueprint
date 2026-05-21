@@ -197,7 +197,7 @@ fn start_binary(
         .env("TANGLE_CONTRACT", TANGLE_CONTRACT)
         .env("STAKING_CONTRACT", STAKING_CONTRACT)
         .env("STATUS_REGISTRY_CONTRACT", STATUS_REGISTRY_CONTRACT)
-        .env("SIDECAR_IMAGE", "tangle-sidecar:local")
+        .env("SIDECAR_IMAGE", "blueprint-sidecar:all-harness")
         .env("SIDECAR_PULL_IMAGE", "false")
         .env("SIDECAR_PUBLIC_HOST", "127.0.0.1")
         .env("OPERATOR_API_PORT", operator_api_port.to_string())
@@ -405,16 +405,15 @@ async fn run_trade_pipeline(
             .header("Authorization", format!("Bearer {session_token}"))
             .send()
             .await
+            && resp.status().is_success()
         {
-            if resp.status().is_success() {
-                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                if let Some(bots) = body["bots"].as_array() {
-                    if let Some(first) = bots.first() {
-                        bot_id = first["id"].as_str().unwrap_or("").to_string();
-                        eprintln!("        Found bot: {bot_id} (attempt {attempt})");
-                        break;
-                    }
-                }
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if let Some(bots) = body["bots"].as_array()
+                && let Some(first) = bots.first()
+            {
+                bot_id = first["id"].as_str().unwrap_or("").to_string();
+                eprintln!("        Found bot: {bot_id} (attempt {attempt})");
+                break;
             }
         }
         if attempt % 10 == 0 {
@@ -1009,7 +1008,7 @@ async fn test_blueprint_manager_full_pipeline() -> Result<()> {
             .env("OPERATOR_API_PORT", op_port.to_string())
             .env("TRADING_API_PORT", trade_port.to_string())
             .env("VALIDATOR_ENDPOINTS", &validator_endpoints_str)
-            .env("SIDECAR_IMAGE", "tangle-sidecar:local")
+            .env("SIDECAR_IMAGE", "blueprint-sidecar:all-harness")
             .env("SIDECAR_PULL_IMAGE", "false")
             .env("SIDECAR_PUBLIC_HOST", "127.0.0.1")
             .env("WORKFLOW_CRON_SCHEDULE", "0 0 1 1 * *")
@@ -1201,7 +1200,7 @@ async fn test_blueprint_manager_firecracker_provision_fails_cleanly() -> Result<
             .env("OPERATOR_API_PORT", op_port.to_string())
             .env("TRADING_API_PORT", trade_port.to_string())
             .env("VALIDATOR_ENDPOINTS", "")
-            .env("SIDECAR_IMAGE", "tangle-sidecar:local")
+            .env("SIDECAR_IMAGE", "blueprint-sidecar:all-harness")
             .env("SIDECAR_PULL_IMAGE", "false")
             .env("SIDECAR_PUBLIC_HOST", "127.0.0.1")
             .env("WORKFLOW_CRON_SCHEDULE", "0 0 1 1 * *")

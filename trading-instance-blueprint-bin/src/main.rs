@@ -252,6 +252,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                 trading_http_api::rate_limit::PerBotRateLimiter::default(),
             ),
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: std::sync::Arc::new(
+                trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+            ),
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);

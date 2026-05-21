@@ -4,15 +4,18 @@ import { parseUnits, formatUnits } from 'viem';
 import type { Address } from 'viem';
 import { Button, Card, CardHeader, CardTitle, CardContent, Input } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
-import { useRedeemInKind } from '~/lib/hooks/useVaultWrite';
+import { useRedeem, useRedeemInKind, useRequestRedeem } from '~/lib/hooks/useVaultWrite';
 import { erc20Abi, tradingVaultAbi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { isKnownExternalHyperEvmChainId } from '~/lib/contracts/chains';
 import { addTx } from '@tangle-network/blueprint-ui';
 import { formatNumber } from '~/lib/format';
+import { ConfirmVaultActionDialog } from './ConfirmVaultActionDialog';
 
 interface WithdrawFormProps {
   vaultAddress: Address;
   assetSymbol: string;
+  assetDecimals: number;
   shareDecimals: number;
   userShares?: bigint;
   userSharesFormatted?: number;
@@ -32,6 +35,7 @@ interface BasketPreviewItem {
 export function WithdrawForm({
   vaultAddress,
   assetSymbol,
+  assetDecimals,
   shareDecimals,
   userShares,
   userSharesFormatted,
@@ -40,12 +44,18 @@ export function WithdrawForm({
   targetChainName,
   onSuccess,
 }: WithdrawFormProps) {
-  const { isConnected, chainId } = useAccount();
+  const { address: userAddress, isConnected, chainId } = useAccount();
   const isReady = isConnected && chainId === targetChainId;
   const [shares, setShares] = useState('');
   const [basketPreview, setBasketPreview] = useState<BasketPreviewItem[]>([]);
+  const [basePreviewAmount, setBasePreviewAmount] = useState<bigint | undefined>();
+  const [baseMaxRedeemShares, setBaseMaxRedeemShares] = useState<bigint | undefined>();
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const redeemInKind = useRedeemInKind();
+  const redeem = useRedeem();
+  const requestRedeem = useRequestRedeem();
+  const isHyperEvmVault = isKnownExternalHyperEvmChainId(targetChainId);
 
   const sharesNumber = Number(shares);
   let parsedShares = 0n;
@@ -70,11 +80,38 @@ export function WithdrawForm({
     async function loadPreview() {
       if (parsedShares === 0n || invalidShares) {
         setBasketPreview([]);
+        setBasePreviewAmount(undefined);
+        setBaseMaxRedeemShares(undefined);
         return;
       }
       setIsPreviewLoading(true);
       try {
         const client = getChainPublicClient(targetChainId);
+        if (isHyperEvmVault) {
+          const [preview, maxRedeem] = await Promise.all([
+            client.readContract({
+              address: vaultAddress,
+              abi: tradingVaultAbi,
+              functionName: 'previewRedeem',
+              args: [parsedShares],
+            }) as Promise<bigint>,
+            userAddress
+              ? client.readContract({
+                address: vaultAddress,
+                abi: tradingVaultAbi,
+                functionName: 'maxRedeem',
+                args: [userAddress],
+              }) as Promise<bigint>
+              : Promise.resolve(undefined),
+          ]);
+          if (!cancelled) {
+            setBasePreviewAmount(preview);
+            setBaseMaxRedeemShares(maxRedeem);
+            setBasketPreview([]);
+          }
+          return;
+        }
+
         const result = await client.readContract({
           address: vaultAddress,
           abi: tradingVaultAbi,
@@ -95,7 +132,11 @@ export function WithdrawForm({
         }));
         if (!cancelled) setBasketPreview(items.filter((item) => item.amount > 0n));
       } catch {
-        if (!cancelled) setBasketPreview([]);
+        if (!cancelled) {
+          setBasketPreview([]);
+          setBasePreviewAmount(undefined);
+          setBaseMaxRedeemShares(undefined);
+        }
       } finally {
         if (!cancelled) setIsPreviewLoading(false);
       }
@@ -104,7 +145,7 @@ export function WithdrawForm({
     return () => {
       cancelled = true;
     };
-  }, [invalidShares, parsedShares, targetChainId, vaultAddress]);
+  }, [invalidShares, isHyperEvmVault, parsedShares, targetChainId, userAddress, vaultAddress]);
 
   // Track confirmation (isSuccess from useWaitForTransactionReceipt) via ref
   // to avoid firing the callback multiple times during re-renders.
@@ -112,7 +153,11 @@ export function WithdrawForm({
   useEffect(() => {
     if (redeemInKind.isSuccess && !confirmedRef.current) {
       confirmedRef.current = true;
-      toast.success('Withdrawal confirmed!');
+      if (redeemInKind.receipt?.status === 'reverted') {
+        toast.error('Withdrawal failed: transaction reverted');
+      } else {
+        toast.success('Withdrawal confirmed!');
+      }
       redeemInKind.reset();
       setShares('');
       onSuccess();
@@ -122,23 +167,96 @@ export function WithdrawForm({
     }
   }, [redeemInKind.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleClick = () => {
+  const redeemConfirmedRef = useRef(false);
+  useEffect(() => {
+    if (redeem.isSuccess && !redeemConfirmedRef.current) {
+      redeemConfirmedRef.current = true;
+      if (redeem.receipt?.status === 'reverted') {
+        toast.error('Withdrawal failed: transaction reverted');
+      } else {
+        toast.success('Withdrawal confirmed!');
+      }
+      redeem.reset();
+      setShares('');
+      onSuccess();
+    }
+    if (!redeem.isSuccess) {
+      redeemConfirmedRef.current = false;
+    }
+  }, [redeem.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestConfirmedRef = useRef(false);
+  useEffect(() => {
+    if (requestRedeem.isSuccess && !requestConfirmedRef.current) {
+      requestConfirmedRef.current = true;
+      if (requestRedeem.receipt?.status === 'reverted') {
+        toast.error('Withdrawal request failed: transaction reverted');
+      } else {
+        toast.success('Withdrawal request queued');
+      }
+      requestRedeem.reset();
+      setShares('');
+      onSuccess();
+    }
+    if (!requestRedeem.isSuccess) {
+      requestConfirmedRef.current = false;
+    }
+  }, [requestRedeem.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const errorMessage = redeemInKind.error?.message
+    ?? redeem.error?.message
+    ?? requestRedeem.error?.message
+    ?? redeemInKind.receiptError?.message
+    ?? redeem.receiptError?.message
+    ?? requestRedeem.receiptError?.message;
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(`Withdrawal failed: ${errorMessage.slice(0, 100)}`);
+      redeemInKind.reset();
+      redeem.reset();
+      requestRedeem.reset();
+    }
+  }, [errorMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const validateSubmission = () => {
     if (!shares || invalidShares || sharesNumber <= 0) {
       toast.error('Enter a valid number of shares');
-      return;
+      return false;
     }
     if (!isReady) {
       toast.error(`Switch to ${targetChainName} first`);
-      return;
+      return false;
     }
     if (paused) {
       toast.error('Vault is paused');
-      return;
+      return false;
     }
     if (insufficientShares) {
       toast.error('Insufficient shares');
+      return false;
+    }
+    return true;
+  };
+
+  const submitWithdrawal = () => {
+    if (isHyperEvmVault) {
+      const shouldQueue = baseMaxRedeemShares != null && parsedShares > baseMaxRedeemShares;
+      const action = shouldQueue ? requestRedeem.requestRedeem : redeem.redeem;
+      const label = shouldQueue ? 'Request queued withdrawal' : `Withdraw ${assetSymbol}`;
+      action(vaultAddress, shares, shareDecimals, targetChainId, {
+        onHash(h: `0x${string}`) {
+          addTx(h, `${label} ${shares || '?'} shares`, targetChainId);
+        },
+        onError(e: Error) {
+          toast.error(`${label} failed: ${e.message.slice(0, 100)}`);
+          redeem.reset();
+          requestRedeem.reset();
+        },
+      });
       return;
     }
+
     const callbacks = {
       onHash(h: `0x${string}`) {
         addTx(h, `Withdraw ${shares || '?'} shares as basket`, targetChainId);
@@ -151,7 +269,18 @@ export function WithdrawForm({
     redeemInKind.redeemInKind(vaultAddress, shares, shareDecimals, targetChainId, callbacks);
   };
 
-  const isPending = redeemInKind.isPending || redeemInKind.isConfirming;
+  const handleClick = () => {
+    if (!validateSubmission()) return;
+    setConfirmOpen(true);
+  };
+
+  const isPending = redeemInKind.isPending
+    || redeemInKind.isConfirming
+    || redeem.isPending
+    || redeem.isConfirming
+    || requestRedeem.isPending
+    || requestRedeem.isConfirming;
+  const willQueue = isHyperEvmVault && baseMaxRedeemShares != null && parsedShares > baseMaxRedeemShares;
 
   const buttonText = !isConnected
     ? 'Connect Wallet'
@@ -164,7 +293,9 @@ export function WithdrawForm({
     : insufficientShares
     ? 'Insufficient Shares'
     : isPending
-    ? 'Withdrawing...'
+    ? willQueue ? 'Queueing...' : 'Withdrawing...'
+    : isHyperEvmVault
+    ? willQueue ? 'Request Withdrawal' : `Withdraw ${assetSymbol}`
     : 'Withdraw Basket';
 
   if (assetSymbol === '???') {
@@ -189,6 +320,7 @@ export function WithdrawForm({
   }
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
@@ -227,10 +359,24 @@ export function WithdrawForm({
           </div>
           <div className="rounded-lg border border-arena-border bg-arena-surface-muted/40 p-3">
             <div className="mb-2 flex items-center justify-between text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-              <span>Withdrawal Basket</span>
+              <span>{isHyperEvmVault ? 'Withdrawal Estimate' : 'Withdrawal Basket'}</span>
               {isPreviewLoading && <span>Loading...</span>}
             </div>
-            {basketPreview.length > 0 ? (
+            {isHyperEvmVault && basePreviewAmount != null ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="font-data text-arena-elements-textSecondary">{assetSymbol}</span>
+                  <span className="font-data font-semibold text-arena-elements-textPrimary">
+                    {formatNumber(Number(formatUnits(basePreviewAmount, assetDecimals)), { maximumFractionDigits: 6 })}
+                  </span>
+                </div>
+                {willQueue && (
+                  <div className="text-xs text-arena-elements-textSecondary">
+                    Not enough idle liquidity for an instant withdrawal. This request will enter the settlement queue.
+                  </div>
+                )}
+              </div>
+            ) : basketPreview.length > 0 ? (
               <div className="space-y-2">
                 {basketPreview.map((item) => (
                   <div key={item.token} className="flex items-center justify-between gap-3 text-sm">
@@ -258,5 +404,22 @@ export function WithdrawForm({
         </div>
       </CardContent>
     </Card>
+    <ConfirmVaultActionDialog
+      open={confirmOpen}
+      title={willQueue ? 'Confirm withdrawal request' : 'Confirm withdrawal'}
+      description={`${willQueue ? 'Queue' : 'Submit'} ${shares || '0'} vault shares on ${targetChainName}.`}
+      confirmLabel={willQueue ? 'Request withdrawal' : 'Withdraw'}
+      pending={isPending}
+      onOpenChange={setConfirmOpen}
+      onConfirm={() => {
+        if (!validateSubmission()) {
+          setConfirmOpen(false);
+          return;
+        }
+        setConfirmOpen(false);
+        submitWithdrawal();
+      }}
+    />
+    </>
   );
 }

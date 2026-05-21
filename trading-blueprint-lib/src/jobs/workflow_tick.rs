@@ -68,6 +68,42 @@ fn disable_stopped_bot_workflows(
     Ok(())
 }
 
+fn backfill_active_bot_run_history(all_bots: &[crate::state::TradingBotRecord]) {
+    for workflow_id in all_bots
+        .iter()
+        .filter(|bot| bot.trading_active)
+        .filter_map(|bot| bot.workflow_id)
+        .flat_map(workflow_group_ids)
+    {
+        if let Err(err) = crate::workflow_compat::backfill_latest_execution_run(workflow_id) {
+            tracing::warn!(
+                workflow_id,
+                error = %err,
+                "Failed to backfill workflow run history before tick"
+            );
+        }
+    }
+}
+
+fn persist_executed_run_history(response: &Value) {
+    let Some(executed) = response.get("executed").and_then(Value::as_array) else {
+        return;
+    };
+
+    for workflow_id in executed
+        .iter()
+        .filter_map(|entry| entry.get("workflowId").and_then(Value::as_u64))
+    {
+        if let Err(err) = crate::workflow_compat::backfill_latest_execution_run(workflow_id) {
+            tracing::warn!(
+                workflow_id,
+                error = %err,
+                "Failed to persist workflow run history after tick"
+            );
+        }
+    }
+}
+
 /// Trading-aware workflow tick.
 ///
 /// Before running the standard workflow tick, checks all active bots for
@@ -84,6 +120,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     tracing::info!("Found {} bots", all_bots.len());
 
     disable_stopped_bot_workflows(&all_bots)?;
+    backfill_active_bot_run_history(&all_bots);
 
     for bot in &all_bots {
         if !should_initiate_wind_down(bot) {
@@ -150,6 +187,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             serde_json::json!({"error": e, "count": 0, "executed": []})
         }
     };
+    persist_executed_run_history(&response);
 
     // 3. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?

@@ -193,6 +193,25 @@ pub async fn deploy_bot_vault(
     })
 }
 
+pub async fn approve_hyperliquid_api_wallet(
+    chain: &ChainClient,
+    vault_address: Address,
+    agent_wallet: Address,
+    agent_name: String,
+) -> Result<String, String> {
+    let call = ITradingVault::approveHyperliquidApiWalletCall {
+        agentWallet: agent_wallet,
+        agentName: agent_name,
+    };
+    send_contract_call_with_hash(
+        chain,
+        vault_address,
+        Bytes::from(call.abi_encode()),
+        "TradingVault.approveHyperliquidApiWallet",
+    )
+    .await
+}
+
 pub async fn configure_vault_supported_assets(
     chain: &ChainClient,
     vault_address: Address,
@@ -406,6 +425,17 @@ async fn send_contract_call(
     data: Bytes,
     label: &str,
 ) -> Result<(), String> {
+    send_contract_call_with_hash(chain, to, data, label)
+        .await
+        .map(|_| ())
+}
+
+async fn send_contract_call_with_hash(
+    chain: &ChainClient,
+    to: Address,
+    data: Bytes,
+    label: &str,
+) -> Result<String, String> {
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(to)
         .input(data.into());
@@ -414,11 +444,15 @@ async fn send_contract_call(
         .send_transaction(tx)
         .await
         .map_err(|e| format!("{label} tx send failed: {e}"))?;
-    pending
+    let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+    let receipt = pending
         .get_receipt()
         .await
         .map_err(|e| format!("{label} receipt failed: {e}"))?;
-    Ok(())
+    if !receipt.status() {
+        return Err(format!("{label} transaction reverted: {tx_hash}"));
+    }
+    Ok(tx_hash)
 }
 
 /// Parse VaultCreated event from transaction receipt.

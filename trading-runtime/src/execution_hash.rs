@@ -2,6 +2,10 @@ use alloy::primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy::sol_types::SolValue;
 
 use crate::adapters::{Approval, EncodedAction};
+use crate::hyperevm_corewriter::{
+    ACTION_SPOT_SEND, ACTION_USD_CLASS_TRANSFER, encode_spot_send_action,
+    encode_usd_class_transfer_action,
+};
 use crate::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use crate::polymarket_clob::{ClobOrderParams, Side};
 
@@ -11,12 +15,15 @@ const HEALTH_FACTOR_PAYLOAD_TYPE: &str = "HealthFactorPayload(address target,byt
 const APPROVAL_CALL_TYPE: &str = "ApprovalCall(address token,address spender,uint256 amount)";
 const COLLATERAL_RELEASE_TYPE: &str = "CollateralRelease(uint256 amount,address recipient,bytes32 intentHash,uint256 deadline,uint256 chainId)";
 const CLOB_ORDER_TYPE: &str = "ClobOrder(bytes32 tokenIdHash,bytes32 sideHash,bytes32 priceHash,bytes32 sizeHash,bytes32 orderTypeHash,uint256 expiration,bytes32 intentHash,uint256 deadline,uint256 chainId)";
-const HYPERLIQUID_ORDER_TYPE: &str = "HyperliquidOrder(bytes32 assetHash,bool isBuy,bytes32 sizeHash,bytes32 orderTypeHash,bool reduceOnly,bytes32 cloidHash,bytes32 intentHash,uint256 deadline,uint256 chainId)";
+const HYPERLIQUID_ORDER_TYPE: &str = "HyperliquidOrder(bytes32 accountHash,bytes32 assetHash,bool isBuy,bytes32 sizeHash,bytes32 orderTypeHash,bool reduceOnly,bytes32 cloidHash,bytes32 intentHash,uint256 deadline,uint256 chainId)";
+const HYPERLIQUID_FUND_MOVEMENT_TYPE: &str = "HyperliquidFundMovement(address vault,uint256 chainId,uint24 actionType,address destination,uint64 token,uint64 amount,bool direction,uint256 nonce,uint256 deadline,uint256 leverageCap,uint256 maxTradesPerHour,uint256 maxSlippageBps)";
+const HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPE: &str = "HyperliquidFundMovementExecution(address vault,uint256 chainId,uint24 actionType,bytes action)";
 
 pub const ACTION_KIND_VAULT_EXECUTE: u64 = 0;
 pub const ACTION_KIND_COLLATERAL_RELEASE: u64 = 1;
 pub const ACTION_KIND_CLOB_ORDER: u64 = 2;
 pub const ACTION_KIND_HYPERLIQUID_ORDER: u64 = 3;
+pub const ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT: u64 = 4;
 
 pub fn execution_payload_typehash() -> B256 {
     keccak256(EXECUTION_PAYLOAD_TYPE.as_bytes())
@@ -44,6 +51,14 @@ pub fn clob_order_typehash() -> B256 {
 
 pub fn hyperliquid_order_typehash() -> B256 {
     keccak256(HYPERLIQUID_ORDER_TYPE.as_bytes())
+}
+
+pub fn hyperliquid_fund_movement_typehash() -> B256 {
+    keccak256(HYPERLIQUID_FUND_MOVEMENT_TYPE.as_bytes())
+}
+
+pub fn hyperliquid_fund_movement_execution_typehash() -> B256 {
+    keccak256(HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPE.as_bytes())
 }
 
 pub fn hash_approvals(approvals: &[Approval]) -> B256 {
@@ -268,11 +283,13 @@ pub fn hash_clob_order_parts(
 
 pub fn hash_hyperliquid_order(
     request: &PlaceOrderRequest,
+    account: &str,
     intent_hash: B256,
     deadline: U256,
     chain_id: u64,
 ) -> B256 {
     hash_hyperliquid_order_parts(
+        account,
         &hyperliquid_asset_key(&request.asset),
         request.is_buy,
         &request.size,
@@ -287,6 +304,7 @@ pub fn hash_hyperliquid_order(
 
 #[allow(clippy::too_many_arguments)]
 pub fn hash_hyperliquid_order_parts(
+    account: &str,
     asset: &str,
     is_buy: bool,
     size: &str,
@@ -299,6 +317,7 @@ pub fn hash_hyperliquid_order_parts(
 ) -> B256 {
     keccak256(SolValue::abi_encode(&(
         hyperliquid_order_typehash(),
+        keccak256(account.trim().to_ascii_lowercase().as_bytes()),
         keccak256(asset.as_bytes()),
         is_buy,
         keccak256(size.as_bytes()),
@@ -308,6 +327,134 @@ pub fn hash_hyperliquid_order_parts(
         intent_hash,
         deadline,
         U256::from(chain_id),
+    )))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HyperliquidFundMovementPolicy {
+    pub leverage_cap: U256,
+    pub max_trades_per_hour: U256,
+    pub max_slippage_bps: U256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HyperliquidFundMovementHashes {
+    pub action: Bytes,
+    pub intent_hash: B256,
+    pub execution_hash: B256,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_hyperliquid_usd_class_fund_movement_hashes(
+    vault: Address,
+    chain_id: u64,
+    ntl: u64,
+    to_perp: bool,
+    nonce: U256,
+    deadline: U256,
+    policy: HyperliquidFundMovementPolicy,
+) -> Result<HyperliquidFundMovementHashes, String> {
+    let action = encode_usd_class_transfer_action(ntl, to_perp)?;
+    Ok(HyperliquidFundMovementHashes {
+        intent_hash: hash_hyperliquid_fund_movement_intent_parts(
+            vault,
+            chain_id,
+            ACTION_USD_CLASS_TRANSFER,
+            Address::ZERO,
+            0,
+            ntl,
+            to_perp,
+            nonce,
+            deadline,
+            policy,
+        ),
+        execution_hash: hash_hyperliquid_fund_movement_execution_parts(
+            vault,
+            chain_id,
+            ACTION_USD_CLASS_TRANSFER,
+            &action,
+        ),
+        action,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_hyperliquid_spot_send_fund_movement_hashes(
+    vault: Address,
+    chain_id: u64,
+    destination: Address,
+    token: u64,
+    wei_amount: u64,
+    nonce: U256,
+    deadline: U256,
+    policy: HyperliquidFundMovementPolicy,
+) -> Result<HyperliquidFundMovementHashes, String> {
+    let action = encode_spot_send_action(destination, token, wei_amount)?;
+    Ok(HyperliquidFundMovementHashes {
+        intent_hash: hash_hyperliquid_fund_movement_intent_parts(
+            vault,
+            chain_id,
+            ACTION_SPOT_SEND,
+            destination,
+            token,
+            wei_amount,
+            false,
+            nonce,
+            deadline,
+            policy,
+        ),
+        execution_hash: hash_hyperliquid_fund_movement_execution_parts(
+            vault,
+            chain_id,
+            ACTION_SPOT_SEND,
+            &action,
+        ),
+        action,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn hash_hyperliquid_fund_movement_intent_parts(
+    vault: Address,
+    chain_id: u64,
+    action_type: u32,
+    destination: Address,
+    token: u64,
+    amount: u64,
+    direction: bool,
+    nonce: U256,
+    deadline: U256,
+    policy: HyperliquidFundMovementPolicy,
+) -> B256 {
+    keccak256(SolValue::abi_encode(&(
+        hyperliquid_fund_movement_typehash(),
+        vault,
+        U256::from(chain_id),
+        action_type,
+        destination,
+        token,
+        amount,
+        direction,
+        nonce,
+        deadline,
+        policy.leverage_cap,
+        policy.max_trades_per_hour,
+        policy.max_slippage_bps,
+    )))
+}
+
+pub fn hash_hyperliquid_fund_movement_execution_parts(
+    vault: Address,
+    chain_id: u64,
+    action_type: u32,
+    action: &Bytes,
+) -> B256 {
+    keccak256(SolValue::abi_encode(&(
+        hyperliquid_fund_movement_execution_typehash(),
+        vault,
+        U256::from(chain_id),
+        action_type,
+        action,
     )))
 }
 
@@ -358,6 +505,124 @@ mod tests {
             hash_approvals(&[a.clone(), b.clone()]),
             hash_approvals(&[b, a])
         );
+    }
+
+    #[test]
+    fn action_kind_constants_are_distinct() {
+        assert_eq!(ACTION_KIND_HYPERLIQUID_ORDER, 3);
+        assert_eq!(ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, 4);
+        assert_ne!(
+            ACTION_KIND_HYPERLIQUID_ORDER,
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
+        );
+    }
+
+    #[test]
+    fn fund_movement_hashes_bind_corewriter_action_and_nonce() {
+        let vault = Address::from([0x11u8; 20]);
+        let policy = HyperliquidFundMovementPolicy {
+            leverage_cap: U256::from(2),
+            max_trades_per_hour: U256::from(12),
+            max_slippage_bps: U256::from(50),
+        };
+
+        let hashes = build_hyperliquid_usd_class_fund_movement_hashes(
+            vault,
+            998,
+            1_000_000,
+            false,
+            U256::from(7),
+            U256::from(1_800_000_000u64),
+            policy,
+        )
+        .unwrap();
+
+        assert_eq!(&hashes.action[..4], &[0x01, 0x00, 0x00, 0x07]);
+        assert_eq!(
+            hashes.intent_hash,
+            hash_hyperliquid_fund_movement_intent_parts(
+                vault,
+                998,
+                ACTION_USD_CLASS_TRANSFER,
+                Address::ZERO,
+                0,
+                1_000_000,
+                false,
+                U256::from(7),
+                U256::from(1_800_000_000u64),
+                policy,
+            )
+        );
+        assert_eq!(
+            hashes.execution_hash,
+            hash_hyperliquid_fund_movement_execution_parts(
+                vault,
+                998,
+                ACTION_USD_CLASS_TRANSFER,
+                &hashes.action,
+            )
+        );
+
+        let next_nonce = build_hyperliquid_usd_class_fund_movement_hashes(
+            vault,
+            998,
+            1_000_000,
+            false,
+            U256::from(8),
+            U256::from(1_800_000_000u64),
+            policy,
+        )
+        .unwrap();
+        assert_ne!(hashes.intent_hash, next_nonce.intent_hash);
+        assert_eq!(hashes.execution_hash, next_nonce.execution_hash);
+    }
+
+    #[test]
+    fn spot_fund_movement_hashes_bind_destination_and_amount() {
+        let vault = Address::from([0x11u8; 20]);
+        let destination = Address::from([0x22u8; 20]);
+        let policy = HyperliquidFundMovementPolicy {
+            leverage_cap: U256::from(2),
+            max_trades_per_hour: U256::from(12),
+            max_slippage_bps: U256::from(50),
+        };
+
+        let hashes = build_hyperliquid_spot_send_fund_movement_hashes(
+            vault,
+            998,
+            destination,
+            1_505,
+            2_000_000,
+            U256::from(9),
+            U256::from(1_800_000_000u64),
+            policy,
+        )
+        .unwrap();
+
+        assert_eq!(&hashes.action[..4], &[0x01, 0x00, 0x00, 0x06]);
+        assert_eq!(
+            hashes.execution_hash,
+            hash_hyperliquid_fund_movement_execution_parts(
+                vault,
+                998,
+                ACTION_SPOT_SEND,
+                &hashes.action,
+            )
+        );
+
+        let changed_amount = build_hyperliquid_spot_send_fund_movement_hashes(
+            vault,
+            998,
+            destination,
+            1_505,
+            2_000_001,
+            U256::from(9),
+            U256::from(1_800_000_000u64),
+            policy,
+        )
+        .unwrap();
+        assert_ne!(hashes.intent_hash, changed_amount.intent_hash);
+        assert_ne!(hashes.execution_hash, changed_amount.execution_hash);
     }
 
     #[test]
@@ -465,8 +730,37 @@ mod tests {
         changed_hl.reduce_only = true;
 
         assert_ne!(
-            hash_hyperliquid_order(&hl, B256::ZERO, U256::from(100), 42161),
-            hash_hyperliquid_order(&changed_hl, B256::ZERO, U256::from(100), 42161)
+            hash_hyperliquid_order(
+                &hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            ),
+            hash_hyperliquid_order(
+                &changed_hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            )
+        );
+
+        assert_ne!(
+            hash_hyperliquid_order(
+                &hl,
+                "0x1111111111111111111111111111111111111111",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            ),
+            hash_hyperliquid_order(
+                &hl,
+                "0x2222222222222222222222222222222222222222",
+                B256::ZERO,
+                U256::from(100),
+                42161
+            )
         );
     }
 }

@@ -23,6 +23,7 @@ base = "${BASE_RPC_URL}"
 arbitrum = "${ARBITRUM_RPC_URL}"
 polygon = "${POLYGON_RPC_URL}"
 mainnet = "${ETH_RPC_URL}"
+hyperevm_testnet = "https://rpc.hyperliquid-testnet.xyz/evm"
 
 [soldeer]
 recursive_deps = true

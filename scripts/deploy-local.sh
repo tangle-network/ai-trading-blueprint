@@ -32,8 +32,8 @@ TRADING_APPROVE_GAS_PRICE_WEI="${TRADING_APPROVE_GAS_PRICE_WEI:-1}"
 OPERATOR_REGISTRATION_GAS_LIMIT="${OPERATOR_REGISTRATION_GAS_LIMIT:-3000000}"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-SERVICE_REQUEST_KEY="0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
-SERVICE_REQUEST_ADDR="0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
+SERVICE_REQUEST_ADDR="${SERVICE_REQUEST_ADDR:-0xb607A500574fE29afb0d0681f1dC3E82f79f4877}"
+FUNDING_ADDR="${FUNDING_ADDR:-$DEPLOYER_ADDR}"
 OPERATOR1_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 OPERATOR1_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 OPERATOR2_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
@@ -198,6 +198,8 @@ create_manual_singleton_vault() {
     SERVICE_ID="$service_id" \
     ASSET_TOKEN="$TRADING_ASSET_TOKEN" \
     ADMIN_ADDRESS="$admin_address" \
+    SIGNERS="$OPERATOR1_ADDR,$OPERATOR2_ADDR,$DEPLOYER_ADDR" \
+    REQUIRED_SIGS=2 \
     SIGNER_ONE="$OPERATOR1_ADDR" \
     SIGNER_TWO="$OPERATOR2_ADDR" \
     VAULT_NAME="$vault_name" \
@@ -329,6 +331,14 @@ echo "  Cloud Blueprint ID:     $BLUEPRINT_ID"
 echo "  Instance Blueprint ID:  $INSTANCE_BLUEPRINT_ID"
 echo "  TEE Blueprint ID:       $TEE_BLUEPRINT_ID"
 echo "  Validator Blueprint ID: $VALIDATOR_BLUEPRINT_ID"
+echo "  Service requester:      $SERVICE_REQUEST_ADDR"
+
+# The local HyperEVM flow uses the same account that owns the testnet vault
+# stack as the service requester/permitted caller. Impersonate it on Anvil so
+# requestService can run locally without exposing the real private key to cast.
+cast rpc anvil_autoImpersonateAccount true --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+cast rpc anvil_setBalance "$SERVICE_REQUEST_ADDR" "0x56BC75E2D63100000" --rpc-url "$RPC_URL" > /dev/null 2>&1
+cast rpc anvil_impersonateAccount "$SERVICE_REQUEST_ADDR" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 
 # Fund user accounts
 echo "  Funding user accounts..."
@@ -336,12 +346,12 @@ if [[ "$FORK_MODE" == "true" ]]; then
   echo "    Skipped custom demo-user funding in fork mode (historical fork backend)"
 else
   for acct in "$USER_ACCOUNT" "$USER_ACCOUNT_2"; do
-    send_with_retry "$acct" --value 100ether --gas-limit 21000 --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+    send_with_retry "$acct" --value 100ether --gas-limit 21000 --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
     if [[ -z "$EXISTING_USDC_ADDRESS" && -z "$EXISTING_WETH_ADDRESS" ]]; then
       send_with_retry "$USDC" "mint(address,uint256)" "$acct" 1000000000000 \
-        --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+        --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
       send_with_retry "$WETH" "mint(address,uint256)" "$acct" 100000000000000000000 \
-        --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+        --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
       echo "    $acct (100 ETH, 1M USDC, 100 WETH)"
     else
       echo "    $acct (100 ETH, token seeding deferred to fork helper)"
@@ -353,12 +363,12 @@ fi
 if [[ -n "${EXTRA_ACCOUNTS:-}" ]]; then
   echo "  Funding extra accounts..."
   for acct in $EXTRA_ACCOUNTS; do
-    send_with_retry "$acct" --value 100ether --gas-limit 21000 --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+    send_with_retry "$acct" --value 100ether --gas-limit 21000 --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
     if [[ -z "$EXISTING_USDC_ADDRESS" && -z "$EXISTING_WETH_ADDRESS" ]]; then
       send_with_retry "$USDC" "mint(address,uint256)" "$acct" 1000000000000 \
-        --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+        --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
       send_with_retry "$WETH" "mint(address,uint256)" "$acct" 100000000000000000000 \
-        --rpc-url "$RPC_URL" --from "$SERVICE_REQUEST_ADDR" --unlocked > /dev/null
+        --rpc-url "$RPC_URL" --from "$FUNDING_ADDR" --unlocked > /dev/null
       echo "  Extra: $acct (100 ETH, 1M USDC, 100 WETH)"
     else
       echo "  Extra: $acct (100 ETH, token seeding deferred to fork helper)"
@@ -915,6 +925,7 @@ VITE_TEE_BLUEPRINT_ID=$TEE_BLUEPRINT_ID
 VITE_VALIDATOR_BLUEPRINT_ID=$VALIDATOR_BLUEPRINT_ID
 VITE_VALIDATOR_SERVICE_ID=$VALIDATOR_SERVICE_ID
 VITE_VALIDATOR_SERVICE_IDS=$VALIDATOR_SERVICE_IDS_CSV
+VITE_LOCAL_FACTORY_EXTRA_SIGNERS=$DEPLOYER_ADDR
 EOF
 
 echo ""

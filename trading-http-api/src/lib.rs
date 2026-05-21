@@ -4,12 +4,17 @@ pub mod auth;
 pub mod candle_store;
 pub mod envelope_renewal;
 pub mod envelope_watcher;
+pub mod evolution_store;
+pub mod hyperliquid_mode;
+pub mod hyperliquid_nav;
+pub mod hyperliquid_settlement;
 pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
 pub mod nav_stream;
 pub mod rate_limit;
 pub mod routes;
+pub mod sandbox_store;
 pub mod session_auth;
 pub mod trade_store;
 
@@ -20,6 +25,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::hyperliquid_nav::{DefaultHyperliquidNavReconciler, HyperliquidNavReconciler};
 use trading_runtime::PortfolioState;
 use trading_runtime::chain::ChainClient;
 use trading_runtime::executor::TradeExecutor;
@@ -187,6 +193,9 @@ pub struct MultiBotTradingState {
     /// the auth middleware so the dapp can subscribe without a token.
     /// Defaults to `None`; binaries opt in by injecting a `NavStreamConfig`.
     pub nav_stream_config: Option<nav_stream::NavStreamConfig>,
+    /// Refreshes Hyperliquid NAV before mode decisions. Tests can inject a
+    /// fake reconciler so execute-route freshness behavior is deterministic.
+    pub hyperliquid_nav_reconciler: Arc<dyn HyperliquidNavReconciler>,
 }
 
 impl Default for MultiBotTradingState {
@@ -206,6 +215,7 @@ impl Default for MultiBotTradingState {
             rate_limiter: Arc::new(rate_limit::PerBotRateLimiter::default()),
             key_provider: trading_runtime::cex::default_provider(),
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: Arc::new(DefaultHyperliquidNavReconciler),
         }
     }
 }
@@ -484,6 +494,133 @@ pub fn validate_morpho_protocol_request(
     ))
 }
 
+/// Build a multi-bot trading HTTP API router.
+///
+/// This serves `/validate`, `/execute`, and `/health` for ALL bots.
+/// The auth middleware resolves the calling bot from the bearer token and
+/// injects the bot record into request extensions.
+///
+/// Side effects: when `state.list_envelope_bots` is set, this also spawns the
+/// envelope renewal cron as a background task ticking every
+/// [`envelope_renewal::RENEWAL_CRON_INTERVAL`].
+/// Hard upper bound on request body size for the multi-bot HTTP API.
+///
+/// Axum's default is 2 MiB, applied per-extractor; we tighten to 256 KiB so
+/// a single envelope or learning-outcome POST cannot OOM the process.
+/// Envelopes themselves are < 8 KiB; quote responses < 4 KiB. 256 KiB gives
+/// a >32× safety margin while keeping the surface tight enough that a bad
+/// agent can't queue a 100 MiB JSON parse in tokio's worker pool. See
+/// `audits/http-api-concurrency-audit.md` finding #3.
+const MAX_BODY_BYTES: usize = 256 * 1024;
+
+pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::get;
+    if state.list_envelope_bots.is_some() {
+        envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
+        envelope_watcher::spawn_envelope_watcher(Arc::clone(&state));
+    }
+    // Prometheus exporter is mounted on the *outer* router, ahead of the
+    // auth middleware below, so scrapers can hit it without a bearer token.
+    let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
+    let nav_stream_config = state.nav_stream_config.clone();
+    let auth_router = Router::new()
+        .route("/health", get(multi_bot_health))
+        .route("/ready", get(multi_bot_ready))
+        .merge(routes::market_data::multi_bot_router())
+        .merge(routes::portfolio::multi_bot_router())
+        .merge(routes::validate::multi_bot_router())
+        .merge(routes::execute::multi_bot_router())
+        .merge(routes::preflight::multi_bot_router())
+        .merge(routes::collateral::multi_bot_router())
+        .merge(routes::envelope::multi_bot_router())
+        .merge(routes::envelope_quote::multi_bot_router())
+        .merge(routes::circuit::multi_bot_router())
+        .merge(routes::adapters::multi_bot_router())
+        .merge(routes::metrics::multi_bot_router())
+        .merge(routes::trades::multi_bot_router())
+        .merge(routes::backtest::multi_bot_router())
+        .merge(routes::candles::multi_bot_router())
+        .merge(routes::cex::multi_bot_router())
+        .merge(routes::evolution::multi_bot_router())
+        .merge(routes::hyperliquid::multi_bot_router())
+        .merge(routes::hyperliquid_mode::multi_bot_router())
+        .merge(routes::hyperliquid_nav::multi_bot_router())
+        .merge(routes::hyperliquid_settlement::multi_bot_router())
+        .merge(routes::learning::multi_bot_router())
+        .merge(routes::solana::multi_bot_router())
+        .merge(routes::strategy::multi_bot_router())
+        .merge(routes::supported_assets::multi_bot_router())
+        // Rate-limit middleware runs AFTER auth so it can read the
+        // resolved BotContext from request extensions. Axum applies
+        // `.layer` calls outermost-first, so the rate-limit layer is
+        // listed *before* the auth layer here even though it executes
+        // *after* auth in the request flow.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::per_bot_rate_limit,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::multi_bot_auth_middleware,
+        ))
+        .layer(sandbox_runtime::operator_api::build_cors_layer())
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .with_state(state);
+
+    // The NAV WebSocket stream sits ahead of auth so browser clients can
+    // subscribe without setting an Authorization header on the upgrade
+    // request. The data is read-only and reflects the on-chain NAV.
+    let mut outer = Router::new().merge(prom_router);
+    if let Some(nav_config) = nav_stream_config {
+        outer = outer.merge(routes::nav_ws::router(nav_config));
+    }
+    outer.merge(auth_router)
+}
+
+fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {
+    let rpc_ready = state
+        .chain_client_rpc_url
+        .as_ref()
+        .is_some_and(|url| !url.trim().is_empty())
+        || state.chain_client.is_some();
+    let simulation_ready = rpc_ready;
+
+    (
+        rpc_ready,
+        serde_json::json!({
+        "status": if rpc_ready { "ok" } else { "degraded" },
+        "mode": "multi",
+        "rpc_ready": rpc_ready,
+        "validator_count": serde_json::Value::Null,
+        "validator_quorum_ready": serde_json::Value::Null,
+        "simulation_ready": simulation_ready,
+        "vault_ready": serde_json::Value::Null,
+        }),
+    )
+}
+
+async fn multi_bot_health(
+    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
+) -> axum::Json<serde_json::Value> {
+    let (_, payload) = multi_bot_readiness_payload(&state);
+    axum::Json(payload)
+}
+
+async fn multi_bot_ready(
+    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
+) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    let (ready, payload) = multi_bot_readiness_payload(&state);
+    (
+        if ready {
+            axum::http::StatusCode::OK
+        } else {
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        },
+        axum::Json(payload),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,128 +721,4 @@ mod tests {
             "1600000000000000000"
         );
     }
-}
-
-/// Build a multi-bot trading HTTP API router.
-///
-/// This serves `/validate`, `/execute`, and `/health` for ALL bots.
-/// The auth middleware resolves the calling bot from the bearer token and
-/// injects the bot record into request extensions.
-///
-/// Side effects: when `state.list_envelope_bots` is set, this also spawns the
-/// envelope renewal cron as a background task ticking every
-/// [`envelope_renewal::RENEWAL_CRON_INTERVAL`].
-/// Hard upper bound on request body size for the multi-bot HTTP API.
-///
-/// Axum's default is 2 MiB, applied per-extractor; we tighten to 256 KiB so
-/// a single envelope or learning-outcome POST cannot OOM the process.
-/// Envelopes themselves are < 8 KiB; quote responses < 4 KiB. 256 KiB gives
-/// a >32× safety margin while keeping the surface tight enough that a bad
-/// agent can't queue a 100 MiB JSON parse in tokio's worker pool. See
-/// `audits/http-api-concurrency-audit.md` finding #3.
-const MAX_BODY_BYTES: usize = 256 * 1024;
-
-pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
-    use axum::extract::DefaultBodyLimit;
-    use axum::routing::get;
-    if state.list_envelope_bots.is_some() {
-        envelope_renewal::spawn_renewal_cron(Arc::clone(&state));
-        envelope_watcher::spawn_envelope_watcher(Arc::clone(&state));
-    }
-    // Prometheus exporter is mounted on the *outer* router, ahead of the
-    // auth middleware below, so scrapers can hit it without a bearer token.
-    let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
-    let nav_stream_config = state.nav_stream_config.clone();
-    let auth_router = Router::new()
-        .route("/health", get(multi_bot_health))
-        .route("/ready", get(multi_bot_ready))
-        .merge(routes::market_data::multi_bot_router())
-        .merge(routes::portfolio::multi_bot_router())
-        .merge(routes::validate::multi_bot_router())
-        .merge(routes::execute::multi_bot_router())
-        .merge(routes::preflight::multi_bot_router())
-        .merge(routes::collateral::multi_bot_router())
-        .merge(routes::envelope::multi_bot_router())
-        .merge(routes::envelope_quote::multi_bot_router())
-        .merge(routes::circuit::multi_bot_router())
-        .merge(routes::adapters::multi_bot_router())
-        .merge(routes::metrics::multi_bot_router())
-        .merge(routes::trades::multi_bot_router())
-        .merge(routes::backtest::multi_bot_router())
-        .merge(routes::candles::multi_bot_router())
-        .merge(routes::cex::multi_bot_router())
-        .merge(routes::evolution::multi_bot_router())
-        .merge(routes::hyperliquid::multi_bot_router())
-        .merge(routes::learning::multi_bot_router())
-        .merge(routes::solana::multi_bot_router())
-        .merge(routes::strategy::multi_bot_router())
-        .merge(routes::supported_assets::multi_bot_router())
-        // Rate-limit middleware runs AFTER auth so it can read the
-        // resolved BotContext from request extensions. Axum applies
-        // `.layer` calls outermost-first, so the rate-limit layer is
-        // listed *before* the auth layer here even though it executes
-        // *after* auth in the request flow.
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit::per_bot_rate_limit,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth::multi_bot_auth_middleware,
-        ))
-        .layer(sandbox_runtime::operator_api::build_cors_layer())
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(state);
-
-    // The NAV WebSocket stream sits ahead of auth so browser clients can
-    // subscribe without setting an Authorization header on the upgrade
-    // request. The data is read-only and reflects the on-chain NAV.
-    let mut outer = Router::new().merge(prom_router);
-    if let Some(nav_config) = nav_stream_config {
-        outer = outer.merge(routes::nav_ws::router(nav_config));
-    }
-    outer.merge(auth_router)
-}
-
-fn multi_bot_readiness_payload(state: &MultiBotTradingState) -> (bool, serde_json::Value) {
-    let rpc_ready = state
-        .chain_client_rpc_url
-        .as_ref()
-        .is_some_and(|url| !url.trim().is_empty())
-        || state.chain_client.is_some();
-    let simulation_ready = rpc_ready;
-
-    (
-        rpc_ready,
-        serde_json::json!({
-        "status": if rpc_ready { "ok" } else { "degraded" },
-        "mode": "multi",
-        "rpc_ready": rpc_ready,
-        "validator_count": serde_json::Value::Null,
-        "validator_quorum_ready": serde_json::Value::Null,
-        "simulation_ready": simulation_ready,
-        "vault_ready": serde_json::Value::Null,
-        }),
-    )
-}
-
-async fn multi_bot_health(
-    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
-) -> axum::Json<serde_json::Value> {
-    let (_, payload) = multi_bot_readiness_payload(&state);
-    axum::Json(payload)
-}
-
-async fn multi_bot_ready(
-    axum::extract::State(state): axum::extract::State<Arc<MultiBotTradingState>>,
-) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
-    let (ready, payload) = multi_bot_readiness_payload(&state);
-    (
-        if ready {
-            axum::http::StatusCode::OK
-        } else {
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
-        },
-        axum::Json(payload),
-    )
 }

@@ -616,6 +616,22 @@ pub fn build_operator_router() -> Router {
         )
         .route("/api/bots/{bot_id}/portfolio/state", get(get_bot_portfolio))
         .route(
+            "/api/bots/{bot_id}/hyperliquid/nav",
+            get(get_bot_hyperliquid_nav).post(refresh_bot_hyperliquid_nav),
+        )
+        .route(
+            "/api/bots/{bot_id}/hyperliquid/mode",
+            get(get_bot_hyperliquid_mode),
+        )
+        .route(
+            "/api/bots/{bot_id}/hyperliquid/settlement",
+            get(get_bot_hyperliquid_settlement),
+        )
+        .route(
+            "/api/bots/{bot_id}/hyperliquid/settlement/run",
+            post(run_bot_hyperliquid_settlement),
+        )
+        .route(
             "/api/bots/{bot_id}/activation-progress",
             get(get_activation_progress),
         )
@@ -1164,6 +1180,17 @@ fn run_precedes_cursor(run: &WorkflowRunRecord, cursor: &(u64, String)) -> bool 
     run.started_at < cursor.0 || (run.started_at == cursor.0 && run.run_id < cursor.1)
 }
 
+fn latest_execution_runs_for_workflows(workflow_ids: &[u64]) -> Vec<WorkflowRunRecord> {
+    workflow_ids
+        .iter()
+        .filter_map(|workflow_id| {
+            trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(*workflow_id)
+                .ok()
+                .flatten()
+        })
+        .collect()
+}
+
 fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
     let transcript_available = run
         .session_id
@@ -1280,6 +1307,63 @@ fn replayable_run_for_session(
     Ok(Some(run))
 }
 
+fn workflow_session_base_for_run(run: &WorkflowRunRecord) -> Option<String> {
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(run.workflow_id);
+    let entry = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .ok()?
+        .get(&key)
+        .ok()??;
+    let workflow_json: serde_json::Value = serde_json::from_str(&entry.workflow_json).ok()?;
+    workflow_json
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+}
+
+fn timestamped_session_candidate(base: &str, session_id: String) -> Option<(u64, String)> {
+    let suffix = session_id.strip_prefix(&format!("{base}-"))?;
+    let started_at = suffix.parse::<u64>().ok()?;
+    Some((started_at, session_id))
+}
+
+async fn resolve_run_transcript_session_alias(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+) -> Option<String> {
+    let base = workflow_session_base_for_run(run)?;
+    let cutoff = run.completed_at.unwrap_or(run.started_at);
+    let sessions = trading_blueprint_lib::operator_chat::list_chat_session_ids(target)
+        .await
+        .ok()?;
+
+    sessions
+        .into_iter()
+        .filter_map(|session_id| timestamped_session_candidate(&base, session_id))
+        .filter(|(started_at, _)| *started_at <= cutoff)
+        .max_by_key(|(started_at, _)| *started_at)
+        .map(|(_, session_id)| session_id)
+}
+
+async fn live_run_transcript_alias_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    run: &WorkflowRunRecord,
+    query: Option<&str>,
+) -> Option<Response> {
+    let session_id = resolve_run_transcript_session_alias(target, run).await?;
+    let response = trading_blueprint_lib::operator_chat::proxy_chat_request(
+        target,
+        reqwest::Method::GET,
+        &format!("/agents/sessions/{session_id}/messages"),
+        None,
+        query,
+    )
+    .await
+    .ok()?;
+
+    response.status().is_success().then_some(response)
+}
+
 fn parse_transcript_cursor(cursor: &str) -> Option<usize> {
     cursor.parse::<usize>().ok()
 }
@@ -1314,16 +1398,22 @@ fn replay_transcript_messages_response(
     }
 }
 
-fn run_transcript_fallback_response(
+async fn run_transcript_fallback_response(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
+    raw_query: Option<&str>,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
         trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let messages = match transcript {
-        Some(record) => record.messages,
-        None => synthesize_run_transcript_messages(run),
+    let messages = if let Some(record) = transcript {
+        record.messages
+    } else if let Some(response) = live_run_transcript_alias_response(target, run, raw_query).await
+    {
+        return Ok(response);
+    } else {
+        synthesize_run_transcript_messages(run)
     };
 
     Ok(replay_transcript_messages_response(messages, query))
@@ -1380,6 +1470,16 @@ async fn list_bot_runs(
     let mut runs =
         trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&workflow_ids)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    for latest_run in latest_execution_runs_for_workflows(&workflow_ids) {
+        if !runs.iter().any(|run| run.run_id == latest_run.run_id) {
+            runs.push(latest_run);
+        }
+    }
+    runs.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.run_id.cmp(&a.run_id))
+    });
 
     if let Some(cursor) = cursor.as_ref() {
         runs.retain(|run| run_precedes_cursor(run, cursor));
@@ -1409,6 +1509,18 @@ async fn get_bot_run(
         .collect::<HashSet<_>>();
     let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .or_else(|| {
+            workflow_ids
+                .iter()
+                .find_map(|workflow_id| {
+                    trading_blueprint_lib::workflow_compat::latest_execution_run_for_workflow(
+                        *workflow_id,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .filter(|run| run.run_id == run_id)
+        })
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Run not found".to_string()))?;
 
     if !workflow_ids.contains(&run.workflow_id) {
@@ -1650,6 +1762,16 @@ async fn run_now(
         .unwrap_or_default()
         .as_secs();
 
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before manual run"
+        );
+    }
+
     // Spawn workflow execution in the background so we return immediately.
     let wf_key_bg = wf_key.clone();
     tokio::spawn(async move {
@@ -1657,10 +1779,23 @@ async fn run_now(
         let _guard = _run_guard;
         match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
             Ok(execution) => {
+                let latest_execution = execution.latest_execution.clone();
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
                     workflow_id,
-                    execution.latest_execution,
+                    latest_execution.clone(),
                 );
+                if let Err(err) =
+                    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                        workflow_id,
+                        latest_execution,
+                    )
+                {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %err,
+                        "Failed to persist workflow run history after manual run"
+                    );
+                }
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
                     .ok()
                     .and_then(|store| {
@@ -1681,10 +1816,34 @@ async fn run_now(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
-                    workflow_id,
-                    err,
-                );
+                let failed_execution =
+                    ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                        workflow_id,
+                        err,
+                    );
+                match failed_execution {
+                    Ok(latest_execution) => {
+                        if let Err(err) =
+                            trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                                workflow_id,
+                                latest_execution,
+                            )
+                        {
+                            tracing::warn!(
+                                workflow_id,
+                                error = %err,
+                                "Failed to persist failed workflow run history"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %err,
+                            "Failed to store failed workflow latest execution"
+                        );
+                    }
+                }
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
                     .ok()
                     .and_then(|store| {
@@ -1726,12 +1885,12 @@ async fn update_config(
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     // Update vault address if provided
-    if let Some(addr) = &body.vault_address {
-        if let Ok(store) = state::bots() {
-            let _ = store.update(&state::bot_key(&bot.id), |b| {
-                b.vault_address.clone_from(addr);
-            });
-        }
+    if let Some(addr) = &body.vault_address
+        && let Ok(store) = state::bots()
+    {
+        let _ = store.update(&state::bot_key(&bot.id), |b| {
+            b.vault_address.clone_from(addr);
+        });
     }
 
     // Persist harness config if provided
@@ -1992,19 +2151,31 @@ async fn list_chat_messages(
     .await
     {
         Ok(response) => {
-            if response.status() == StatusCode::NOT_FOUND {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if response.status() == StatusCode::NOT_FOUND
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Ok(response)
         }
         Err(error) => {
-            if error.0 == StatusCode::BAD_GATEWAY {
-                if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
-                    return run_transcript_fallback_response(&run, &transcript_query);
-                }
+            if error.0 == StatusCode::BAD_GATEWAY
+                && let Some(run) = replayable_run_for_session(&bot, &session_id)?
+            {
+                return run_transcript_fallback_response(
+                    &target,
+                    &run,
+                    &transcript_query,
+                    query.as_deref(),
+                )
+                .await;
             }
 
             Err(error)
@@ -3206,10 +3377,10 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
 }
 
 fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
-    if bot.strategy_type.eq_ignore_ascii_case("dex") {
-        if let Some(portfolio) = synthesize_dex_fallback_portfolio(bot) {
-            return portfolio;
-        }
+    if bot.strategy_type.eq_ignore_ascii_case("dex")
+        && let Some(portfolio) = synthesize_dex_fallback_portfolio(bot)
+    {
+        return portfolio;
     }
 
     let trades = fallback_trade_dataset(bot);
@@ -3607,6 +3778,102 @@ async fn get_bot_portfolio(
     }
 }
 
+async fn get_bot_hyperliquid_nav(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    proxy_hyperliquid_nav(&bot, reqwest::Method::GET).await
+}
+
+async fn refresh_bot_hyperliquid_nav(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    proxy_hyperliquid_nav(&bot, reqwest::Method::POST).await
+}
+
+async fn get_bot_hyperliquid_mode(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    fetch_trading_api_json_with_method(&bot, reqwest::Method::GET, "/hyperliquid/mode", &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid mode request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid mode".to_string(),
+            )
+        })
+}
+
+async fn get_bot_hyperliquid_settlement(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    proxy_hyperliquid_settlement(&bot, reqwest::Method::GET, "/hyperliquid/settlement").await
+}
+
+async fn run_bot_hyperliquid_settlement(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    proxy_hyperliquid_settlement(&bot, reqwest::Method::POST, "/hyperliquid/settlement/run").await
+}
+
+async fn proxy_hyperliquid_settlement(
+    bot: &TradingBotRecord,
+    method: reqwest::Method,
+    path: &str,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    fetch_trading_api_json_with_method(bot, method, path, &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid settlement request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid settlement".to_string(),
+            )
+        })
+}
+
+async fn proxy_hyperliquid_nav(
+    bot: &TradingBotRecord,
+    method: reqwest::Method,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    fetch_trading_api_json_with_method(bot, method, "/hyperliquid/nav", &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api Hyperliquid NAV request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for Hyperliquid NAV reconciliation".to_string(),
+            )
+        })
+}
+
 // ── Activation progress handler ──────────────────────────────────────────
 
 async fn get_activation_progress(
@@ -3813,15 +4080,38 @@ async fn debug_run_now(
         .unwrap_or_default()
         .as_secs();
 
+    if let Err(err) =
+        trading_blueprint_lib::workflow_compat::backfill_latest_execution_run(workflow_id)
+    {
+        tracing::warn!(
+            workflow_id,
+            error = %err,
+            "Failed to backfill workflow run history before debug run"
+        );
+    }
+
     let wf_key_bg = wf_key.clone();
     tokio::spawn(async move {
         let _guard = _run_guard;
         match ai_agent_sandbox_blueprint_lib::workflows::run_workflow(&entry).await {
             Ok(execution) => {
+                let latest_execution = execution.latest_execution.clone();
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
                     workflow_id,
-                    execution.latest_execution,
+                    latest_execution.clone(),
                 );
+                if let Err(err) =
+                    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                        workflow_id,
+                        latest_execution,
+                    )
+                {
+                    tracing::warn!(
+                        workflow_id,
+                        error = %err,
+                        "Failed to persist workflow run history after debug run"
+                    );
+                }
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
                     .ok()
                     .and_then(|store| {
@@ -3842,10 +4132,34 @@ async fn debug_run_now(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let _ = ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
-                    workflow_id,
-                    err,
-                );
+                let failed_execution =
+                    ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                        workflow_id,
+                        err,
+                    );
+                match failed_execution {
+                    Ok(latest_execution) => {
+                        if let Err(err) =
+                            trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                                workflow_id,
+                                latest_execution,
+                            )
+                        {
+                            tracing::warn!(
+                                workflow_id,
+                                error = %err,
+                                "Failed to persist failed debug workflow run history"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %err,
+                            "Failed to store failed debug workflow latest execution"
+                        );
+                    }
+                }
                 let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
                     .ok()
                     .and_then(|store| {
@@ -4609,6 +4923,284 @@ mod tests {
         record
     }
 
+    async fn spawn_mock_hyperliquid_nav_api() -> String {
+        let app = Router::new()
+            .route(
+                "/hyperliquid/nav",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "total_nav": "100000",
+                            "share_price": "1"
+                        },
+                        "stale": false
+                    }))
+                })
+                .post(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "total_nav": "100001",
+                            "share_price": "1.00001"
+                        },
+                        "stale": false
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/mode",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "snapshot": {
+                            "bot_id": "hype-nav-proxy",
+                            "mode": "liquidity",
+                            "reason": "queued withdrawals are above the 1500 bps liquidity threshold",
+                            "checked_at": "2026-05-18T00:00:00Z",
+                            "thresholds": {
+                                "liquidity_mode_queue_bps": 1500,
+                                "emergency_queue_bps": 6000,
+                                "min_idle_usdc_bps": 1500,
+                                "max_margin_usage_bps": 8000
+                            },
+                            "metrics": {
+                                "nav_as_of": "2026-05-18T00:00:00Z",
+                                "nav_stale": false,
+                                "queued_withdrawal_bps": 1800,
+                                "idle_usdc_bps": 400,
+                                "margin_usage_bps": 4200
+                            }
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/settlement",
+                axum::routing::get(|| async {
+                    Json(serde_json::json!({
+                        "state": {
+                            "bot_id": "hype-nav-proxy",
+                            "settlement_cron": "0 0 0 * * *",
+                            "next_settlement_time": "2026-05-19T00:00:00Z",
+                            "cutoff_time": "2026-05-18T23:00:00Z",
+                            "current_epoch": "2026-05-18T00:00:00Z",
+                            "cutoff_secs": 3600,
+                            "idle_buffer_bps": 1500,
+                            "idle_buffer_target": "15000000000",
+                            "cash_needed": "0",
+                            "queued_shares": "250000000",
+                            "next_request_id": "1",
+                            "next_request_created_at": "2026-05-18T22:30:00Z",
+                            "next_request_eligible": true,
+                            "eligible_pending_request_count": 1,
+                            "rollover": false,
+                            "last_attempt": null
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/hyperliquid/settlement/run",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "attempt": {
+                            "bot_id": "hype-nav-proxy",
+                            "epoch": "2026-05-18T00:00:00Z",
+                            "last_attempt_at": "2026-05-18T00:00:03Z",
+                            "last_status": "succeeded",
+                            "fulfilled_count": 1,
+                            "fulfilled_assets": "250000000",
+                            "stopped_reason": "queue_empty",
+                            "tx_hashes": ["0xabc"]
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock Hyperliquid NAV API");
+        let addr = listener.local_addr().expect("mock Hyperliquid NAV addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock Hyperliquid NAV API");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn test_bot_hyperliquid_nav_routes_proxy_trading_api() {
+        ensure_state_dir();
+        let trading_api_url = spawn_mock_hyperliquid_nav_api().await;
+        let mut bot = seed_bot(
+            "hype-nav-proxy",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-hype-nav-proxy",
+        );
+        bot.strategy_type = "hyperliquid_perp".to_string();
+        bot.trading_api_url = trading_api_url;
+        bot.trading_api_token = "tok".to_string();
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot.clone())
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let get_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_response.status(), StatusCode::OK);
+        let body = get_response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["total_nav"], "100000");
+        assert_eq!(json["snapshot"]["share_price"], "1");
+        assert_eq!(json["stale"], false);
+
+        let post_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(post_response.status(), StatusCode::OK);
+        let body = post_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["total_nav"], "100001");
+        assert_eq!(json["snapshot"]["share_price"], "1.00001");
+        assert_eq!(json["stale"], false);
+
+        let mode_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/mode", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mode_response.status(), StatusCode::OK);
+        let body = mode_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["snapshot"]["mode"], "liquidity");
+        assert_eq!(json["snapshot"]["metrics"]["queued_withdrawal_bps"], 1800);
+
+        let settlement_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/bots/{}/hyperliquid/settlement", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(settlement_response.status(), StatusCode::OK);
+        let body = settlement_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["state"]["idle_buffer_bps"], 1500);
+        assert_eq!(json["state"]["eligible_pending_request_count"], 1);
+
+        let run_response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/bots/{}/hyperliquid/settlement/run", bot.id))
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run_response.status(), StatusCode::OK);
+        let body = run_response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["attempt"]["fulfilled_count"], 1);
+        assert_eq!(json["attempt"]["stopped_reason"], "queue_empty");
+    }
+
+    #[tokio::test]
+    async fn test_bot_hyperliquid_proxy_routes_reject_wrong_submitter() {
+        ensure_state_dir();
+
+        let mut bot = seed_bot(
+            "hype-proxy-forbidden-1",
+            "0xDEAD000000000000000000000000000000000003",
+            true,
+            "sandbox-hype-proxy-forbidden-1",
+        );
+        bot.strategy_type = "hyperliquid_perp".to_string();
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot.clone())
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let routes = [
+            ("GET", format!("/api/bots/{}/hyperliquid/nav", bot.id)),
+            ("POST", format!("/api/bots/{}/hyperliquid/nav", bot.id)),
+            ("GET", format!("/api/bots/{}/hyperliquid/mode", bot.id)),
+            (
+                "GET",
+                format!("/api/bots/{}/hyperliquid/settlement", bot.id),
+            ),
+            (
+                "POST",
+                format!("/api/bots/{}/hyperliquid/settlement/run", bot.id),
+            ),
+        ];
+
+        for (method, uri) in routes {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("authorization", test_auth_header())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{method} Hyperliquid proxy route should reject wrong submitter"
+            );
+        }
+    }
+
     /// The address embedded in the token produced by `test_auth_header()`.
     const TEST_AUTH_ADDRESS: &str = "0x1234567890abcdef1234567890abcdef12345678";
 
@@ -4658,6 +5250,10 @@ mod tests {
             runner_signal: None,
             agent_reasoning: None,
             harness_version: None,
+            candidate_hash: None,
+            revision_id: None,
+            paper_pnl_pct: None,
+            paper_equity_after: None,
         }
     }
 

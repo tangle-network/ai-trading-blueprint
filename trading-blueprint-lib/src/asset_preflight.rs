@@ -169,6 +169,7 @@ pub async fn preflight_dex_asset(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn success_response(
     request: &DexAssetPreflightRequest,
     token: Address,
@@ -339,13 +340,12 @@ fn select_preflight_rpc_url(
         .filter(|candidate| candidate.chain_id.is_none_or(|id| id == chain_id))
         .collect::<Vec<_>>();
 
-    if !requested_rpc_url.is_empty() {
-        if matching_candidates
+    if !requested_rpc_url.is_empty()
+        && matching_candidates
             .iter()
             .any(|candidate| candidate.rpc_url == requested_rpc_url)
-        {
-            return Some(requested_rpc_url.to_string());
-        }
+    {
+        return Some(requested_rpc_url.to_string());
     }
 
     match matching_candidates.as_slice() {

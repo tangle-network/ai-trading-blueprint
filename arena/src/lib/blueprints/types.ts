@@ -1,4 +1,5 @@
 import type { Address } from 'viem';
+import type { ValidationTrust } from '~/lib/types/bot';
 
 export interface StrategyPackDef {
   id: string;
@@ -56,4 +57,5 @@ export interface ProvisionParams {
   validatorServiceIds: bigint[];
   /** Max vault collateral for CLOB trading (basis points, 0 = disabled) */
   maxCollateralBps: bigint;
+  validationTrust?: ValidationTrust;
 }

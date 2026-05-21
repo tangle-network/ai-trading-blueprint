@@ -48,8 +48,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(fa4fce1c832152d2cfa17886f7dc81db)
       '@tangle-network/sandbox-ui':
-        specifier: ^0.12.0
-        version: 0.12.0(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+        specifier: ^0.17.0
+        version: 0.17.0(@tangle-network/brand@0.3.0(react@19.0.0))(@tangle-network/ui@1.0.1(@nanostores/react@0.7.3(nanostores@0.10.3)(react@19.0.0))(@tangle-network/brand@0.3.0(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(nanostores@0.10.3)(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@tanstack/react-query':
         specifier: ^5.90.16
         version: 5.90.21(react@19.0.0)
@@ -678,13 +678,6 @@ packages:
       nanostores: ^0.9.0 || ^0.10.0 || ^0.11.0
       react: '>=18.0.0'
 
-  '@nanostores/react@1.1.0':
-    resolution: {integrity: sha512-MbH35fjhcf7LAubYX5vhOChYUfTLzNLqH/mBGLVsHkcvjy0F8crO1WQwdmQ2xKbAmtpalDa2zBt3Hlg5kqr8iw==}
-    engines: {node: ^20.0.0 || >=22.0.0}
-    peerDependencies:
-      nanostores: ^1.2.0
-      react: '>=18.0.0'
-
   '@noble/ciphers@1.3.0':
     resolution: {integrity: sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw==}
     engines: {node: ^14.21.3 || >=16}
@@ -726,42 +719,36 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-arm-musl@2.5.6':
     resolution: {integrity: sha512-Ve3gUCG57nuUUSyjBq/MAM0CzArtuIOxsBdQ+ftz6ho8n7s1i9E1Nmk/xmP323r2YL0SONs1EuwqBp2u1k5fxg==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@parcel/watcher-linux-arm64-glibc@2.5.6':
     resolution: {integrity: sha512-f2g/DT3NhGPdBmMWYoxixqYr3v/UXcmLOYy16Bx0TM20Tchduwr4EaCbmxh1321TABqPGDpS8D/ggOTaljijOA==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-arm64-musl@2.5.6':
     resolution: {integrity: sha512-qb6naMDGlbCwdhLj6hgoVKJl2odL34z2sqkC7Z6kzir8b5W65WYDpLB6R06KabvZdgoHI/zxke4b3zR0wAbDTA==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@parcel/watcher-linux-x64-glibc@2.5.6':
     resolution: {integrity: sha512-kbT5wvNQlx7NaGjzPFu8nVIW1rWqV780O7ZtkjuWaPUgpv2NMFpjYERVi0UYj1msZNyCzGlaCWEtzc+exjMGbQ==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-x64-musl@2.5.6':
     resolution: {integrity: sha512-1JRFeC+h7RdXwldHzTsmdtYR/Ku8SylLgTU/reMuqdVD7CtLwf0VR1FqeprZ0eHQkO0vqsbvFLXUmYm/uNKJBg==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@parcel/watcher-win32-arm64@2.5.6':
     resolution: {integrity: sha512-3ukyebjc6eGlw9yRt678DxVF7rjXatWiHvTXqphZLvo7aC5NdEgFufVwjFfY51ijYEWpXbqF5jtrK275z52D4Q==}
@@ -1352,79 +1339,66 @@ packages:
     resolution: {integrity: sha512-F8sWbhZ7tyuEfsmOxwc2giKDQzN3+kuBLPwwZGyVkLlKGdV1nvnNwYD0fKQ8+XS6hp9nY7B+ZeK01EBUE7aHaw==}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.57.1':
     resolution: {integrity: sha512-rGfNUfn0GIeXtBP1wL5MnzSj98+PZe/AXaGBCRmT0ts80lU5CATYGxXukeTX39XBKsxzFpEeK+Mrp9faXOlmrw==}
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.57.1':
     resolution: {integrity: sha512-MMtej3YHWeg/0klK2Qodf3yrNzz6CGjo2UntLvk2RSPlhzgLvYEB3frRvbEF2wRKh1Z2fDIg9KRPe1fawv7C+g==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.57.1':
     resolution: {integrity: sha512-1a/qhaaOXhqXGpMFMET9VqwZakkljWHLmZOX48R0I/YLbhdxr1m4gtG1Hq7++VhVUmf+L3sTAf9op4JlhQ5u1Q==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.57.1':
     resolution: {integrity: sha512-QWO6RQTZ/cqYtJMtxhkRkidoNGXc7ERPbZN7dVW5SdURuLeVU7lwKMpo18XdcmpWYd0qsP1bwKPf7DNSUinhvA==}
     cpu: [loong64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.57.1':
     resolution: {integrity: sha512-xpObYIf+8gprgWaPP32xiN5RVTi/s5FCR+XMXSKmhfoJjrpRAjCuuqQXyxUa/eJTdAE6eJ+KDKaoEqjZQxh3Gw==}
     cpu: [loong64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.57.1':
     resolution: {integrity: sha512-4BrCgrpZo4hvzMDKRqEaW1zeecScDCR+2nZ86ATLhAoJ5FQ+lbHVD3ttKe74/c7tNT9c6F2viwB3ufwp01Oh2w==}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.57.1':
     resolution: {integrity: sha512-NOlUuzesGauESAyEYFSe3QTUguL+lvrN1HtwEEsU2rOwdUDeTMJdO5dUYl/2hKf9jWydJrO9OL/XSSf65R5+Xw==}
     cpu: [ppc64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.57.1':
     resolution: {integrity: sha512-ptA88htVp0AwUUqhVghwDIKlvJMD/fmL/wrQj99PRHFRAG6Z5nbWoWG4o81Nt9FT+IuqUQi+L31ZKAFeJ5Is+A==}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.57.1':
     resolution: {integrity: sha512-S51t7aMMTNdmAMPpBg7OOsTdn4tySRQvklmL3RpDRyknk87+Sp3xaumlatU+ppQ+5raY7sSTcC2beGgvhENfuw==}
     cpu: [riscv64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.57.1':
     resolution: {integrity: sha512-Bl00OFnVFkL82FHbEqy3k5CUCKH6OEJL54KCyx2oqsmZnFTR8IoNqBF+mjQVcRCT5sB6yOvK8A37LNm/kPJiZg==}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.57.1':
     resolution: {integrity: sha512-ABca4ceT4N+Tv/GtotnWAeXZUZuM/9AQyCyKYyKnpk4yoA7QIAuBt6Hkgpw8kActYlew2mvckXkvx0FfoInnLg==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.57.1':
     resolution: {integrity: sha512-HFps0JeGtuOR2convgRRkHCekD7j+gdAuXM+/i6kGzQtFhlCtQkpwtNzkNj6QhCDp7DRJ7+qC/1Vg2jt5iSOFw==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.57.1':
     resolution: {integrity: sha512-H+hXEv9gdVQuDTgnqD+SQffoWoc0Of59AStSzTEj/feWTBAnSfSD3+Dql1ZruJQxmykT/JVY0dE8Ka7z0DH1hw==}
@@ -1492,24 +1466,58 @@ packages:
       viem: ^2.31.0
       wagmi: ^3.3.0
 
-  '@tangle-network/sandbox-ui@0.12.0':
-    resolution: {integrity: sha512-nFsRecwM7zYIWo4Wr7kDV5MpXOG9+wxGjmKiVC0Rn+n20TX2zycLdHc4qCIURKAQZN7u6LQxF66cs3NSdMsFqg==}
+  '@tangle-network/brand@0.3.0':
+    resolution: {integrity: sha512-Jqfa/zNOH6eE2EMye/rI/X/02Hd++lndyC5r9g44QyGpV+yj0xIX1DtKZwyXSwvnDK0hz+H2ICnTYvz2yUKj+w==}
+    peerDependencies:
+      react: '>=18'
+    peerDependenciesMeta:
+      react:
+        optional: true
+
+  '@tangle-network/sandbox-ui@0.17.0':
+    resolution: {integrity: sha512-8+S/VYRNxYFRv5RI62tgOL4ACEwXhBCCpVeEVJujZ/zHYWt6r0/6Of8fdeC1KsOagm1Q0CBWJUw2Z+Qa7AAMnA==}
+    peerDependencies:
+      '@tangle-network/brand': ^0.3.0
+      '@tangle-network/ui': ^1.0.1
+      '@tanstack/react-query': '*'
+      '@xterm/addon-fit': '*'
+      '@xterm/addon-web-links': '*'
+      '@xterm/addon-webgl': '*'
+      '@xterm/xterm': '*'
+      react: ^18 || ^19
+      react-dom: ^18 || ^19
+    peerDependenciesMeta:
+      '@tanstack/react-query':
+        optional: true
+      '@xterm/addon-fit':
+        optional: true
+      '@xterm/addon-web-links':
+        optional: true
+      '@xterm/addon-webgl':
+        optional: true
+      '@xterm/xterm':
+        optional: true
+
+  '@tangle-network/ui@1.0.1':
+    resolution: {integrity: sha512-GQQ/0w6ydyqdWOWmAIjUMQzKeVgkHLFKvt1uqgaLH7HwuYA/pmHUso5HWHjdHjhY5jDYG6cwhGiVpruSky33rA==}
     peerDependencies:
       '@hocuspocus/provider': '*'
+      '@nanostores/react': '*'
+      '@tangle-network/brand': ^0.3.0
       '@tanstack/react-query': '*'
       '@tiptap/core': '*'
       '@tiptap/extension-collaboration': '*'
       '@tiptap/extension-collaboration-caret': '*'
       '@tiptap/react': '*'
       '@tiptap/starter-kit': '*'
-      '@xterm/addon-fit': '*'
-      '@xterm/addon-web-links': '*'
-      '@xterm/xterm': '*'
+      nanostores: '*'
       react: ^18 || ^19
       react-dom: ^18 || ^19
       yjs: '*'
     peerDependenciesMeta:
       '@hocuspocus/provider':
+        optional: true
+      '@nanostores/react':
         optional: true
       '@tanstack/react-query':
         optional: true
@@ -1523,11 +1531,7 @@ packages:
         optional: true
       '@tiptap/starter-kit':
         optional: true
-      '@xterm/addon-fit':
-        optional: true
-      '@xterm/addon-web-links':
-        optional: true
-      '@xterm/xterm':
+      nanostores:
         optional: true
       yjs:
         optional: true
@@ -1621,6 +1625,7 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@unocss/astro@66.6.0':
     resolution: {integrity: sha512-HCDgZnoXv6pZGUK9N4ko7ZeBP1YTIP8IFj0Vr7pXVdv9sGR9CofoueFbclTvPQ065UHSsG+WI+JO5z9/BGd5fw==}
@@ -3076,56 +3081,48 @@ packages:
     engines: {node: '>=14.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: glibc
 
   sass-embedded-linux-arm@1.97.3:
     resolution: {integrity: sha512-2lPQ7HQQg4CKsH18FTsj2hbw5GJa6sBQgDsls+cV7buXlHjqF8iTKhAQViT6nrpLK/e8nFCoaRgSqEC8xMnXuA==}
     engines: {node: '>=14.0.0'}
     cpu: [arm]
     os: [linux]
-    libc: glibc
 
   sass-embedded-linux-musl-arm64@1.97.3:
     resolution: {integrity: sha512-Lij0SdZCsr+mNRSyDZ7XtJpXEITrYsaGbOTz5e6uFLJ9bmzUbV7M8BXz2/cA7bhfpRPT7/lwRKPdV4+aR9Ozcw==}
     engines: {node: '>=14.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: musl
 
   sass-embedded-linux-musl-arm@1.97.3:
     resolution: {integrity: sha512-cBTMU68X2opBpoYsSZnI321gnoaiMBEtc+60CKCclN6PCL3W3uXm8g4TLoil1hDD6mqU9YYNlVG6sJ+ZNef6Lg==}
     engines: {node: '>=14.0.0'}
     cpu: [arm]
     os: [linux]
-    libc: musl
 
   sass-embedded-linux-musl-riscv64@1.97.3:
     resolution: {integrity: sha512-sBeLFIzMGshR4WmHAD4oIM7WJVkSoCIEwutzptFtGlSlwfNiijULp+J5hA2KteGvI6Gji35apR5aWj66wEn/iA==}
     engines: {node: '>=14.0.0'}
     cpu: [riscv64]
     os: [linux]
-    libc: musl
 
   sass-embedded-linux-musl-x64@1.97.3:
     resolution: {integrity: sha512-/oWJ+OVrDg7ADDQxRLC/4g1+Nsz1g4mkYS2t6XmyMJKFTFK50FVI2t5sOdFH+zmMp+nXHKM036W94y9m4jjEcw==}
     engines: {node: '>=14.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: musl
 
   sass-embedded-linux-riscv64@1.97.3:
     resolution: {integrity: sha512-l3IfySApLVYdNx0Kjm7Zehte1CDPZVcldma3dZt+TfzvlAEerM6YDgsk5XEj3L8eHBCgHgF4A0MJspHEo2WNfA==}
     engines: {node: '>=14.0.0'}
     cpu: [riscv64]
     os: [linux]
-    libc: glibc
 
   sass-embedded-linux-x64@1.97.3:
     resolution: {integrity: sha512-Kwqwc/jSSlcpRjULAOVbndqEy2GBzo6OBmmuBVINWUaJLJ8Kczz3vIsDUWLfWz/kTEw9FHBSiL0WCtYLVAXSLg==}
     engines: {node: '>=14.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: glibc
 
   sass-embedded-unknown-all@1.97.3:
     resolution: {integrity: sha512-/GHajyYJmvb0IABUQHbVHf1nuHPtIDo/ClMZ81IDr59wT5CNcMe7/dMNujXwWugtQVGI5UGmqXWZQCeoGnct8Q==}
@@ -4151,11 +4148,6 @@ snapshots:
       nanostores: 0.10.3
       react: 19.0.0
 
-  '@nanostores/react@1.1.0(nanostores@1.2.0)(react@19.0.0)':
-    dependencies:
-      nanostores: 1.2.0
-      react: 19.0.0
-
   '@noble/ciphers@1.3.0': {}
 
   '@noble/curves@1.9.1':
@@ -4881,9 +4873,31 @@ snapshots:
       viem: 2.46.2(typescript@5.9.3)
       wagmi: 3.4.4(@tanstack/query-core@5.90.20)(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react@18.3.1)(ox@0.12.4(typescript@5.9.3))(react@19.0.0)(typescript@5.9.3)(viem@2.46.2(typescript@5.9.3))
 
-  '@tangle-network/sandbox-ui@0.12.0(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)':
+  '@tangle-network/brand@0.3.0(react@19.0.0)':
+    optionalDependencies:
+      react: 19.0.0
+
+  '@tangle-network/sandbox-ui@0.17.0(@tangle-network/brand@0.3.0(react@19.0.0))(@tangle-network/ui@1.0.1(@nanostores/react@0.7.3(nanostores@0.10.3)(react@19.0.0))(@tangle-network/brand@0.3.0(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(nanostores@0.10.3)(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(@xterm/addon-fit@0.11.0)(@xterm/addon-web-links@0.12.0)(@xterm/xterm@6.0.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)':
     dependencies:
-      '@nanostores/react': 1.1.0(nanostores@1.2.0)(react@19.0.0)
+      '@radix-ui/react-dropdown-menu': 2.1.16(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      '@radix-ui/react-select': 2.2.6(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      '@tangle-network/brand': 0.3.0(react@19.0.0)
+      '@tangle-network/ui': 1.0.1(@nanostores/react@0.7.3(nanostores@0.10.3)(react@19.0.0))(@tangle-network/brand@0.3.0(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(nanostores@0.10.3)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      lucide-react: 0.469.0(react@19.0.0)
+      nanostores: 1.2.0
+      react: 19.0.0
+      react-dom: 19.0.0(react@19.0.0)
+    optionalDependencies:
+      '@tanstack/react-query': 5.90.21(react@19.0.0)
+      '@xterm/addon-fit': 0.11.0
+      '@xterm/addon-web-links': 0.12.0
+      '@xterm/xterm': 6.0.0
+    transitivePeerDependencies:
+      - '@types/react'
+      - '@types/react-dom'
+
+  '@tangle-network/ui@1.0.1(@nanostores/react@0.7.3(nanostores@0.10.3)(react@19.0.0))(@tangle-network/brand@0.3.0(react@19.0.0))(@tanstack/react-query@5.90.21(react@19.0.0))(@types/react-dom@18.3.1)(@types/react@18.3.1)(nanostores@0.10.3)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)':
+    dependencies:
       '@pierre/trees': 1.0.0-beta.3(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@radix-ui/react-avatar': 1.1.11(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@radix-ui/react-collapsible': 1.1.12(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -4896,11 +4910,11 @@ snapshots:
       '@radix-ui/react-switch': 1.2.6(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@radix-ui/react-tabs': 1.1.13(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       '@radix-ui/react-toast': 1.2.15(@types/react-dom@18.3.1)(@types/react@18.3.1)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      '@tangle-network/brand': 0.3.0(react@19.0.0)
       class-variance-authority: 0.7.1
       clsx: 2.1.1
       lucide-react: 0.469.0(react@19.0.0)
       marked: 17.0.5
-      nanostores: 1.2.0
       react: 19.0.0
       react-dom: 19.0.0(react@19.0.0)
       react-markdown: 10.1.0(@types/react@18.3.1)(react@19.0.0)
@@ -4911,10 +4925,9 @@ snapshots:
       tailwind-merge: 3.4.1
       turndown: 7.2.2
     optionalDependencies:
+      '@nanostores/react': 0.7.3(nanostores@0.10.3)(react@19.0.0)
       '@tanstack/react-query': 5.90.21(react@19.0.0)
-      '@xterm/addon-fit': 0.11.0
-      '@xterm/addon-web-links': 0.12.0
-      '@xterm/xterm': 6.0.0
+      nanostores: 0.10.3
     transitivePeerDependencies:
       - '@types/react'
       - '@types/react-dom'

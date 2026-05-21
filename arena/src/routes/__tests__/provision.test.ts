@@ -49,6 +49,7 @@ vi.mock('~/lib/contracts/chains', () => ({
   networks: {
     0: { chain: { id: 0, name: 'Testnet' } },
   },
+  isKnownExternalHyperEvmChainId: (chainId: number) => chainId === 998 || chainId === 999,
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({
@@ -158,6 +159,18 @@ vi.mock('~/lib/blueprints', () => ({
       expertKnowledge: '',
     },
     {
+      id: 'hyperliquid_perp',
+      name: 'Hyperliquid Perps',
+      description: 'Hyperliquid perp strategy',
+      providers: ['Hyperliquid'],
+      executionMode: 'single-chain',
+      supportedChainIds: [998, 999],
+      cron: '* * * * *',
+      maxTurns: 1,
+      timeoutMs: 1000,
+      expertKnowledge: '',
+    },
+    {
       id: 'volatility',
       name: 'Volatility',
       description: 'Volatility strategy',
@@ -230,9 +243,15 @@ describe('provision runtime backend helpers', () => {
     );
   });
 
-  it('falls back to the first configured network when the selected chain is unsupported', async () => {
+  it('falls back to the first configured network when a regular selected chain is unsupported', async () => {
     const { resolveSelectedProvisionNetwork } = await import('../provision');
     expect(resolveSelectedProvisionNetwork(31339)?.chain.id).toBe(0);
+  });
+
+  it('does not fall back to local config for unconfigured external HyperEVM chains', async () => {
+    const { resolveSelectedProvisionNetwork } = await import('../provision');
+    expect(resolveSelectedProvisionNetwork(998)).toBeUndefined();
+    expect(resolveSelectedProvisionNetwork(999)).toBeUndefined();
   });
 
   it('propagates normalized runtime and overrides into strategy config payload', async () => {
@@ -295,6 +314,54 @@ describe('provision runtime backend helpers', () => {
         defaultValidatorServiceId: '9',
       }),
     ).toMatchObject({ ok: false });
+  });
+
+  it('requires the contract signer floor for live factory vault creation', async () => {
+    const { validateFactoryVaultSignerConfig } = await import('../provision');
+
+    expect(validateFactoryVaultSignerConfig(2)).toMatchObject({
+      ok: false,
+      message:
+        'Factory vault creation needs at least 3 validator operators and a 2/3 supermajority',
+    });
+    expect(validateFactoryVaultSignerConfig(3)).toEqual({ ok: true });
+  });
+
+  it('merges local factory extra signers without duplicates', async () => {
+    const {
+      mergeVaultSigners,
+      parseFactoryExtraSigners,
+      validateFactoryVaultSignerConfig,
+    } = await import('../provision');
+
+    const extra = parseFactoryExtraSigners(
+      '0x90f79bf6eb2c4f870365e785982e1f101e93b906, invalid, 0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+    );
+
+    expect(extra).toEqual(['0x90F79bf6EB2c4f870365E785982E1f101E93b906']);
+    expect(
+      mergeVaultSigners(
+        [
+          '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+          '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+        ],
+        extra,
+      ),
+    ).toEqual([
+      '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+      '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+    ]);
+
+    const localSigners = mergeVaultSigners(
+      [
+        '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+      ],
+      extra,
+    );
+    expect(validateFactoryVaultSignerConfig(localSigners.length)).toEqual({
+      ok: true,
+    });
   });
 
   it('shares normalized strategy runtime and schedules across provision payload builders', async () => {
@@ -664,6 +731,20 @@ describe('provision runtime backend helpers', () => {
         enabled: true,
         chainId: 42161,
       },
+      {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 998,
+      },
+      {
+        id: 'hyperevm-mainnet',
+        label: 'HyperEVM Mainnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 999,
+      },
     ] as const;
 
     expect(
@@ -681,6 +762,11 @@ describe('provision runtime backend helpers', () => {
         (target) => target.id,
       ),
     ).toEqual(['arbitrum-fork', 'arbitrum-one']);
+    expect(
+      executionTargetsForStrategy('hyperliquid_perp', [...targets]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(['hyperevm-testnet', 'hyperevm-mainnet']);
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
   });
 
@@ -707,6 +793,69 @@ describe('provision runtime backend helpers', () => {
         protocolChainId: 1,
       }),
     ).toBeUndefined();
+  });
+
+  it('returns Hyperliquid as the HyperEVM perp protocol', async () => {
+    const { availableProtocolsForStrategyTarget } =
+      await import('../provision');
+
+    expect(
+      availableProtocolsForStrategyTarget('hyperliquid_perp', {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 998,
+      }),
+    ).toEqual(['hyperliquid']);
+    expect(
+      availableProtocolsForStrategyTarget('hyperliquid_perp', {
+        id: 'hyperevm-mainnet',
+        label: 'HyperEVM Mainnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 999,
+      }),
+    ).toEqual(['hyperliquid']);
+  });
+
+  it('adds Hyperliquid account-control fields to HyperEVM perp config', async () => {
+    const { buildProvisionStrategyConfig } = await import('../provision');
+
+    expect(
+      buildProvisionStrategyConfig({
+        strategyType: 'hyperliquid_perp',
+        selectedExecutionTarget: {
+          id: 'hyperevm-testnet',
+          label: 'HyperEVM Testnet',
+          description: 'HyperEVM',
+          enabled: true,
+          chainId: 998,
+        },
+        runtimeBackend: 'docker',
+        isTeeBlueprint: false,
+        includeExecutionTarget: true,
+        executionConfig: {
+          chainId: 998n,
+          rpcUrl: 'https://rpc.hyperliquid-testnet.xyz/evm',
+          vaultBinding: 'factory',
+          provisionVaultAddress:
+            '0x0000000000000000000000000000000000000fAc',
+          vaultFactoryAddress:
+            '0x0000000000000000000000000000000000000fAc',
+          vaultAddress: '0x0000000000000000000000000000000000000fAc',
+          assetAddress: '0x2B3370eE501B4a559b57D449569354196457D8Ab',
+          paperTrade: false,
+          protocolChainId: undefined,
+        },
+      }),
+    ).toMatchObject({
+      available_protocols: ['hyperliquid'],
+      vault_binding: 'factory',
+      hyperliquid_execution_model: 'hyperevm_vault_agent',
+      hyperliquid_account_source: 'hyperevm_vault_contract',
+      hyperliquid_api_wallet_approval: 'corewriter_on_provision',
+    });
   });
 
   it('threads validation_trust through the operator provision body when non-default', async () => {

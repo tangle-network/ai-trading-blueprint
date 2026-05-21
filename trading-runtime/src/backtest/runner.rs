@@ -350,7 +350,7 @@ mod tests {
             exit_rules: vec![ExitRule::StopLoss { pct: 5.0 }],
             ..Default::default()
         });
-        let mut pos = TrackedPosition {
+        let pos = TrackedPosition {
             token: "ETH".into(),
             direction: Direction::Long,
             entry_price: 2500.0,
@@ -416,8 +416,10 @@ mod tests {
     fn runner_harness_update() {
         let mut runner = StrategyRunner::new(HarnessConfig::default());
         assert_eq!(runner.harness().max_positions, 5);
-        let mut h = HarnessConfig::default();
-        h.max_positions = 10;
+        let h = HarnessConfig {
+            max_positions: 10,
+            ..HarnessConfig::default()
+        };
         runner.update_harness(h);
         assert_eq!(runner.harness().max_positions, 10);
     }

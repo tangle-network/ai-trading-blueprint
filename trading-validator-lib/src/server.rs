@@ -630,8 +630,10 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
         || request.intent.target_protocol == "hyperliquid"
     {
         let order = hyperliquid_order_from_intent(&request.intent)?;
+        let account = hyperliquid_account_from_intent(&request.intent)?;
         return Ok(format_b256(hash_hyperliquid_order(
             &order,
+            &account,
             intent_hash,
             deadline,
             request.intent.chain_id,
@@ -833,6 +835,19 @@ fn hyperliquid_order_from_intent(
         reduce_only,
         cloid: None,
     })
+}
+
+fn hyperliquid_account_from_intent(
+    intent: &trading_runtime::TradeIntent,
+) -> Result<String, String> {
+    intent
+        .metadata
+        .get("hyperliquid_account_address")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "hyperliquid_account_address metadata is required".to_string())
 }
 
 /// Run an independent eth_call simulation using the validator's own RPC connection.

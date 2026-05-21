@@ -13,6 +13,7 @@ import { useStore } from '@nanostores/react';
 import {
   decodeEventLog,
   encodeAbiParameters,
+  getAddress,
   parseAbiParameters,
   parseGwei,
   zeroAddress,
@@ -26,7 +27,7 @@ import {
   tradingBlueprintAbi,
 } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
-import { networks } from '~/lib/contracts/chains';
+import { isKnownExternalHyperEvmChainId, networks } from '~/lib/contracts/chains';
 import {
   publicClient,
   selectedChainIdStore,
@@ -167,6 +168,8 @@ type DexExecutionTargetId =
   | 'arbitrum-fork'
   | 'arbitrum'
   | 'arbitrum-one'
+  | 'hyperevm-testnet'
+  | 'hyperevm-mainnet'
   | 'polygon'
   | 'optimism';
 
@@ -236,7 +239,6 @@ const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const POLYGON_USDC_ADDRESS = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 const OPTIMISM_USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
 const ARBITRUM_USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
-
 const CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',
   10: 'Optimism',
@@ -247,6 +249,8 @@ const CHAIN_NAMES: Record<number, string> = {
   31340: 'Arbitrum Fork',
   42161: 'Arbitrum One',
   421614: 'Arbitrum Sepolia',
+  998: 'HyperEVM Testnet',
+  999: 'HyperEVM Mainnet',
 };
 
 function resolveEnvBoolean(
@@ -266,6 +270,13 @@ function resolveEnvPositiveNumber(
 ): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveEnvPositiveNumberOptional(
+  value: string | undefined,
+): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 const DEFAULT_BASE_EXECUTION_TARGET: DexExecutionTargetOption = {
@@ -456,6 +467,90 @@ const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
   ),
 };
 
+const hyperEvmTestnetTargetEnabled = resolveEnvBoolean(
+  import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED,
+  false,
+);
+const hyperEvmTestnetTargetChainId = resolveEnvPositiveNumberOptional(
+  import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID,
+);
+const hyperEvmTestnetTargetRpcUrl =
+  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL?.trim() || undefined;
+const hyperEvmTestnetAssetToken = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN,
+);
+const hyperEvmTestnetVaultFactory = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS,
+);
+const hyperEvmTestnetVault = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS,
+);
+
+const DEFAULT_HYPEREVM_TESTNET_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'hyperevm-testnet',
+  label: 'HyperEVM Testnet',
+  description: 'Uses a bot-bound HyperEVM vault account for native Hyperliquid perps.',
+  modeLabel: 'Hyperliquid perps',
+  enabled: hyperEvmTestnetTargetEnabled &&
+    Boolean(
+      hyperEvmTestnetTargetChainId &&
+        hyperEvmTestnetTargetRpcUrl &&
+        hyperEvmTestnetAssetToken &&
+        (hyperEvmTestnetVaultFactory || hyperEvmTestnetVault),
+    ),
+  chainId: hyperEvmTestnetTargetChainId,
+  rpcUrl: hyperEvmTestnetTargetRpcUrl,
+  vaultFactoryAddress: hyperEvmTestnetVaultFactory,
+  vaultAddress: hyperEvmTestnetVault,
+  assetToken: hyperEvmTestnetAssetToken,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_HYPEREVM_TESTNET_PAPER_TRADE,
+    false,
+  ),
+};
+
+const hyperEvmMainnetTargetEnabled = resolveEnvBoolean(
+  import.meta.env.VITE_HYPEREVM_MAINNET_ENABLED,
+  false,
+);
+const hyperEvmMainnetTargetChainId = resolveEnvPositiveNumberOptional(
+  import.meta.env.VITE_HYPEREVM_MAINNET_CHAIN_ID,
+);
+const hyperEvmMainnetTargetRpcUrl =
+  import.meta.env.VITE_HYPEREVM_MAINNET_RPC_URL?.trim() || undefined;
+const hyperEvmMainnetAssetToken = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN,
+);
+const hyperEvmMainnetVaultFactory = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS,
+);
+const hyperEvmMainnetVault = nonZeroAddress(
+  import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS,
+);
+
+const DEFAULT_HYPEREVM_MAINNET_EXECUTION_TARGET: DexExecutionTargetOption = {
+  id: 'hyperevm-mainnet',
+  label: 'HyperEVM Mainnet',
+  description: 'Uses a bot-bound HyperEVM vault account for native Hyperliquid perps.',
+  modeLabel: 'Hyperliquid perps',
+  enabled: hyperEvmMainnetTargetEnabled &&
+    Boolean(
+      hyperEvmMainnetTargetChainId &&
+        hyperEvmMainnetTargetRpcUrl &&
+        hyperEvmMainnetAssetToken &&
+        (hyperEvmMainnetVaultFactory || hyperEvmMainnetVault),
+    ),
+  chainId: hyperEvmMainnetTargetChainId,
+  rpcUrl: hyperEvmMainnetTargetRpcUrl,
+  vaultFactoryAddress: hyperEvmMainnetVaultFactory,
+  vaultAddress: hyperEvmMainnetVault,
+  assetToken: hyperEvmMainnetAssetToken,
+  paperTrade: resolveEnvBoolean(
+    import.meta.env.VITE_HYPEREVM_MAINNET_PAPER_TRADE,
+    false,
+  ),
+};
+
 const DEFAULT_POLYGON_EXECUTION_TARGET: DexExecutionTargetOption = {
   id: 'polygon',
   label: 'Polygon',
@@ -495,6 +590,14 @@ const DEFAULT_OPTIMISM_EXECUTION_TARGET: DexExecutionTargetOption = {
 export function resolveSelectedProvisionNetwork(
   selectedChainId: number | undefined | null,
 ) {
+  if (
+    selectedChainId != null &&
+    isKnownExternalHyperEvmChainId(selectedChainId) &&
+    !networks[selectedChainId]
+  ) {
+    return undefined;
+  }
+
   const configuredNetworks = Object.values(networks);
   return (
     (selectedChainId != null ? networks[selectedChainId] : undefined) ??
@@ -630,6 +733,17 @@ export function buildProvisionStrategyConfig({
   if (includeExecutionTarget && executionConfig) {
     config.vault_binding = executionConfig.vaultBinding;
     if (
+      strategyType === 'hyperliquid_perp' &&
+      (executionConfig.protocolChainId === 998 ||
+        executionConfig.protocolChainId === 999 ||
+        executionConfig.chainId === 998n ||
+        executionConfig.chainId === 999n)
+    ) {
+      config.hyperliquid_execution_model = 'hyperevm_vault_agent';
+      config.hyperliquid_account_source = 'hyperevm_vault_contract';
+      config.hyperliquid_api_wallet_approval = 'corewriter_on_provision';
+    }
+    if (
       executionConfig.vaultBinding === 'direct' &&
       executionConfig.vaultAddress &&
       executionConfig.vaultAddress !== zeroAddress
@@ -752,6 +866,7 @@ export function resolveExecutionTargetProvisionConfig(
 ): ExecutionTargetProvisionConfig | null {
   const configuredFactoryAddress = nonZeroAddress(target?.vaultFactoryAddress);
   const configuredVaultAddress = nonZeroAddress(target?.vaultAddress);
+  const configuredAssetAddress = nonZeroAddress(target?.assetToken);
   const hasDistinctFactory =
     configuredFactoryAddress &&
     (!configuredVaultAddress ||
@@ -769,7 +884,7 @@ export function resolveExecutionTargetProvisionConfig(
     target.chainId == null ||
     !target.rpcUrl ||
     !provisionVaultAddress ||
-    !target.assetToken
+    !configuredAssetAddress
   ) {
     return null;
   }
@@ -784,16 +899,17 @@ export function resolveExecutionTargetProvisionConfig(
       configuredVaultAddress ??
       configuredFactoryAddress ??
       provisionVaultAddress,
-    assetAddress: target.assetToken as Address,
+    assetAddress: configuredAssetAddress,
     paperTrade: target.paperTrade ?? false,
     protocolChainId: target.protocolChainId,
   };
 }
 
 function nonZeroAddress(value: string | undefined | null): Address | undefined {
-  if (typeof value !== 'string' || value.toLowerCase() === ZERO_ADDRESS)
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === ZERO_ADDRESS)
     return undefined;
-  return value as Address;
+  return trimmed as Address;
 }
 
 function sameAddress(a: string, b: string): boolean {
@@ -910,12 +1026,69 @@ export function availableProtocolsForStrategyTarget(
     return ['gmx_v2', 'vertex'];
   }
   if (
+    strategyType === 'hyperliquid_perp' &&
+    (effectiveChainId === 998 || effectiveChainId === 999)
+  ) {
+    return ['hyperliquid'];
+  }
+  if (
     strategyType === 'yield' &&
     (effectiveChainId === 1 || effectiveChainId === 8453)
   ) {
     return ['aave_v3', 'morpho_vault'];
   }
   return undefined;
+}
+
+export function validateFactoryVaultSignerConfig(
+  signerCount: number,
+): { ok: true } | { ok: false; message: string } {
+  if (signerCount < 3) {
+    return {
+      ok: false,
+      message:
+        'Factory vault creation needs at least 3 validator operators and a 2/3 supermajority',
+    };
+  }
+  return { ok: true };
+}
+
+export function parseFactoryExtraSigners(value?: string): Address[] {
+  if (!value?.trim()) return [];
+
+  const signers: Address[] = [];
+  const seen = new Set<string>();
+  for (const raw of value.split(',')) {
+    const candidate = raw.trim();
+    if (!candidate) continue;
+    try {
+      const address = getAddress(candidate);
+      const lower = address.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        signers.push(address);
+      }
+    } catch {
+      console.warn('[provision] Ignoring invalid local factory signer:', candidate);
+    }
+  }
+  return signers;
+}
+
+export function mergeVaultSigners(
+  signers: Address[],
+  extraSigners: Address[],
+): Address[] {
+  const merged = [...signers];
+  const seen = new Set(signers.map((signer) => signer.toLowerCase()));
+  for (const signer of extraSigners) {
+    const lower = signer.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      merged.push(signer);
+    }
+  }
+  return merged;
 }
 
 export function validateStrategyExecutionSelection(
@@ -1088,6 +1261,8 @@ export default function ProvisionPage() {
       DEFAULT_ARBITRUM_FORK_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_EXECUTION_TARGET,
       DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET,
+      DEFAULT_HYPEREVM_TESTNET_EXECUTION_TARGET,
+      DEFAULT_HYPEREVM_MAINNET_EXECUTION_TARGET,
       DEFAULT_POLYGON_EXECUTION_TARGET,
       DEFAULT_OPTIMISM_EXECUTION_TARGET,
     ];
@@ -2498,13 +2673,22 @@ export default function ProvisionPage() {
     if (
       requiresExecutionTarget &&
       executionConfig?.vaultBinding === 'factory' &&
-      !executionConfig.paperTrade &&
-      vaultSigners.length < 2
+      !executionConfig.paperTrade
     ) {
-      toast.error(
-        'Factory vault creation needs at least 2 validator operators',
+      const extraSigners = parseFactoryExtraSigners(
+        import.meta.env.VITE_LOCAL_FACTORY_EXTRA_SIGNERS,
       );
-      return;
+      if (
+        extraSigners.length > 0 &&
+        (import.meta.env.DEV || import.meta.env.VITE_USE_LOCAL_CHAIN === 'true')
+      ) {
+        vaultSigners = mergeVaultSigners(vaultSigners, extraSigners);
+      }
+      const signerValidation = validateFactoryVaultSignerConfig(vaultSigners.length);
+      if (!signerValidation.ok) {
+        toast.error(signerValidation.message);
+        return;
+      }
     }
 
     const inputs = bp.encodeProvision({
@@ -2530,6 +2714,7 @@ export default function ProvisionPage() {
       maxCollateralBps: collateralCapPct
         ? BigInt(Math.round(Number(collateralCapPct) * 100))
         : 0n,
+      validationTrust,
     });
 
     submitSnapshotRef.current = {
@@ -2650,6 +2835,18 @@ export default function ProvisionPage() {
             err,
           );
         }
+      }
+      const extraSigners = parseFactoryExtraSigners(
+        import.meta.env.VITE_LOCAL_FACTORY_EXTRA_SIGNERS,
+      );
+      if (
+        extraSigners.length > 0 &&
+        (import.meta.env.DEV || import.meta.env.VITE_USE_LOCAL_CHAIN === 'true')
+      ) {
+        instanceVaultSigners = mergeVaultSigners(
+          instanceVaultSigners,
+          extraSigners,
+        );
       }
     }
 

@@ -116,6 +116,11 @@ Returns positions, margin, equity, open orders. Use to check:
 - Available margin before new trades
 - Open orders that might conflict
 
+### Vault NAV, Mode, and Settlement
+- GET /hyperliquid/nav — Check fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable USDC before opening risk.
+- GET /hyperliquid/mode — Check before opening or increasing exposure. In `liquidity` mode, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure. In `emergency_wind_down`, do not open new risk.
+- GET /hyperliquid/settlement — Reports withdrawal pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
+
 ### Prices — GET /hyperliquid/prices
 Returns mid prices for all HL perp markets as `{"ETH": "2500.5", "BTC": "67432.1", ...}`.
 
@@ -126,7 +131,7 @@ Use symbol strings ("ETH", "BTC", "SOL", etc.) or numeric indices (0=BTC, 1=ETH,
 1. Always set leverage BEFORE placing orders
 2. Use bracket orders (entry + SL + TP) for every position
 3. Never risk more than 2% of account per trade
-4. Check GET /hyperliquid/account before opening new positions
+4. Check GET /hyperliquid/nav, GET /hyperliquid/mode, and GET /hyperliquid/account before opening new positions
 5. Use reduce_only=true for all exit orders (SL, TP, manual close)
 
 ### Read-Only Market Data (direct API)

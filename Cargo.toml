@@ -18,6 +18,3 @@ authors = ["Drew Stone"]
 edition = "2024"
 description = "AI Trading Blueprints for Tangle Network"
 license = "MIT OR Apache-2.0"
-
-[patch."https://github.com/tangle-network/blueprint.git"]
-workspace-hack = { path = "patches/workspace-hack" }

@@ -370,8 +370,10 @@ fn build_direct_execution_hash(
         }
         "hyperliquid" => {
             let order = hyperliquid_order_from_intent(intent);
+            let account = hyperliquid_account_from_intent(intent)?;
             Ok(Some(format_b256(hash_hyperliquid_order(
                 &order,
+                &account,
                 intent_hash,
                 deadline,
                 chain_id,
@@ -379,6 +381,63 @@ fn build_direct_execution_hash(
         }
         _ => Ok(None),
     }
+}
+
+fn bind_hyperliquid_account_metadata(
+    protocol: &str,
+    metadata: &serde_json::Value,
+    account: &str,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    if protocol != "hyperliquid" {
+        return Ok(metadata.clone());
+    }
+    let account = account.trim();
+    if account.is_empty() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid validation requires an authoritative account address".to_string(),
+        ));
+    }
+
+    let mut metadata = metadata.clone();
+    match metadata {
+        serde_json::Value::Object(ref mut map) => {
+            if let Some(supplied) = map
+                .get("hyperliquid_account_address")
+                .and_then(serde_json::Value::as_str)
+                && !supplied.trim().eq_ignore_ascii_case(account)
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Hyperliquid account metadata does not match the provisioned bot account"
+                        .to_string(),
+                ));
+            }
+            map.insert(
+                "hyperliquid_account_address".to_string(),
+                serde_json::Value::String(account.to_string()),
+            );
+            Ok(metadata)
+        }
+        _ => Ok(serde_json::json!({ "hyperliquid_account_address": account })),
+    }
+}
+
+fn hyperliquid_account_from_intent(intent: &TradeIntent) -> Result<String, (StatusCode, String)> {
+    intent
+        .metadata
+        .get("hyperliquid_account_address")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Hyperliquid execution hash requires hyperliquid_account_address metadata"
+                    .to_string(),
+            )
+        })
 }
 
 fn format_action(action: &Action) -> String {
@@ -405,7 +464,13 @@ fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
         intent.action,
         Action::OpenLong | Action::Buy | Action::CloseShort
     );
-    let reduce_only = matches!(intent.action, Action::CloseLong | Action::CloseShort);
+    let metadata_reduce_only = intent
+        .metadata
+        .get("reduce_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let reduce_only =
+        metadata_reduce_only || matches!(intent.action, Action::CloseLong | Action::CloseShort);
 
     let order_type = if let Some(trigger_px) = intent
         .metadata
@@ -604,6 +669,20 @@ async fn validate(
         &request.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let authoritative_hyperliquid_account = if request.target_protocol == "hyperliquid" {
+        crate::routes::hyperliquid::require_hyperliquid_account_address_from_config(
+            &state.strategy_config,
+            &state.vault_address,
+            state.paper_trade,
+        )?
+    } else {
+        String::new()
+    };
+    request.metadata = bind_hyperliquid_account_metadata(
+        &request.target_protocol,
+        &request.metadata,
+        &authoritative_hyperliquid_account,
+    )?;
     let parsed = parse_validate_request(&request, protocol_chain_id)?;
     let token_in = normalize_protocol_token(
         &request.target_protocol,
@@ -1079,6 +1158,16 @@ async fn validate_multi_bot(
         &req.metadata,
     )
     .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let authoritative_hyperliquid_account = if req.target_protocol == "hyperliquid" {
+        crate::routes::hyperliquid::require_hyperliquid_account_address(&bot)?
+    } else {
+        String::new()
+    };
+    req.metadata = bind_hyperliquid_account_metadata(
+        &req.target_protocol,
+        &req.metadata,
+        &authoritative_hyperliquid_account,
+    )?;
     let parsed = parse_validate_request(&req, Some(protocol_chain_id))?;
     let token_in =
         normalize_protocol_token(&req.target_protocol, Some(protocol_chain_id), &req.token_in);
@@ -1116,6 +1205,15 @@ async fn validate_multi_bot(
             &bot.rpc_url,
             protocol_chain_id,
             &bot.vault_address,
+            &req.metadata,
+        )
+        .await?;
+    }
+    if !bot.paper_trade && req.target_protocol == "hyperliquid" {
+        crate::hyperliquid_mode::enforce_hyperliquid_mode_for_action_with_nav_refresh(
+            &state,
+            &bot,
+            &req.action,
             &req.metadata,
         )
         .await?;

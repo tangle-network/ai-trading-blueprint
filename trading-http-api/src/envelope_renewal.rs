@@ -503,7 +503,8 @@ mod tests {
     use super::*;
     use crate::routes::envelope::clear_signed_envelope;
     use rust_decimal::Decimal;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
     use trading_runtime::EnvelopeEnforcement;
     use trading_runtime::envelope::policy::{PerpsPolicy, TradingPolicy};
 
@@ -620,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_renews_within_expiry_window() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-expiry-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -656,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_renews_when_consumed_threshold_breached() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-consumed-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -690,7 +691,7 @@ mod tests {
     async fn test_consumption_only_trigger_renews() {
         // Validates the consumption percentage helper in isolation — the cron
         // would call the same logic when chain RPC reports consumption ≥ 80%.
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         let max_total = U256::from(1_000u128);
         assert_eq!(consumed_percentage(U256::from(800u128), max_total), 80.0);
         assert!(
@@ -704,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skips_active_envelope() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-active-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -738,7 +739,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multisig_emits_webhook_only() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-multisig-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -772,7 +773,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_sig_with_wrong_operator_key_does_not_rotate() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-wrongkey-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -806,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_envelope_stored_is_noop() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-empty-{}", uuid::Uuid::new_v4());
         let _ = clear_signed_envelope(&bot_id);
@@ -818,7 +819,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_per_trade_validation_skipped() {
-        let _g = cron_test_lock().lock().unwrap();
+        let _g = cron_test_lock().lock().await;
         ensure_state_dir();
         let bot_id = format!("renewal-pertrade-{}", uuid::Uuid::new_v4());
         let mut info = bot_info_with(&bot_id, None);

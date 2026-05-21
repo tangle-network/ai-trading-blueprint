@@ -5,7 +5,7 @@ import { strategyPacks } from './strategy-packs';
 function encodeProvision(params: ProvisionParams): `0x${string}` {
   return encodeAbiParameters(
     parseAbiParameters(
-      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256)',
+      '(string, string, string, string, address, address, address[], uint256, uint256, string, string, uint64, uint64, uint64, uint64[], uint256, uint8)',
     ),
     [
       [
@@ -25,9 +25,21 @@ function encodeProvision(params: ProvisionParams): `0x${string}` {
         params.maxLifetimeDays,
         params.validatorServiceIds,
         params.maxCollateralBps,
+        validationTrustToDiscriminant(params.validationTrust),
       ],
     ],
   );
+}
+
+function validationTrustToDiscriminant(value: ProvisionParams['validationTrust']): number {
+  switch (value) {
+    case 'envelope':
+      return 1;
+    case 'self_operated':
+      return 2;
+    default:
+      return 0;
+  }
 }
 
 export const tradingCloud: TradingBlueprintDef = {

@@ -10,7 +10,7 @@ export type ValidationTrust = 'per_trade' | 'envelope' | 'self_operated';
 export type StrategyType =
   | 'prediction' | 'prediction_politics' | 'prediction_crypto'
   | 'prediction_war' | 'prediction_trending' | 'prediction_celebrity'
-  | 'dex' | 'yield' | 'perp' | 'volatility' | 'mm' | 'multi'
+  | 'dex' | 'yield' | 'perp' | 'hyperliquid_perp' | 'volatility' | 'mm' | 'multi'
   | 'momentum' | 'mean-reversion' | 'arbitrage' | 'trend-following'
   | 'market-making' | 'sentiment';
 

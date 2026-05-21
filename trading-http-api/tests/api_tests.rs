@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use axum::body::Body;
 use axum::http::StatusCode;
+use axum::{Router, body::Body};
 use http_body_util::BodyExt;
 use hyper::Request;
 use tower::ServiceExt;
@@ -40,6 +40,7 @@ const TEST_TOKEN: &str = "test-api-token-12345";
 const TEST_VALIDATOR_PRIVATE_KEY: &str =
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const TEST_VERIFYING_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const DEFAULT_TEST_VAULT_ADDRESS: &str = "0x0000000000000000000000000000000000000001";
 
 /// Ensure a shared temp state dir is set for the entire test binary.
 /// OnceCell-backed stores in trade_store/metrics_store init once per process.
@@ -258,7 +259,23 @@ fn test_zero_hash() -> String {
 }
 
 fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Option<u64>) {
-    let intent_json = body["intent"].clone();
+    let mut intent_json = body["intent"].clone();
+    let protocol = intent_json["target_protocol"]
+        .as_str()
+        .expect("protocol")
+        .to_string();
+    if protocol == "hyperliquid" {
+        let metadata = intent_json
+            .as_object_mut()
+            .expect("intent object")
+            .entry("metadata")
+            .or_insert_with(|| serde_json::json!({}));
+        let metadata = metadata.as_object_mut().expect("metadata object");
+        metadata
+            .entry("hyperliquid_account_address")
+            .or_insert_with(|| serde_json::json!(DEFAULT_TEST_VAULT_ADDRESS));
+        body["intent"] = intent_json.clone();
+    }
     let validation = body
         .get_mut("validation")
         .and_then(|value| value.as_object_mut())
@@ -269,7 +286,6 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
         .unwrap_or(1_999_999_999);
     validation.insert("deadline".into(), serde_json::json!(deadline));
 
-    let protocol = intent_json["target_protocol"].as_str().expect("protocol");
     let adapter_chain_id = execution_chain_id.map(trading_http_api::protocol_chain_id_from_env);
     let intent_chain_id = adapter_chain_id.unwrap_or(42161);
     let mut intent = trading_runtime::TradeIntentBuilder::new()
@@ -293,7 +309,7 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
                 .parse()
                 .expect("min_amount_out decimal"),
         )
-        .target_protocol(protocol)
+        .target_protocol(&protocol)
         .chain_id(intent_chain_id)
         .metadata(
             intent_json
@@ -351,6 +367,10 @@ fn attach_validation_hashes(body: &mut serde_json::Value, execution_chain_id: Op
         };
         format_b256(hash_hyperliquid_order(
             &order,
+            metadata
+                .get("hyperliquid_account_address")
+                .and_then(|value| value.as_str())
+                .unwrap_or(DEFAULT_TEST_VAULT_ADDRESS),
             intent_hash_b256,
             alloy::primitives::U256::from(deadline),
             execution_chain_id.unwrap_or(intent_chain_id),
@@ -641,6 +661,119 @@ async fn mock_direct_validator_approval(rpc_mock: &MockServer, approved: bool) {
         .await;
 }
 
+async fn mock_hyperliquid_normal_mode(rpc_mock: &MockServer, bot: &BotContext) {
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        bot,
+        chrono::Utc::now(),
+    ))
+    .expect("record hyperliquid nav snapshot");
+
+    mock_hyperliquid_mode_queue(rpc_mock).await;
+}
+
+async fn mock_hyperliquid_mode_queue(rpc_mock: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("0x9bf2ae82"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(rpc_result_hex(U256::ZERO.abi_encode())),
+        )
+        .mount(rpc_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("0x635b6ac5"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(rpc_result_hex(U256::from(1_000u64).abi_encode())),
+        )
+        .mount(rpc_mock)
+        .await;
+}
+
+fn hyperliquid_nav_snapshot(
+    bot: &BotContext,
+    as_of: chrono::DateTime<chrono::Utc>,
+) -> trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
+    trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot {
+        bot_id: bot.bot_id.clone(),
+        account_address: bot.vault_address.clone(),
+        vault_address: bot.vault_address.clone(),
+        share_token: "0x0000000000000000000000000000000000000002".to_string(),
+        asset_token: "0x0000000000000000000000000000000000000003".to_string(),
+        as_of,
+        status: "fresh".to_string(),
+        stale_after_secs: 60,
+        idle_usdc: "500".to_string(),
+        hyperliquid_equity: "500".to_string(),
+        total_nav: "1000".to_string(),
+        withdrawable_usdc: "500".to_string(),
+        total_margin_used: "0".to_string(),
+        total_notional_position: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+        total_shares: "1000".to_string(),
+        share_price: Some("1".to_string()),
+        margin_usage_bps: Some(0),
+        open_order_count: 0,
+        position_count: 0,
+        positions: vec![],
+        warnings: vec![],
+        onchain_accounting_tx_hash: None,
+    }
+}
+
+struct FakeHyperliquidNavReconciler {
+    result: Result<trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot, (StatusCode, String)>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeHyperliquidNavReconciler {
+    fn fresh(bot: &BotContext) -> Arc<Self> {
+        Arc::new(Self {
+            result: Ok(hyperliquid_nav_snapshot(bot, chrono::Utc::now())),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn stale(bot: &BotContext) -> Arc<Self> {
+        Arc::new(Self {
+            result: Ok(hyperliquid_nav_snapshot(
+                bot,
+                chrono::Utc::now() - chrono::Duration::seconds(120),
+            )),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn unavailable(message: &str) -> Arc<Self> {
+        Arc::new(Self {
+            result: Err((StatusCode::BAD_GATEWAY, message.to_string())),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl trading_http_api::hyperliquid_nav::HyperliquidNavReconciler for FakeHyperliquidNavReconciler {
+    async fn reconcile(
+        &self,
+        _state: &MultiBotTradingState,
+        _bot: &BotContext,
+    ) -> Result<trading_http_api::hyperliquid_nav::HyperliquidNavSnapshot, (StatusCode, String)>
+    {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(snapshot) = &self.result {
+            trading_http_api::hyperliquid_nav::record_snapshot(snapshot.clone())
+                .expect("record fake hyperliquid nav snapshot");
+        }
+        self.result.clone()
+    }
+}
+
 fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
     let mut body = serde_json::json!({
         "intent": {
@@ -680,6 +813,13 @@ fn execute_body_for_chain(execution_chain_id: Option<u64>) -> String {
 
 fn execute_body() -> String {
     execute_body_for_chain(None)
+}
+
+fn execute_body_with_metadata(metadata: serde_json::Value) -> String {
+    let mut body: serde_json::Value = serde_json::from_str(&execute_body_for_chain(None)).unwrap();
+    body["intent"]["metadata"] = metadata;
+    attach_validation_hashes(&mut body, None);
+    serde_json::to_string(&body).unwrap()
 }
 
 // ── Existing tests ──────────────────────────────────────────────────────────
@@ -1968,10 +2108,27 @@ fn multi_bot_state_with_strategy_config_and_bot(
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     })
 }
 
 fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTradingState> {
+    multi_bot_state_for_bot_with_nav_reconciler(
+        auth_token,
+        bot,
+        Arc::new(trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler),
+    )
+}
+
+fn multi_bot_state_for_bot_with_nav_reconciler(
+    auth_token: &str,
+    bot: BotContext,
+    hyperliquid_nav_reconciler: Arc<
+        dyn trading_http_api::hyperliquid_nav::HyperliquidNavReconciler,
+    >,
+) -> Arc<MultiBotTradingState> {
     ensure_state_dir();
     let auth_token = auth_token.to_string();
     Arc::new(MultiBotTradingState {
@@ -1998,6 +2155,7 @@ fn multi_bot_state_for_bot(auth_token: &str, bot: BotContext) -> Arc<MultiBotTra
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler,
     })
 }
 
@@ -2080,7 +2238,6 @@ fn hyperliquid_execute_body(strategy_id: &str) -> serde_json::Value {
             "target_protocol": "hyperliquid",
             "metadata": {
                 "asset": "ETH",
-                "leverage": 2,
                 "stop_loss_pct": 3.0
             }
         },
@@ -2330,6 +2487,7 @@ async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
     let bot_id = format!("bot-hl-denied-{}", uuid::Uuid::new_v4());
     let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
     bot.rpc_url = rpc_mock.uri();
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
     let state = multi_bot_state_for_bot("bot-token-hl-denied", bot);
     let app = build_multi_bot_router(state);
     let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
@@ -2357,6 +2515,632 @@ async fn test_live_hyperliquid_per_trade_rejects_onchain_validator_denial() {
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_first_trade_refreshes_missing_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+
+    let bot_id = format!("bot-hl-first-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-first-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-first-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_mode = trading_http_api::hyperliquid_mode::latest_mode_for_bot(&bot_id)
+        .expect("latest mode")
+        .expect("mode snapshot");
+    assert_eq!(
+        latest_mode.mode,
+        trading_http_api::hyperliquid_mode::HyperliquidBotMode::Normal
+    );
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_refreshes_stale_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+
+    let bot_id = format!("bot-hl-stale-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        &bot,
+        chrono::Utc::now() - chrono::Duration::seconds(120),
+    ))
+    .expect("record stale hyperliquid nav snapshot");
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-stale-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-stale-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 401, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_nav = trading_http_api::hyperliquid_nav::latest_snapshot_for_bot(&bot_id)
+        .expect("latest nav")
+        .expect("nav snapshot");
+    assert!(!latest_nav.is_stale_at(chrono::Utc::now()));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_when_nav_refresh_stays_stale() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+
+    let bot_id = format!("bot-hl-stale-refresh-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::stale(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-stale-refresh",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-stale-refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV refresh"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_when_nav_refresh_unavailable() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, false).await;
+
+    let bot_id = format!("bot-hl-nav-unavailable-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    let nav_reconciler = FakeHyperliquidNavReconciler::unavailable("Hyperliquid NAV unavailable");
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-nav-unavailable",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-nav-unavailable")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 502, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV unavailable"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_first_trade_refreshes_missing_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+    let validator = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 85,
+            "signature": TEST_SIG,
+            "reasoning": "Mode gate passed after NAV refresh",
+            "validator": "0xValidator1"
+        })))
+        .mount(&validator)
+        .await;
+
+    let bot_id = format!("bot-hl-validate-first-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = vec![validator.uri()];
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-first-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-first-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_mode = trading_http_api::hyperliquid_mode::latest_mode_for_bot(&bot_id)
+        .expect("latest mode")
+        .expect("mode snapshot");
+    assert_eq!(
+        latest_mode.mode,
+        trading_http_api::hyperliquid_mode::HyperliquidBotMode::Normal
+    );
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_refreshes_stale_nav_before_mode_gate() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_hyperliquid_mode_queue(&rpc_mock).await;
+    let validator = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "score": 85,
+            "signature": TEST_SIG,
+            "reasoning": "Mode gate passed after stale NAV refresh",
+            "validator": "0xValidator1"
+        })))
+        .mount(&validator)
+        .await;
+
+    let bot_id = format!("bot-hl-validate-stale-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = vec![validator.uri()];
+    trading_http_api::hyperliquid_nav::record_snapshot(hyperliquid_nav_snapshot(
+        &bot,
+        chrono::Utc::now() - chrono::Duration::seconds(120),
+    ))
+    .expect("record stale hyperliquid nav snapshot");
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-stale-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-stale-nav")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(nav_reconciler.calls(), 1);
+    let latest_nav = trading_http_api::hyperliquid_nav::latest_snapshot_for_bot(&bot_id)
+        .expect("latest nav")
+        .expect("nav snapshot");
+    assert!(!latest_nav.is_stale_at(chrono::Utc::now()));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_when_nav_refresh_stays_stale() {
+    ensure_state_dir();
+
+    let bot_id = format!("bot-hl-validate-stale-refresh-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let nav_reconciler = FakeHyperliquidNavReconciler::stale(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-stale-refresh",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header(
+                    "authorization",
+                    "Bearer bot-token-hl-validate-stale-refresh",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV refresh"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_when_nav_refresh_unavailable() {
+    ensure_state_dir();
+
+    let bot_id = format!("bot-hl-validate-nav-unavailable-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let nav_reconciler = FakeHyperliquidNavReconciler::unavailable("Hyperliquid NAV unavailable");
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hl-validate-nav-unavailable",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header(
+                    "authorization",
+                    "Bearer bot-token-hl-validate-nav-unavailable",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 502, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("NAV unavailable"));
+    assert_eq!(nav_reconciler.calls(), 1);
+}
+
+#[tokio::test]
+async fn test_hyperliquid_execute_rejects_account_metadata_mismatch() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-account-mismatch-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let state = multi_bot_state_for_bot("bot-token-hl-account-mismatch", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["hyperliquid_account_address"] =
+        serde_json::json!("0x2222222222222222222222222222222222222222");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-account-mismatch")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("does not match the provisioned bot account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_per_trade_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-config-drift", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_envelope_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-envelope-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-envelope-config-drift", bot);
+    let app = build_multi_bot_router(state);
+    let body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-envelope-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_validate_rejects_config_account_drift() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-validate-config-drift-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_account_address": "0x2222222222222222222222222222222222222222"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-validate-config-drift", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/validate")
+                .header("authorization", "Bearer bot-token-hl-validate-config-drift")
+                .header("content-type", "application/json")
+                .body(Body::from(validate_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("configured account"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_leverage_metadata_before_submission() {
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-leverage-{}", uuid::Uuid::new_v4());
+    let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    let state = multi_bot_state_for_bot("bot-token-hl-leverage", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["intent"]["metadata"]["leverage"] = serde_json::json!(2);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-leverage")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("does not accept leverage metadata"));
+    assert!(body.contains("account-scoped leverage"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_pending_api_wallet_approval_before_submission() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-pending-approval-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-pending-approval", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-pending-approval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("API wallet approval is not submitted"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_kill_switch_before_submission() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-kill-switch-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_kill_switch": true,
+        "hyperliquid_api_wallet_approval_status": "submitted_corewriter_approval"
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-kill-switch", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-kill-switch")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("execution is disabled"));
 }
 
 #[tokio::test]
@@ -3752,6 +4536,10 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -3794,6 +4582,9 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -3865,6 +4656,10 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -3942,6 +4737,10 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -3974,6 +4773,57 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
     assert_eq!(positions[0]["token"], "ETH");
     assert_eq!(positions[0]["protocol"], "hyperliquid");
     assert_eq!(positions[0]["position_type"], "long_perp");
+}
+
+#[tokio::test]
+async fn test_multi_bot_portfolio_state_uses_hyperliquid_nav_for_live_perp_bot() {
+    let bot_id = format!("bot-hyperliquid-nav-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.chain_id = 998;
+    bot.strategy_config = serde_json::json!({
+        "strategy_type": "hyperliquid_perp",
+        "hyperliquid_execution_model": "hyperevm_vault_agent"
+    });
+
+    let nav_reconciler = FakeHyperliquidNavReconciler::fresh(&bot);
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hyperliquid-nav",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-hyperliquid-nav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+
+    assert_eq!(json["source"], "hyperliquid_nav");
+    assert_eq!(json["total_value_usd"], "1000");
+    assert_eq!(json["cash_balance"], "500");
+    assert_eq!(json["has_unpriced_positions"], false);
+    assert_eq!(json["has_value_only_positions"], true);
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["token"], "USDC");
+    assert_eq!(positions[0]["amount"], "500");
+    assert_eq!(positions[0]["value_usd"], "500");
+    assert_eq!(positions[0]["current_price"], "1");
+    assert_eq!(positions[0]["protocol"], "hyperevm_vault");
+    assert_eq!(positions[0]["position_type"], "spot");
+    assert_eq!(positions[0]["valuation_status"], "value_only");
+    assert_eq!(nav_reconciler.calls(), 1);
 }
 
 #[tokio::test]
@@ -4092,6 +4942,10 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -4490,6 +5344,9 @@ fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotT
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     })
 }
 
@@ -4504,6 +5361,17 @@ fn validate_body() -> String {
         "target_protocol": "hyperliquid"
     }))
     .unwrap()
+}
+
+async fn multi_bot_hyperliquid_validator_state(
+    validator_uris: Vec<String>,
+) -> (Arc<MultiBotTradingState>, MockServer) {
+    let rpc_mock = MockServer::start().await;
+    let mut bot = live_bot_with_trust("bot-validators", trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.validator_endpoints = validator_uris;
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    (multi_bot_state_for_bot("bot-token-abc", bot), rpc_mock)
 }
 
 #[tokio::test]
@@ -4571,7 +5439,7 @@ async fn test_multi_bot_validate_with_mock_validators() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4648,7 +5516,7 @@ async fn test_multi_bot_validate_below_threshold() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4699,7 +5567,8 @@ async fn test_multi_bot_validate_partial_failure() {
         .mount(&v_fail)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v_ok.uri(), v_fail.uri()]);
+    let (state, _rpc_mock) =
+        multi_bot_hyperliquid_validator_state(vec![v_ok.uri(), v_fail.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -4750,7 +5619,7 @@ async fn test_multi_bot_validate_all_fail() {
         .mount(&v2)
         .await;
 
-    let state = multi_bot_state_with_validators(vec![v1.uri(), v2.uri()]);
+    let (state, _rpc_mock) = multi_bot_hyperliquid_validator_state(vec![v1.uri(), v2.uri()]).await;
     let app = build_multi_bot_router(state);
 
     let response = app
@@ -5158,6 +6027,9 @@ async fn test_multi_bot_clob_execute() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5288,6 +6160,9 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
     let app = build_multi_bot_router(state);
 
@@ -5380,6 +6255,9 @@ async fn test_multi_bot_clob_execute_not_configured() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5478,6 +6356,9 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
         ),
         key_provider: trading_runtime::cex::default_provider(),
         nav_stream_config: None,
+        hyperliquid_nav_reconciler: std::sync::Arc::new(
+            trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+        ),
     });
 
     let app = build_multi_bot_router(state);
@@ -5975,6 +6856,116 @@ fn backtest_config() -> serde_json::Value {
     })
 }
 
+async fn record_evolution_candles(app: &Router, auth_token: &str) {
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+async fn create_sandbox_revision(
+    app: &Router,
+    auth_token: &str,
+    parent_revision_id: Option<&str>,
+) -> String {
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let mut body = serde_json::json!({
+        "user_intent": "Create exact revision-scoped paper evidence candidate.",
+        "base_snapshot_id": snapshot_id,
+        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// revision-scoped evidence\n",
+        "files_changed": ["strategy.rs"],
+        "tests": ["cargo test -p trading-runtime --lib"],
+        "status": "candidate"
+    });
+    if let Some(parent_revision_id) = parent_revision_id {
+        body["parent_revision_id"] = serde_json::Value::String(parent_revision_id.to_string());
+    }
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", format!("Bearer {auth_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    revision["revision_id"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
 async fn test_backtest_run_returns_trades_and_stats() {
     let mock = MockServer::start().await;
@@ -6006,7 +6997,7 @@ async fn test_backtest_run_returns_trades_and_stats() {
     // Verify response structure
     let result = &json["result"];
     assert!(result["candles_processed"].as_u64().unwrap() > 0);
-    assert!(result["equity_curve"].as_array().unwrap().len() > 0);
+    assert!(!result["equity_curve"].as_array().unwrap().is_empty());
     assert!(result["stats"].is_object());
     assert!(result["stats"]["sharpe_ratio"].is_number());
     assert!(result["stats"]["max_drawdown_pct"].is_number());
@@ -6417,6 +7408,1247 @@ async fn test_evolution_full_cycle_record_then_evolve() {
     assert!(json["result"]["test_candles"].as_u64().unwrap() > 0);
 }
 
+#[tokio::test]
+async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut candidate = backtest_config();
+    candidate["harness"]["position_sizing"] =
+        serde_json::json!({"method": "fixed_fraction", "fraction": 0.35});
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert!(json["candles_used"].as_u64().unwrap() >= 60);
+    assert!(json["blockers"].as_array().unwrap().iter().any(|b| {
+        b.as_str()
+            .unwrap()
+            .contains("missing persisted paper trading evidence")
+    }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_ignores_forged_request_paper_evidence() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-paper-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "paper": {
+            "trades": 999,
+            "total_return_pct": 50.0,
+            "max_drawdown_pct": 0.1,
+            "candidate_hash": "sha256:forged"
+        },
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["paper"], serde_json::Value::Null);
+    let blockers = json["blockers"].as_array().unwrap();
+    assert!(
+        blockers
+            .iter()
+            .any(|b| b.as_str().unwrap().contains("missing persisted paper"))
+    );
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_derives_paper_evidence_from_persisted_candidate_trades() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-persisted-paper-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = if i < 30 {
+            120.0 - i as f64
+        } else {
+            90.0 + (i - 30) as f64 * 1.2
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let candidate = backtest_config();
+    let probe_body = serde_json::json!({
+        "user_intent": "Probe exact candidate hash before persisted paper evidence exists.",
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+    let probe_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&probe_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = probe_resp.status();
+    let bytes = probe_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let probe_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = probe_json["run"]["candidate_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "user_intent": "Create exact revision-scoped paper evidence candidate.",
+                        "base_snapshot_id": snapshot_id,
+                        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// revision-scoped evidence\n",
+                        "files_changed": ["strategy.rs"],
+                        "tests": ["cargo test -p trading-runtime --lib"],
+                        "status": "candidate"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let revision_id = revision["revision_id"].as_str().unwrap().to_string();
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": "sha256:intentionally-wrong",
+            "revision_id": revision_id,
+            "paper_pnl_pct": "0.1",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 10.0))
+        }));
+        let exec_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", &format!("Bearer {bot_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = exec_resp.status();
+        let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    }
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "revision_id": revision_id,
+        "paper": {
+            "trades": 0,
+            "total_return_pct": -99.0,
+            "max_drawdown_pct": 99.0,
+            "candidate_hash": "sha256:forged"
+        },
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+
+    let gate_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["paper"]["candidate_hash"], candidate_hash);
+    assert_eq!(json["paper"]["revision_id"], revision_id);
+    assert_eq!(json["paper"]["trades"], 20);
+    assert!(json["paper"]["total_return_pct"].as_f64().unwrap() > 0.0);
+    assert_eq!(json["paper"]["max_drawdown_pct"].as_f64().unwrap(), 0.0);
+    let blockers = json["blockers"].as_array().unwrap();
+    assert!(!blockers.iter().any(|b| {
+        let blocker = b.as_str().unwrap();
+        blocker.contains("missing persisted paper")
+            || blocker.contains("need at least")
+            || blocker.contains("return must be positive")
+            || blocker.contains("drawdown")
+            || blocker.contains("missing pnl")
+            || blocker.contains("missing equity")
+    }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_does_not_leak_revision_evidence_across_bots() {
+    let mock = MockServer::start().await;
+    let bot_a = format!("evo-isolation-a-{}", uuid::Uuid::new_v4());
+    let bot_b = format!("evo-isolation-b-{}", uuid::Uuid::new_v4());
+    let app_a = build_router(test_state_with_bot_id(&mock.uri(), &bot_a).await);
+    let app_b = build_router(test_state_with_bot_id(&mock.uri(), &bot_b).await);
+    record_evolution_candles(&app_a, &bot_a).await;
+    record_evolution_candles(&app_b, &bot_b).await;
+
+    let probe_body = serde_json::json!({
+        "user_intent": "Probe shared candidate hash for bot isolation evidence.",
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+    let probe_resp = app_a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", format!("Bearer {bot_a}"))
+                .header("content-type", "application/json")
+                .body(Body::from(probe_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(probe_resp.status(), 200);
+    let bytes = probe_resp.into_body().collect().await.unwrap().to_bytes();
+    let probe_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = probe_json["run"]["candidate_hash"].as_str().unwrap();
+    let revision_id_a = create_sandbox_revision(&app_a, &bot_a, None).await;
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": candidate_hash,
+            "revision_id": revision_id_a,
+            "paper_pnl_pct": "0.2",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 20.0))
+        }));
+        let exec_resp = app_a
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", format!("Bearer {bot_a}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exec_resp.status(), 200);
+    }
+
+    let gate_body = serde_json::json!({
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "revision_id": revision_id_a,
+        "min_paper_trades": 20,
+        "max_paper_drawdown_pct": 10.0
+    });
+    let gate_resp = app_b
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", format!("Bearer {bot_b}"))
+                .header("content-type", "application/json")
+                .body(Body::from(gate_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["paper"], serde_json::Value::Null);
+    assert!(json["blockers"].as_array().unwrap().iter().any(|blocker| {
+        blocker
+            .as_str()
+            .unwrap()
+            .contains("missing persisted paper trading evidence")
+    }));
+}
+
+#[tokio::test]
+async fn test_execute_rejects_stale_live_revision_after_rollback() {
+    let market = MockServer::start().await;
+    let rpc = MockServer::start().await;
+    let state = live_test_state(&market.uri(), &rpc.uri()).await;
+    let app = build_router(state);
+
+    let first_revision_id = create_sandbox_revision(&app, TEST_TOKEN, None).await;
+    let second_revision_id =
+        create_sandbox_revision(&app, TEST_TOKEN, Some(&first_revision_id)).await;
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{second_revision_id}/activate"
+                ))
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "candidate passed paper evidence"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let rollback_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/rollback")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "target_revision_id": first_revision_id,
+                        "reason": "candidate failed canary"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rollback_resp.status(), 200);
+
+    let exec_body = execute_body_with_metadata(serde_json::json!({
+        "test_nonce": uuid::Uuid::new_v4().to_string(),
+        "revision_id": second_revision_id
+    }));
+    let exec_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(exec_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = exec_resp.status();
+    let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("not the active live revision"),
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn test_self_improvement_loop_generates_candidate_gates_and_persists_run() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..72 {
+        let base = if i < 36 {
+            140.0 - i as f64 * 1.1
+        } else {
+            100.0 + (i - 36) as f64 * 1.05
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.2),
+            "low": format!("{:.2}", base - 0.8),
+            "close": format!("{:.2}", base + 0.35),
+            "volume": "120000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let body = serde_json::json!({
+        "user_intent": "Make this strategy safer and reduce risk before any live promotion.",
+        "current": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(json["run"]["bot_id"], bot_id);
+    assert!(
+        json["run"]["candidate_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert_eq!(json["run"]["approved"], false);
+    assert_eq!(json["run"]["status"], "blocked");
+    assert!(json["run"]["blockers"].as_array().unwrap().iter().any(|b| {
+        b.as_str()
+            .unwrap()
+            .contains("missing persisted paper trading evidence")
+    }));
+    assert_eq!(
+        json["run"]["candidate_config"]["harness"]["version"].as_u64(),
+        Some(2)
+    );
+    assert!(
+        json["run"]["candidate_config"]["harness"]["entry_threshold"]
+            .as_f64()
+            .unwrap()
+            > backtest_config()["harness"]["entry_threshold"]
+                .as_f64()
+                .unwrap()
+    );
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 1);
+    assert_eq!(runs[0]["run_id"], json["run"]["run_id"]);
+}
+
+#[tokio::test]
+async fn test_self_improvement_records_sandbox_lineage_and_survives_rollback() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-sandbox-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..72 {
+        let base = if i < 36 {
+            140.0 - i as f64 * 1.1
+        } else {
+            100.0 + (i - 36) as f64 * 1.05
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.2),
+            "low": format!("{:.2}", base - 0.8),
+            "close": format!("{:.2}", base + 0.35),
+            "volume": "120000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let snapshot_body = serde_json::json!({
+        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+        "base_ref": "linh/feat/hype-perp",
+        "base_commit": "cc4b514",
+        "base_image_digest": "sha256:base-image",
+        "workspace_digest": "sha256:workspace-v0",
+        "workspace_path": "/workspace/bot"
+    });
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(snapshot_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap().to_string();
+
+    let candidate = backtest_config();
+    let first_body = serde_json::json!({
+        "user_intent": "Rewrite the local sandbox strategy runner to test a safer entry threshold.",
+        "current": backtest_config(),
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7,
+        "sandbox_mutation": {
+            "base_snapshot_id": snapshot_id,
+            "patch": "diff --git a/trading-runtime/src/backtest/runner.rs b/trading-runtime/src/backtest/runner.rs\n+// safer threshold experiment\n",
+            "files_changed": ["trading-runtime/src/backtest/runner.rs"],
+            "tests": ["cargo test -p trading-runtime --lib"]
+        }
+    });
+    let first_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(first_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = first_resp.status();
+    let bytes = first_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let first_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candidate_hash = first_json["run"]["candidate_hash"].as_str().unwrap();
+    let first_revision_id = first_json["run"]["sandbox_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(first_json["run"]["base_snapshot_id"], snapshot_id);
+
+    for i in 0..20 {
+        let exec_body = execute_body_with_metadata(serde_json::json!({
+            "test_nonce": uuid::Uuid::new_v4().to_string(),
+            "candidate_hash": candidate_hash,
+            "paper_pnl_pct": "0.1",
+            "paper_equity_after": format!("{:.2}", 10_000.0 + (i as f64 * 10.0))
+        }));
+        let exec_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("authorization", &format!("Bearer {bot_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(exec_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = exec_resp.status();
+        let bytes = exec_resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    }
+
+    let second_body = serde_json::json!({
+        "user_intent": "Continue the same sandbox experiment after paper trading evidence exists.",
+        "current": backtest_config(),
+        "candidate": backtest_config(),
+        "token": "ETH",
+        "train_pct": 0.7,
+        "sandbox_mutation": {
+            "base_snapshot_id": snapshot_id,
+            "parent_revision_id": first_revision_id,
+            "patch": "diff --git a/trading-http-api/src/routes/evolution.rs b/trading-http-api/src/routes/evolution.rs\n+// persist paper evidence linkage\n",
+            "files_changed": ["trading-http-api/src/routes/evolution.rs"],
+            "tests": ["cargo test -p trading-http-api evolution --test api_tests"]
+        }
+    });
+    let second_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(second_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = second_resp.status();
+    let bytes = second_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let second_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(second_json["run"]["paper_evidence"]["trades"], 20);
+    let second_revision_id = second_json["run"]["sandbox_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{second_revision_id}/activate"
+                ))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "passed paper evidence"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let rollback_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/rollback")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "target_revision_id": first_revision_id,
+                        "reason": "regression detected"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = rollback_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let rollback: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(rollback["revision_id"], first_revision_id);
+    assert_eq!(rollback["rollback_from"], second_revision_id);
+
+    let lineage_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/sandbox/lineage")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = lineage_resp.into_body().collect().await.unwrap().to_bytes();
+    let lineage: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(lineage["snapshots"].as_array().unwrap().len(), 1);
+    assert_eq!(lineage["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(lineage["active_revision"]["revision_id"], first_revision_id);
+    assert_eq!(
+        lineage["active_revision"]["rollback_from"],
+        second_revision_id
+    );
+    assert!(
+        lineage["revisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|revision| {
+                revision["run_id"] == second_json["run"]["run_id"]
+                    && revision["parent_revision_id"] == first_revision_id
+            })
+    );
+}
+
+#[tokio::test]
+async fn test_revision_arena_projects_revision_zero_and_active_candidate() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("revision-arena-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let initial_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/revision-arena")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initial_resp.status(), 200);
+    let bytes = initial_resp.into_body().collect().await.unwrap().to_bytes();
+    let initial: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(initial["active_revision_id"], "rev-0");
+    assert_eq!(initial["live_revision_id"], serde_json::Value::Null);
+    assert_eq!(initial["revisions"].as_array().unwrap().len(), 1);
+    assert_eq!(initial["revisions"][0]["revision_id"], "rev-0");
+    assert_eq!(initial["revisions"][0]["run_mode"], "paper");
+    assert_eq!(initial["revisions"][0]["can_execute_live"], false);
+    assert!(
+        initial["invariant"]
+            .as_str()
+            .unwrap()
+            .contains("Only the active live/canary revision")
+    );
+
+    let snapshot_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/snapshot")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "base_repo": "https://github.com/tangle-network/ai-trading-blueprint",
+                        "base_ref": "linh/feat/hype-perp",
+                        "base_commit": "rev0",
+                        "base_image_digest": "sha256:image",
+                        "workspace_digest": "sha256:workspace"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot_resp.status(), 200);
+    let bytes = snapshot_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshot_id = snapshot["snapshot_id"].as_str().unwrap();
+
+    let revision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/sandbox/revisions")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "user_intent": "Create a paper-only revision arena candidate.",
+                        "base_snapshot_id": snapshot_id,
+                        "patch": "diff --git a/strategy.rs b/strategy.rs\n+// candidate\n",
+                        "files_changed": ["strategy.rs"],
+                        "tests": ["cargo test -p trading-runtime --lib"],
+                        "status": "candidate"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revision_resp.status(), 200);
+    let bytes = revision_resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let revision: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let revision_id = revision["revision_id"].as_str().unwrap();
+
+    let activate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/sandbox/revisions/{revision_id}/activate"
+                ))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"reason": "paper promotion accepted"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activate_resp.status(), 200);
+
+    let arena_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/revision-arena")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(arena_resp.status(), 200);
+    let bytes = arena_resp.into_body().collect().await.unwrap().to_bytes();
+    let arena: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(arena["active_revision_id"], revision_id);
+    assert_eq!(arena["live_revision_id"], serde_json::Value::Null);
+    assert_eq!(arena["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(arena["revisions"][0]["status"], "superseded");
+    assert_eq!(arena["revisions"][1]["revision_id"], revision_id);
+    assert_eq!(arena["revisions"][1]["status"], "active");
+    assert_eq!(arena["revisions"][1]["run_mode"], "paper");
+    assert_eq!(arena["revisions"][1]["can_execute_live"], false);
+    assert_eq!(arena["revisions"][1]["parent_revision_id"], "rev-0");
+    assert_eq!(arena["revisions"][1]["files_changed"][0], "strategy.rs");
+    assert!(
+        arena["modes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|mode| mode["mode"] == "live" && mode["can_touch_funds"] == true)
+    );
+}
+
+#[tokio::test]
+async fn test_self_improvement_rejects_short_intent_before_artifacting() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-short-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "user_intent": "too short",
+        "current": backtest_config(),
+        "token": "ETH"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/self-improve")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_self_improvement_stress_concurrent_runs_persist_and_stay_bot_scoped() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("self-improve-stress-{}", uuid::Uuid::new_v4());
+    let other_bot_id = format!("self-improve-other-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+    let other_state = test_state_with_bot_id(&mock.uri(), &other_bot_id).await;
+    let other_app = build_router(other_state);
+
+    let mut candles = Vec::new();
+    for i in 0..96 {
+        let base = if i < 48 {
+            160.0 - i as f64 * 0.9
+        } else {
+            116.0 + (i - 48) as f64 * 0.85
+        };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.1),
+            "low": format!("{:.2}", base - 0.7),
+            "close": format!("{:.2}", base + 0.3),
+            "volume": "150000"
+        }));
+    }
+
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut explicit_candidate = backtest_config();
+    explicit_candidate["harness"]["version"] = serde_json::json!(77);
+    explicit_candidate["harness"]["entry_threshold"] = serde_json::json!(0.42);
+
+    let mut calls = Vec::new();
+    for i in 0..12 {
+        let app = app.clone();
+        let bot_id = bot_id.clone();
+        let mut body = serde_json::json!({
+            "user_intent": format!("Concurrent improvement run {i}: reduce drawdown without live mutation."),
+            "current": backtest_config(),
+            "candidate": explicit_candidate,
+            "token": "ETH",
+            "train_pct": 0.7
+        });
+        if i % 2 == 0 {
+            body["paper"] = serde_json::json!({
+                "trades": 3,
+                "total_return_pct": -0.2,
+                "max_drawdown_pct": 15.0,
+                "candidate_hash": format!("candidate-{i}")
+            });
+        }
+        calls.push(tokio::spawn(async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/evolution/self-improve")
+                        .header("authorization", &format!("Bearer {bot_id}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_string(&body).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        }));
+    }
+
+    let results = futures_util::future::join_all(calls).await;
+    let mut run_ids = std::collections::BTreeSet::new();
+    for result in results {
+        let json = result.unwrap();
+        assert_eq!(json["run"]["approved"], false);
+        assert_eq!(json["run"]["status"], "blocked");
+        assert_eq!(
+            json["run"]["candidate_config"]["harness"]["version"].as_u64(),
+            Some(77),
+            "explicit agent candidate must not be overwritten by generator"
+        );
+        assert!(run_ids.insert(json["run"]["run_id"].as_str().unwrap().to_string()));
+    }
+    assert_eq!(run_ids.len(), 12);
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bytes = list_resp.into_body().collect().await.unwrap().to_bytes();
+    let runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(runs.as_array().unwrap().len(), 12);
+
+    let other_resp = other_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/evolution/self-improve/runs")
+                .header("authorization", &format!("Bearer {other_bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(other_resp.status(), 200);
+    let bytes = other_resp.into_body().collect().await.unwrap().to_bytes();
+    let other_runs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(other_runs.as_array().unwrap().len(), 0);
+}
+
 // ── Backtest multi-token tests ─────────────────────────────────────────
 
 #[tokio::test]
@@ -6706,15 +8938,15 @@ impl Drop for CexEnvGuard {
     }
 }
 
-fn cex_env_lock() -> &'static std::sync::Mutex<()> {
+fn cex_env_lock() -> &'static tokio::sync::Mutex<()> {
     use std::sync::OnceLock;
-    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::const_new(()))
 }
 
 #[tokio::test]
 async fn test_cex_unknown_venue_returns_404() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
 
@@ -6735,7 +8967,7 @@ async fn test_cex_unknown_venue_returns_404() {
 
 #[tokio::test]
 async fn test_cex_live_direct_route_rejected_for_live_bot() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     ensure_state_dir();
     let bot_id = format!("bot-direct-cex-{}", uuid::Uuid::new_v4());
     let bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::Envelope);
@@ -6768,7 +9000,7 @@ async fn test_cex_live_direct_route_rejected_for_live_bot() {
 
 #[tokio::test]
 async fn test_cex_binance_paper_order_through_mock() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -6838,7 +9070,7 @@ async fn test_cex_binance_paper_order_through_mock() {
 
 #[tokio::test]
 async fn test_cex_binance_account_endpoint() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -6886,7 +9118,7 @@ async fn test_cex_binance_account_endpoint() {
 
 #[tokio::test]
 async fn test_cex_binance_translates_insufficient_balance_to_402() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -6933,7 +9165,7 @@ async fn test_cex_binance_translates_insufficient_balance_to_402() {
 
 #[tokio::test]
 async fn test_cex_coinbase_paper_order_through_mock() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let mock = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -6994,7 +9226,7 @@ async fn test_cex_coinbase_paper_order_through_mock() {
 
 #[tokio::test]
 async fn test_cex_coinbase_misconfigured_key_returns_503() {
-    let _guard = cex_env_lock().lock().unwrap();
+    let _guard = cex_env_lock().lock().await;
     let _env = CexEnvGuard::set(&[
         ("COINBASE_BASE_URL", "http://127.0.0.1:1"),
         (

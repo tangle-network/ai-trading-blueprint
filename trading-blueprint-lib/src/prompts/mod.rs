@@ -121,6 +121,22 @@ pub fn build_pack_loop_prompt(
                 metrics_idx = metrics_step_index,
             )
         }
+        "hyperliquid_perp" => format!(
+            "Trading tick ({name}). Run these steps:\n\n\
+             1. Load the Trading API client: `const api=require('/home/agent/tools/api-client')`.\n\
+             2. Check live Hyperliquid state before considering risk:\n\
+                `await api.getHyperliquidNav()` — confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.\n\
+                `await api.getHyperliquidMode()` — if mode is `liquidity` or `emergency_wind_down`, do not open or increase exposure.\n\
+                `await api.apiCall('GET','/hyperliquid/account')` — inspect account value, usable margin, positions, and open orders.\n\
+                `await api.apiCall('GET','/hyperliquid/prices')` — read current perp mid prices.\n\
+             3. If account value, withdrawable, or usable/free margin is missing, zero, stale, or not parseable, make a safe skip decision. Log it with `node /home/agent/tools/log-decision.js '{{\"action\":\"skip\",\"reason\":\"no-usable-hyperliquid-margin\"}}'`, write metrics with `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`, and stop.\n\
+             4. If mode allows risk and there is usable margin, choose a small ETH/BTC/SOL perp action from current positions, prices, funding, and risk limits. Prefer no trade unless the setup is clear.\n\
+             5. For any actionable trade, build an intent with `target_protocol: \"hyperliquid\"`, `action: \"open\"`, `action: \"close\"`, or `action: \"reduce\"`, and `metadata` containing `asset`, optional `limit_price`, reduce-only intent when reducing, and stop-loss / take-profit context when available. Do not include `leverage`; live account leverage is preconfigured outside the tick loop. Use only the Trading API validation/execution flow: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`.\n\
+             6. Log every trade or skip with `log-decision.js` and write metrics with `write-metrics.js` using the latest NAV/account value.\n\n\
+             Use only Hyperliquid state and actions in this loop. Be decisive — you have {max_turns} turns.",
+            name = pack.name,
+            max_turns = pack.max_turns,
+        ),
         _ => format!(
             "Trading tick ({name}). Run these steps:\n\n\
              1. `node /home/agent/tools/analyze-opportunities.js` — scans markets, fetches prices, outputs actionable opportunities\n\
@@ -230,15 +246,14 @@ Authorization: Bearer {token}
   Body: {{ "max_drawdown_pct": 10.0 }}
 - GET /adapters — List available protocol adapters
 
-### Hyperliquid Perps Endpoints (native L1 API — preferred for HL)
-- POST /hyperliquid/order — Place any order type directly
-  Body: {{ "asset": "ETH", "is_buy": true, "size": "0.1", "order_type": {{ "type": "market" }} }}
-- POST /hyperliquid/bracket — Entry + stop-loss + take-profit grouped
-  Body: {{ "entry": {{...}}, "stop_loss": {{...}}, "take_profit": {{...}} }}
-- POST /hyperliquid/cancel — Cancel an order
+### Hyperliquid Perps Endpoints
+- GET /hyperliquid/nav — Required before opening or increasing risk; confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.
+- GET /hyperliquid/mode — Required before opening or increasing risk. If mode is `liquidity` or `emergency_wind_down`, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure.
+- GET /hyperliquid/settlement — Withdrawal pressure tool. Reports FIFO queue pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
+- Live orders must go through POST /validate then POST /execute with `target_protocol: "hyperliquid"`; direct native order/leverage routes are unavailable for live bots.
+- Do not include `metadata.leverage` in live Hyperliquid execute intents; leverage is account-level configuration outside this tick loop.
+- POST /hyperliquid/cancel — Cancel a paper-mode order only; live risk-reducing actions must still go through /execute.
   Body: {{ "asset": 1, "order_id": 12345 }}
-- POST /hyperliquid/leverage — Set leverage (do this BEFORE placing orders)
-  Body: {{ "asset": 1, "leverage": 5, "is_cross": true }}
 - GET /hyperliquid/account — Positions, margin, open orders
 - GET /hyperliquid/prices — Mid prices for all HL perp markets
 
@@ -437,6 +452,12 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          Keep the cycle small:\n\
          - Test one existing relevant tool, or\n\
          - Propose one HarnessConfig mutation and backtest it.\n\n\
+         First run the package-backed self-improvement status check:\n\
+         ```\n\
+         bun --bun /home/agent/tools/self-improvement-loop.mjs status\n\
+         ```\n\
+         If the Tangle packages are unavailable, run `npm install` or `pnpm install` from /home/agent before attempting a code-changing loop.\n\n\
+         For code/tool changes, prefer the local MCP server over manual shell editing. It is registered at `/home/agent/config/self-improvement-mcp.json` and exposes `self_improvement.create_task`, `self_improvement.status`, `self_improvement.list_tasks`, `self_improvement.logs`, `self_improvement.patch`, `self_improvement.cancel`, `self_improvement.backtest`, and `self_improvement.promote_candidate`. The MCP creates isolated worktrees, drives one or more coding-agent variants through multiple feedback rounds, runs deterministic checks, can run an optional reviewer command, and only completes after a candidate passes.\n\n\
          Correct candle workflow:\n\
          ```\n\
          curl -X POST {api_url}/market-data/candles/fetch -H 'Authorization: Bearer {token}' \\\n\
@@ -452,7 +473,12 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
          ## 4. Promote or discard\n\
          If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
          If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
-         ## 5. Update memory\n\
+         ## 5. Record the self-improvement run\n\
+         For any code, prompt, tool, or harness mutation, record the sandbox snapshot, findings, knowledge, and promotion gate through:\n\
+         ```\n\
+         bun --bun /home/agent/tools/self-improvement-loop.mjs run \"<one sentence intent and mutation summary>\"\n\
+         ```\n\n\
+         ## 6. Update memory\n\
          Update /home/agent/memory/toc.md with findings. Log insights.\n\n\
          Report: what you analyzed, what you changed, backtest results.",
         api_url = api_url,
@@ -770,6 +796,30 @@ mod tests {
             prompt.contains("1000000") && prompt.contains("1000000000000000000"),
             "dex loop prompt must give concrete base-unit examples"
         );
+    }
+
+    #[test]
+    fn test_hyperliquid_perp_loop_prompt_uses_hyperliquid_workflow_only() {
+        let pack = packs::get_pack("hyperliquid_perp").unwrap();
+        let mut config = test_config();
+        config.strategy_type = "hyperliquid_perp".to_string();
+        config.chain_id = 998;
+        let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
+
+        assert!(prompt.contains("getHyperliquidNav"));
+        assert!(prompt.contains("getHyperliquidMode"));
+        assert!(prompt.contains("/hyperliquid/account"));
+        assert!(prompt.contains("/hyperliquid/prices"));
+        assert!(!prompt.contains("/hyperliquid/order"));
+        assert!(prompt.contains("Do not include `leverage`"));
+        assert!(prompt.contains("no-usable-hyperliquid-margin"));
+        assert!(prompt.contains("target_protocol: \"hyperliquid\""));
+        assert!(prompt.contains("15 turns"));
+        assert!(!prompt.contains("condition-id"));
+        assert!(!prompt.contains("polymarket_clob"));
+        assert!(!prompt.contains("submit-trade.js"));
+        assert!(!prompt.contains("check-orders.js"));
+        assert!(!prompt.contains("manage-collateral.js"));
     }
 
     #[test]

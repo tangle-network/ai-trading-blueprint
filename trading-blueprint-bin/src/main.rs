@@ -61,6 +61,11 @@ fn configure_runtime_env() {
         // any worker threads.
         unsafe { std::env::set_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", "0") };
     }
+    if std::env::var("REQUEST_TIMEOUT_SECS").is_err() {
+        // SAFETY: single-threaded at this point — called before tokio spawns
+        // any worker threads.
+        unsafe { std::env::set_var("REQUEST_TIMEOUT_SECS", "360") };
+    }
 }
 
 #[tokio::main]
@@ -415,6 +420,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
             // wrapper that consumes the field defaults to no NAV stream when
             // None. Wire later when the trading-bin needs to stream NAV.
             nav_stream_config: None,
+            hyperliquid_nav_reconciler: std::sync::Arc::new(
+                trading_http_api::hyperliquid_nav::DefaultHyperliquidNavReconciler,
+            ),
         });
 
         let router = trading_http_api::build_multi_bot_router(trading_state);
@@ -435,18 +443,18 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
 
     let tangle_config = {
         let mut config = TangleConfig::default();
-        if let Ok(cap_str) = std::env::var("OPERATOR_MAX_CAPACITY") {
-            if let Ok(capacity) = cap_str.parse::<u32>() {
-                tracing::info!("Registering with OPERATOR_MAX_CAPACITY={capacity}");
-                let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
-                let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
-                let inputs = trading_blueprint_lib::registration::trading_registration_payload(
-                    capacity,
-                    &api_endpoint,
-                    &strategies,
-                );
-                config = config.with_registration_inputs(inputs);
-            }
+        if let Ok(cap_str) = std::env::var("OPERATOR_MAX_CAPACITY")
+            && let Ok(capacity) = cap_str.parse::<u32>()
+        {
+            tracing::info!("Registering with OPERATOR_MAX_CAPACITY={capacity}");
+            let api_endpoint = std::env::var("OPERATOR_API_ENDPOINT").unwrap_or_default();
+            let strategies = std::env::var("SUPPORTED_STRATEGIES").unwrap_or_default();
+            let inputs = trading_blueprint_lib::registration::trading_registration_payload(
+                capacity,
+                &api_endpoint,
+                &strategies,
+            );
+            config = config.with_registration_inputs(inputs);
         }
         config
     };
@@ -597,7 +605,9 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         runner = runner.producer(producer).background_service(gateway);
     }
 
-    let private_key_for_shutdown = std::env::var("PRIVATE_KEY").unwrap_or_default();
+    let private_key_for_shutdown = std::env::var("HYPERLIQUID_API_WALLET_PRIVATE_KEY")
+        .or_else(|_| std::env::var("HYPERLIQUID_API_PRIVATE_KEY"))
+        .unwrap_or_default();
     let result = runner
         .with_shutdown_handler(async move {
             tracing::info!("Shutting down trading blueprint — closing HL positions");
@@ -751,4 +761,61 @@ fn setup_log() {
         .try_init()
         .is_err()
     {}
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env_var(key: &str, value: Option<OsString>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn configure_runtime_env_defaults_request_timeout() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");
+        let original_idle = std::env::var_os("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+
+        unsafe {
+            std::env::remove_var("REQUEST_TIMEOUT_SECS");
+            std::env::remove_var("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+        }
+
+        super::configure_runtime_env();
+
+        assert_eq!(std::env::var("REQUEST_TIMEOUT_SECS").unwrap(), "360");
+        assert_eq!(std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").unwrap(), "0");
+
+        restore_env_var("REQUEST_TIMEOUT_SECS", original_timeout);
+        restore_env_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", original_idle);
+    }
+
+    #[test]
+    fn configure_runtime_env_preserves_request_timeout_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");
+        let original_idle = std::env::var_os("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+
+        unsafe {
+            std::env::set_var("REQUEST_TIMEOUT_SECS", "42");
+            std::env::remove_var("SANDBOX_DEFAULT_IDLE_TIMEOUT");
+        }
+
+        super::configure_runtime_env();
+
+        assert_eq!(std::env::var("REQUEST_TIMEOUT_SECS").unwrap(), "42");
+        assert_eq!(std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").unwrap(), "0");
+
+        restore_env_var("REQUEST_TIMEOUT_SECS", original_timeout);
+        restore_env_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", original_idle);
+    }
 }

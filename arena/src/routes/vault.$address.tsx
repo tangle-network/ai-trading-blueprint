@@ -252,6 +252,7 @@ export default function VaultPage() {
           <WithdrawForm
             vaultAddress={vaultAddress}
             assetSymbol={vault.assetSymbol}
+            assetDecimals={vault.assetDecimals}
             shareDecimals={vault.shareDecimals}
             userShares={vault.userShares}
             userSharesFormatted={vault.userSharesFormatted}

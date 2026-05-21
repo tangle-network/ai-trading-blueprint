@@ -124,10 +124,10 @@ fn extract_json_array(s: &str) -> &str {
             return after[..end].trim();
         }
     }
-    if let Some(start) = s.find('[') {
-        if let Some(end) = s.rfind(']') {
-            return &s[start..=end];
-        }
+    if let Some(start) = s.find('[')
+        && let Some(end) = s.rfind(']')
+    {
+        return &s[start..=end];
     }
     s.trim()
 }
@@ -408,15 +408,15 @@ Respond with JSON only. No markdown, no extra text.";
             }
             // Also try extracting from markdown fences
             let cleaned = extract_json_array(&llm_output);
-            if let Ok(hold_json) = serde_json::from_str::<serde_json::Value>(cleaned) {
-                if hold_json.get("action").and_then(|a| a.as_str()) == Some("hold") {
-                    println!(
-                        "\n  [agent] DECISION: HOLD — {}",
-                        hold_json["reasoning"].as_str().unwrap_or("no reason given")
-                    );
-                    holds += 1;
-                    continue;
-                }
+            if let Ok(hold_json) = serde_json::from_str::<serde_json::Value>(cleaned)
+                && hold_json.get("action").and_then(|a| a.as_str()) == Some("hold")
+            {
+                println!(
+                    "\n  [agent] DECISION: HOLD — {}",
+                    hold_json["reasoning"].as_str().unwrap_or("no reason given")
+                );
+                holds += 1;
+                continue;
             }
         }
 

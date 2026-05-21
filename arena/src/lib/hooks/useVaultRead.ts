@@ -4,6 +4,7 @@ import { formatUnits, zeroAddress } from 'viem';
 import type { Address } from 'viem';
 import { tradingVaultAbi, erc20Abi } from '~/lib/contracts/abis';
 import { getChainPublicClient } from '~/lib/contracts/chainClients';
+import { isKnownExternalHyperEvmChainId } from '~/lib/contracts/chains';
 
 interface VaultReadState {
   tvl?: number;
@@ -35,6 +36,10 @@ interface VaultReadState {
   isLoading: boolean;
   isRefreshing: boolean;
   error?: Error;
+}
+
+function usesAssetUnitShares(targetChainId: number): boolean {
+  return isKnownExternalHyperEvmChainId(targetChainId);
 }
 
 /** Read all vault on-chain state using a standalone viem client. */
@@ -73,40 +78,48 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
 
     try {
       const client = getChainPublicClient(targetChainId);
+      const assetUnitShares = usesAssetUnitShares(targetChainId);
       // Phase 1: Vault basics — try multicall first, fall back to individual calls
       let totalAssets: bigint | undefined;
       let assetToken: Address | undefined;
       let shareToken: Address | undefined;
       let paused = false;
 
-      try {
-        const vaultBasics: any[] = await client.multicall({
-          contracts: [
-            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalAssets' },
-            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'asset' },
-            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'share' },
-            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'paused' },
-          ],
-        });
-        totalAssets = vaultBasics[0]?.status === 'success' ? vaultBasics[0].result as bigint : undefined;
-        assetToken = vaultBasics[1]?.status === 'success' ? vaultBasics[1].result as Address : undefined;
-        shareToken = vaultBasics[2]?.status === 'success' ? vaultBasics[2].result as Address : undefined;
-        paused = vaultBasics[3]?.status === 'success' ? (vaultBasics[3].result as boolean) : false;
-
-        // Log individual failures for debugging
-        for (let i = 0; i < vaultBasics.length; i++) {
-          if (vaultBasics[i]?.status === 'failure') {
-            const names = ['totalAssets', 'asset', 'share', 'paused'];
-            console.warn(`[useVaultRead] ${names[i]}() failed:`, vaultBasics[i].error?.message ?? 'unknown');
-          }
-        }
-      } catch (mcErr) {
-        // Multicall failed entirely (e.g. multicall3 not deployed) — try individual calls
-        console.warn('[useVaultRead] multicall failed, trying individual calls:', mcErr);
+      if (assetUnitShares) {
         try { totalAssets = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalAssets' }) as bigint; } catch {}
         try { assetToken = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'asset' }) as Address; } catch {}
         try { shareToken = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'share' }) as Address; } catch {}
         try { paused = (await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'paused' }) as boolean) ?? false; } catch {}
+      } else {
+        try {
+          const vaultBasics: any[] = await client.multicall({
+            contracts: [
+              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalAssets' },
+              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'asset' },
+              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'share' },
+              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'paused' },
+            ],
+          });
+          totalAssets = vaultBasics[0]?.status === 'success' ? vaultBasics[0].result as bigint : undefined;
+          assetToken = vaultBasics[1]?.status === 'success' ? vaultBasics[1].result as Address : undefined;
+          shareToken = vaultBasics[2]?.status === 'success' ? vaultBasics[2].result as Address : undefined;
+          paused = vaultBasics[3]?.status === 'success' ? (vaultBasics[3].result as boolean) : false;
+
+          // Log individual failures for debugging
+          for (let i = 0; i < vaultBasics.length; i++) {
+            if (vaultBasics[i]?.status === 'failure') {
+              const names = ['totalAssets', 'asset', 'share', 'paused'];
+              console.warn(`[useVaultRead] ${names[i]}() failed:`, vaultBasics[i].error?.message ?? 'unknown');
+            }
+          }
+        } catch (mcErr) {
+          // Multicall failed entirely (e.g. multicall3 not deployed) — try individual calls
+          console.warn('[useVaultRead] multicall failed, trying individual calls:', mcErr);
+          try { totalAssets = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalAssets' }) as bigint; } catch {}
+          try { assetToken = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'asset' }) as Address; } catch {}
+          try { shareToken = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'share' }) as Address; } catch {}
+          try { paused = (await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'paused' }) as boolean) ?? false; } catch {}
+        }
       }
 
       if (!assetToken || !shareToken) {
@@ -132,29 +145,37 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
       let shareDec = 18;
       let shareSupply: bigint | undefined;
 
-      try {
-        const tokenInfo: any[] = await client.multicall({
-          contracts: [
-            { address: assetToken, abi: erc20Abi, functionName: 'symbol' },
-            { address: assetToken, abi: erc20Abi, functionName: 'decimals' },
-            { address: shareToken, abi: erc20Abi, functionName: 'decimals' },
-            { address: shareToken, abi: erc20Abi, functionName: 'totalSupply' },
-          ],
-        });
-        assetSymbol = tokenInfo[0]?.status === 'success' ? (tokenInfo[0].result as string) : '???';
-        assetDecimals = tokenInfo[1]?.status === 'success' ? (tokenInfo[1].result as number) : 18;
-        shareDec = tokenInfo[2]?.status === 'success' ? (tokenInfo[2].result as number) : 18;
-        shareSupply = tokenInfo[3]?.status === 'success' ? (tokenInfo[3].result as bigint) : undefined;
-      } catch (mcErr) {
-        console.warn('[useVaultRead] token info multicall failed, trying individual calls:', mcErr);
+      if (assetUnitShares) {
         try { assetSymbol = (await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'symbol' }) as string) ?? '???'; } catch {}
         try { assetDecimals = (await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'decimals' }) as number) ?? 18; } catch {}
         try { shareDec = (await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'decimals' }) as number) ?? 18; } catch {}
         try { shareSupply = await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'totalSupply' }) as bigint; } catch {}
+      } else {
+        try {
+          const tokenInfo: any[] = await client.multicall({
+            contracts: [
+              { address: assetToken, abi: erc20Abi, functionName: 'symbol' },
+              { address: assetToken, abi: erc20Abi, functionName: 'decimals' },
+              { address: shareToken, abi: erc20Abi, functionName: 'decimals' },
+              { address: shareToken, abi: erc20Abi, functionName: 'totalSupply' },
+            ],
+          });
+          assetSymbol = tokenInfo[0]?.status === 'success' ? (tokenInfo[0].result as string) : '???';
+          assetDecimals = tokenInfo[1]?.status === 'success' ? (tokenInfo[1].result as number) : 18;
+          shareDec = tokenInfo[2]?.status === 'success' ? (tokenInfo[2].result as number) : 18;
+          shareSupply = tokenInfo[3]?.status === 'success' ? (tokenInfo[3].result as bigint) : undefined;
+        } catch (mcErr) {
+          console.warn('[useVaultRead] token info multicall failed, trying individual calls:', mcErr);
+          try { assetSymbol = (await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'symbol' }) as string) ?? '???'; } catch {}
+          try { assetDecimals = (await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'decimals' }) as number) ?? 18; } catch {}
+          try { shareDec = (await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'decimals' }) as number) ?? 18; } catch {}
+          try { shareSupply = await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'totalSupply' }) as bigint; } catch {}
+        }
       }
+      const displayShareDecimals = usesAssetUnitShares(targetChainId) ? assetDecimals : shareDec;
 
       // Phase 3: Conversion rate
-      const oneShare = 10n ** BigInt(shareDec);
+      const oneShare = 10n ** BigInt(displayShareDecimals);
       let assetsPerShare: bigint | undefined;
       try {
         assetsPerShare = await client.readContract({
@@ -176,47 +197,56 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
       let isNavSafe: boolean | undefined;
 
       if (userAddress) {
-        try {
-          const userResults: any[] = await client.multicall({
-            contracts: [
-              { address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
-              { address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
-              { address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] },
-              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] },
-            ],
-          });
-          userShares = userResults[0]?.status === 'success' ? userResults[0].result as bigint : undefined;
-          userAssetBalance = userResults[1]?.status === 'success' ? userResults[1].result as bigint : undefined;
-          userAllowance = userResults[2]?.status === 'success' ? userResults[2].result as bigint : undefined;
-          maxDeposit = userResults[3]?.status === 'success' ? userResults[3].result as bigint : undefined;
-        } catch (mcErr) {
-          console.warn('[useVaultRead] user balance multicall failed, trying individual calls:', mcErr);
+        if (assetUnitShares) {
           try { userShares = await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
           try { userAssetBalance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
           try { userAllowance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] }) as bigint; } catch {}
           try { maxDeposit = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] }) as bigint; } catch {}
+        } else {
+          try {
+            const userResults: any[] = await client.multicall({
+              contracts: [
+                { address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
+                { address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] },
+                { address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] },
+                { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] },
+              ],
+            });
+            userShares = userResults[0]?.status === 'success' ? userResults[0].result as bigint : undefined;
+            userAssetBalance = userResults[1]?.status === 'success' ? userResults[1].result as bigint : undefined;
+            userAllowance = userResults[2]?.status === 'success' ? userResults[2].result as bigint : undefined;
+            maxDeposit = userResults[3]?.status === 'success' ? userResults[3].result as bigint : undefined;
+          } catch (mcErr) {
+            console.warn('[useVaultRead] user balance multicall failed, trying individual calls:', mcErr);
+            try { userShares = await client.readContract({ address: shareToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
+            try { userAssetBalance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'balanceOf', args: [userAddress] }) as bigint; } catch {}
+            try { userAllowance = await client.readContract({ address: assetToken, abi: erc20Abi, functionName: 'allowance', args: [userAddress, vaultAddress] }) as bigint; } catch {}
+            try { maxDeposit = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [userAddress] }) as bigint; } catch {}
+          }
         }
       } else {
         try { maxDeposit = await client.readContract({ address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxDeposit', args: [zeroAddress] }) as bigint; } catch {}
       }
 
-      try {
-        heldTokens = await client.readContract({
-          address: vaultAddress,
-          abi: tradingVaultAbi,
-          functionName: 'getHeldTokens',
-        }) as Address[];
-      } catch {
-        heldTokens = [];
-      }
-      try {
-        isNavSafe = await client.readContract({
-          address: vaultAddress,
-          abi: tradingVaultAbi,
-          functionName: 'isNavSafe',
-        }) as boolean;
-      } catch {
-        isNavSafe = undefined;
+      if (!assetUnitShares) {
+        try {
+          heldTokens = await client.readContract({
+            address: vaultAddress,
+            abi: tradingVaultAbi,
+            functionName: 'getHeldTokens',
+          }) as Address[];
+        } catch {
+          heldTokens = [];
+        }
+        try {
+          isNavSafe = await client.readContract({
+            address: vaultAddress,
+            abi: tradingVaultAbi,
+            functionName: 'isNavSafe',
+          }) as boolean;
+        } catch {
+          isNavSafe = undefined;
+        }
       }
 
       // Phase 5: Collateral state
@@ -225,37 +255,39 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
       let availableCollateral: bigint | undefined;
       let isAdmin = false;
 
-      try {
-        const collateralCalls: any[] = [
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalOutstandingCollateral' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxCollateralBps' },
-          { address: vaultAddress, abi: tradingVaultAbi, functionName: 'availableCollateral' },
-        ];
-        // Check admin role if connected
-        if (userAddress) {
-          collateralCalls.push(
-            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'DEFAULT_ADMIN_ROLE' },
-          );
-        }
-        const collateralResults: any[] = await client.multicall({ contracts: collateralCalls });
-        totalOutstandingCollateral = collateralResults[0]?.status === 'success' ? collateralResults[0].result as bigint : undefined;
-        maxCollateralBps = collateralResults[1]?.status === 'success' ? Number(collateralResults[1].result) : undefined;
-        availableCollateral = collateralResults[2]?.status === 'success' ? collateralResults[2].result as bigint : undefined;
+      if (!assetUnitShares) {
+        try {
+          const collateralCalls: any[] = [
+            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'totalOutstandingCollateral' },
+            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'maxCollateralBps' },
+            { address: vaultAddress, abi: tradingVaultAbi, functionName: 'availableCollateral' },
+          ];
+          // Check admin role if connected
+          if (userAddress) {
+            collateralCalls.push(
+              { address: vaultAddress, abi: tradingVaultAbi, functionName: 'DEFAULT_ADMIN_ROLE' },
+            );
+          }
+          const collateralResults: any[] = await client.multicall({ contracts: collateralCalls });
+          totalOutstandingCollateral = collateralResults[0]?.status === 'success' ? collateralResults[0].result as bigint : undefined;
+          maxCollateralBps = collateralResults[1]?.status === 'success' ? Number(collateralResults[1].result) : undefined;
+          availableCollateral = collateralResults[2]?.status === 'success' ? collateralResults[2].result as bigint : undefined;
 
-        // If we got the admin role hash, check if user has it
-        if (userAddress && collateralResults[3]?.status === 'success') {
-          const adminRole = collateralResults[3].result as `0x${string}`;
-          try {
-            isAdmin = await client.readContract({
-              address: vaultAddress,
-              abi: tradingVaultAbi,
-              functionName: 'hasRole',
-              args: [adminRole, userAddress],
-            }) as boolean;
-          } catch {}
+          // If we got the admin role hash, check if user has it
+          if (userAddress && collateralResults[3]?.status === 'success') {
+            const adminRole = collateralResults[3].result as `0x${string}`;
+            try {
+              isAdmin = await client.readContract({
+                address: vaultAddress,
+                abi: tradingVaultAbi,
+                functionName: 'hasRole',
+                args: [adminRole, userAddress],
+              }) as boolean;
+            } catch {}
+          }
+        } catch {
+          // Collateral reads are non-critical — older vaults may not have these functions
         }
-      } catch {
-        // Collateral reads are non-critical — older vaults may not have these functions
       }
 
       // Derive computed values
@@ -273,12 +305,12 @@ export function useVaultRead(vaultAddress: Address | undefined, targetChainId: n
         shareToken,
         assetSymbol,
         assetDecimals,
-        shareDecimals: shareDec,
+        shareDecimals: displayShareDecimals,
         sharePrice,
-        totalShares: shareSupply != null ? Number(formatUnits(shareSupply, shareDec)) : undefined,
+        totalShares: shareSupply != null ? Number(formatUnits(shareSupply, displayShareDecimals)) : undefined,
         paused,
         userShares,
-        userSharesFormatted: userShares != null ? Number(formatUnits(userShares, shareDec)) : undefined,
+        userSharesFormatted: userShares != null ? Number(formatUnits(userShares, displayShareDecimals)) : undefined,
         userAssetBalance,
         userAssetBalanceFormatted: userAssetBalance != null ? Number(formatUnits(userAssetBalance, assetDecimals)) : undefined,
         userAllowance,

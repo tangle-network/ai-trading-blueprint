@@ -1,8 +1,12 @@
 import type { Address } from 'viem';
 import { defineChain } from 'viem';
 import {
-  tangleLocal as sharedTangleLocal, tangleTestnet, tangleMainnet, rpcUrl,
-  configureNetworks, getNetworks,
+  tangleLocal as sharedTangleLocal,
+  tangleTestnet,
+  tangleMainnet,
+  rpcUrl,
+  configureNetworks,
+  getNetworks,
   type CoreAddresses,
 } from '@tangle-network/blueprint-ui';
 
@@ -11,20 +15,31 @@ const executionForkChainId = Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?
 const executionForkRpcUrl = import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? rpcUrl;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+export const KNOWN_EXTERNAL_HYPEREVM_CHAIN_IDS = [998, 999] as const;
+
+export function isKnownExternalHyperEvmChainId(chainId: number): boolean {
+  return (KNOWN_EXTERNAL_HYPEREVM_CHAIN_IDS as readonly number[]).includes(chainId);
+}
 
 function isLocalRpcUrl(value: string | undefined): boolean {
   if (!value) return false;
   try {
     const { hostname } = new URL(value);
-    return (
-      hostname === '127.0.0.1' ||
-      hostname === 'localhost' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1'
-    );
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1';
   } catch {
     return false;
   }
+}
+
+function nonEmptyEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function nonZeroAddressEnv(value: string | undefined): Address | undefined {
+  const trimmed = nonEmptyEnv(value);
+  if (!trimmed || trimmed.toLowerCase() === ZERO_ADDRESS) return undefined;
+  return trimmed as Address;
 }
 
 const includeLocalExecutionFork =
@@ -39,7 +54,9 @@ export const executionForkChain = defineChain({
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: { default: { http: [executionForkRpcUrl] } },
   blockExplorers: { default: { name: 'Explorer', url: '' } },
-  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
 });
 
 export const tangleLocal = forkMode ? executionForkChain : sharedTangleLocal;
@@ -65,10 +82,16 @@ export const ethereumMainnet = defineChain({
   name: 'Ethereum',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: [import.meta.env.VITE_ETHEREUM_RPC_URL ?? 'https://eth.llamarpc.com'] },
+    default: {
+      http: [import.meta.env.VITE_ETHEREUM_RPC_URL ?? 'https://eth.llamarpc.com'],
+    },
   },
-  blockExplorers: { default: { name: 'Etherscan', url: 'https://etherscan.io' } },
-  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+  blockExplorers: {
+    default: { name: 'Etherscan', url: 'https://etherscan.io' },
+  },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
 });
 
 export const arbitrumOne = defineChain({
@@ -76,10 +99,14 @@ export const arbitrumOne = defineChain({
   name: 'Arbitrum One',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: [import.meta.env.VITE_ARBITRUM_RPC_URL ?? 'https://arb1.arbitrum.io/rpc'] },
+    default: {
+      http: [import.meta.env.VITE_ARBITRUM_RPC_URL ?? 'https://arb1.arbitrum.io/rpc'],
+    },
   },
   blockExplorers: { default: { name: 'Arbiscan', url: 'https://arbiscan.io' } },
-  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
 });
 
 export const baseMainnet = defineChain({
@@ -87,10 +114,16 @@ export const baseMainnet = defineChain({
   name: 'Base',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: [import.meta.env.VITE_BASE_RPC_URL ?? 'https://mainnet.base.org'] },
+    default: {
+      http: [import.meta.env.VITE_BASE_RPC_URL ?? 'https://mainnet.base.org'],
+    },
   },
-  blockExplorers: { default: { name: 'BaseScan', url: 'https://basescan.org' } },
-  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+  blockExplorers: {
+    default: { name: 'BaseScan', url: 'https://basescan.org' },
+  },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
 });
 
 export const baseSepolia = defineChain({
@@ -98,16 +131,81 @@ export const baseSepolia = defineChain({
   name: 'Base Sepolia',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'] },
+    default: {
+      http: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
+    },
   },
-  blockExplorers: { default: { name: 'BaseScan Sepolia', url: 'https://sepolia.basescan.org' } },
-  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+  blockExplorers: {
+    default: { name: 'BaseScan Sepolia', url: 'https://sepolia.basescan.org' },
+  },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
+});
+
+const hyperEvmTestnetEnabled = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED === 'true';
+const configuredHyperEvmTestnetChainId = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID);
+const hyperEvmTestnetChainId = Number.isFinite(configuredHyperEvmTestnetChainId) && configuredHyperEvmTestnetChainId > 0
+  ? configuredHyperEvmTestnetChainId
+  : 998;
+const hyperEvmTestnetRpcUrl = nonEmptyEnv(import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL);
+const hyperEvmTestnetAssetToken = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN);
+const hyperEvmTestnetVaultFactory = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS);
+const hyperEvmTestnetVault = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS);
+export const hyperEvmTestnetConfigured =
+  hyperEvmTestnetEnabled &&
+  Number.isFinite(configuredHyperEvmTestnetChainId) &&
+  configuredHyperEvmTestnetChainId > 0 &&
+  Boolean(
+    hyperEvmTestnetRpcUrl &&
+      hyperEvmTestnetAssetToken &&
+      (hyperEvmTestnetVaultFactory || hyperEvmTestnetVault),
+  );
+
+export const hyperEvmTestnet = defineChain({
+  id: hyperEvmTestnetChainId,
+  name: 'HyperEVM Testnet',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [hyperEvmTestnetRpcUrl ?? ''] } },
+  blockExplorers: { default: { name: 'HyperEVM Testnet', url: '' } },
+});
+
+const hyperEvmMainnetEnabled = import.meta.env.VITE_HYPEREVM_MAINNET_ENABLED === 'true';
+const configuredHyperEvmMainnetChainId = Number(import.meta.env.VITE_HYPEREVM_MAINNET_CHAIN_ID);
+const hyperEvmMainnetChainId = Number.isFinite(configuredHyperEvmMainnetChainId) && configuredHyperEvmMainnetChainId > 0
+  ? configuredHyperEvmMainnetChainId
+  : 999;
+const hyperEvmMainnetRpcUrl = nonEmptyEnv(import.meta.env.VITE_HYPEREVM_MAINNET_RPC_URL);
+const hyperEvmMainnetAssetToken = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN);
+const hyperEvmMainnetVaultFactory = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS);
+const hyperEvmMainnetVault = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS);
+export const hyperEvmMainnetConfigured =
+  hyperEvmMainnetEnabled &&
+  Number.isFinite(configuredHyperEvmMainnetChainId) &&
+  configuredHyperEvmMainnetChainId > 0 &&
+  Boolean(
+    hyperEvmMainnetRpcUrl &&
+      hyperEvmMainnetAssetToken &&
+      (hyperEvmMainnetVaultFactory || hyperEvmMainnetVault),
+  );
+
+export const hyperEvmMainnet = defineChain({
+  id: hyperEvmMainnetChainId,
+  name: 'HyperEVM Mainnet',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [hyperEvmMainnetRpcUrl ?? ''] } },
+  blockExplorers: { default: { name: 'HyperEVM', url: '' } },
 });
 
 export {
-  tangleTestnet, tangleMainnet, rpcUrl,
-  allTangleChains, mainnet, resolveRpcUrl,
-  configureNetworks, getNetworks,
+  tangleTestnet,
+  tangleMainnet,
+  rpcUrl,
+  allTangleChains,
+  mainnet,
+  resolveRpcUrl,
+  configureNetworks,
+  getNetworks,
 } from '@tangle-network/blueprint-ui';
 export type { CoreAddresses, NetworkConfig } from '@tangle-network/blueprint-ui';
 
@@ -135,7 +233,10 @@ export interface ArenaAddresses extends CoreAddresses {
  * out of `deployments/{chainId}/v3.json` into the matching env var, or update
  * the fallback constant in this file once a deployment is canonical.
  */
-function envelopeV3Addresses(chainId: number): { tradeValidator: Address; tradingVault: Address } {
+function envelopeV3Addresses(chainId: number): {
+  tradeValidator: Address;
+  tradingVault: Address;
+} {
   switch (chainId) {
     case 31337:
       return {
@@ -167,8 +268,7 @@ function envelopeV3Addresses(chainId: number): { tradeValidator: Address; tradin
     case 84532:
       return {
         // First target for envelope-v3 rollout — populate via env once deployed.
-        tradeValidator: (import.meta.env.VITE_TRADE_VALIDATOR_BASE_SEPOLIA ??
-          ZERO_ADDRESS) as Address,
+        tradeValidator: (import.meta.env.VITE_TRADE_VALIDATOR_BASE_SEPOLIA ?? ZERO_ADDRESS) as Address,
         tradingVault: (import.meta.env.VITE_TRADING_VAULT_BASE_SEPOLIA ?? ZERO_ADDRESS) as Address,
       };
     default:
@@ -212,8 +312,7 @@ configureNetworks<ArenaAddresses>({
             jobs: ZERO_ADDRESS,
             services: ZERO_ADDRESS,
             tangle: ZERO_ADDRESS,
-            vaultFactory: (import.meta.env.VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS ??
-              ZERO_ADDRESS) as Address,
+            vaultFactory: (import.meta.env.VITE_DEX_ETHEREUM_VAULT_FACTORY_ADDRESS ?? ZERO_ADDRESS) as Address,
             tradingBlueprint: ZERO_ADDRESS,
             tradeValidator: (import.meta.env.VITE_TRADE_VALIDATOR_FORK ?? ZERO_ADDRESS) as Address,
             tradingVault: (import.meta.env.VITE_TRADING_VAULT_FORK ?? ZERO_ADDRESS) as Address,
@@ -311,6 +410,44 @@ configureNetworks<ArenaAddresses>({
       tradingVault: baseSepoliaEnvelopeV3.tradingVault,
     },
   },
+  ...(hyperEvmTestnetConfigured
+    ? {
+        [hyperEvmTestnet.id]: {
+          chain: hyperEvmTestnet,
+          rpcUrl: hyperEvmTestnet.rpcUrls.default.http[0] ?? '',
+          label: 'HyperEVM Testnet',
+          shortLabel: 'HyperEVM',
+          addresses: {
+            jobs: ZERO_ADDRESS,
+            services: ZERO_ADDRESS,
+            tangle: ZERO_ADDRESS,
+            vaultFactory: hyperEvmTestnetVaultFactory ?? ZERO_ADDRESS,
+            tradingBlueprint: ZERO_ADDRESS,
+            tradeValidator: ZERO_ADDRESS,
+            tradingVault: hyperEvmTestnetVault ?? ZERO_ADDRESS,
+          },
+        },
+      }
+    : {}),
+  ...(hyperEvmMainnetConfigured
+    ? {
+        [hyperEvmMainnet.id]: {
+          chain: hyperEvmMainnet,
+          rpcUrl: hyperEvmMainnet.rpcUrls.default.http[0] ?? '',
+          label: 'HyperEVM Mainnet',
+          shortLabel: 'HyperEVM',
+          addresses: {
+            jobs: ZERO_ADDRESS,
+            services: ZERO_ADDRESS,
+            tangle: ZERO_ADDRESS,
+            vaultFactory: hyperEvmMainnetVaultFactory ?? ZERO_ADDRESS,
+            tradingBlueprint: ZERO_ADDRESS,
+            tradeValidator: ZERO_ADDRESS,
+            tradingVault: hyperEvmMainnetVault ?? ZERO_ADDRESS,
+          },
+        },
+      }
+    : {}),
 });
 
 /** Backwards-compatible accessor. */

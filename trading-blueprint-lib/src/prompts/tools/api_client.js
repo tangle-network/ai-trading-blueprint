@@ -308,6 +308,18 @@ async function getSupportedAssets() {
   return apiCall('GET', '/supported-assets');
 }
 
+async function getHyperliquidNav() {
+  return apiCall('GET', '/hyperliquid/nav');
+}
+
+async function getHyperliquidMode() {
+  return apiCall('GET', '/hyperliquid/mode');
+}
+
+async function getHyperliquidSettlement() {
+  return apiCall('GET', '/hyperliquid/settlement');
+}
+
 async function getMetrics() {
   return apiCall('GET', '/metrics');
 }
@@ -334,5 +346,8 @@ module.exports = {
   getBanditStatus,
   getAdapters,
   getSupportedAssets,
+  getHyperliquidNav,
+  getHyperliquidMode,
+  getHyperliquidSettlement,
   getMetrics,
 };

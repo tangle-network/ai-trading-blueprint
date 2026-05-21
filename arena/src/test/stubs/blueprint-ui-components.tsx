@@ -11,7 +11,7 @@ export const TableBody = ({ children, ...props }: any) => <tbody {...props}>{chi
 export const TableRow = ({ children, ...props }: any) => <tr {...props}>{children}</tr>;
 export const TableHead = ({ children, ...props }: any) => <th {...props}>{children}</th>;
 export const TableCell = ({ children, ...props }: any) => <td {...props}>{children}</td>;
-export const Dialog = ({ children }: any) => <div>{children}</div>;
+export const Dialog = ({ children, open = true }: any) => (open ? <div>{children}</div> : null);
 export const DialogContent = ({ children }: any) => <div>{children}</div>;
 export const DialogHeader = ({ children }: any) => <div>{children}</div>;
 export const DialogTitle = ({ children }: any) => <h2>{children}</h2>;

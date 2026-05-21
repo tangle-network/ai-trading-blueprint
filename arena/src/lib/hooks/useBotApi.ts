@@ -124,6 +124,54 @@ interface ApiBotMetricsSummary {
   trade_count: number;
 }
 
+export type RevisionRunMode =
+  | 'live'
+  | 'canary'
+  | 'paper'
+  | 'shadow'
+  | 'backtest'
+  | 'research';
+
+export interface RevisionArenaEntry {
+  revision_id: string;
+  display_name: string;
+  source: string;
+  status: string;
+  run_mode: RevisionRunMode;
+  can_execute_live: boolean;
+  parent_revision_id?: string | null;
+  run_id?: string | null;
+  created_at?: string | null;
+  user_intent: string;
+  patch_sha256?: string | null;
+  files_changed: string[];
+  tests: string[];
+  promotion_approved?: boolean | null;
+  promotion_blockers: string[];
+  paper_evidence?: {
+    trades?: number;
+    total_return_pct?: number;
+    max_drawdown_pct?: number;
+    candidate_hash?: string | null;
+    revision_id?: string | null;
+  } | null;
+}
+
+export interface RevisionModeCapability {
+  mode: RevisionRunMode;
+  can_touch_funds: boolean;
+  description: string;
+}
+
+export interface RevisionArena {
+  bot_id: string;
+  invariant: string;
+  active_revision_id: string;
+  live_revision_id?: string | null;
+  revisions: RevisionArenaEntry[];
+  modes: RevisionModeCapability[];
+}
+
 async function fetchOperatorBotApi<T>(
   apiUrl: string,
   auth: Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken' | 'getToken'>,
@@ -427,6 +475,29 @@ export function useBotMetricsSummary(botId: string, options: BotApiQueryOptions 
     },
     staleTime: 15_000,
     refetchOnMount: false,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+  });
+}
+
+export function useRevisionArena(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+
+  return useQuery<RevisionArena>({
+    queryKey: ['revision-arena', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryFn: async () => {
+      const path = buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        '/evolution/revision-arena',
+      );
+      return fetchOperatorBotApi<RevisionArena>(apiUrl, auth, path);
+    },
+    staleTime: 10_000,
+    refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
   });

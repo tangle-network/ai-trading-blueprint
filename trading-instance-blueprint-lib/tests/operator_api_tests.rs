@@ -1077,6 +1077,133 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     let _ = clear_instance_bot_id();
 }
 
+#[tokio::test]
+async fn test_runs_routes_page_durable_latest_execution_history() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
+    let workflow_id = 9_200_301_u64;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.workflow_id = Some(workflow_id);
+        })
+        .unwrap();
+    let auth = test_auth_header(SUBMITTER);
+
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_300,
+            success: true,
+            result: "Instance durable run".to_string(),
+            error: String::new(),
+            trace_id: "trace-instance-durable-1".to_string(),
+            duration_ms: 10_000,
+            input_tokens: 13,
+            output_tokens: 5,
+            session_id: "fast-instance-1775824300".to_string(),
+        },
+    )
+    .expect("persist first run");
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_400,
+            success: false,
+            result: String::new(),
+            error: "Instance provider failed".to_string(),
+            trace_id: String::new(),
+            duration_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            session_id: String::new(),
+        },
+    )
+    .expect("persist second run");
+
+    let first_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/runs?limit=1")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = first_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    assert_eq!(
+        first_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824400")
+    );
+    assert_eq!(first_json["runs"][0]["status"], "failed");
+    assert_eq!(
+        first_json["next_cursor"],
+        format!("1775824400:latest-{workflow_id}-1775824400")
+    );
+
+    let cursor = first_json["next_cursor"].as_str().expect("cursor");
+    let second_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bot/runs?limit=1&cursor={cursor}"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body = second_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(
+        second_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824300")
+    );
+    assert_eq!(second_json["runs"][0]["result"], "Instance durable run");
+    assert!(second_json["next_cursor"].is_null());
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bot/runs/latest-{workflow_id}-1775824300"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(
+        detail_json["run_id"],
+        format!("latest-{workflow_id}-1775824300")
+    );
+
+    let _ = clear_instance_bot_id();
+}
+
 // ---------------------------------------------------------------------------
 // Config update
 // ---------------------------------------------------------------------------
@@ -1385,6 +1512,10 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");

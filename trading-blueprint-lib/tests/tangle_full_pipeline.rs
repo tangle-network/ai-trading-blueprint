@@ -65,7 +65,7 @@ async fn test_full_multi_blueprint_pipeline() -> Result<()> {
     common::setup_log();
     // Force the local sidecar image — .env may have the remote image
     unsafe {
-        std::env::set_var("SIDECAR_IMAGE", "tangle-sidecar:local");
+        std::env::set_var("SIDECAR_IMAGE", "blueprint-sidecar:all-harness");
         std::env::set_var("SIDECAR_PULL_IMAGE", "false");
         std::env::set_var("SIDECAR_PUBLIC_HOST", "127.0.0.1");
         std::env::set_var("REQUEST_TIMEOUT_SECS", "60");

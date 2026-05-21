@@ -60,7 +60,7 @@ fn seed_sandbox_record(id: &str) {
         snapshot_s3_url: None,
         container_removed_at: None,
         image_removed_at: None,
-        original_image: "tangle-sidecar:local".to_string(),
+        original_image: "blueprint-sidecar:all-harness".to_string(),
         base_env_json: "{}".to_string(),
         user_env_json: String::new(),
         snapshot_destination: None,
@@ -296,6 +296,67 @@ async fn spawn_mock_trading_api() -> String {
                     "cash_balance": null,
                     "warnings": [],
                     "has_unpriced_positions": false
+                }))
+            }),
+        )
+        .route(
+            "/hyperliquid/nav",
+            get(|| async {
+                Json(json!({
+                    "snapshot": {
+                        "bot_id": "remote-bot",
+                        "account_address": "0x1111111111111111111111111111111111111111",
+                        "vault_address": "0x2222222222222222222222222222222222222222",
+                        "share_token": "0x3333333333333333333333333333333333333333",
+                        "asset_token": "0x4444444444444444444444444444444444444444",
+                        "as_of": "2026-01-01T00:00:00Z",
+                        "status": "fresh",
+                        "stale_after_secs": 60,
+                        "idle_usdc": "10000",
+                        "hyperliquid_equity": "90000",
+                        "total_nav": "100000",
+                        "withdrawable_usdc": "12000",
+                        "total_margin_used": "45000",
+                        "total_notional_position": "120000",
+                        "unrealized_pnl": "50",
+                        "total_shares": "100000",
+                        "share_price": "1",
+                        "margin_usage_bps": 5000,
+                        "open_order_count": 1,
+                        "position_count": 1,
+                        "positions": [],
+                        "warnings": []
+                    },
+                    "stale": false
+                }))
+            })
+            .post(|| async {
+                Json(json!({
+                    "snapshot": {
+                        "bot_id": "remote-bot",
+                        "account_address": "0x1111111111111111111111111111111111111111",
+                        "vault_address": "0x2222222222222222222222222222222222222222",
+                        "share_token": "0x3333333333333333333333333333333333333333",
+                        "asset_token": "0x4444444444444444444444444444444444444444",
+                        "as_of": "2026-01-01T00:00:01Z",
+                        "status": "fresh",
+                        "stale_after_secs": 60,
+                        "idle_usdc": "10000",
+                        "hyperliquid_equity": "90001",
+                        "total_nav": "100001",
+                        "withdrawable_usdc": "12000",
+                        "total_margin_used": "45000",
+                        "total_notional_position": "120000",
+                        "unrealized_pnl": "51",
+                        "total_shares": "100000",
+                        "share_price": "1.00001",
+                        "margin_usage_bps": 5000,
+                        "open_order_count": 1,
+                        "position_count": 1,
+                        "positions": [],
+                        "warnings": []
+                    },
+                    "stale": false
                 }))
             }),
         );
@@ -569,6 +630,70 @@ async fn spawn_mock_chat_sidecar_with_message_status(
         .route(
             "/agents/sessions/{id}/abort",
             post(|| async { Json(json!({"ok": true})) }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock chat sidecar");
+    let addr = listener.local_addr().expect("mock chat sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock chat sidecar");
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_mock_chat_sidecar_with_run_alias(actual_session_id: &str) -> String {
+    let actual_session_id = actual_session_id.to_string();
+    let sessions_session_id = actual_session_id.clone();
+    let messages_session_id = actual_session_id.clone();
+    let app = Router::new()
+        .route(
+            "/agents/sessions",
+            get(move || {
+                let sessions_session_id = sessions_session_id.clone();
+                async move {
+                    Json(json!([
+                        {"id": "manual-1", "title": "New Chat"},
+                        {"id": sessions_session_id}
+                    ]))
+                }
+            }),
+        )
+        .route(
+            "/agents/sessions/{id}/messages",
+            get(move |Path(id): Path<String>| {
+                let messages_session_id = messages_session_id.clone();
+                async move {
+                    if id == messages_session_id {
+                        (
+                            StatusCode::OK,
+                            Json(json!([
+                                {
+                                    "info": {
+                                        "id": "aliased-msg",
+                                        "role": "assistant",
+                                        "timestamp": "2026-04-24T07:12:00.000Z"
+                                    },
+                                    "parts": [{ "type": "text", "text": "full aliased transcript" }]
+                                }
+                            ])),
+                        )
+                    } else {
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({
+                                "success": false,
+                                "error": {
+                                    "code": "SESSION_NOT_FOUND",
+                                    "message": format!("Session {id} not found")
+                                }
+                            })),
+                        )
+                    }
+                }
+            }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1412,6 +1537,176 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     assert!(cursor_json["next_cursor"].is_null());
 }
 
+#[tokio::test]
+async fn test_archived_run_messages_recover_sidecar_session_alias() {
+    let _ = init_test_env();
+    let workflow_id = 9_100_251;
+    let bot = seed_bot_with_workflow("runs-alias-bot", "dex", true, Some(workflow_id));
+    let auth = test_auth_header(SUBMITTER);
+    let actual_session_id = format!("wf-{workflow_id}-1775824000");
+    let sidecar_url = spawn_mock_chat_sidecar_with_run_alias(&actual_session_id).await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-alias".to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: "run-alias".to_string(),
+                workflow_id,
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_000,
+                completed_at: Some(1_775_824_060),
+                session_id: Some("ses_wrong_sidecar_session".to_string()),
+                trace_id: None,
+                duration_ms: 60_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some("summary only".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert completed run");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/ses_wrong_sidecar_session/messages?limit=200",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["info"]["id"], "aliased-msg");
+    assert_eq!(json[0]["parts"][0]["text"], "full aliased transcript");
+}
+
+#[tokio::test]
+async fn test_runs_routes_page_durable_latest_execution_history() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-durable-bot", "dex", true, Some(9_100_301));
+    let workflow_id = bot.workflow_id.expect("workflow id");
+    let auth = test_auth_header(SUBMITTER);
+
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_100,
+            success: true,
+            result: "First durable run".to_string(),
+            error: String::new(),
+            trace_id: "trace-durable-1".to_string(),
+            duration_ms: 12_000,
+            input_tokens: 11,
+            output_tokens: 7,
+            session_id: "fast-runs-durable-bot-1775824100".to_string(),
+        },
+    )
+    .expect("persist first run");
+    trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+        workflow_id,
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowLatestExecution {
+            executed_at: 1_775_824_200,
+            success: false,
+            result: String::new(),
+            error: "Provider credits exhausted".to_string(),
+            trace_id: String::new(),
+            duration_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            session_id: String::new(),
+        },
+    )
+    .expect("persist second run");
+
+    let first_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs?limit=1", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = first_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    assert_eq!(
+        first_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824200")
+    );
+    assert_eq!(first_json["runs"][0]["status"], "failed");
+    assert_eq!(
+        first_json["next_cursor"],
+        format!("1775824200:latest-{workflow_id}-1775824200")
+    );
+
+    let cursor = first_json["next_cursor"].as_str().expect("cursor");
+    let second_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs?limit=1&cursor={cursor}", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body = second_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(
+        second_json["runs"][0]["run_id"],
+        format!("latest-{workflow_id}-1775824100")
+    );
+    assert_eq!(second_json["runs"][0]["result"], "First durable run");
+    assert!(second_json["next_cursor"].is_null());
+
+    let detail_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/latest-{workflow_id}-1775824100",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = detail_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let detail_json: serde_json::Value = serde_json::from_slice(&detail_body).unwrap();
+    assert_eq!(
+        detail_json["run_id"],
+        format!("latest-{workflow_id}-1775824100")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Bot control tests (with auth)
 // ---------------------------------------------------------------------------
@@ -1859,6 +2154,39 @@ async fn test_get_bot_portfolio_preserves_remote_value_only_positions() {
 }
 
 #[tokio::test]
+async fn test_get_bot_hyperliquid_nav_proxies_trading_api() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("hyperliquid-nav-bot", "hyperliquid_perp", true);
+    let trading_api_url = spawn_mock_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/hyperliquid/nav", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["snapshot"]["total_nav"], "100000");
+    assert_eq!(json["snapshot"]["share_price"], "1");
+    assert_eq!(json["stale"], false);
+}
+
+#[tokio::test]
 async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
     let _dir = init_test_env();
 
@@ -1912,6 +2240,10 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -2046,6 +2378,10 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");
@@ -2140,6 +2476,10 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         runner_signal: None,
         agent_reasoning: None,
         harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
     })
     .await
     .expect("record trade");

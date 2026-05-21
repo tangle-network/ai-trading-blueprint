@@ -65,6 +65,9 @@ pub fn supported_assets_for(
     match (normalized_strategy.as_str(), normalized_protocol.as_str()) {
         ("dex", "uniswap_v3" | "aerodrome") => dex_assets(registry_chain_id, &normalized_protocol),
         ("yield", "aave_v3") => aave_assets(registry_chain_id, &normalized_protocol),
+        ("hyperliquid_perp", "hyperliquid") => {
+            hyperliquid_perp_assets(registry_chain_id, &normalized_protocol)
+        }
         _ => Vec::new(),
     }
 }
@@ -75,13 +78,24 @@ pub fn supported_assets_for_config(
     protocol: &str,
     strategy_config: Option<&Value>,
 ) -> Vec<SupportedAsset> {
-    if let Some(configured) = strategy_config
-        .and_then(|config| configured_assets_from_value(config, strategy_type, chain_id, protocol))
-    {
+    let normalized_strategy = normalize_strategy_type(strategy_type);
+    let normalized_protocol = normalize_protocol(protocol);
+
+    if let Some(configured) = strategy_config.and_then(|config| {
+        configured_assets_from_value(config, &normalized_strategy, chain_id, &normalized_protocol)
+    }) {
         return configured;
     }
 
-    supported_assets_for(strategy_type, chain_id, protocol)
+    if normalized_strategy == "hyperliquid_perp"
+        && normalized_protocol == "hyperliquid"
+        && let Some(asset) =
+            hyperliquid_perp_asset_from_config(chain_id, &normalized_protocol, strategy_config)
+    {
+        return vec![asset];
+    }
+
+    supported_assets_for(&normalized_strategy, chain_id, &normalized_protocol)
 }
 
 pub fn is_supported_trade_asset(
@@ -306,7 +320,8 @@ pub fn default_protocol_for_strategy(strategy_type: &str) -> Option<&'static str
         "dex" => Some("uniswap_v3"),
         "yield" => Some("aave_v3"),
         "prediction" => Some("polymarket_clob"),
-        "perp" => Some("hyperliquid"),
+        "hyperliquid_perp" => Some("hyperliquid"),
+        "perp" => Some("gmx_v2"),
         _ => None,
     }
 }
@@ -316,6 +331,9 @@ pub fn normalize_strategy_type(strategy_type: &str) -> String {
         "dex" | "dex_trading" | "spot" => "dex".to_string(),
         "yield" | "defi_yield" | "aave" => "yield".to_string(),
         "prediction" | "prediction_market" => "prediction".to_string(),
+        "hyperliquid_perp" | "hyperliquid-perp" | "hl_perp" | "hl-perp" => {
+            "hyperliquid_perp".to_string()
+        }
         "perp" | "perp_trading" | "perpetual" => "perp".to_string(),
         other => other.to_string(),
     }
@@ -387,6 +405,50 @@ fn aave_assets(chain_id: u64, protocol: &str) -> Vec<SupportedAsset> {
     assets
 }
 
+fn hyperliquid_perp_assets(chain_id: u64, protocol: &str) -> Vec<SupportedAsset> {
+    token_metadata_for_chain(Some(chain_id), "USDC")
+        .map(|token| SupportedAsset {
+            strategy_type: "hyperliquid_perp".to_string(),
+            protocol: protocol.to_string(),
+            chain_id,
+            symbol: token.symbol.to_string(),
+            address: token.address.to_string(),
+            decimals: token.decimals,
+            roles: vec![TradeAssetRole::Input, TradeAssetRole::Collateral],
+            valuation_adapter: ValuationAdapterKind::None,
+        })
+        .into_iter()
+        .collect()
+}
+
+fn hyperliquid_perp_asset_from_config(
+    chain_id: u64,
+    protocol: &str,
+    strategy_config: Option<&Value>,
+) -> Option<SupportedAsset> {
+    let asset_token = strategy_config
+        .and_then(|config| config.get("asset_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Address::from_str(asset_token).ok()?;
+    let token = token_metadata_for_chain(Some(chain_id), asset_token);
+
+    Some(SupportedAsset {
+        strategy_type: "hyperliquid_perp".to_string(),
+        protocol: protocol.to_string(),
+        chain_id: registry_chain_id(chain_id),
+        symbol: token
+            .map(|token| token.symbol)
+            .unwrap_or("USDC")
+            .to_string(),
+        address: asset_token.to_string(),
+        decimals: token.map(|token| token.decimals).unwrap_or(6),
+        roles: vec![TradeAssetRole::Input, TradeAssetRole::Collateral],
+        valuation_adapter: ValuationAdapterKind::None,
+    })
+}
+
 fn registry_chain_id(chain_id: u64) -> u64 {
     match chain_id {
         31337..=31339 => 1,
@@ -405,6 +467,11 @@ fn normalize_token(token: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const HYPEREVM_TESTNET_USDC: &str = "0x2B3370eE501B4a559b57D449569354196457D8Ab";
+    const CONFIGURED_HYPEREVM_MAINNET_USDC: &str = "0x1111111111111111111111111111111111110999";
 
     #[test]
     fn dex_ethereum_fork_returns_weth_and_usdc() {
@@ -518,6 +585,111 @@ mod tests {
         );
         assert!(assets.iter().any(|asset| asset.symbol == "variableDebtWETH"
             && asset.roles.contains(&TradeAssetRole::Debt)));
+    }
+
+    #[test]
+    fn hyperliquid_perp_hyperevm_uses_usdc_collateral_only() {
+        let assets = supported_assets_for("hyperliquid_perp", 998, "hyperliquid");
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].strategy_type, "hyperliquid_perp");
+        assert_eq!(assets[0].protocol, "hyperliquid");
+        assert_eq!(assets[0].chain_id, 998);
+        assert_eq!(assets[0].symbol, "USDC");
+        assert_eq!(assets[0].address, HYPEREVM_TESTNET_USDC);
+        assert_eq!(assets[0].decimals, 6);
+        assert!(assets[0].roles.contains(&TradeAssetRole::Input));
+        assert!(assets[0].roles.contains(&TradeAssetRole::Collateral));
+        assert_eq!(assets[0].valuation_adapter, ValuationAdapterKind::None);
+    }
+
+    #[test]
+    fn hyperliquid_perp_hyperevm_mainnet_uses_configured_usdc_collateral() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        // SAFETY: this test serializes writes to the HyperEVM mainnet token
+        // env keys and restores the previous values before returning.
+        let previous_runtime = std::env::var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN").ok();
+        let previous_vite = std::env::var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN").ok();
+        unsafe {
+            std::env::set_var(
+                "HYPEREVM_MAINNET_USDC_ASSET_TOKEN",
+                CONFIGURED_HYPEREVM_MAINNET_USDC,
+            );
+            std::env::remove_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN");
+        }
+
+        let assets = supported_assets_for("hyperliquid_perp", 999, "hyperliquid");
+
+        unsafe {
+            match previous_runtime {
+                Some(value) => std::env::set_var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN", value),
+                None => std::env::remove_var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN"),
+            }
+            match previous_vite {
+                Some(value) => std::env::set_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN", value),
+                None => std::env::remove_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN"),
+            }
+        }
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].strategy_type, "hyperliquid_perp");
+        assert_eq!(assets[0].protocol, "hyperliquid");
+        assert_eq!(assets[0].chain_id, 999);
+        assert_eq!(assets[0].symbol, "USDC");
+        assert_eq!(assets[0].address, CONFIGURED_HYPEREVM_MAINNET_USDC);
+        assert_eq!(assets[0].decimals, 6);
+        assert!(assets[0].roles.contains(&TradeAssetRole::Input));
+        assert!(assets[0].roles.contains(&TradeAssetRole::Collateral));
+        assert_eq!(assets[0].valuation_adapter, ValuationAdapterKind::None);
+    }
+
+    #[test]
+    fn hyperliquid_perp_mainnet_uses_provisioned_asset_token_without_env() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let previous_runtime = std::env::var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN").ok();
+        let previous_vite = std::env::var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN").ok();
+        unsafe {
+            std::env::remove_var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN");
+            std::env::remove_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN");
+        }
+
+        let config = serde_json::json!({
+            "strategy_type": "hyperliquid_perp",
+            "asset_token": CONFIGURED_HYPEREVM_MAINNET_USDC
+        });
+        let assets =
+            supported_assets_for_config("hyperliquid_perp", 999, "hyperliquid", Some(&config));
+
+        unsafe {
+            match previous_runtime {
+                Some(value) => std::env::set_var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN", value),
+                None => std::env::remove_var("HYPEREVM_MAINNET_USDC_ASSET_TOKEN"),
+            }
+            match previous_vite {
+                Some(value) => std::env::set_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN", value),
+                None => std::env::remove_var("VITE_HYPEREVM_MAINNET_USDC_ASSET_TOKEN"),
+            }
+        }
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].strategy_type, "hyperliquid_perp");
+        assert_eq!(assets[0].protocol, "hyperliquid");
+        assert_eq!(assets[0].chain_id, 999);
+        assert_eq!(assets[0].symbol, "USDC");
+        assert_eq!(assets[0].address, CONFIGURED_HYPEREVM_MAINNET_USDC);
+        assert_eq!(assets[0].decimals, 6);
+        assert!(assets[0].roles.contains(&TradeAssetRole::Input));
+        assert!(assets[0].roles.contains(&TradeAssetRole::Collateral));
+        assert_eq!(assets[0].valuation_adapter, ValuationAdapterKind::None);
+    }
+
+    #[test]
+    fn generic_perp_no_longer_defaults_to_hyperliquid() {
+        assert_eq!(default_protocol_for_strategy("perp"), Some("gmx_v2"));
+        assert_eq!(
+            default_protocol_for_strategy("hyperliquid_perp"),
+            Some("hyperliquid")
+        );
     }
 
     // ── parse-error surface + fallback behavior ─────────────────────────────

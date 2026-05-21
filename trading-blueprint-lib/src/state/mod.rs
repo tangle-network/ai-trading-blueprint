@@ -290,9 +290,9 @@ pub fn find_bot_by_sandbox(sandbox_id: &str) -> Result<TradingBotRecord, String>
 /// Used for provision dedup: if a provision job is replayed (e.g., operator restart
 /// replays past events), return the existing bot instead of creating a duplicate.
 pub fn find_bot_by_call(service_id: u64, call_id: u64) -> Result<Option<TradingBotRecord>, String> {
-    Ok(bots()?
+    bots()?
         .find(|b| b.service_id == service_id && b.call_id == call_id)
-        .map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 /// Find a bot record by API token.

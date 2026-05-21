@@ -262,6 +262,7 @@ sol! {
         function returnCollateral(uint256 amount) external;
         function writeDownCollateral(address operator, uint256 amount) external;
         function setMaxCollateralBps(uint256 bps) external;
+        function approveHyperliquidApiWallet(address agentWallet, string calldata agentName) external;
         function totalOutstandingCollateral() external view returns (uint256);
         function operatorCollateral(address operator) external view returns (uint256);
         function maxCollateralBps() external view returns (uint256);
