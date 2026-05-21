@@ -7,6 +7,9 @@ import { currentCommitSha } from '../trading/persona-runner.js'
 
 export interface ProductBrowserEvalOptions {
   baseUrl?: string
+  badApiKey?: string
+  badBaseUrl?: string
+  badModel?: string
   casesPath?: string
   outputDir?: string
   runBad?: boolean
@@ -34,6 +37,7 @@ export interface ProductBrowserEvalReport {
   failed: number
   cases: BadCase[]
   bad?: {
+    llm: BadLlmConfig
     status: number
     stdout_tail: string
     stderr_tail: string
@@ -44,6 +48,13 @@ export interface ProductBrowserEvalReport {
     output: string
     stderr_tail: string
   }>
+}
+
+interface BadLlmConfig {
+  route: 'tangle-router'
+  provider_adapter: 'openai-compatible'
+  model: string
+  base_url: string
 }
 
 export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): ProductBrowserEvalReport {
@@ -104,6 +115,7 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
   if (!badPath) {
     throw new Error('Product browser eval requires `bad` on PATH. Install @tangle-network/browser-agent-driver or run without --run-bad to generate cases only.')
   }
+  const llm = resolveBadLlmConfig(options)
   const result = spawnSync(badPath, [
     'run',
     '--cases',
@@ -112,16 +124,33 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
     outputDir,
     '--mode',
     'full-evidence',
+    '--provider',
+    'openai',
+    '--model',
+    llm.model,
+    '--base-url',
+    llm.base_url,
+    '--api-key',
+    llm.apiKey,
     '--json',
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 50 * 1024 * 1024,
-    env: process.env,
+    env: {
+      ...process.env,
+      LLM_BASE_URL: llm.base_url,
+      OPENAI_API_KEY: llm.apiKey,
+      TANGLE_API_KEY: llm.apiKey,
+      TANGLE_ROUTER_API_KEY: llm.apiKey,
+      TANGLE_ROUTER_BASE_URL: llm.base_url,
+      TANGLE_ROUTER_URL: llm.base_url,
+    },
   })
   const status = result.status ?? 1
   report.bad = {
+    llm: llm.publicConfig,
     status,
     stdout_tail: tail(result.stdout ?? ''),
     stderr_tail: tail(result.stderr ?? ''),
@@ -129,6 +158,44 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
   report.passed = status === 0 ? cases.length : 0
   report.failed = status === 0 ? 0 : cases.length
   return report
+}
+
+function resolveBadLlmConfig(options: ProductBrowserEvalOptions): BadLlmConfig & { apiKey: string; publicConfig: BadLlmConfig } {
+  const model = options.badModel
+    ?? process.env.BAD_TANGLE_ROUTER_MODEL
+    ?? process.env.TANGLE_ROUTER_MODEL
+    ?? 'deepseek-v4-pro'
+  const baseUrl = normalizeRouterBaseUrl(options.badBaseUrl
+    ?? process.env.BAD_TANGLE_ROUTER_BASE_URL
+    ?? process.env.TANGLE_ROUTER_BASE_URL
+    ?? process.env.TANGLE_ROUTER_URL
+    ?? process.env.LLM_BASE_URL
+    ?? 'https://router.tangle.tools/v1')
+  const apiKey = options.badApiKey
+    ?? process.env.BAD_TANGLE_ROUTER_API_KEY
+    ?? process.env.TANGLE_API_KEY
+    ?? process.env.TANGLE_ROUTER_API_KEY
+    ?? process.env.TANGLE_ROUTER_USER_KEY
+
+  if (!apiKey) {
+    throw new Error(
+      'Product browser --run-bad requires a Tangle Router key. Set TANGLE_API_KEY, TANGLE_ROUTER_API_KEY, TANGLE_ROUTER_USER_KEY, or BAD_TANGLE_ROUTER_API_KEY.',
+    )
+  }
+  if (isDirectProviderUrl(baseUrl)) {
+    throw new Error(`Refusing to run product browser BAD eval against direct provider URL: ${baseUrl}. Use Tangle Router instead.`)
+  }
+  if (/^(?:openai\/)?gpt-|^o[134]\b/i.test(model)) {
+    throw new Error(`Refusing to run product browser BAD eval with OpenAI model "${model}". Use DeepSeek via Tangle Router, e.g. deepseek-v4-pro.`)
+  }
+
+  const publicConfig: BadLlmConfig = {
+    route: 'tangle-router',
+    provider_adapter: 'openai-compatible',
+    model,
+    base_url: baseUrl,
+  }
+  return { ...publicConfig, apiKey, publicConfig }
 }
 
 function arenaProductCases(baseUrl: string, maxTurns: number): BadCase[] {
@@ -202,4 +269,24 @@ function tail(text: string): string {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
+}
+
+function normalizeRouterBaseUrl(value: string): string {
+  const trimmed = trimTrailingSlash(value)
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
+function isDirectProviderUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname
+    return [
+      'api.anthropic.com',
+      'api.deepseek.com',
+      'api.openai.com',
+      'api.openrouter.ai',
+      'generativelanguage.googleapis.com',
+    ].includes(hostname)
+  } catch {
+    return false
+  }
 }

@@ -237,15 +237,30 @@ npm run eval:product-browser -- --snapshot
 ```
 
 Run the full agentic browser-driver cases against a live Arena app with BAD and
-an LLM provider configured:
+Tangle Router configured. This intentionally routes BAD through the router's
+OpenAI-compatible adapter while using DeepSeek v4 by default; it refuses direct
+provider endpoints and OpenAI model ids.
 
 ```bash
+export TANGLE_API_KEY=<router-key>
+ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+npm run eval:product-browser -- --run-bad
+```
+
+Useful overrides:
+
+```bash
+BAD_TANGLE_ROUTER_MODEL=deepseek-v4-pro \
+TANGLE_ROUTER_URL=https://router.tangle.tools/v1 \
 ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
 npm run eval:product-browser -- --run-bad
 ```
 
 The runner fails loudly if `--run-bad` is requested and `bad` is unavailable.
-Cases-only mode is a contract/build gate, not browser proof.
+It also fails if no router key is present in `TANGLE_API_KEY`,
+`TANGLE_ROUTER_API_KEY`, `TANGLE_ROUTER_USER_KEY`, or
+`BAD_TANGLE_ROUTER_API_KEY`. Cases-only mode is a contract/build gate, not
+browser proof.
 
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
