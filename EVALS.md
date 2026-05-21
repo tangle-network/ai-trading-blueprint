@@ -251,25 +251,29 @@ Each case runs in its own BAD process/output directory so a browser teardown or
 failure in one product story cannot poison the remaining stories.
 
 ```bash
-export TANGLE_API_KEY=<router-key>
-ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
-npm run eval:product-browser -- --run-bad
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  npm run eval:product-browser -- --run-bad
 ```
 
 Useful overrides:
 
 ```bash
-BAD_TANGLE_ROUTER_MODEL=deepseek-v4-pro \
-TANGLE_ROUTER_URL=https://router.tangle.tools/v1 \
-ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
-npm run eval:product-browser -- --run-bad
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env BAD_TANGLE_ROUTER_MODEL=deepseek-v4-pro \
+  TANGLE_ROUTER_URL=https://router.tangle.tools/v1 \
+  ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  npm run eval:product-browser -- --run-bad
 ```
 
 The runner fails loudly if `--run-bad` is requested and `bad` is unavailable.
 It also fails if no router key is present in `TANGLE_API_KEY`,
 `TANGLE_ROUTER_API_KEY`, `TANGLE_ROUTER_USER_KEY`, or
-`BAD_TANGLE_ROUTER_API_KEY`. Cases-only mode is a contract/build gate, not
-browser proof.
+`BAD_TANGLE_ROUTER_API_KEY`. The canonical local source for this repo's
+DeepSeek v4 browser eval is `~/company/devops/secrets/agent-state.env`;
+`~/company/devops/secrets/tangle-router.env` is the router service/upstream-key
+vault and is not the right source for this product eval. Cases-only mode is a
+contract/build gate, not browser proof.
 
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in

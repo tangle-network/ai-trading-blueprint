@@ -256,12 +256,13 @@ function arenaProductCases(baseUrl: string, maxTurns: number): BadCase[] {
     },
     {
       id: 'arena-bot-detail-revision-arena',
-      url: `${baseUrl}/arena/bot/eval-real-api-bot`,
+      url: `${baseUrl}/arena`,
       maxTurns,
       goal: [
-        'Act as a returning user reviewing an agent. Inspect bot detail, trade history, reasoning/validation,',
-        'and revision arena/self-improvement state if present. Determine whether old-vs-new revision safety,',
-        'paper/live status, and validation blockers are clear.',
+        'Act as a returning user reviewing an agent. From the Arena leaderboard, open a real visible bot if one exists.',
+        'Inspect bot detail, trade history, reasoning/validation, and revision arena/self-improvement state if present.',
+        'Determine whether old-vs-new revision safety, paper/live status, and validation blockers are clear.',
+        'If no bot is available, record the empty-state or missing-seed blocker as the product finding instead of inventing a bot id.',
       ].join(' '),
       metadata: meta('ui_revision_arena', ['bot_detail', 'paper_live_status', 'validation_blockers']),
     },
