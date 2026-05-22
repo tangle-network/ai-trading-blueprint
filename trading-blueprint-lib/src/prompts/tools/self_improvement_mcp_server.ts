@@ -31,9 +31,15 @@ const ROOT = process.env.AGENT_WORKSPACE || defaultRoot();
 const STATE_DIR = join(ROOT, '.evolve', 'mcp-self-improvement');
 const TASKS_DIR = join(STATE_DIR, 'tasks');
 const WORKTREE_DIR = join(STATE_DIR, 'worktrees');
-const DEFAULT_CODING_COMMAND =
-  process.env.SELF_IMPROVEMENT_CODING_COMMAND
-  || 'sh -lc \'opencode run --dangerously-skip-permissions "$(cat)"\'';
+function defaultCodingCommand() {
+  if (process.env.SELF_IMPROVEMENT_CODING_COMMAND) return process.env.SELF_IMPROVEMENT_CODING_COMMAND;
+  if (process.env.SIDECAR_DEFAULT_HARNESS === 'gemini' || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+    return 'sh -lc \'gemini --skip-trust --yolo -p "$(cat)"\'';
+  }
+  return 'sh -lc \'opencode run --dangerously-skip-permissions "$(cat)"\'';
+}
+
+const DEFAULT_CODING_COMMAND = defaultCodingCommand();
 const DEFAULT_REVIEW_COMMAND = process.env.SELF_IMPROVEMENT_REVIEW_COMMAND || '';
 const DEFAULT_TESTS = [
   'cargo fmt --check',

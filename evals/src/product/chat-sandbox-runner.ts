@@ -11,7 +11,9 @@ const RAIN_PROMPT = [
   'Research Rain SDK trading and positions support from the real developer docs and add it only as a paper-trading capability candidate.',
   'User intent: integrate and market make on Rain markets.',
   'Do not give a generic answer. Produce a tactical capability plan or self-improvement task in the sandbox that names the Rain docs/API surface, required read/write methods, risk controls, validation/backtest steps, and exact blockers.',
-  'If code changes are required, start the local self-improvement workflow or create the smallest scoped task/spec for it. Keep live trading disabled unless validation proves paper performance and safety.',
+  'This must prove the code-changing loop, not just planning. Start and complete the smallest local self-improvement MCP task that leaves a real patch in an isolated worktree. The task should create a bounded paper-only Rain capability artifact such as eval-artifacts/rain/paper-capability.json with fields for venue, mode, required read methods, simulated write methods, risk gates, validation gates, blockers, and no_live_keys=true.',
+  'Use deterministic tests for that task, for example JSON/schema checks and grep assertions against the created artifact. Keep the patch scoped to the artifact; do not add live trading code or dependencies.',
+  'If the MCP task cannot complete, write the exact blocking command and error into sandbox memory. Keep live trading disabled unless validation proves paper performance and safety.',
   'Do not ask for live keys and do not trade real funds.',
 ].join('\n')
 
@@ -140,6 +142,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     sandbox.commands.memory_rain_excerpt?.stdout ?? '',
   ].join('\n')
   const mcpTaskCount = parseCount(sandbox.commands.mcp_task_count?.stdout)
+  const mcpTaskSummary = sandbox.commands.mcp_task_summary?.stdout ?? ''
   const workspaceChanges = (sandbox.commands.git_status?.stdout ?? '').trim()
   const toolchainText = sandbox.commands.toolchain?.stdout ?? ''
   const selfImprovementStatus = [
@@ -150,6 +153,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
   const executionArtifacts = [
     sandbox.commands.agent_env?.stdout ?? '',
     selfImprovementStatus,
+    mcpTaskSummary,
     sandbox.commands.self_improvement_runs?.stdout ?? '',
     sandbox.commands.revision_arena?.stdout ?? '',
     sandbox.commands.recent_evolve_rain_excerpt?.stdout ?? '',
@@ -175,7 +179,14 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     'risk',
   ])
   const startedImprovement = mcpTaskCount > 0 || workspaceChanges.length > 0 || hasActionableCapabilityArtifact
-  const executedSelfImprovementTask = mcpTaskCount > 0 || workspaceChanges.length > 0 || hasSuccessfulEvolutionPayload(evolution)
+  const completedMcpTask = includesAny(mcpTaskSummary, ['"status":"completed"', '"status": "completed"']) &&
+    includesAny(mcpTaskSummary, ['rain', 'paper-capability']) &&
+    includesAny(mcpTaskSummary, ['eval-artifacts/rain/paper-capability.json']) &&
+    includesAny(mcpTaskSummary, ['"patch_sha256":"sha256:', '"patch_sha256": "sha256:']) &&
+    includesAny(mcpTaskSummary, ['"test_passed":1', '"test_passed": 1', '"test_passed":true', '"test_passed": true']) &&
+    includesAny(mcpTaskSummary, ['"diff_additions":']) &&
+    !includesAny(mcpTaskSummary, ['"diff_additions":0', '"diff_additions": 0'])
+  const executedSelfImprovementTask = completedMcpTask || workspaceChanges.length > 0 || hasSuccessfulEvolutionPayload(evolution)
   const hasValidationPlan = includesAny(evidenceText, ['backtest', 'paper trade', 'paper-trading', 'validation', 'test']) &&
     includesAny(evidenceText, ['risk', 'limit', 'blocked', 'live'])
   const agentEnv = sandbox.commands.agent_env?.stdout ?? ''
@@ -247,6 +258,11 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: summarizeText(executionArtifacts || workspaceChanges || `mcp task files=${mcpTaskCount}`),
     },
     {
+      name: 'agent completed a validated code-change self-improvement task',
+      passed: completedMcpTask,
+      detail: summarizeText(mcpTaskSummary || `mcp task files=${mcpTaskCount}`),
+    },
+    {
       name: 'agent specified validation and risk gates',
       passed: hasValidationPlan,
       detail: summarizeText(evidenceText),
@@ -277,6 +293,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did the agent use real Rain developer evidence?', hasRainDeveloperEvidence, summarizeText(evidenceText)),
       answer('Did the agent classify unsupported/new capability paper-first?', includesAll(transcriptText, ['paper']) || includesAll(memoryText, ['paper']), 'paper-first signal searched in transcript and memory'),
       answer('Did it start a self-improvement/MCP task or capability artifact?', startedImprovement, summarizeText(executionArtifacts || `mcp task files=${mcpTaskCount}`)),
+      answer('Did it complete a validated code-changing self-improvement task?', completedMcpTask, summarizeText(mcpTaskSummary || `mcp task files=${mcpTaskCount}`)),
       answer('Did sandbox files change?', workspaceChanges.length > 0, workspaceChanges || 'git status clean or unavailable'),
       answer('Did it define validation/backtest/risk gates?', hasValidationPlan, summarizeText(evidenceText)),
       answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
@@ -346,6 +363,7 @@ function inspectSandbox(containerName: string): { commands: Record<string, Sandb
     memory_rain_hits: 'grep -Ril "Rain\\|rain.one\\|market make" /home/agent/memory 2>/dev/null | head -20',
     memory_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|Rain-SDK\\|Trading-and-positions\\|market make\\|paper\\|backtest\\|validation\\|blocker" /home/agent/memory 2>/dev/null | head -120',
     mcp_task_count: 'find /home/agent/.evolve/mcp-self-improvement/tasks -type f 2>/dev/null | wc -l',
+    mcp_task_summary: 'find /home/agent/.evolve/mcp-self-improvement/tasks -maxdepth 1 -type f -name "*.json" 2>/dev/null | sort | tail -10 | xargs -r sed -n "1,220p"',
     self_improvement_runs: 'find /home/agent/.evolve/self-improvement /home/agent/evolution/self-improve -type f 2>/dev/null | head -40',
     revision_arena: 'find /home/agent/evolution/revision-arena /home/agent/.evolve/revision-arena -type f 2>/dev/null | head -40',
     capability_artifacts: 'find /home/agent -type f \\( -path "*/.evolve/*" -o -path "*/memory/*" -o -path "*/evolution/*" -o -path "*/workspace/*" \\) 2>/dev/null | grep -Ei "rain|capability|self-improvement|task|spec|plan" | head -80',
