@@ -31,10 +31,18 @@ const STRATEGY_HINTS = [
   },
 ]
 
+interface CreateBotResponse {
+  bot_id?: unknown
+  id?: unknown
+  status?: unknown
+  activation_error?: unknown
+}
+
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const navigate = useNavigate()
   const { getToken } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
@@ -47,6 +55,7 @@ export default function CreateAgent() {
     if (!prompt.trim() || isCreating) return
     setIsCreating(true)
     setStatus('Parsing your strategy...')
+    setError('')
 
     try {
       // Determine strategy type from prompt
@@ -81,6 +90,7 @@ export default function CreateAgent() {
         body: JSON.stringify({
           prompt,
           name: prompt.slice(0, 50),
+          strategy_type: strategyType,
         }),
       })
 
@@ -98,6 +108,7 @@ export default function CreateAgent() {
           body: JSON.stringify({
             prompt,
             name: prompt.slice(0, 50),
+            strategy_type: strategyType,
           }),
         })
       }
@@ -107,15 +118,26 @@ export default function CreateAgent() {
         throw new Error(err || `Provision failed: ${res.status}`)
       }
 
-      const data = await res.json()
-      setStatus('Agent created! Opening chat...')
+      const data = await res.json() as CreateBotResponse
+      const botId = typeof data.bot_id === 'string'
+        ? data.bot_id
+        : typeof data.id === 'string'
+          ? data.id
+          : ''
+      if (!botId) {
+        throw new Error('Operator created a bot but did not return a bot id')
+      }
+      const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
+      setStatus(activationError ? 'Agent created; activation needs attention. Opening bot...' : 'Agent created! Opening chat...')
 
       // Navigate to the bot's chat view
       setTimeout(() => {
-        navigate(`/arena/bot/${data.bot_id || data.id}`)
+        navigate(`/arena/bot/${encodeURIComponent(botId)}`)
       }, 500)
     } catch (err) {
-      setStatus(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      setStatus('Create failed')
+      setError(message)
       setIsCreating(false)
     }
   }, [prompt, isCreating, getToken, navigate])
@@ -164,6 +186,14 @@ export default function CreateAgent() {
               {isCreating ? status : 'Create Agent →'}
             </Button>
           </div>
+          {(status || error) && (
+            <p
+              role={error ? 'alert' : 'status'}
+              className={`mt-3 text-sm ${error ? 'text-red-500' : 'text-arena-elements-textSecondary'}`}
+            >
+              {error || status}
+            </p>
+          )}
         </div>
 
         {/* Strategy hints */}
