@@ -20,6 +20,8 @@ const TRACE_DIR = join(EVOLVE_DIR, 'traces');
 const KNOWLEDGE_ROOT = join(ROOT, '.agent-knowledge');
 const HARNESS_PATH = join(ROOT, 'config', 'harness.json');
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.sidecar', '.opencode', '.opencode-home', '.evolve']);
+const SECRET_PATH_RE = /(^|\/)(\.env(\.|$)|.*\.(pem|key|p12|pfx|keystore|wallet)|id_rsa|id_ed25519|secrets?\.json|credentials?\.json)$/i;
+const SECRET_TEXT_RE = /(api[_-]?key|private[_-]?key|secret|seed phrase|mnemonic|bearer)\s*[:=]\s*['"]?[A-Za-z0-9_./+=-]{24,}/i;
 
 function ensureDirs() {
   for (const dir of [FINDINGS_DIR, RUNS_DIR, TRACE_DIR, KNOWLEDGE_ROOT]) mkdirSync(dir, { recursive: true });
@@ -65,6 +67,7 @@ function workspaceDigest(root = ROOT) {
         continue;
       }
       if (stat.isDirectory()) walk(path);
+      else if (SECRET_PATH_RE.test(relative(root, path))) continue;
       else if (stat.isFile()) files.push(path);
     }
   }
@@ -90,6 +93,16 @@ function currentPatch() {
 function changedFiles() {
   const out = git(['diff', '--name-only', '--', '.']);
   return out ? out.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+function validatePatchForExport(patch, files) {
+  const sensitiveFiles = files.filter((file) => SECRET_PATH_RE.test(file));
+  if (sensitiveFiles.length > 0) {
+    throw new Error(`refusing to export self-improvement patch containing secret-like paths: ${sensitiveFiles.join(', ')}`);
+  }
+  if (SECRET_TEXT_RE.test(patch)) {
+    throw new Error('refusing to export self-improvement patch containing secret-like material');
+  }
 }
 
 function defaultBacktestConfig() {
@@ -148,7 +161,7 @@ function deterministicFinding(runId, intent, config, packageStatus) {
     recommended_action: packageStatus.available
       ? 'Continue through deterministic backtest, paper-trading, and sandbox revision gates.'
       : 'Install package dependencies from /home/agent/package.json before attempting package-backed analyst loops.',
-    validation_plan: 'Run npm install or pnpm install, then node /home/agent/tools/self-improvement-loop.mjs status.',
+    validation_plan: 'Run npm install or pnpm install, then bun --bun /home/agent/tools/self-improvement-loop.ts status.',
     subject,
     metadata: { run_id: runId, tangle_packages_available: packageStatus.available, missing: packageStatus.missing },
   };
@@ -225,6 +238,8 @@ async function createSnapshot(intent) {
 
 async function recordSelfImprove(intent, snapshot, analyst) {
   const patch = currentPatch();
+  const files = changedFiles();
+  validatePatchForExport(patch, files);
   const response = await apiCall('POST', '/evolution/self-improve', {
     user_intent: intent,
     current: defaultBacktestConfig(),
@@ -234,8 +249,8 @@ async function recordSelfImprove(intent, snapshot, analyst) {
       base_snapshot_id: snapshot.snapshot_id,
       patch,
       patch_sha256: sha256(patch),
-      files_changed: changedFiles(),
-      tests: ['node /home/agent/tools/self-improvement-loop.mjs status'],
+      files_changed: files,
+      tests: ['bun --bun /home/agent/tools/self-improvement-loop.ts status'],
       status: analyst.mode === 'tangle-agent-packages' ? 'candidate' : 'blocked_dependency_readiness',
     },
   });

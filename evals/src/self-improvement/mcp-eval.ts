@@ -25,7 +25,7 @@ interface SelfImprovementTask {
   task_id: string
 }
 
-interface SelfImprovementStatus {
+export interface SelfImprovementStatus {
   status: string
   failure?: string
   winner_variant_id?: string
@@ -41,6 +41,7 @@ interface SelfImprovementStatus {
 interface EvalResult {
   name: string
   passed: boolean
+  skipped?: boolean
   metrics: Record<string, unknown>
   evidence: Record<string, unknown>
   at: string
@@ -51,7 +52,7 @@ export interface SelfImprovementMcpEvalOptions {
   skipOpencode?: boolean
 }
 
-const mcpPath = resolveRepo('trading-blueprint-lib/src/prompts/tools/self_improvement_mcp_server.mjs')
+const mcpPath = resolveRepo('trading-blueprint-lib/src/prompts/tools/self_improvement_mcp_server.ts')
 const results: EvalResult[] = []
 
 export async function runSelfImprovementMcpEval(options: SelfImprovementMcpEvalOptions = {}) {
@@ -72,13 +73,15 @@ export async function runSelfImprovementMcpEval(options: SelfImprovementMcpEvalO
     }
   }
 
-  const passed = results.filter((result) => result.passed).length
+  const counted = results.filter((result) => !result.skipped)
+  const passed = counted.filter((result) => result.passed).length
   const summary = {
     suite: 'self-improvement-mcp',
     passed,
-    failed: results.length - passed,
-    total: results.length,
-    success_rate: results.length === 0 ? 0 : passed / results.length,
+    failed: counted.length - passed,
+    skipped: results.length - counted.length,
+    total: counted.length,
+    success_rate: counted.length === 0 ? 0 : passed / counted.length,
     results,
   }
   const outputPath = options.outputPath ?? resolveRepo('.evolve', 'evals', `self-improvement-mcp-${isoStamp()}.json`)
@@ -110,8 +113,16 @@ function record(
   passed: boolean,
   metrics: Record<string, unknown> = {},
   evidence: Record<string, unknown> = {},
+  options: { skipped?: boolean } = {},
 ): void {
-  results.push({ name, passed, metrics, evidence, at: new Date().toISOString() })
+  results.push({
+    name,
+    passed,
+    ...(options.skipped ? { skipped: true } : {}),
+    metrics,
+    evidence,
+    at: new Date().toISOString(),
+  })
 }
 
 function assertOrThrow(condition: unknown, message: string): asserts condition {
@@ -171,7 +182,7 @@ function responseAt(responses: McpResponse[], index: number): McpResponse {
   return response
 }
 
-async function createTask(workspace: string, args: Record<string, unknown>, timeoutMs = 240_000) {
+export async function createTask(workspace: string, args: Record<string, unknown>, timeoutMs = 240_000) {
   const responses = await callMcp(workspace, [{
     jsonrpc: '2.0',
     id: 1,
@@ -181,7 +192,7 @@ async function createTask(workspace: string, args: Record<string, unknown>, time
   return textPayload<SelfImprovementTask>(responseAt(responses, 0))
 }
 
-async function statusAndPatch(workspace: string, taskId: string) {
+export async function statusAndPatch(workspace: string, taskId: string) {
   const responses = await callMcp(workspace, [
     {
       jsonrpc: '2.0',
@@ -202,7 +213,7 @@ async function statusAndPatch(workspace: string, taskId: string) {
   }
 }
 
-async function waitForTerminal(workspace: string, taskId: string, timeoutMs = 240_000): Promise<SelfImprovementStatus> {
+export async function waitForTerminal(workspace: string, taskId: string, timeoutMs = 240_000): Promise<SelfImprovementStatus> {
   const started = Date.now()
   let latest: SelfImprovementStatus | null = null
   while (Date.now() - started < timeoutMs) {
@@ -320,10 +331,11 @@ async function evalUntrackedNewFileApproval(): Promise<void> {
 
 async function evalOpencodeNewFileApproval(skipOpencode: boolean): Promise<void> {
   const opencode = sh('command -v opencode', repoRoot)
-  if (!opencode.ok || skipOpencode) {
-    record('opencode_new_file_approval', true, { skipped: 1 }, { reason: 'opencode unavailable or skipped' })
+  if (skipOpencode) {
+    record('opencode_new_file_approval', true, { skipped: 1 }, { reason: 'explicitly skipped by caller' }, { skipped: true })
     return
   }
+  assertOrThrow(opencode.ok, 'opencode is required for the real coding-agent self-improvement eval; use --skip-opencode only for local protocol smoke tests')
 
   const workspace = initRepo('mcp-opencode')
   const started = Date.now()

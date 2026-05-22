@@ -632,7 +632,7 @@ function backtestTask(args) {
   const task = loadTask(String(args.task_id));
   if (task.status !== 'completed') throw new Error('task must be completed before backtest');
   const variant = winningVariant(task);
-  const command = args.command ? String(args.command) : 'bun --bun /home/agent/tools/self-improvement-loop.mjs status';
+  const command = args.command ? String(args.command) : 'bun --bun /home/agent/tools/self-improvement-loop.ts status';
   const result = sh(command, variant.worktree_path || ROOT);
   appendLog(task.task_id, `backtest command: ${command} -> ${result.status}`);
   return result;

@@ -28,9 +28,9 @@ fn trading_agent_package_json() -> String {
         "private": true,
         "scripts": {
             "serve": "opencode serve",
-            "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.mjs run",
-            "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.mjs status",
-            "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
+            "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.ts run",
+            "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.ts status",
+            "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
         },
         "dependencies": {
             "@tangle-network/agent-eval": "^0.29.1",
@@ -966,15 +966,15 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
-        "/home/agent/tools/self-improvement-loop.mjs",
-        include_str!("../prompts/tools/self_improvement_loop.mjs"),
+        "/home/agent/tools/self-improvement-loop.ts",
+        include_str!("../prompts/tools/self_improvement_loop.ts"),
     )
     .await?;
     write_file_to_sidecar(
         sidecar_url,
         token,
-        "/home/agent/tools/self-improvement-mcp-server.mjs",
-        include_str!("../prompts/tools/self_improvement_mcp_server.mjs"),
+        "/home/agent/tools/self-improvement-mcp-server.ts",
+        include_str!("../prompts/tools/self_improvement_mcp_server.ts"),
     )
     .await?;
     write_file_to_sidecar(
@@ -985,7 +985,7 @@ pub(crate) async fn write_prebuilt_tools(
             "name": "trading-self-improvement",
             "transport": "stdio",
             "command": "bun",
-            "args": ["--bun", "/home/agent/tools/self-improvement-mcp-server.mjs"],
+            "args": ["--bun", "/home/agent/tools/self-improvement-mcp-server.ts"],
             "tools": [
                 "self_improvement.create_task",
                 "self_improvement.status",
@@ -1122,11 +1122,11 @@ mod tests {
         assert_eq!(package["scripts"]["serve"], "opencode serve");
         assert_eq!(
             package["scripts"]["self-improve:status"],
-            "bun --bun /home/agent/tools/self-improvement-loop.mjs status"
+            "bun --bun /home/agent/tools/self-improvement-loop.ts status"
         );
         assert_eq!(
             package["scripts"]["mcp:self-improvement"],
-            "bun --bun /home/agent/tools/self-improvement-mcp-server.mjs"
+            "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
         );
         assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
         assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn self_improvement_loop_uses_tangle_agent_packages_and_existing_api() {
-        let tool = include_str!("../prompts/tools/self_improvement_loop.mjs");
+        let tool = include_str!("../prompts/tools/self_improvement_loop.ts");
         assert!(tool.contains("@tangle-network/agent-eval"));
         assert!(tool.contains("@tangle-network/agent-runtime/analyst-loop"));
         assert!(tool.contains("@tangle-network/agent-knowledge"));
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn self_improvement_mcp_server_exposes_multishot_task_tools() {
-        let tool = include_str!("../prompts/tools/self_improvement_mcp_server.mjs");
+        let tool = include_str!("../prompts/tools/self_improvement_mcp_server.ts");
         assert!(tool.contains("tools/list"));
         assert!(tool.contains("tools/call"));
         assert!(tool.contains("auto-dev-style"));

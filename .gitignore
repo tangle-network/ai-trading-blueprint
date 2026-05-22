@@ -41,6 +41,7 @@ dependencies/
 blueprint-state/
 **/blueprint-state/
 .tmp/
+.evolve/
 
 # Node.js / Frontend
 node_modules/

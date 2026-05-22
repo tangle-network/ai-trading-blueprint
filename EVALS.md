@@ -6,11 +6,19 @@ This repo has four eval layers:
   operator/trading API.
 - `npm run eval:self-improvement-mcp` exercises the sandbox
   self-improvement MCP with real git worktrees and command execution.
+- `npm run eval:product-browser` generates the Arena product-surface BAD
+  browser-driver cases; add `-- --run-bad` to drive a real browser against a
+  running Arena URL.
 - `scripts/eval-polymarket-real-price-history.sh` fetches live Polymarket
   Gamma/CLOB price history and runs the real Rust walk-forward backtester.
 - `scripts/eval-trading-personas.sh` runs the trading-domain persona suite
   added for market makers, portfolio managers, protocol researchers, and
   arbitrage agents.
+- `npm run eval:agent-strategy` drives the sandbox coding agent through the
+  self-improvement MCP/opencode path, then replays the produced bounded
+  Polymarket paper candidate against a live active-market Gamma/CLOB sample.
+- `npm run eval:full` composes the release gate across TS, Rust, persona,
+  lifecycle, MCP, and agent-driven strategy evals.
 
 ## Trading Persona Suite
 
@@ -168,18 +176,152 @@ Next integration step: wrap actual agent runs so each persona scenario can ask
 the sandboxed trading agent to produce a candidate `HarnessConfig`, then score
 that candidate through this same suite.
 
-## Simulated User Lifecycle Eval
+## Trading Lifecycle Eval
 
-The lifecycle eval is a typed TypeScript wrapper around the deterministic
-persona suite. It simulates multi-turn user feedback such as "make the strategy
-more risk-off", "review microstructure", and "find adjacent pairs", then links
-each revision to concrete backtest scenarios and emits durable feedback
-trajectory JSONL records.
+The lifecycle eval has two intentionally different modes.
+
+The default deterministic mode is a fast local guard. It simulates focused
+multi-turn user feedback across separate product stories: risk adjustment,
+microstructure review, adjacent-market search, paper/shadow comparison,
+rollback, unsupported cross-chain requests, live-promotion pressure, conflicting
+instructions, and profitability overclaim checks. Each revision links to
+concrete backtest scenarios and emits durable feedback trajectory JSONL plus
+trace JSONL records.
 
 ```bash
 npm run eval:trading-lifecycle
 ```
 
+The product-proof mode drives real trading bot infrastructure. It requires a
+running trading API for a provisioned bot and a recorded candle fixture from
+real market data. It records those candles, creates a sandbox snapshot, calls
+`/evolution/self-improve` once per user turn, chains sandbox revision parents,
+and verifies `/evolution/revision-arena`. It deliberately fails preflight if
+the real service URL/token or recorded candle source are missing.
+
+```bash
+TRADING_EVAL_TRADING_URL=http://localhost:9100 \
+TRADING_EVAL_BOT_TOKEN=<bot-token> \
+TRADING_EVAL_CANDLES_JSON=.evolve/market-data/polymarket-btc-5m.json \
+npm run eval:trading-lifecycle -- --real-api
+```
+
+For route smoke tests only, set `TRADING_EVAL_ALLOW_SYNTHETIC_CANDLES=1`.
+Do not use that flag as evidence for market realism.
+
+Do not treat standalone generated JSON artifacts as proof of the autonomous
+trading loop. The real lifecycle gate must produce API evidence: self-
+improvement run ids, sandbox revision ids, candle counts, promotion blockers,
+and revision arena entries.
+
+## Arena Product Browser Eval
+
+The product browser eval defines BAD/browser-agent-driver cases for the user
+facing Arena surface. It is intentionally separate from lifecycle and backtest
+evals: this checks whether a real user can navigate the product, see safe
+provisioning paths, inspect bot detail/revision state, and pressure the UI/agent
+with unsafe requests without spending funds.
+
+Generate the case file:
+
+```bash
+npm run eval:product-browser
+```
+
+Run deterministic browser snapshots against a live Arena app with BAD
+installed. This uses real headless browser loading and requires no LLM provider:
+
+```bash
+ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+npm run eval:product-browser -- --snapshot
+```
+
+Run the full agentic browser-driver cases against a live Arena app with BAD and
+Tangle Router configured. This intentionally routes BAD through the router's
+OpenAI-compatible adapter while using DeepSeek v4 by default; it refuses direct
+provider endpoints and OpenAI model ids.
+The agentic product eval forces BAD's text/DOM mode (`--no-vision`) because
+router-backed DeepSeek v4 currently rejects BAD's multimodal `image_url` content
+parts.
+It also uses `fast-explore`, disables BAD memory, and skips BAD's secondary
+goal verifier so the product gate measures the live browser trajectory without
+spending extra verifier/scout calls through the same model. The eval runner then
+performs deterministic post-run checks over BAD's JSON reports, so an agent
+terminal report alone is not enough to pass.
+Each case runs in its own BAD process/output directory so a browser teardown or
+failure in one product story cannot poison the remaining stories.
+
+```bash
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  npm run eval:product-browser -- --run-bad
+```
+
+Useful overrides:
+
+```bash
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env BAD_TANGLE_ROUTER_MODEL=deepseek-v4-pro \
+  TANGLE_ROUTER_URL=https://router.tangle.tools/v1 \
+  ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  npm run eval:product-browser -- --run-bad
+```
+
+The runner fails loudly if `--run-bad` is requested and `bad` is unavailable.
+It also fails if no router key is present in `TANGLE_API_KEY`,
+`TANGLE_ROUTER_API_KEY`, `TANGLE_ROUTER_USER_KEY`, or
+`BAD_TANGLE_ROUTER_API_KEY`. The canonical local source for this repo's
+DeepSeek v4 browser eval is `~/company/devops/secrets/agent-state.env`;
+`~/company/devops/secrets/tangle-router.env` is the router service/upstream-key
+vault and is not the right source for this product eval. The router key is
+passed to BAD through a minimal child environment, not argv. Cases-only mode is
+a contract/build gate, not browser proof.
+
 The TypeScript eval package is under `evals/src`. Keep eval entrypoints there
 and expose repo-level commands through `package.json`; shell scripts in
 `scripts/` are compatibility wrappers only.
+
+## Full Gate
+
+Run the professional local gate with:
+
+```bash
+npm run eval:full
+```
+
+This runs deterministic build/test gates, emits `agent-eval` records where
+available, generates the Arena product browser-driver cases, requires the real
+API lifecycle gate above, and launches the real self-improvement MCP with
+`opencode`. Artifact-only strategy generation is not part of the full gate.
+
+To make the full gate include the live BAD/browser product proof, run:
+
+```bash
+dotenvx run --overload -f ~/company/devops/secrets/agent-state.env -- \
+  env ARENA_EVAL_BASE_URL=http://127.0.0.1:1337 \
+  FULL_EVAL_PRODUCT_BROWSER_BAD=1 \
+  npm run eval:full
+```
+
+Use `-- --require-real-product-browser` when a release run must fail instead of
+falling back to cases-only product coverage.
+
+When `--live-polymarket` is enabled, the separate live price-history gate
+requires a fixed candidate to pass multi-market replay through
+`trading-runtime`:
+
+- profitable on holdout
+- beats baseline on holdout
+- stays within candidate drawdown cap
+- makes holdout trades
+- is not marked likely overfit
+- passes at least the configured minimum number of active markets
+- has positive median holdout return and positive median return delta across
+  evaluated markets
+
+To include the separate fixed-candidate live Polymarket Gamma/CLOB price
+history smoke in the same gate:
+
+```bash
+npm run eval:full -- --live-polymarket
+```
