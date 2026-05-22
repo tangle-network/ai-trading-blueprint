@@ -41,7 +41,9 @@ export function SecretsModal({
 }) {
   const apiUrl = target?.apiUrl ?? OPERATOR_API_URL;
   const defaultProvider = (
-    DEFAULT_AI_PROVIDER === 'zai' || DEFAULT_AI_PROVIDER === 'tangle-router'
+    DEFAULT_AI_PROVIDER === 'zai' ||
+    DEFAULT_AI_PROVIDER === 'gemini' ||
+    DEFAULT_AI_PROVIDER === 'tangle-router'
       ? DEFAULT_AI_PROVIDER
       : 'anthropic'
   ) as AiProvider;

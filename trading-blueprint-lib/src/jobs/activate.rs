@@ -1007,8 +1007,33 @@ pub(crate) async fn write_prebuilt_tools(
         include_str!("../prompts/tools/record_candle.js"),
     )
     .await?;
+    initialize_agent_git_workspace(sidecar_url, token).await?;
 
     tracing::info!("Deployed pre-built trading tools for strategy: {strategy_type}");
+    Ok(())
+}
+
+async fn initialize_agent_git_workspace(sidecar_url: &str, token: &str) -> Result<(), String> {
+    let command = r#"set -eu
+cd /home/agent
+git init -q
+git config user.email "trading-agent@tangle.local"
+git config user.name "Trading Agent"
+git add package.json config tools memory .opencode 2>/dev/null || true
+if ! git diff --cached --quiet; then
+  git commit -q -m "Initialize trading agent workspace"
+fi
+"#;
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: sidecar_url.to_string(),
+        command: command.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: "{}".to_string(),
+        timeout_ms: 30_000,
+    };
+    ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
+        .await
+        .map_err(|e| format!("Failed to initialize agent git workspace: {e}"))?;
     Ok(())
 }
 
@@ -1153,6 +1178,8 @@ mod tests {
         let tool = include_str!("../prompts/tools/self_improvement_mcp_server.ts");
         assert!(tool.contains("tools/list"));
         assert!(tool.contains("tools/call"));
+        assert!(tool.contains("SIDECAR_DEFAULT_HARNESS === 'gemini'"));
+        assert!(tool.contains("gemini --skip-trust --yolo"));
         assert!(tool.contains("auto-dev-style"));
         assert!(tool.contains("principal/L8-level"));
         assert!(tool.contains("10x IC"));

@@ -1,4 +1,4 @@
-export type AiProvider = 'anthropic' | 'zai' | 'tangle-router';
+export type AiProvider = 'anthropic' | 'gemini' | 'zai' | 'tangle-router';
 
 export const DEFAULT_AI_PROVIDER = import.meta.env.VITE_DEFAULT_AI_PROVIDER ?? '';
 export const DEFAULT_AI_API_KEY = import.meta.env.VITE_DEFAULT_AI_API_KEY ?? '';
@@ -20,6 +20,14 @@ export const AI_PROVIDERS: {
     envKey: 'ZAI_API_KEY',
     modelProvider: 'zai-coding-plan',
     modelName: 'glm-4.7',
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini',
+    placeholder: 'your-gemini-api-key',
+    envKey: 'GEMINI_API_KEY',
+    modelProvider: 'gemini',
+    modelName: 'gemini-3-pro-preview',
   },
   {
     id: 'anthropic',
@@ -48,6 +56,10 @@ export function buildEnvForProvider(provider: AiProvider, key: string): Record<s
   };
   // Also set the provider-native key so inner session reads it
   env[config.envKey] = key;
+  if (provider === 'gemini') {
+    env.GOOGLE_API_KEY = key;
+    env.SIDECAR_DEFAULT_HARNESS = 'gemini';
+  }
   if (provider === 'tangle-router') {
     env.TANGLE_ROUTER_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;
     env.OPENCODE_MODEL_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;

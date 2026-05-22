@@ -1016,19 +1016,28 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         serde_json::Value::String(prompt.clone()),
     );
 
+    let mut activation_error = None;
     let activate_result =
-        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, user_env, None)
-            .await
-            .map_err(|e| {
-                ApiError::message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Activation failed: {e}"),
-                )
-            })?;
+        match trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, user_env, None).await
+        {
+            Ok(result) => Some(result),
+            Err(error) => {
+                tracing::warn!(
+                    bot_id = %bot.id,
+                    %error,
+                    "Bot provisioned but activation did not complete"
+                );
+                activation_error = Some(error);
+                None
+            }
+        };
 
     // 3. Seed the user's initial prompt as an actionable owner conversation so
     // the agent sees it through the normal ACTION NEEDED workflow on first tick.
-    if let Ok(sandbox) = sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id) {
+    if let Some(ref activate_result) = activate_result
+        && let Ok(sandbox) =
+            sandbox_runtime::runtime::get_sandbox_by_id(&activate_result.sandbox_id)
+    {
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let timestamp = chrono::Utc::now().format("%H:%M UTC").to_string();
         let (conversation_file, strategy_content, toc_content) =
@@ -1056,14 +1065,33 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         }
     }
 
+    let status = if activate_result.is_some() {
+        "active"
+    } else {
+        "awaiting_activation"
+    };
+    let sandbox_id = activate_result
+        .as_ref()
+        .map(|result| result.sandbox_id.clone())
+        .unwrap_or_else(|| bot.sandbox_id.clone());
+    let trading_api_url = activate_result
+        .as_ref()
+        .map(|result| serde_json::Value::String(result.trading_api_url.clone()))
+        .unwrap_or(serde_json::Value::Null);
+    let trading_api_token = activate_result
+        .as_ref()
+        .map(|result| serde_json::Value::String(result.trading_api_token.clone()))
+        .unwrap_or(serde_json::Value::Null);
+
     Ok(Json(serde_json::json!({
         "bot_id": bot.id,
-        "sandbox_id": activate_result.sandbox_id,
+        "sandbox_id": sandbox_id,
         "strategy_type": strategy_type,
         "name": name,
-        "status": "active",
-        "trading_api_url": activate_result.trading_api_url,
-        "trading_api_token": activate_result.trading_api_token,
+        "status": status,
+        "trading_api_url": trading_api_url,
+        "trading_api_token": trading_api_token,
+        "activation_error": activation_error,
         "prompt": prompt,
     })))
 }
@@ -1534,23 +1562,34 @@ async fn get_bot_run(
 
 fn operator_ai_env() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut env = serde_json::Map::new();
-    let providers: &[(&str, &str, &str, &str)] = &[
+    let providers: &[(&str, &str, &str, &[&str])] = &[
         (
             "ANTHROPIC_API_KEY",
             "anthropic",
             "claude-sonnet-4-6",
-            "ANTHROPIC_API_KEY",
+            &["ANTHROPIC_API_KEY"],
         ),
-        ("ZAI_API_KEY", "zai-coding-plan", "glm-4.7", "ZAI_API_KEY"),
+        (
+            "ZAI_API_KEY",
+            "zai-coding-plan",
+            "glm-4.7",
+            &["ZAI_API_KEY"],
+        ),
+        (
+            "TANGLE_API_KEY",
+            "openrouter",
+            "anthropic/claude-sonnet-4-6",
+            &["TANGLE_API_KEY", "TANGLE_ROUTER_API_KEY"],
+        ),
         (
             "TANGLE_ROUTER_API_KEY",
             "openrouter",
             "anthropic/claude-sonnet-4-6",
-            "TANGLE_ROUTER_API_KEY",
+            &["TANGLE_ROUTER_API_KEY", "TANGLE_API_KEY"],
         ),
     ];
 
-    for &(env_var, model_provider, model_name, native_key) in providers {
+    for &(env_var, model_provider, model_name, native_keys) in providers {
         if let Ok(key) = std::env::var(env_var) {
             if key.is_empty() {
                 continue;
@@ -1558,20 +1597,22 @@ fn operator_ai_env() -> Result<serde_json::Map<String, serde_json::Value>, Strin
             env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
             env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
             env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-            if env_var == "TANGLE_ROUTER_API_KEY" {
+            if env_var == "TANGLE_API_KEY" || env_var == "TANGLE_ROUTER_API_KEY" {
                 let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
                     .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
                 env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
                 env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
             }
-            env.insert(native_key.into(), key.into());
+            for native_key in native_keys {
+                env.insert((*native_key).into(), key.clone().into());
+            }
             return Ok(env);
         }
     }
 
     Err(
         "No API keys provided and operator has no pre-configured AI keys. \
-         Set ANTHROPIC_API_KEY, ZAI_API_KEY, or TANGLE_ROUTER_API_KEY in the operator environment."
+         Set ANTHROPIC_API_KEY, ZAI_API_KEY, or TANGLE_API_KEY in the operator environment."
             .to_string(),
     )
 }

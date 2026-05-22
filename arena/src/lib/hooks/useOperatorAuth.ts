@@ -35,6 +35,9 @@ const EMPTY_STATE: OperatorAuthState = {
 const authRegistry = new Map<string, OperatorAuthState>();
 const authListeners = new Map<string, Set<() => void>>();
 const SESSION_STORAGE_PREFIX = 'arena.operator_auth.';
+const DEV_E2E_AUTH_ADDRESS = import.meta.env.DEV
+  ? (import.meta.env.VITE_OPERATOR_E2E_AUTH_ADDRESS as string | undefined)
+  : undefined;
 
 function isMissingWagmiProviderError(error: unknown): boolean {
   return error instanceof Error && (
@@ -86,8 +89,12 @@ function subscribeToKey(key: string, listener: () => void): () => void {
 
 function clearPersistedSession(key: string) {
   if (typeof window === 'undefined' || !window.sessionStorage) return;
+  const storageKey = getPersistedSessionKey(key);
   try {
-    window.sessionStorage.removeItem(getPersistedSessionKey(key));
+    window.sessionStorage.removeItem(storageKey);
+    if (import.meta.env.DEV) {
+      window.localStorage?.removeItem(storageKey);
+    }
   } catch {
     // Best-effort cleanup only.
   }
@@ -96,7 +103,9 @@ function clearPersistedSession(key: string) {
 function readPersistedSession(key: string): OperatorSession | null {
   if (typeof window === 'undefined' || !window.sessionStorage) return null;
   try {
-    const raw = window.sessionStorage.getItem(getPersistedSessionKey(key));
+    const storageKey = getPersistedSessionKey(key);
+    const raw = window.sessionStorage.getItem(storageKey)
+      ?? (import.meta.env.DEV ? window.localStorage?.getItem(storageKey) : null);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<OperatorSession>;
     if (typeof parsed?.token !== 'string' || typeof parsed?.expiresAt !== 'number') {
@@ -124,7 +133,7 @@ function persistSession(key: string, session: OperatorSession | null) {
     if (session && isSessionValid(session)) {
       window.sessionStorage.setItem(getPersistedSessionKey(key), JSON.stringify(session));
     } else {
-      window.sessionStorage.removeItem(getPersistedSessionKey(key));
+      clearPersistedSession(key);
     }
   } catch {
     // Best-effort persistence only.
@@ -132,11 +141,11 @@ function persistSession(key: string, session: OperatorSession | null) {
 }
 
 export function useOperatorAuth(apiUrl: string): OperatorAuth {
-  let address: string | undefined;
+  let walletAddress: string | undefined;
   let signMessageAsync: ReturnType<typeof useSignMessage>['signMessageAsync'] | undefined;
 
   try {
-    ({ address } = useAccount());
+    ({ address: walletAddress } = useAccount());
   } catch (error) {
     if (!isMissingWagmiProviderError(error)) throw error;
   }
@@ -147,6 +156,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
     if (!isMissingWagmiProviderError(error)) throw error;
   }
 
+  const address = walletAddress ?? DEV_E2E_AUTH_ADDRESS;
   const cacheKey = address ? makeCacheKey(address, apiUrl) : null;
 
   const subscribe = useCallback((listener: () => void) => {
@@ -187,7 +197,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
   }, [cacheKey]);
 
   const getToken = useCallback(async (forceRefresh = false): Promise<string | null> => {
-    if (!address || !cacheKey || !apiUrl || !signMessageAsync) return null;
+    if (!address || !cacheKey || !apiUrl) return null;
 
     const current = getState(cacheKey);
     if (!forceRefresh && isSessionValid(current.session)) return current.session.token;
@@ -204,6 +214,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
         return persisted.token;
       }
     }
+    if (!signMessageAsync) return null;
     if (current.inflight) return current.inflight;
     if (forceRefresh) {
       setState(cacheKey, { ...current, session: null, error: null });

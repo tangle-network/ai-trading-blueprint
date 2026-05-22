@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use axum::http::{StatusCode, header::CONTENT_TYPE};
@@ -6,10 +8,13 @@ use axum::response::{
     IntoResponse, Response,
     sse::{Event, KeepAlive, Sse},
 };
-use bytes::Bytes;
-use futures_core::Stream;
 use serde_json::Value;
+use serde_json::json;
 use tokio::time::sleep;
+
+static CHAT_TRANSCRIPTS: LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const DEFAULT_CHAT_AGENT_RUN_TIMEOUT_MS: u64 = 1_800_000;
 
 #[derive(Clone, Debug)]
 pub struct SidecarChatTarget {
@@ -58,52 +63,6 @@ fn chat_session_type(bot_id: &str, session_id: &str) -> &'static str {
         "autonomous"
     } else {
         "manual"
-    }
-}
-
-fn transform_session_entries(
-    bot_id: &str,
-    values: Vec<Value>,
-    scope: ChatSessionScope,
-) -> Vec<Value> {
-    values
-        .into_iter()
-        .filter_map(|entry| match entry {
-            Value::Object(mut map) => {
-                let Some(session_id) = map.get("id").and_then(Value::as_str) else {
-                    return Some(Value::Object(map));
-                };
-
-                if scope == ChatSessionScope::ManualOnly
-                    && is_autonomous_chat_session(bot_id, session_id)
-                {
-                    return None;
-                }
-
-                map.insert(
-                    "session_type".to_string(),
-                    Value::String(chat_session_type(bot_id, session_id).to_string()),
-                );
-                Some(Value::Object(map))
-            }
-            other => Some(other),
-        })
-        .collect()
-}
-
-fn transform_sessions_payload(bot_id: &str, payload: Value, scope: ChatSessionScope) -> Value {
-    match payload {
-        Value::Array(values) => Value::Array(transform_session_entries(bot_id, values, scope)),
-        Value::Object(mut map) => {
-            if let Some(Value::Array(values)) = map.remove("sessions") {
-                map.insert(
-                    "sessions".to_string(),
-                    Value::Array(transform_session_entries(bot_id, values, scope)),
-                );
-            }
-            Value::Object(map)
-        }
-        other => other,
     }
 }
 
@@ -171,14 +130,34 @@ async fn send_chat_request_once(
             format!("Bearer {}", target.sidecar_token),
         );
     }
-    if let Some(json) = body {
+    if let Some(ref json) = body {
         req = req.json(&json);
     }
 
-    req.timeout(Duration::from_secs(30))
+    let timeout = request_timeout(path, body.as_ref());
+    req.timeout(timeout)
         .send()
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Sidecar unreachable: {e}")))
+}
+
+fn request_timeout(path: &str, body: Option<&Value>) -> Duration {
+    let requested_ms = body
+        .and_then(|value| {
+            value
+                .get("timeout")
+                .or_else(|| value.get("timeout_ms"))
+                .and_then(Value::as_u64)
+        })
+        .filter(|value| *value > 0);
+    if path == "/agents/run" {
+        return Duration::from_millis(
+            requested_ms.unwrap_or_else(default_chat_agent_run_timeout_ms),
+        );
+    }
+    requested_ms
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_secs(30))
 }
 
 async fn recover_chat_target(target: &SidecarChatTarget) -> Option<SidecarChatTarget> {
@@ -237,33 +216,14 @@ async fn wait_for_sidecar_health(sidecar_url: &str, attempts: usize) {
     }
 }
 
-async fn into_axum_response(resp: reqwest::Response) -> Result<Response, (StatusCode, String)> {
-    let status =
-        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json")
-        .to_string();
-    let bytes = resp.bytes().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to read sidecar response: {e}"),
-        )
-    })?;
-
-    Ok((status, [(CONTENT_TYPE, content_type)], bytes).into_response())
-}
-
 pub async fn proxy_chat_request(
     target: &SidecarChatTarget,
     method: reqwest::Method,
     path: &str,
     body: Option<Value>,
-    query: Option<&str>,
+    _query: Option<&str>,
 ) -> Result<Response, (StatusCode, String)> {
-    into_axum_response(send_chat_request(target, method, path, body, query).await?).await
+    run_backed_chat_response(target, method, path, body).await
 }
 
 pub async fn list_chat_sessions(
@@ -271,224 +231,354 @@ pub async fn list_chat_sessions(
     bot_id: &str,
     scope: ChatSessionScope,
 ) -> Result<Response, (StatusCode, String)> {
-    let resp =
-        send_chat_request(target, reqwest::Method::GET, "/agents/sessions", None, None).await?;
-    let status =
-        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let bytes = resp.bytes().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to read sidecar response: {e}"),
-        )
-    })?;
-
-    if !status.is_success() {
-        return Ok((status, [(CONTENT_TYPE, "application/json")], bytes).into_response());
-    }
-
-    let payload: Value = serde_json::from_slice(&bytes).map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to decode sidecar session list: {e}"),
-        )
-    })?;
-    let filtered = transform_sessions_payload(bot_id, payload, scope);
-    let body = serde_json::to_vec(&filtered).map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to encode filtered session list: {e}"),
-        )
-    })?;
-
-    Ok((status, [(CONTENT_TYPE, "application/json")], body).into_response())
+    Ok(json_response(
+        StatusCode::OK,
+        Value::Array(run_backed_session_entries(target, bot_id, scope)),
+    ))
 }
 
 pub async fn list_chat_session_ids(
     target: &SidecarChatTarget,
 ) -> Result<Vec<String>, (StatusCode, String)> {
-    let resp =
-        send_chat_request(target, reqwest::Method::GET, "/agents/sessions", None, None).await?;
-    let status =
-        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let bytes = resp.bytes().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to read sidecar response: {e}"),
-        )
-    })?;
+    Ok(
+        run_backed_session_entries(target, "", ChatSessionScope::All)
+            .into_iter()
+            .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect(),
+    )
+}
 
-    if !status.is_success() {
-        return Err((status, String::from_utf8_lossy(&bytes).into_owned()));
+fn json_response(status: StatusCode, value: Value) -> Response {
+    let bytes = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
+    (status, [(CONTENT_TYPE, "application/json")], bytes).into_response()
+}
+
+fn transcript_key(sandbox_id: &str, session_id: &str) -> String {
+    format!("{sandbox_id}::{session_id}")
+}
+
+fn default_manual_session_id(sandbox_id: &str) -> String {
+    let suffix: String = sandbox_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(40)
+        .collect();
+    format!("manual-{suffix}")
+}
+
+fn run_backed_session_entries(
+    target: &SidecarChatTarget,
+    bot_id: &str,
+    scope: ChatSessionScope,
+) -> Vec<Value> {
+    let mut session_ids = vec![default_manual_session_id(&target.sandbox_id)];
+    if let Ok(store) = CHAT_TRANSCRIPTS.lock() {
+        let prefix = format!("{}::", target.sandbox_id);
+        session_ids.extend(
+            store
+                .keys()
+                .filter_map(|key| key.strip_prefix(&prefix).map(str::to_string)),
+        );
+    }
+    session_ids.sort();
+    session_ids.dedup();
+    session_ids
+        .into_iter()
+        .filter(|session_id| {
+            scope == ChatSessionScope::All || !is_autonomous_chat_session(bot_id, session_id)
+        })
+        .map(|session_id| {
+            json!({
+                "id": session_id,
+                "title": "New Chat",
+                "session_type": chat_session_type(bot_id, &session_id),
+                "transport": "agents/run"
+            })
+        })
+        .collect()
+}
+
+async fn run_backed_chat_response(
+    target: &SidecarChatTarget,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Response, (StatusCode, String)> {
+    if method == reqwest::Method::POST && path == "/agents/sessions" {
+        let session_id = body
+            .as_ref()
+            .and_then(|value| value.get("id").or_else(|| value.get("session_id")))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| default_manual_session_id(&target.sandbox_id));
+        return Ok(json_response(
+            StatusCode::OK,
+            json!({ "id": session_id, "title": "New Chat", "transport": "agents/run" }),
+        ));
     }
 
-    let payload: Value = serde_json::from_slice(&bytes).map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Failed to decode sidecar session list: {e}"),
-        )
-    })?;
-
-    let entries: Vec<Value> = match payload {
-        Value::Array(values) => values,
-        Value::Object(mut map) => map
-            .remove("sessions")
-            .and_then(|sessions| sessions.as_array().cloned())
-            .unwrap_or_default(),
-        _ => Vec::new(),
+    let Some((session_id, suffix)) = parse_session_path(path) else {
+        return Ok(json_response(
+            StatusCode::NOT_FOUND,
+            json!({ "success": false, "error": { "code": "NOT_FOUND", "message": "Unknown chat endpoint" } }),
+        ));
     };
 
-    Ok(entries
-        .into_iter()
-        .filter_map(|entry| match entry {
-            Value::Object(map) => map.get("id").and_then(Value::as_str).map(str::to_string),
-            _ => None,
+    if suffix.is_empty() && method == reqwest::Method::GET {
+        return Ok(json_response(
+            StatusCode::OK,
+            json!({ "id": session_id, "title": "New Chat", "transport": "agents/run" }),
+        ));
+    }
+    if suffix.is_empty() && method == reqwest::Method::PATCH {
+        return Ok(json_response(
+            StatusCode::OK,
+            json!({ "id": session_id, "title": body.and_then(|v| v.get("title").cloned()).unwrap_or(Value::String("New Chat".to_string())) }),
+        ));
+    }
+    if suffix.is_empty() && method == reqwest::Method::DELETE {
+        if let Ok(mut store) = CHAT_TRANSCRIPTS.lock() {
+            store.remove(&transcript_key(&target.sandbox_id, &session_id));
+        }
+        return Ok(json_response(StatusCode::OK, json!({ "ok": true })));
+    }
+    if suffix == "abort" && method == reqwest::Method::POST {
+        return Ok(json_response(StatusCode::OK, json!({ "ok": true })));
+    }
+    if suffix != "messages" {
+        return Ok(json_response(
+            StatusCode::NOT_FOUND,
+            json!({ "success": false, "error": { "code": "NOT_FOUND", "message": "Unknown chat endpoint" } }),
+        ));
+    }
+
+    if method == reqwest::Method::GET {
+        let messages = CHAT_TRANSCRIPTS
+            .lock()
+            .ok()
+            .and_then(|store| {
+                store
+                    .get(&transcript_key(&target.sandbox_id, &session_id))
+                    .cloned()
+            })
+            .unwrap_or_default();
+        return Ok(json_response(StatusCode::OK, Value::Array(messages)));
+    }
+
+    if method != reqwest::Method::POST {
+        return Ok(json_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            json!({ "error": "method not allowed" }),
+        ));
+    }
+
+    let user_body = body.unwrap_or_else(|| json!({}));
+    let message = extract_message_text(&user_body);
+    append_transcript_message(
+        target,
+        &session_id,
+        "user",
+        message.clone(),
+        json!({ "transport": "operator-chat", "source": "owner" }),
+    );
+
+    let run_target = target.clone();
+    let run_session_id = session_id.clone();
+    tokio::spawn(async move {
+        run_agent_turn(run_target, run_session_id, message).await;
+    });
+    Ok(json_response(
+        StatusCode::OK,
+        json!({
+            "ok": true,
+            "sessionId": session_id,
+            "transport": "agents/run",
+            "status": "accepted"
+        }),
+    ))
+}
+
+async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: String) {
+    let run_body = json!({
+        "identifier": "default",
+        "message": message,
+        "sessionId": session_id.clone(),
+        "timeout": default_chat_agent_run_timeout_ms()
+    });
+    let result = send_chat_request(
+        &target,
+        reqwest::Method::POST,
+        "/agents/run",
+        Some(run_body),
+        None,
+    )
+    .await;
+    let (status, payload) = match result {
+        Ok(run_response) => {
+            let status = StatusCode::from_u16(run_response.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let bytes = match run_response.bytes().await {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    append_transcript_message(
+                        &target,
+                        &session_id,
+                        "assistant",
+                        format!("Agent run failed to return a readable response: {error}"),
+                        json!({ "transport": "agents/run", "status": "read_error" }),
+                    );
+                    return;
+                }
+            };
+            let payload: Value = serde_json::from_slice(&bytes).unwrap_or_else(
+                |_| json!({ "success": false, "response": String::from_utf8_lossy(&bytes) }),
+            );
+            (status, payload)
+        }
+        Err((status, message)) => (
+            status,
+            json!({ "success": false, "error": { "message": message } }),
+        ),
+    };
+    let assistant_text = payload
+        .get("response")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
         })
-        .collect())
+        .unwrap_or("")
+        .to_string();
+    let text = if assistant_text.is_empty() {
+        format!(
+            "Agent run completed without text output. sidecar_status={}",
+            status.as_u16()
+        )
+    } else {
+        assistant_text
+    };
+    append_transcript_message(
+        &target,
+        &session_id,
+        "assistant",
+        text,
+        json!({ "transport": "agents/run", "status": status.as_u16() }),
+    );
+}
+
+fn default_chat_agent_run_timeout_ms() -> u64 {
+    std::env::var("CHAT_AGENT_RUN_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CHAT_AGENT_RUN_TIMEOUT_MS)
+}
+
+fn parse_session_path(path: &str) -> Option<(String, String)> {
+    let rest = path.strip_prefix("/agents/sessions/")?;
+    let mut parts = rest.split('/').map(str::to_string).collect::<Vec<_>>();
+    if parts.is_empty() || parts[0].is_empty() {
+        return None;
+    }
+    let session_id = parts.remove(0);
+    Some((session_id, parts.join("/")))
+}
+
+fn extract_message_text(body: &Value) -> String {
+    if let Some(message) = body.get("message").and_then(Value::as_str) {
+        return message.to_string();
+    }
+    body.get("parts")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| body.to_string())
+}
+
+fn append_transcript_message(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    role: &str,
+    text: String,
+    metadata: Value,
+) {
+    let message_id = format!(
+        "{}-{}",
+        role,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let message = json!({
+        "info": {
+            "id": message_id,
+            "role": role,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        },
+        "parts": [{ "type": "text", "text": text }],
+        "metadata": metadata,
+    });
+    if let Ok(mut store) = CHAT_TRANSCRIPTS.lock() {
+        store
+            .entry(transcript_key(&target.sandbox_id, session_id))
+            .or_default()
+            .push(message);
+    }
 }
 
 pub async fn proxy_chat_events(
     target: SidecarChatTarget,
     session_id: Option<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let client = reqwest::Client::new();
-    let resp = match connect_chat_events_once(&client, &target, session_id.as_deref()).await {
-        Ok(response) => response,
-        Err(initial_error) => {
-            let recovered_target = recover_chat_target(&target)
-                .await
-                .ok_or_else(|| initial_error.clone())?;
-            connect_chat_events_once(&client, &recovered_target, session_id.as_deref())
-                .await
-                .inspect_err(|retry_error| {
-                    tracing::warn!(
-                        sandbox_id = %target.sandbox_id,
-                        initial = %initial_error.1,
-                        retry = %retry_error.1,
-                        "chat SSE retry failed after recovery attempt"
-                    );
-                })?
-        }
-    };
-
-    if !resp.status().is_success() {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            format!("Sidecar SSE returned status {}", resp.status()),
-        ));
-    }
-
-    let event_stream = SseParser::new(resp.bytes_stream());
+    let session_id = session_id.unwrap_or_else(|| default_manual_session_id(&target.sandbox_id));
+    let messages = CHAT_TRANSCRIPTS
+        .lock()
+        .ok()
+        .and_then(|store| {
+            store
+                .get(&transcript_key(&target.sandbox_id, &session_id))
+                .cloned()
+        })
+        .unwrap_or_default();
+    let event = Event::default()
+        .event("sync")
+        .json_data(json!({
+            "sessionId": session_id,
+            "messages": messages,
+            "transport": "agents/run"
+        }))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to encode chat event: {e}"),
+            )
+        })?;
+    let event_stream = futures_util::stream::once(async move { Ok::<Event, Infallible>(event) });
     Ok(Sse::new(Box::pin(event_stream))
         .keep_alive(KeepAlive::default())
         .into_response())
 }
 
-async fn connect_chat_events_once(
-    client: &reqwest::Client,
-    target: &SidecarChatTarget,
-    session_id: Option<&str>,
-) -> Result<reqwest::Response, (StatusCode, String)> {
-    let mut url = format!("{}/agents/events", target.sidecar_url.trim_end_matches('/'));
-    if let Some(sid) = session_id
-        && !sid.is_empty()
-    {
-        url.push_str(&format!("?sessionId={sid}"));
-    }
-
-    let mut req = client.get(&url);
-    if !target.sidecar_token.is_empty() {
-        req = req.header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {}", target.sidecar_token),
-        );
-    }
-
-    req.timeout(Duration::from_secs(3600))
-        .send()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to connect to sidecar SSE: {e}"),
-            )
-        })
-}
-
-struct SseParser<S> {
-    inner: S,
-    buffer: String,
-}
-
-impl<S> SseParser<S> {
-    fn new(inner: S) -> Self {
-        Self {
-            inner,
-            buffer: String::new(),
-        }
-    }
-}
-
-impl<S> Stream for SseParser<S>
-where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin,
-{
-    type Item = Result<Event, Infallible>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        loop {
-            if let Some(pos) = this.buffer.find("\n\n") {
-                let event_text = this.buffer[..pos].to_string();
-                this.buffer = this.buffer[pos + 2..].to_string();
-
-                let mut event_type = None;
-                let mut data_parts = Vec::new();
-
-                for line in event_text.lines() {
-                    if let Some(rest) = line.strip_prefix("event:") {
-                        event_type = Some(rest.trim().to_string());
-                    } else if let Some(rest) = line.strip_prefix("data:") {
-                        data_parts.push(rest.trim().to_string());
-                    }
-                }
-
-                if !data_parts.is_empty() {
-                    let data = data_parts.join("\n");
-                    let mut event = Event::default().data(data);
-                    if let Some(kind) = event_type {
-                        event = event.event(kind);
-                    }
-                    return std::task::Poll::Ready(Some(Ok(event)));
-                }
-                continue;
-            }
-
-            match std::pin::Pin::new(&mut this.inner).poll_next(cx) {
-                std::task::Poll::Ready(Some(Ok(bytes))) => {
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        this.buffer.push_str(text);
-                    }
-                }
-                std::task::Poll::Ready(Some(Err(_))) => return std::task::Poll::Ready(None),
-                std::task::Poll::Ready(None) => return std::task::Poll::Ready(None),
-                std::task::Poll::Pending => return std::task::Poll::Pending,
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Json, Router, routing::get};
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
     use tempfile::tempdir;
 
     #[test]
-    fn detects_legacy_and_current_autonomous_session_names() {
+    fn detects_autonomous_session_names() {
         let bot_id = "bot-123";
 
         for session_id in [
@@ -509,44 +599,6 @@ mod tests {
         for session_id in ["manual-1", "session-abc", "conversation-with-owner"] {
             assert!(!is_autonomous_chat_session(bot_id, session_id));
         }
-    }
-
-    #[test]
-    fn transforms_manual_sessions_with_session_type() {
-        let payload = serde_json::json!([
-            {"id": "manual-1", "title": "New Chat"},
-            {"id": "fast-bot-123", "title": "Fast"}
-        ]);
-
-        let transformed =
-            transform_sessions_payload("bot-123", payload, ChatSessionScope::ManualOnly);
-
-        assert_eq!(
-            transformed,
-            serde_json::json!([
-                {"id": "manual-1", "title": "New Chat", "session_type": "manual"}
-            ])
-        );
-    }
-
-    #[test]
-    fn includes_autonomous_sessions_when_scope_is_all() {
-        let payload = serde_json::json!([
-            {"id": "manual-1", "title": "New Chat"},
-            {"id": "fast-bot-123"},
-            {"id": "research-bot-123"}
-        ]);
-
-        let transformed = transform_sessions_payload("bot-123", payload, ChatSessionScope::All);
-
-        assert_eq!(
-            transformed,
-            serde_json::json!([
-                {"id": "manual-1", "title": "New Chat", "session_type": "manual"},
-                {"id": "fast-bot-123", "session_type": "autonomous"},
-                {"id": "research-bot-123", "session_type": "autonomous"}
-            ])
-        );
     }
 
     fn init_test_env() -> tempfile::TempDir {
@@ -611,8 +663,8 @@ mod tests {
                 get(|| async { Json(serde_json::json!({ "ok": true })) }),
             )
             .route(
-                "/agents/sessions",
-                get(|| async { Json(serde_json::json!([{ "id": "manual-1" }])) }),
+                "/agents/run",
+                post(|| async { Json(serde_json::json!({ "success": true, "response": "ok" })) }),
             );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -628,7 +680,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chat_request_retries_with_latest_sandbox_target() {
+    async fn run_request_retries_with_latest_sandbox_target() {
         let _dir = init_test_env();
         let sandbox_id = "sandbox-chat-retry";
         let fresh_url = spawn_mock_chat_sidecar().await;
@@ -642,9 +694,9 @@ mod tests {
 
         let response = send_chat_request(
             &stale_target,
-            reqwest::Method::GET,
-            "/agents/sessions",
-            None,
+            reqwest::Method::POST,
+            "/agents/run",
+            Some(serde_json::json!({ "message": "hello" })),
             None,
         )
         .await
@@ -652,6 +704,6 @@ mod tests {
 
         assert!(response.status().is_success());
         let payload: serde_json::Value = response.json().await.expect("json payload");
-        assert_eq!(payload, serde_json::json!([{ "id": "manual-1" }]));
+        assert_eq!(payload["response"], "ok");
     }
 }

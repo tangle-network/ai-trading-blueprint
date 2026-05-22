@@ -12,6 +12,7 @@ const personaReportPath = resolveRepo(
   argValue('--persona-report') ?? `.evolve/evals/trading-lifecycle-personas-${isoStamp()}.json`,
 )
 const feedbackJsonlPath = resolveRepo(argValue('--feedback-jsonl') ?? '.evolve/agent-eval/trading-lifecycle-feedback.jsonl')
+const traceJsonlPath = resolveRepo(argValue('--trace-jsonl') ?? '.evolve/agent-eval/trading-lifecycle-traces.jsonl')
 const mode = process.argv.includes('--real-api') ? 'real-api' : 'deterministic'
 const maxAgentTurns = argValue('--max-agent-turns')
 
@@ -19,6 +20,7 @@ const summary = await runTradingLifecycleEval({
   outputPath,
   personaReportPath,
   feedbackJsonlPath,
+  traceJsonlPath,
   mode,
   ...(maxAgentTurns ? { maxAgentTurns: Number(maxAgentTurns) } : {}),
 })
