@@ -1,0 +1,1165 @@
+//! Hyperliquid funding readiness and Core spot-to-perp movement routes.
+//!
+//! The vault can submit validated Hyperliquid CoreWriter actions, but Core
+//! balances and idle HyperEVM ERC20 balances are not the same thing. These
+//! routes make that distinction explicit for trading agents.
+
+use alloy::primitives::aliases::U24;
+use alloy::primitives::{Address, Bytes, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol;
+use alloy::sol_types::{SolCall, SolValue};
+use axum::extract::{Extension, State};
+use axum::http::StatusCode;
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
+use chrono::Utc;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{Duration, sleep};
+
+use crate::routes::hyperliquid::{get_hl_client, require_hyperliquid_account_address};
+use crate::{BotContext, MultiBotTradingState};
+use trading_runtime::execution_hash::{
+    ACTION_EVM_USDC_TO_CORE, ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, HyperliquidFundMovementPolicy,
+    build_hyperliquid_evm_usdc_to_core_fund_movement_hashes,
+    build_hyperliquid_usd_class_fund_movement_hashes,
+};
+use trading_runtime::hyperevm_corewriter::ACTION_USD_CLASS_TRANSFER;
+use trading_runtime::intent::TradeIntentBuilder;
+use trading_runtime::types::Action;
+use trading_runtime::validator_client::{ValidationExecutionOptions, ValidatorClient};
+
+sol! {
+    interface IHyperliquidVaultFunding {
+        struct FundMovementAuthorization {
+            uint256 nonce;
+            uint256 deadline;
+            bytes[] signatures;
+            uint256[] scores;
+        }
+
+        function leverageCap() external view returns (uint256);
+        function maxTradesPerHour() external view returns (uint256);
+        function maxSlippageBps() external view returns (uint256);
+        function tradeValidator() external view returns (address);
+        function computeFundMovementHashes(
+            uint24 actionType,
+            address destination,
+            uint64 token,
+            uint64 amount,
+            bool direction,
+            uint256 nonce,
+            uint256 deadline,
+            bytes action
+        ) external view returns (bytes32 intentHash, bytes32 executionHash);
+        function returnUsdClassLiquidity(uint64 ntl, bool toPerp, FundMovementAuthorization calldata authorization) external;
+        function returnSpotLiquidity(address destination, uint64 token, uint64 weiAmount, FundMovementAuthorization calldata authorization) external;
+    }
+
+    interface ITradeValidatorFundingPreflight {
+        function validateWithSignatures(
+            bytes32 intentHash,
+            bytes32 executionHash,
+            address vault,
+            bytes[] calldata signatures,
+            uint256[] calldata scores,
+            uint256 deadline,
+            uint256 actionKind
+        ) external view returns (bool approved, uint256 validCount);
+    }
+}
+
+const CORE_USDC_WEI_PER_USDC: u64 = 100_000_000;
+const EVM_USDC_WEI_PER_USDC: u64 = 1_000_000;
+const HYPERLIQUID_USDC_SPOT_TOKEN: u64 = 0;
+const FUNDING_PROTOCOL: &str = "hyperliquid_funding";
+const FUNDING_POLL_ATTEMPTS: usize = 10;
+const FUNDING_POLL_DELAY_MS: u64 = 2_000;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HyperliquidFundingStatus {
+    pub state: String,
+    pub idle_evm_usdc: String,
+    pub core_spot_usdc: String,
+    pub perp_margin_usdc: String,
+    pub core_total_usdc: String,
+    pub requested_usdc: Option<String>,
+    pub can_move_core_spot_to_perp: bool,
+    pub can_move_idle_evm_to_core: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsdClassTransferRequest {
+    pub amount_usdc: String,
+    #[serde(default = "default_to_perp")]
+    pub to_perp: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EvmUsdcToCoreRequest {
+    pub amount_usdc: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreparePerpMarginRequest {
+    pub amount_usdc: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsdClassTransferResponse {
+    pub status: String,
+    pub tx_hash: String,
+    pub ntl: u64,
+    pub to_perp: bool,
+    pub funding_status_before: HyperliquidFundingStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EvmUsdcToCoreResponse {
+    pub status: String,
+    pub tx_hash: String,
+    pub amount_wei: u64,
+    pub system_address: String,
+    pub funding_status_before: HyperliquidFundingStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreparePerpMarginResponse {
+    pub status: String,
+    pub requested_usdc: String,
+    pub moved_evm_to_core_usdc: Option<String>,
+    pub moved_core_to_perp_usdc: Option<String>,
+    pub evm_to_core_tx_hash: Option<String>,
+    pub usd_class_tx_hash: Option<String>,
+    pub funding_status_before: HyperliquidFundingStatus,
+    pub funding_status_after_evm_to_core: Option<HyperliquidFundingStatus>,
+    pub funding_status_after: HyperliquidFundingStatus,
+}
+
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
+    Router::new()
+        .route("/hyperliquid/funding/status", get(get_funding_status))
+        .route(
+            "/hyperliquid/funding/usd-class-transfer",
+            post(post_usd_class_transfer),
+        )
+        .route(
+            "/hyperliquid/funding/evm-usdc-to-core",
+            post(post_evm_usdc_to_core),
+        )
+        .route(
+            "/hyperliquid/funding/prepare-perp-margin",
+            post(post_prepare_perp_margin),
+        )
+}
+
+async fn get_funding_status(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+) -> Result<Json<HyperliquidFundingStatus>, (StatusCode, String)> {
+    funding_status(&state, &bot, None).await.map(Json)
+}
+
+async fn post_usd_class_transfer(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+    Json(req): Json<UsdClassTransferRequest>,
+) -> Result<Json<UsdClassTransferResponse>, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid funding is only available for live vault bots".to_string(),
+        ));
+    }
+    if !req.to_perp {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Only Core spot to perp funding is supported by this route".to_string(),
+        ));
+    }
+
+    let amount = parse_positive_decimal(&req.amount_usdc, "amount_usdc")?;
+    let status = funding_status(&state, &bot, Some(amount)).await?;
+    if !status.can_move_core_spot_to_perp {
+        return Err((StatusCode::CONFLICT, status.reason));
+    }
+
+    let transfer = submit_usd_class_transfer(&state, &bot, amount, req.to_perp).await?;
+
+    Ok(Json(UsdClassTransferResponse {
+        status: "submitted".to_string(),
+        tx_hash: transfer.tx_hash,
+        ntl: transfer.ntl,
+        to_perp: req.to_perp,
+        funding_status_before: status,
+    }))
+}
+
+async fn post_evm_usdc_to_core(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+    Json(req): Json<EvmUsdcToCoreRequest>,
+) -> Result<Json<EvmUsdcToCoreResponse>, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid funding is only available for live vault bots".to_string(),
+        ));
+    }
+
+    let amount = parse_positive_decimal(&req.amount_usdc, "amount_usdc")?;
+    let status = funding_status(&state, &bot, Some(amount)).await?;
+    if !status.can_move_idle_evm_to_core {
+        return Err((StatusCode::CONFLICT, status.reason));
+    }
+
+    let transfer = submit_evm_usdc_to_core(&state, &bot, amount).await?;
+
+    Ok(Json(EvmUsdcToCoreResponse {
+        status: "submitted".to_string(),
+        tx_hash: transfer.tx_hash,
+        amount_wei: transfer.amount_wei,
+        system_address: transfer.system_address.to_string(),
+        funding_status_before: status,
+    }))
+}
+
+async fn post_prepare_perp_margin(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+    Json(req): Json<PreparePerpMarginRequest>,
+) -> Result<Json<PreparePerpMarginResponse>, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid funding is only available for live vault bots".to_string(),
+        ));
+    }
+
+    let requested = parse_positive_decimal(&req.amount_usdc, "amount_usdc")?;
+    let before = funding_status(&state, &bot, Some(requested)).await?;
+    let perp_margin = parse_decimal(&before.perp_margin_usdc, "perp_margin_usdc")?;
+    if perp_margin >= requested {
+        return Ok(Json(PreparePerpMarginResponse {
+            status: "already_ready".to_string(),
+            requested_usdc: requested.to_string(),
+            moved_evm_to_core_usdc: None,
+            moved_core_to_perp_usdc: None,
+            evm_to_core_tx_hash: None,
+            usd_class_tx_hash: None,
+            funding_status_before: before.clone(),
+            funding_status_after_evm_to_core: None,
+            funding_status_after: before,
+        }));
+    }
+
+    let required_margin = requested - perp_margin;
+    let core_spot = parse_decimal(&before.core_spot_usdc, "core_spot_usdc")?;
+    let idle_evm = parse_decimal(&before.idle_evm_usdc, "idle_evm_usdc")?;
+    let mut evm_to_core_tx_hash = None;
+    let mut moved_evm_to_core_usdc = None;
+    let mut after_evm_to_core = None;
+    let mut core_ready = before.clone();
+
+    if core_spot < required_margin {
+        let evm_needed = required_margin - core_spot;
+        if idle_evm < evm_needed {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "Insufficient funding for requested margin: need {requested} USDC total, have {} perp margin, {} Core spot, and {} idle EVM USDC",
+                    before.perp_margin_usdc, before.core_spot_usdc, before.idle_evm_usdc
+                ),
+            ));
+        }
+
+        let transfer = submit_evm_usdc_to_core(&state, &bot, evm_needed).await?;
+        evm_to_core_tx_hash = Some(transfer.tx_hash);
+        moved_evm_to_core_usdc = Some(evm_needed.to_string());
+        core_ready = wait_for_funding_status(&state, &bot, Some(required_margin), |status| {
+            parse_decimal(&status.core_spot_usdc, "core_spot_usdc")
+                .map(|core| core >= required_margin)
+                .unwrap_or(false)
+        })
+        .await?;
+        after_evm_to_core = Some(core_ready.clone());
+    }
+
+    let latest_core = parse_decimal(&core_ready.core_spot_usdc, "core_spot_usdc")?;
+    if latest_core < required_margin {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "Timed out waiting for Core spot USDC before perp funding: need {required_margin}, got {latest_core}"
+            ),
+        ));
+    }
+
+    let usd_transfer = submit_usd_class_transfer(&state, &bot, required_margin, true).await?;
+    let after = wait_for_funding_status(&state, &bot, Some(requested), |status| {
+        parse_decimal(&status.perp_margin_usdc, "perp_margin_usdc")
+            .map(|margin| margin >= requested)
+            .unwrap_or(false)
+    })
+    .await?;
+
+    Ok(Json(PreparePerpMarginResponse {
+        status: "prepared".to_string(),
+        requested_usdc: requested.to_string(),
+        moved_evm_to_core_usdc,
+        moved_core_to_perp_usdc: Some(required_margin.to_string()),
+        evm_to_core_tx_hash,
+        usd_class_tx_hash: Some(usd_transfer.tx_hash),
+        funding_status_before: before,
+        funding_status_after_evm_to_core: after_evm_to_core,
+        funding_status_after: after,
+    }))
+}
+
+struct UsdClassTransferSubmission {
+    tx_hash: String,
+    ntl: u64,
+}
+
+struct EvmUsdcToCoreSubmission {
+    tx_hash: String,
+    amount_wei: u64,
+    system_address: Address,
+}
+
+async fn submit_usd_class_transfer(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    amount: Decimal,
+    to_perp: bool,
+) -> Result<UsdClassTransferSubmission, (StatusCode, String)> {
+    let chain_client = matching_chain_client(state, bot)?;
+    let vault = parse_address(&bot.vault_address, "vault address")?;
+    let ntl = decimal_usdc_to_core_wei(amount)?;
+    let deadline = Utc::now().timestamp() as u64 + state.validation_deadline_secs;
+    let nonce = next_nonce();
+    let policy = read_fund_movement_policy(bot, vault).await?;
+    let hashes = build_hyperliquid_usd_class_fund_movement_hashes(
+        vault,
+        bot.chain_id,
+        ntl,
+        to_perp,
+        nonce,
+        U256::from(deadline),
+        policy,
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let (intent_hash, execution_hash) = vault_fund_movement_hashes(
+        &chain_client,
+        vault,
+        ACTION_USD_CLASS_TRANSFER,
+        Address::ZERO,
+        HYPERLIQUID_USDC_SPOT_TOKEN,
+        ntl,
+        to_perp,
+        nonce,
+        U256::from(deadline),
+        hashes.action.clone(),
+    )
+    .await?;
+
+    let validation = validate_fund_movement(
+        state,
+        bot,
+        amount,
+        serde_json::json!({
+            "funding_action": "usd_class_transfer",
+            "amount_ntl": ntl.to_string(),
+            "to_perp": to_perp,
+        }),
+        nonce,
+        deadline,
+        policy,
+        format!("0x{}", hex::encode(intent_hash.as_slice())),
+        format!("0x{}", hex::encode(execution_hash.as_slice())),
+    )
+    .await?;
+    if !validation.approved {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Hyperliquid fund movement was rejected by validators: aggregate_score={}",
+                validation.aggregate_score
+            ),
+        ));
+    }
+
+    let signatures = validation_signatures(&validation)?;
+    let scores = validation_scores(&validation);
+    let authorization = IHyperliquidVaultFunding::FundMovementAuthorization {
+        nonce,
+        deadline: U256::from(deadline),
+        signatures,
+        scores,
+    };
+    preflight_fund_movement_authorization(
+        &chain_client,
+        vault,
+        intent_hash,
+        execution_hash,
+        &authorization,
+        &validation,
+    )
+    .await?;
+    let calldata = IHyperliquidVaultFunding::returnUsdClassLiquidityCall {
+        ntl,
+        toPerp: to_perp,
+        authorization,
+    }
+    .abi_encode();
+    let tx_hash = send_funding_tx(&chain_client, vault, calldata).await?;
+
+    Ok(UsdClassTransferSubmission { tx_hash, ntl })
+}
+
+async fn submit_evm_usdc_to_core(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    amount: Decimal,
+) -> Result<EvmUsdcToCoreSubmission, (StatusCode, String)> {
+    let chain_client = matching_chain_client(state, bot)?;
+    let vault = parse_address(&bot.vault_address, "vault address")?;
+    let amount_wei = decimal_usdc_to_evm_wei(amount)?;
+    let system_address = hyperliquid_token_system_address(HYPERLIQUID_USDC_SPOT_TOKEN);
+    let deadline = Utc::now().timestamp() as u64 + state.validation_deadline_secs;
+    let nonce = next_nonce();
+    let policy = read_fund_movement_policy(bot, vault).await?;
+    let hashes = build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
+        vault,
+        bot.chain_id,
+        system_address,
+        amount_wei,
+        nonce,
+        U256::from(deadline),
+        policy,
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let (intent_hash, execution_hash) = vault_fund_movement_hashes(
+        &chain_client,
+        vault,
+        ACTION_EVM_USDC_TO_CORE,
+        system_address,
+        HYPERLIQUID_USDC_SPOT_TOKEN,
+        amount_wei,
+        true,
+        nonce,
+        U256::from(deadline),
+        hashes.action.clone(),
+    )
+    .await?;
+
+    let validation = validate_fund_movement(
+        state,
+        bot,
+        amount,
+        serde_json::json!({
+            "funding_action": "evm_usdc_to_core",
+            "amount_evm_wei": amount_wei.to_string(),
+            "system_address": system_address.to_string(),
+        }),
+        nonce,
+        deadline,
+        policy,
+        format!("0x{}", hex::encode(intent_hash.as_slice())),
+        format!("0x{}", hex::encode(execution_hash.as_slice())),
+    )
+    .await?;
+    if !validation.approved {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Hyperliquid EVM-to-Core transfer was rejected by validators: aggregate_score={}",
+                validation.aggregate_score
+            ),
+        ));
+    }
+
+    let signatures = validation_signatures(&validation)?;
+    let scores = validation_scores(&validation);
+    let authorization = IHyperliquidVaultFunding::FundMovementAuthorization {
+        nonce,
+        deadline: U256::from(deadline),
+        signatures,
+        scores,
+    };
+    preflight_fund_movement_authorization(
+        &chain_client,
+        vault,
+        intent_hash,
+        execution_hash,
+        &authorization,
+        &validation,
+    )
+    .await?;
+    let calldata = IHyperliquidVaultFunding::returnSpotLiquidityCall {
+        destination: system_address,
+        token: HYPERLIQUID_USDC_SPOT_TOKEN,
+        weiAmount: amount_wei,
+        authorization,
+    }
+    .abi_encode();
+    let tx_hash = send_funding_tx(&chain_client, vault, calldata).await?;
+
+    Ok(EvmUsdcToCoreSubmission {
+        tx_hash,
+        amount_wei,
+        system_address,
+    })
+}
+
+async fn send_funding_tx(
+    chain_client: &trading_runtime::chain::ChainClient,
+    vault: Address,
+    calldata: Vec<u8>,
+) -> Result<String, (StatusCode, String)> {
+    let tx = TransactionRequest::default()
+        .to(vault)
+        .input(Bytes::from(calldata).into());
+    let pending = chain_client
+        .provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid fund movement tx send failed: {e}"),
+            )
+        })?;
+    let tx_hash = format!("0x{}", hex::encode(pending.tx_hash().as_slice()));
+    let receipt = pending.get_receipt().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid fund movement receipt failed: {e}"),
+        )
+    })?;
+    if !receipt.status() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid fund movement reverted: {tx_hash}"),
+        ));
+    }
+    Ok(tx_hash)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn vault_fund_movement_hashes(
+    chain_client: &trading_runtime::chain::ChainClient,
+    vault: Address,
+    action_type: u32,
+    destination: Address,
+    token: u64,
+    amount: u64,
+    direction: bool,
+    nonce: U256,
+    deadline: U256,
+    action: Bytes,
+) -> Result<(alloy::primitives::B256, alloy::primitives::B256), (StatusCode, String)> {
+    let call = IHyperliquidVaultFunding::computeFundMovementHashesCall {
+        actionType: U24::from(action_type),
+        destination,
+        token,
+        amount,
+        direction,
+        nonce,
+        deadline,
+        action,
+    };
+    let tx = TransactionRequest::default()
+        .to(vault)
+        .input(Bytes::from(call.abi_encode()).into());
+    let bytes = chain_client.provider.call(tx).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid fund movement hash eth_call failed: {e}"),
+        )
+    })?;
+    let decoded =
+        IHyperliquidVaultFunding::computeFundMovementHashesCall::abi_decode_returns(bytes.as_ref())
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Hyperliquid fund movement hash decode failed: {e}"),
+                )
+            })?;
+    Ok((decoded.intentHash, decoded.executionHash))
+}
+
+async fn preflight_fund_movement_authorization(
+    chain_client: &trading_runtime::chain::ChainClient,
+    vault: Address,
+    intent_hash: alloy::primitives::B256,
+    execution_hash: alloy::primitives::B256,
+    authorization: &IHyperliquidVaultFunding::FundMovementAuthorization,
+    validation: &trading_runtime::types::ValidationResult,
+) -> Result<(), (StatusCode, String)> {
+    let provider = &chain_client.provider;
+    let trade_validator = eth_call_address(
+        provider,
+        vault,
+        IHyperliquidVaultFunding::tradeValidatorCall {}.abi_encode(),
+    )
+    .await?;
+    let call = ITradeValidatorFundingPreflight::validateWithSignaturesCall {
+        intentHash: intent_hash,
+        executionHash: execution_hash,
+        vault,
+        signatures: authorization.signatures.clone(),
+        scores: authorization.scores.clone(),
+        deadline: authorization.deadline,
+        actionKind: U256::from(ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT),
+    };
+    let tx = TransactionRequest::default()
+        .to(trade_validator)
+        .input(Bytes::from(call.abi_encode()).into());
+    let bytes = provider.call(tx).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid fund movement validator preflight failed: {e}"),
+        )
+    })?;
+    let decoded = ITradeValidatorFundingPreflight::validateWithSignaturesCall::abi_decode_returns(
+        bytes.as_ref(),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid fund movement validator preflight decode failed: {e}"),
+        )
+    })?;
+    let validator_responses: Vec<_> = validation
+        .validator_responses
+        .iter()
+        .map(|response| {
+            serde_json::json!({
+                "validator": response.validator,
+                "score": response.score,
+                "chain_id": response.chain_id,
+                "verifying_contract": response.verifying_contract,
+                "signature_prefix": response.signature.chars().take(12).collect::<String>(),
+            })
+        })
+        .collect();
+    tracing::info!(
+        vault = %vault,
+        trade_validator = %trade_validator,
+        approved = decoded.approved,
+        valid_count = %decoded.validCount,
+        response_count = validation.validator_responses.len(),
+        aggregate_score = validation.aggregate_score,
+        validator_responses = %serde_json::Value::Array(validator_responses),
+        "Hyperliquid fund movement validator preflight completed"
+    );
+    if decoded.approved {
+        return Ok(());
+    }
+    Err((
+        StatusCode::BAD_GATEWAY,
+        format!(
+            "Hyperliquid fund movement validator preflight rejected: valid_count={}, aggregate_score={}, responses={}",
+            decoded.validCount,
+            validation.aggregate_score,
+            validation.validator_responses.len()
+        ),
+    ))
+}
+
+async fn wait_for_funding_status(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    requested: Option<Decimal>,
+    ready: impl Fn(&HyperliquidFundingStatus) -> bool,
+) -> Result<HyperliquidFundingStatus, (StatusCode, String)> {
+    let mut last = funding_status(state, bot, requested).await?;
+    if ready(&last) {
+        return Ok(last);
+    }
+    for _ in 1..FUNDING_POLL_ATTEMPTS {
+        sleep(Duration::from_millis(FUNDING_POLL_DELAY_MS)).await;
+        last = funding_status(state, bot, requested).await?;
+        if ready(&last) {
+            return Ok(last);
+        }
+    }
+    Ok(last)
+}
+
+async fn funding_status(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    requested: Option<Decimal>,
+) -> Result<HyperliquidFundingStatus, (StatusCode, String)> {
+    let nav = state
+        .hyperliquid_nav_reconciler
+        .reconcile(state, bot)
+        .await?;
+    let account_address = require_hyperliquid_account_address(bot)?;
+    let account = get_hl_client(state)?
+        .get_account_for(Some(&account_address))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid account refresh failed for {account_address}: {e}"),
+            )
+        })?;
+
+    let idle_evm_usdc = parse_decimal(&nav.idle_usdc, "idle_usdc")?;
+    let core_total_usdc = parse_decimal(&nav.hyperliquid_equity, "hyperliquid_equity")?;
+    let perp_margin_usdc = parse_decimal(&account.account_value, "account_value")?;
+    let core_spot_usdc = (core_total_usdc - perp_margin_usdc).max(Decimal::ZERO);
+
+    Ok(classify_funding_status(
+        idle_evm_usdc,
+        core_spot_usdc,
+        perp_margin_usdc,
+        core_total_usdc,
+        requested,
+    ))
+}
+
+fn classify_funding_status(
+    idle_evm_usdc: Decimal,
+    core_spot_usdc: Decimal,
+    perp_margin_usdc: Decimal,
+    core_total_usdc: Decimal,
+    requested: Option<Decimal>,
+) -> HyperliquidFundingStatus {
+    let enough_core_spot = requested.is_none_or(|amount| core_spot_usdc >= amount);
+    let enough_perp_margin = requested.is_none_or(|amount| perp_margin_usdc >= amount);
+    let enough_idle_evm = requested.is_none_or(|amount| idle_evm_usdc >= amount);
+    let enough_idle_evm_to_cover_gap =
+        requested.is_none_or(|amount| core_spot_usdc + idle_evm_usdc >= amount);
+    let (state, reason, can_move_core_spot_to_perp, can_move_idle_evm_to_core) = if core_spot_usdc
+        > Decimal::ZERO
+    {
+        if enough_core_spot {
+            (
+                "core_spot_available",
+                "Core spot USDC is available and can be moved to perp margin.",
+                true,
+                idle_evm_usdc > Decimal::ZERO,
+            )
+        } else {
+            (
+                "insufficient_core_spot",
+                "Core spot USDC exists, but not enough for the requested transfer. Idle EVM USDC can be bridged into Core if available.",
+                false,
+                idle_evm_usdc > Decimal::ZERO && enough_idle_evm_to_cover_gap,
+            )
+        }
+    } else if perp_margin_usdc > Decimal::ZERO && enough_perp_margin {
+        (
+            "perp_margin_available",
+            "Perp margin is already available; no funding transfer is needed.",
+            false,
+            false,
+        )
+    } else if idle_evm_usdc > Decimal::ZERO {
+        if enough_idle_evm {
+            (
+                "idle_evm_usdc_available",
+                "Idle HyperEVM USDC can be moved to HyperCore, then moved to perp margin.",
+                false,
+                true,
+            )
+        } else {
+            (
+                "insufficient_idle_evm_usdc",
+                "Idle HyperEVM USDC exists, but not enough for the requested transfer.",
+                false,
+                false,
+            )
+        }
+    } else {
+        (
+            "no_funds_available",
+            "No idle EVM USDC, Core spot USDC, or perp margin is available.",
+            false,
+            false,
+        )
+    };
+
+    HyperliquidFundingStatus {
+        state: state.to_string(),
+        idle_evm_usdc: idle_evm_usdc.to_string(),
+        core_spot_usdc: core_spot_usdc.to_string(),
+        perp_margin_usdc: perp_margin_usdc.to_string(),
+        core_total_usdc: core_total_usdc.to_string(),
+        requested_usdc: requested.map(|amount| amount.to_string()),
+        can_move_core_spot_to_perp,
+        can_move_idle_evm_to_core,
+        reason: reason.to_string(),
+    }
+}
+
+async fn validate_fund_movement(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+    amount: Decimal,
+    mut metadata: serde_json::Value,
+    nonce: U256,
+    deadline: u64,
+    policy: HyperliquidFundMovementPolicy,
+    intent_hash: String,
+    execution_hash: String,
+) -> Result<trading_runtime::types::ValidationResult, (StatusCode, String)> {
+    if bot.validator_endpoints.is_empty() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid fund movement requires validator endpoints".to_string(),
+        ));
+    }
+    let metadata_obj = metadata.as_object_mut().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid fund movement metadata must be an object".to_string(),
+        )
+    })?;
+    metadata_obj.insert("nonce".to_string(), serde_json::json!(nonce.to_string()));
+    metadata_obj.insert(
+        "leverage_cap".to_string(),
+        serde_json::json!(policy.leverage_cap.to_string()),
+    );
+    metadata_obj.insert(
+        "max_trades_per_hour".to_string(),
+        serde_json::json!(policy.max_trades_per_hour.to_string()),
+    );
+    metadata_obj.insert(
+        "max_slippage_bps".to_string(),
+        serde_json::json!(policy.max_slippage_bps.to_string()),
+    );
+    let intent = TradeIntentBuilder::new()
+        .strategy_id(format!("hyperliquid-funding-{}", bot.bot_id))
+        .action(Action::CollateralRelease)
+        .token_in("USDC")
+        .token_out("USDC")
+        .amount_in(amount)
+        .min_amount_out(Decimal::ZERO)
+        .target_protocol(FUNDING_PROTOCOL)
+        .chain_id(bot.chain_id)
+        .metadata(metadata)
+        .build()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let min_validators = crate::routes::validate::required_validator_signatures(
+        &bot.vault_address,
+        Some(&bot.rpc_url),
+        bot.paper_trade,
+    )
+    .await?;
+    let client = ValidatorClient::new(bot.validator_endpoints.clone(), state.min_validator_score)
+        .with_min_validators(min_validators);
+    client
+        .validate_with_context(
+            &intent,
+            &bot.vault_address,
+            deadline,
+            ValidationExecutionOptions {
+                intent_hash_override: Some(intent_hash),
+                execution_hash_override: Some(execution_hash),
+                action_kind: ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT,
+                ..ValidationExecutionOptions::default()
+            },
+        )
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
+}
+
+async fn read_fund_movement_policy(
+    bot: &BotContext,
+    vault: Address,
+) -> Result<HyperliquidFundMovementPolicy, (StatusCode, String)> {
+    let provider = ProviderBuilder::new().connect_http(bot.rpc_url.parse().map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Invalid RPC URL for Hyperliquid funding: {e}"),
+        )
+    })?);
+    Ok(HyperliquidFundMovementPolicy {
+        leverage_cap: eth_call_u256(
+            &provider,
+            vault,
+            IHyperliquidVaultFunding::leverageCapCall {}.abi_encode(),
+            "leverageCap",
+        )
+        .await?,
+        max_trades_per_hour: eth_call_u256(
+            &provider,
+            vault,
+            IHyperliquidVaultFunding::maxTradesPerHourCall {}.abi_encode(),
+            "maxTradesPerHour",
+        )
+        .await?,
+        max_slippage_bps: eth_call_u256(
+            &provider,
+            vault,
+            IHyperliquidVaultFunding::maxSlippageBpsCall {}.abi_encode(),
+            "maxSlippageBps",
+        )
+        .await?,
+    })
+}
+
+async fn eth_call_u256<P>(
+    provider: &P,
+    to: Address,
+    calldata: Vec<u8>,
+    field: &str,
+) -> Result<U256, (StatusCode, String)>
+where
+    P: Provider,
+{
+    let tx = TransactionRequest::default()
+        .to(to)
+        .input(Bytes::from(calldata).into());
+    let bytes = provider.call(tx).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid funding {field} eth_call failed: {e}"),
+        )
+    })?;
+    U256::abi_decode(bytes.as_ref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid funding {field} decode failed: {e}"),
+        )
+    })
+}
+
+async fn eth_call_address<P>(
+    provider: &P,
+    to: Address,
+    calldata: Vec<u8>,
+) -> Result<Address, (StatusCode, String)>
+where
+    P: Provider,
+{
+    let tx = TransactionRequest::default()
+        .to(to)
+        .input(Bytes::from(calldata).into());
+    let bytes = provider.call(tx).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid funding address eth_call failed: {e}"),
+        )
+    })?;
+    Address::abi_decode(bytes.as_ref()).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid funding address decode failed: {e}"),
+        )
+    })
+}
+
+fn validation_signatures(
+    validation: &trading_runtime::types::ValidationResult,
+) -> Result<Vec<Bytes>, (StatusCode, String)> {
+    validation
+        .validator_responses
+        .iter()
+        .map(|response| {
+            let signature = response
+                .signature
+                .strip_prefix("0x")
+                .unwrap_or(&response.signature);
+            let bytes = hex::decode(signature).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid signature hex from {}: {e}", response.validator),
+                )
+            })?;
+            if bytes.len() != 65 {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Signature from {} must be 65 bytes, got {}",
+                        response.validator,
+                        bytes.len()
+                    ),
+                ));
+            }
+            Ok(Bytes::from(bytes))
+        })
+        .collect()
+}
+
+fn validation_scores(validation: &trading_runtime::types::ValidationResult) -> Vec<U256> {
+    validation
+        .validator_responses
+        .iter()
+        .map(|response| U256::from(response.score))
+        .collect()
+}
+
+fn matching_chain_client(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+) -> Result<trading_runtime::chain::ChainClient, (StatusCode, String)> {
+    let Some(chain_client) = state.chain_client.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid funding requires a shared chain client".to_string(),
+        ));
+    };
+    if state.chain_client_chain_id != Some(bot.chain_id)
+        || state.chain_client_rpc_url.as_deref() != Some(bot.rpc_url.as_str())
+    {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperliquid funding chain client does not match this bot chain/RPC".to_string(),
+        ));
+    }
+    Ok(chain_client.clone())
+}
+
+fn decimal_usdc_to_core_wei(amount: Decimal) -> Result<u64, (StatusCode, String)> {
+    let scaled = amount * Decimal::from(CORE_USDC_WEI_PER_USDC);
+    if scaled.fract() != Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "amount_usdc has more precision than Hyperliquid Core USDC wei".to_string(),
+        ));
+    }
+    scaled.to_u64().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "amount_usdc exceeds uint64 CoreWriter amount".to_string(),
+        )
+    })
+}
+
+fn decimal_usdc_to_evm_wei(amount: Decimal) -> Result<u64, (StatusCode, String)> {
+    let scaled = amount * Decimal::from(EVM_USDC_WEI_PER_USDC);
+    if scaled.fract() != Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "amount_usdc has more precision than HyperEVM USDC base units".to_string(),
+        ));
+    }
+    scaled.to_u64().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "amount_usdc exceeds uint64 EVM USDC amount".to_string(),
+        )
+    })
+}
+
+fn hyperliquid_token_system_address(token: u64) -> Address {
+    let mut bytes = [0u8; 20];
+    bytes[0] = 0x20;
+    bytes[12..20].copy_from_slice(&token.to_be_bytes());
+    Address::from(bytes)
+}
+
+fn parse_positive_decimal(value: &str, field: &str) -> Result<Decimal, (StatusCode, String)> {
+    let amount = parse_decimal(value, field)?;
+    if amount <= Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{field} must be greater than zero"),
+        ));
+    }
+    Ok(amount)
+}
+
+fn parse_decimal(value: &str, field: &str) -> Result<Decimal, (StatusCode, String)> {
+    Decimal::from_str(value).map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Invalid Hyperliquid funding {field}: {e}"),
+        )
+    })
+}
+
+fn parse_address(value: &str, field: &str) -> Result<Address, (StatusCode, String)> {
+    value.parse().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Hyperliquid funding {field}: {e}"),
+        )
+    })
+}
+
+fn next_nonce() -> U256 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    U256::from(nanos)
+}
+
+fn default_to_perp() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_identifies_idle_evm_as_deployable_to_core() {
+        let status = classify_funding_status(
+            Decimal::new(5, 0),
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Some(Decimal::new(1, 0)),
+        );
+
+        assert_eq!(status.state, "idle_evm_usdc_available");
+        assert!(!status.can_move_core_spot_to_perp);
+        assert!(status.can_move_idle_evm_to_core);
+        assert!(status.reason.contains("moved to HyperCore"));
+    }
+
+    #[test]
+    fn status_allows_core_spot_to_perp_when_sufficient() {
+        let status = classify_funding_status(
+            Decimal::ZERO,
+            Decimal::new(12, 0),
+            Decimal::ZERO,
+            Decimal::new(12, 0),
+            Some(Decimal::new(10, 0)),
+        );
+
+        assert_eq!(status.state, "core_spot_available");
+        assert!(status.can_move_core_spot_to_perp);
+    }
+
+    #[test]
+    fn usdc_amount_converts_to_core_wei() {
+        assert_eq!(
+            decimal_usdc_to_core_wei(Decimal::new(125, 1)).unwrap(),
+            1_250_000_000
+        );
+    }
+
+    #[test]
+    fn usdc_amount_converts_to_evm_wei() {
+        assert_eq!(
+            decimal_usdc_to_evm_wei(Decimal::new(125, 1)).unwrap(),
+            12_500_000
+        );
+    }
+
+    #[test]
+    fn derives_hyperliquid_usdc_system_address() {
+        assert_eq!(
+            hyperliquid_token_system_address(0).to_string(),
+            "0x2000000000000000000000000000000000000000"
+        );
+    }
+}
