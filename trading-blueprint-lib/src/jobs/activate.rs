@@ -911,6 +911,13 @@ pub(crate) async fn write_prebuilt_tools(
         &harness_json,
     )
     .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/canonical-harness.json",
+        &harness_json,
+    )
+    .await?;
 
     // Common tools (all strategies)
     write_file_to_sidecar(
@@ -995,6 +1002,13 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/write-metrics.js",
         include_str!("../prompts/tools/write_metrics.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/hyperliquid-tick.js",
+        include_str!("../prompts/tools/hyperliquid_tick.js"),
     )
     .await?;
     write_file_to_sidecar(
@@ -1237,6 +1251,16 @@ mod tests {
     fn hyperliquid_pack_fast_workflow_uses_pack_budget() {
         let pack = crate::prompts::packs::get_pack("hyperliquid_perp").unwrap();
         assert_eq!(fast_workflow_budget(Some(&pack)), (15, 180_000));
+    }
+
+    #[test]
+    fn hyperliquid_tick_tool_is_bundled_and_structured() {
+        let tool = include_str!("../prompts/tools/hyperliquid_tick.js");
+        assert!(tool.contains("result_schema_version"));
+        assert!(tool.contains("logs_written"));
+        assert!(tool.contains("metrics_written"));
+        assert!(tool.contains("fundHyperliquidMargin"));
+        assert!(tool.contains("no-clear-hyperliquid-setup"));
     }
 
     #[test]

@@ -122,18 +122,9 @@ pub fn build_pack_loop_prompt(
             )
         }
         "hyperliquid_perp" => format!(
-            "Trading tick ({name}). Run these steps:\n\n\
-             1. Load the Trading API client: `const api=require('/home/agent/tools/api-client')`.\n\
-             2. Check live Hyperliquid state before considering risk:\n\
-                `await api.getHyperliquidNav()` — confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.\n\
-                `await api.getHyperliquidMode()` — if mode is `liquidity` or `emergency_wind_down`, do not open or increase exposure.\n\
-                `await api.apiCall('GET','/hyperliquid/account')` — inspect account value, usable margin, positions, and open orders.\n\
-                `await api.apiCall('GET','/hyperliquid/prices')` — read current perp mid prices.\n\
-             3. If account value, withdrawable, or usable/free margin is missing, zero, stale, or not parseable, make a safe skip decision. Log it with `node /home/agent/tools/log-decision.js '{{\"action\":\"skip\",\"reason\":\"no-usable-hyperliquid-margin\"}}'`, write metrics with `node /home/agent/tools/write-metrics.js '{{\"portfolio_value_usd\":0,\"pnl_pct\":0}}'`, and stop.\n\
-             4. If mode allows risk and there is usable margin, choose a small ETH/BTC/SOL perp action from current positions, prices, funding, and risk limits. Prefer no trade unless the setup is clear.\n\
-             5. For any actionable trade, build an intent with `target_protocol: \"hyperliquid\"`, `action: \"open\"`, `action: \"close\"`, or `action: \"reduce\"`, and `metadata` containing `asset`, optional `limit_price`, reduce-only intent when reducing, and stop-loss / take-profit context when available. Do not include `leverage`; live account leverage is preconfigured outside the tick loop. Use only the Trading API validation/execution flow: `const validation=await api.validate(intent); if ((validation.data||validation).approved) await api.execute(intent, validation);`.\n\
-             6. Log every trade or skip with `log-decision.js` and write metrics with `write-metrics.js` using the latest NAV/account value.\n\n\
-             Use only Hyperliquid state and actions in this loop. Be decisive — you have {max_turns} turns.",
+            "Trading tick ({name}). Run exactly this command:\n\n\
+             `node /home/agent/tools/hyperliquid-tick.js`\n\n\
+             Return only the final JSON object printed by that command. Do not summarize it, rewrite it, or place trades outside that tool. You have {max_turns} turns.",
             name = pack.name,
             max_turns = pack.max_turns,
         ),
@@ -250,6 +241,9 @@ Authorization: Bearer {token}
 - GET /hyperliquid/nav — Required before opening or increasing risk; confirms fresh vault NAV, idle USDC, Hyperliquid equity, and withdrawable balance.
 - GET /hyperliquid/mode — Required before opening or increasing risk. If mode is `liquidity` or `emergency_wind_down`, cancel non-essential orders, prefer reduce-only trades, and avoid new exposure.
 - GET /hyperliquid/settlement — Withdrawal pressure tool. Reports FIFO queue pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
+- GET /hyperliquid/funding/status — Separates idle HyperEVM USDC, Core spot USDC, and usable perp margin.
+- POST /hyperliquid/funding/prepare-perp-margin — Safest funding path. Body: {{ "amount_usdc": "10" }}. Moves idle HyperEVM USDC to HyperCore spot when needed, waits for Core spot balance, then moves Core spot USDC to perp margin.
+- POST /hyperliquid/funding/usd-class-transfer — Lower-level validated Core spot USDC → perp margin movement. Prefer `/hyperliquid/funding/prepare-perp-margin` in the bot loop.
 - Live orders must go through POST /validate then POST /execute with `target_protocol: "hyperliquid"`; direct native order/leverage routes are unavailable for live bots.
 - Do not include `metadata.leverage` in live Hyperliquid execute intents; leverage is account-level configuration outside this tick loop.
 - POST /hyperliquid/cancel — Cancel a paper-mode order only; live risk-reducing actions must still go through /execute.
@@ -491,7 +485,7 @@ pub fn build_research_tick_prompt(config: &crate::state::TradingBotRecord) -> St
            -d '{{\"current\": <current_harness>, \"candidate\": <mutation>, \"candles\": <array>, \"train_pct\":0.7}}'\n\
          ```\n\n\
          ## 4. Promote or discard\n\
-         If walk-forward Sharpe improves: update /home/agent/config/harness.json.\n\
+         If walk-forward Sharpe improves: write the proposed config to /home/agent/config/candidate-harness.json and log the proposal to /home/agent/logs/evolution.jsonl. Do not overwrite /home/agent/config/harness.json or /home/agent/config/canonical-harness.json; live promotion requires owner/backend approval.\n\
          If not: log what you tried and why it failed to /home/agent/logs/evolution.jsonl.\n\n\
          ## 5. Record the self-improvement run\n\
          For any code, prompt, tool, or harness mutation, record the sandbox snapshot, findings, knowledge, and promotion gate through:\n\
@@ -556,7 +550,7 @@ Your owner's messages are more important than any single trade."#;
 
 const EVOLUTION_BLOCK: &str = r#"## Harness-Driven Trading
 
-Your trading decisions should be guided by `/home/agent/config/harness.json`. Read it at the start of each tick. It defines entry rules, exit rules, filters, position sizing, and max positions. Use the harness as your primary framework — your AI judgment supplements (market context, anomalies) but doesn't override.
+Your trading decisions should be guided by `/home/agent/config/canonical-harness.json`, falling back to `/home/agent/config/harness.json` only if the canonical file is unavailable. Read it at the start of each tick. It defines entry rules, exit rules, filters, position sizing, and max positions. Use the harness as your primary framework — your AI judgment supplements (market context, anomalies) but doesn't override.
 
 ## Candle Recording
 
@@ -607,8 +601,8 @@ You are not just a trading bot — you are a self-improving system. You have Ope
    ```
 
 **5. Promote winners, discard losers.** If your mutation wins the walk-forward test:
-   - Update `/home/agent/config/harness.json` with the new config
-   - Call `node /home/agent/tools/evolve-strategy.js promote '<json>'` to persist
+   - Write the proposed config to `/home/agent/config/candidate-harness.json`
+   - Log that it is ready for owner/backend approval; do not overwrite `/home/agent/config/harness.json` or `/home/agent/config/canonical-harness.json`
    - Log the evolution: what changed, why, backtest results
    If it loses, log what you tried and why it failed — inform your next hypothesis.
 
@@ -826,14 +820,14 @@ mod tests {
         config.chain_id = 998;
         let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
 
-        assert!(prompt.contains("getHyperliquidNav"));
-        assert!(prompt.contains("getHyperliquidMode"));
-        assert!(prompt.contains("/hyperliquid/account"));
-        assert!(prompt.contains("/hyperliquid/prices"));
+        assert!(prompt.contains("node /home/agent/tools/hyperliquid-tick.js"));
+        assert!(prompt.contains("Return only the final JSON object"));
+        assert!(prompt.contains("Do not summarize it"));
+        assert!(prompt.contains("Do not"));
         assert!(!prompt.contains("/hyperliquid/order"));
-        assert!(prompt.contains("Do not include `leverage`"));
-        assert!(prompt.contains("no-usable-hyperliquid-margin"));
-        assert!(prompt.contains("target_protocol: \"hyperliquid\""));
+        assert!(!prompt.contains("getHyperliquidNav"));
+        assert!(!prompt.contains("fundHyperliquidMargin"));
+        assert!(!prompt.contains("no-usable-hyperliquid-margin"));
         assert!(prompt.contains("15 turns"));
         assert!(!prompt.contains("condition-id"));
         assert!(!prompt.contains("polymarket_clob"));
