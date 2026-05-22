@@ -2,9 +2,9 @@
   "chainId": 998,
   "deployer": "0xb607A500574fE29afb0d0681f1dC3E82f79f4877",
   "assetToken": "0x2B3370eE501B4a559b57D449569354196457D8Ab",
-  "vaultFactory": "0x83902d44dE701581906A13fa2Fc1DF9f2a363863",
-  "vaultImplementation": "0x81a375Ce8a0f909aA3140755A21C9d0803D6eA1f",
-  "vaultDeployer": "0x06686Fd845D8CBcbD5EBFB48a70998B9D07C16AF",
-  "vaultShareDeployer": "0xc3eedA3FFd548fB4A1Eb364a9EBDBc214830c0f7",
-  "tradeValidator": "0xd20afF6DE9FDE57514D37400bF0b1dc902200158"
+  "vaultFactory": "0x3077cc9c2f88ace869d00470ce1b1553cce16601",
+  "vaultImplementation": "0x52b3e231b2311e84d23b944b63033e8e93b5f96e",
+  "vaultDeployer": "0x63eac713c5a3189c082e65ef9f40bc7a758ab86a",
+  "vaultShareDeployer": "0x40bcd0b1c25256069ad3a57d1b5ae89c57632150",
+  "tradeValidator": "0xf5ccecfd63e1009a53059e408e49bf2616f5883b"
 }
