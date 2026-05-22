@@ -8,12 +8,14 @@ import {
 import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { OperatorAccessCard } from "~/components/operator/OperatorAccessCard";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
+import { demoRevisionArena } from "~/lib/demo/demoBots";
 
 interface RevisionArenaTabProps {
   botId: string;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  demoMode?: boolean;
 }
 
 function modeLabel(mode: RevisionRunMode): string {
@@ -186,20 +188,22 @@ export function RevisionArenaTab({
   operatorApiUrl,
   operatorKind,
   verificationState,
+  demoMode = false,
 }: RevisionArenaTabProps) {
   const apiUrl = operatorApiUrl ?? "";
   const auth = useOperatorAuth(apiUrl);
   const query = useRevisionArena(botId, {
     operatorApiUrl,
     operatorKind,
-    enabled: verificationState !== "unverified",
+    enabled: !demoMode && verificationState !== "unverified",
     refetchInterval: 15_000,
   });
 
   const sortedRevisions = useMemo(
-    () => query.data?.revisions ?? [],
-    [query.data?.revisions],
+    () => (demoMode ? demoRevisionArena.revisions : (query.data?.revisions ?? [])),
+    [demoMode, query.data?.revisions],
   );
+  const arena = demoMode ? demoRevisionArena : query.data;
 
   if (verificationState === "unverified") {
     return (
@@ -211,7 +215,7 @@ export function RevisionArenaTab({
     );
   }
 
-  if (!auth.isAuthenticated) {
+  if (!demoMode && !auth.isAuthenticated) {
     return (
       <AuthBanner
         onAuth={auth.authenticate}
@@ -230,7 +234,7 @@ export function RevisionArenaTab({
     );
   }
 
-  if (query.error || !query.data) {
+  if (query.error || !arena) {
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:warning-circle mx-auto mb-3 text-3xl text-crimson-500" />
@@ -252,20 +256,20 @@ export function RevisionArenaTab({
               Revision Arena
             </h2>
             <p className="mt-1 max-w-3xl text-sm text-arena-elements-textSecondary">
-              {query.data.invariant}
+              {arena.invariant}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-right text-[11px] font-data sm:min-w-[260px]">
             <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-2">
               <div className="text-arena-elements-textTertiary">Active</div>
               <div className="mt-1 text-arena-elements-textPrimary">
-                {query.data.active_revision_id}
+                {arena.active_revision_id}
               </div>
             </div>
             <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-2">
               <div className="text-arena-elements-textTertiary">Live</div>
               <div className="mt-1 text-arena-elements-textPrimary">
-                {query.data.live_revision_id ?? "none"}
+                {arena.live_revision_id ?? "none"}
               </div>
             </div>
           </div>
@@ -279,7 +283,7 @@ export function RevisionArenaTab({
       </section>
 
       <section className="grid gap-3 md:grid-cols-3">
-        {query.data.modes.map((mode) => (
+        {arena.modes.map((mode) => (
           <div
             key={mode.mode}
             className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"

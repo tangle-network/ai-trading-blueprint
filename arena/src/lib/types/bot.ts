@@ -58,7 +58,7 @@ export interface Bot {
   callId?: number;
 
   // Internal UI source tracking
-  source?: 'on_chain' | 'operator' | 'provision';
+  source?: 'on_chain' | 'operator' | 'provision' | 'demo';
   verificationState?: BotVerificationState;
   operatorKind?: BotOperatorKind;
   operatorApiUrl?: string | null;

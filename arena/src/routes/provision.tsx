@@ -2944,7 +2944,7 @@ export default function ProvisionPage() {
   const canNext = (() => {
     switch (step) {
       case 'blueprint':
-        return !!selectedBlueprint;
+        return !!(selectedBlueprint ?? TRADING_BLUEPRINTS[0]);
       case 'configure':
         return (
           !!name.trim() &&
@@ -2960,8 +2960,11 @@ export default function ProvisionPage() {
   const goNext = () => {
     const idx = STEP_ORDER.indexOf(step);
     if (idx < STEP_ORDER.length - 1) {
-      if (step === 'blueprint' && selectedBlueprint) {
-        setBlueprintId(selectedBlueprint.blueprintId);
+      if (step === 'blueprint') {
+        const nextBlueprint = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
+        if (!nextBlueprint) return;
+        setSelectedBlueprint(nextBlueprint);
+        setBlueprintId(nextBlueprint.blueprintId);
       }
       setStep(STEP_ORDER[idx + 1]);
     }

@@ -33,6 +33,80 @@ interface ChatTabProps {
   onConfigureSecrets?: () => void;
 }
 
+export function DemoChatTab({ botName }: { botName: string }) {
+  const [messages, setMessages] = useState([
+    {
+      role: "assistant",
+      text:
+        "I am running in paper mode. I can research strategy changes, write candidate specs, and compare revisions, but live trading, skipped validation, fund movement, and guaranteed profitability are blocked.",
+    },
+  ]);
+  const [draft, setDraft] = useState("");
+
+  const send = useCallback(() => {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft("");
+    setMessages((current) => [
+      ...current,
+      { role: "user", text },
+      {
+        role: "assistant",
+        text:
+          "Request received. Safety decision: keep this candidate in paper/shadow mode, require backtest plus paper evidence, preserve validator envelope checks, and reject any guaranteed-profitability or immediate-live-trading shortcut.",
+      },
+    ]);
+  }, [draft]);
+
+  return (
+    <div className="arena-chat-shell glass-card overflow-hidden rounded-xl border border-arena-elements-dividerColor">
+      <div className="border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="i-ph:chat-circle-dots text-violet-700 dark:text-violet-400" />
+          <div>
+            <div className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+              {botName} Demo Chat
+            </div>
+            <div className="text-[11px] font-data text-arena-elements-textTertiary">
+              Paper-only local product mode
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 p-4">
+        {messages.map((message, index) => (
+          <div
+            key={`${message.role}-${index}`}
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              message.role === "user"
+                ? "ml-auto max-w-[82%] border-violet-500/20 bg-violet-500/8 text-arena-elements-textPrimary"
+                : "mr-auto max-w-[88%] border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 text-arena-elements-textSecondary"
+            }`}
+          >
+            {message.text}
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t border-arena-elements-dividerColor/50 p-3">
+        <div className="flex gap-2">
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") send();
+            }}
+            placeholder="Ask for a strategy change, risk adjustment, or live-trading promotion..."
+            className="min-w-0 flex-1 rounded-lg border border-arena-elements-borderColor bg-transparent px-3 py-2 text-sm outline-none focus:border-violet-500/50"
+          />
+          <Button onClick={send}>Send</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function extractChatErrorMessage(error: unknown): string | null {
   if (!error) return null;
 

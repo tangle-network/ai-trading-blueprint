@@ -20,7 +20,7 @@ import {
   ReasoningTab,
   usePendingValidationCount,
 } from "~/components/bot-detail/ReasoningTab";
-import { ChatTab } from "~/components/bot-detail/ChatTab";
+import { ChatTab, DemoChatTab } from "~/components/bot-detail/ChatTab";
 import { RunsTab } from "~/components/bot-detail/RunsTab";
 import { RevisionArenaTab } from "~/components/bot-detail/RevisionArenaTab";
 import { ControlsTab } from "~/components/bot-detail/ControlsTab";
@@ -242,6 +242,7 @@ export default function BotDetailPage() {
   );
   const detailApiUrl = bot?.operatorApiUrl ?? routeOperatorApiUrl;
   const isHyperliquidPerpBot = bot?.strategyType === "hyperliquid_perp";
+  const isDemoBot = bot?.source === "demo";
 
   useEffect(() => {
     if (!bot?.id || !detailApiUrl) return;
@@ -354,7 +355,7 @@ export default function BotDetailPage() {
               <TabsTrigger value="runs">Runs</TabsTrigger>
             )}
             <TabsTrigger value="arena">Revision Arena</TabsTrigger>
-            {operatorMeta?.features.chat && (
+            {(operatorMeta?.features.chat || isDemoBot) && (
               <TabsTrigger value="chat">Chat</TabsTrigger>
             )}
             {operatorMeta?.features.terminal && (
@@ -431,38 +432,43 @@ export default function BotDetailPage() {
                 operatorApiUrl={bot.operatorApiUrl}
                 operatorKind={bot.operatorKind}
                 verificationState={bot.verificationState}
+                demoMode={isDemoBot}
               />
             </ErrorBoundary>
           </TabsContent>
 
-          {operatorMeta?.features.chat && (
+          {(operatorMeta?.features.chat || isDemoBot) && (
             <TabsContent value="chat" className="mt-6">
               <ErrorBoundary>
-                <ChatTab
-                  botId={bot.id}
-                  botName={displayBotName}
-                  operatorAddress={bot.operatorAddress}
-                  operatorApiUrl={bot.operatorApiUrl}
-                  operatorKind={bot.operatorKind}
-                  verificationState={bot.verificationState}
-                  requiresSecrets={
-                    bot.status === "needs_config" ||
-                    bot.secretsConfigured === false
-                  }
-                  onConfigureSecrets={
-                    bot.status === "needs_config" ||
-                    bot.secretsConfigured === false
-                      ? () =>
-                          setSecretsTarget({
-                            apiUrl: bot.operatorApiUrl ?? undefined,
-                            botId: bot.id,
-                            sandboxId: bot.sandboxId,
-                            callId: bot.callId,
-                            serviceId: bot.serviceId,
-                          })
-                      : undefined
-                  }
-                />
+                {isDemoBot ? (
+                  <DemoChatTab botName={displayBotName} />
+                ) : (
+                  <ChatTab
+                    botId={bot.id}
+                    botName={displayBotName}
+                    operatorAddress={bot.operatorAddress}
+                    operatorApiUrl={bot.operatorApiUrl}
+                    operatorKind={bot.operatorKind}
+                    verificationState={bot.verificationState}
+                    requiresSecrets={
+                      bot.status === "needs_config" ||
+                      bot.secretsConfigured === false
+                    }
+                    onConfigureSecrets={
+                      bot.status === "needs_config" ||
+                      bot.secretsConfigured === false
+                        ? () =>
+                            setSecretsTarget({
+                              apiUrl: bot.operatorApiUrl ?? undefined,
+                              botId: bot.id,
+                              sandboxId: bot.sandboxId,
+                              callId: bot.callId,
+                              serviceId: bot.serviceId,
+                            })
+                        : undefined
+                    }
+                  />
+                )}
               </ErrorBoundary>
             </TabsContent>
           )}

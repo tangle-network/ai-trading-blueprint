@@ -1,5 +1,6 @@
 import { atom } from 'nanostores';
 import type { Bot } from '~/lib/types/bot';
+import { demoArenaEnabled, demoPaperBot } from '~/lib/demo/demoBots';
 
 export type OperatorDataState = 'disabled' | 'authenticating' | 'locked' | 'ready' | 'partial';
 
@@ -11,9 +12,11 @@ export interface HydratedBotsState {
   lastSyncedAt: number | null;
 }
 
+const demoBots = demoArenaEnabled() ? [demoPaperBot] : [];
+
 const EMPTY_STATE: HydratedBotsState = {
-  bots: [],
-  isLoading: true,
+  bots: demoBots,
+  isLoading: demoBots.length === 0,
   isOnChain: false,
   operatorDataState: 'disabled',
   lastSyncedAt: null,

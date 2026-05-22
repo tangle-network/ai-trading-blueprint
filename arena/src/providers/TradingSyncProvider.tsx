@@ -35,6 +35,7 @@ import {
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { subscribeBotsRefresh } from '~/lib/events/bots';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
+import { demoArenaEnabled, demoPaperBot } from '~/lib/demo/demoBots';
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -712,7 +713,9 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       }
 
       const nextState = {
-        bots: builtBots,
+        bots: builtBots.length === 0 && demoArenaEnabled()
+          ? [demoPaperBot]
+          : builtBots,
         isLoading: false,
         isOnChain: builtBots.length > 0,
         operatorDataState: getOperatorDataState(activeOperatorSources),
