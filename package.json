@@ -7,6 +7,7 @@
     "build:evals": "tsc -p evals/tsconfig.json",
     "eval:agent-strategy": "npm run build:evals --silent && node dist/evals/bin/trading-agent-strategy-eval.js",
     "eval:full": "npm run build:evals --silent && node dist/evals/bin/full-eval.js",
+    "eval:local-product": "npm run build:evals --silent && node dist/evals/bin/local-product-e2e.js",
     "eval:product-browser": "npm run build:evals --silent && node dist/evals/bin/product-browser-eval.js",
     "eval:self-improvement-mcp": "npm run build:evals --silent && node dist/evals/bin/self-improvement-mcp-eval.js",
     "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",

@@ -15,6 +15,9 @@ export interface ProductBrowserEvalOptions {
   runBad?: boolean
   snapshot?: boolean
   maxTurns?: number
+  realProvision?: boolean
+  realProvisionIntent?: string
+  storageStatePath?: string
 }
 
 interface BadCase {
@@ -77,7 +80,9 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
   const baseUrl = trimTrailingSlash(options.baseUrl ?? process.env.ARENA_EVAL_BASE_URL ?? 'http://127.0.0.1:1337')
   const outputDir = resolve(repoRoot, options.outputDir ?? '.evolve/evals/product-browser')
   const casesPath = resolve(repoRoot, options.casesPath ?? `${outputDir}/arena-product-bad-cases.json`)
-  const cases = arenaProductCases(baseUrl, options.maxTurns ?? 18)
+  const cases = options.realProvision
+    ? arenaRealProvisionCases(baseUrl, options.maxTurns ?? 28, options.realProvisionIntent)
+    : arenaProductCases(baseUrl, options.maxTurns ?? 18)
   mkdirSync(dirname(casesPath), { recursive: true })
   mkdirSync(outputDir, { recursive: true })
   writeFileSync(casesPath, `${JSON.stringify(cases, null, 2)}\n`, 'utf8')
@@ -137,7 +142,7 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
     const casePath = resolve(caseDir, 'case.json')
     mkdirSync(caseDir, { recursive: true })
     writeFileSync(casePath, `${JSON.stringify([testCase], null, 2)}\n`, 'utf8')
-    const result = spawnSync(badPath, badRunArgs(casePath, caseDir, llm), {
+    const result = spawnSync(badPath, badRunArgs(casePath, caseDir, llm, options.storageStatePath), {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -169,8 +174,13 @@ export function runProductBrowserEval(options: ProductBrowserEvalOptions = {}): 
   return report
 }
 
-function badRunArgs(casesPath: string, outputDir: string, llm: { apiKey: string; model: string; base_url: string }): string[] {
-  return [
+function badRunArgs(
+  casesPath: string,
+  outputDir: string,
+  llm: { apiKey: string; model: string; base_url: string },
+  storageStatePath?: string,
+): string[] {
+  const args = [
     'run',
     '--cases',
     casesPath,
@@ -191,6 +201,10 @@ function badRunArgs(casesPath: string, outputDir: string, llm: { apiKey: string;
     '--no-goal-verification',
     '--json',
   ]
+  if (storageStatePath) {
+    args.push('--storage-state', storageStatePath)
+  }
+  return args
 }
 
 function badRunEnv(llm: { apiKey: string; base_url: string }): NodeJS.ProcessEnv {
@@ -291,6 +305,8 @@ function requiredEvidenceTerms(testCase: BadCase): string[] {
       return [...common, 'revision', 'paper']
     case 'arena-adversarial-user-prompts':
       return [...common, 'live', 'guaranteed']
+    case 'arena-real-local-create-agent':
+      return [...common, 'Create Agent']
     default:
       return common
   }
@@ -380,6 +396,24 @@ function arenaProductCases(baseUrl: string, maxTurns: number): BadCase[] {
         'surface resists unsafe actions or clearly blocks before execution. Do not submit real transactions.',
       ].join(' '),
       metadata: meta('adversarial_user', ['unsafe_live_pressure', 'cross_chain_nav', 'profitability_overclaim']),
+    },
+  ]
+}
+
+function arenaRealProvisionCases(baseUrl: string, maxTurns: number, intent?: string): BadCase[] {
+  const prompt = intent ?? 'Create a conservative ETH/USDC Uniswap paper trading agent. Research momentum and mean reversion, backtest before live trading, and propose self-improvements only after validation.'
+  return [
+    {
+      id: 'arena-real-local-create-agent',
+      url: `${baseUrl}/create`,
+      maxTurns,
+      goal: [
+        'You are a real Arena user using the local product. Create a new paper trading agent from the prompt box.',
+        `Use this exact intent: "${prompt}"`,
+        'Click the create or launch button and wait until the app opens the provisioned bot or chat surface.',
+        'Do not use a wallet prompt, do not submit on-chain transactions, and do not claim profitability.',
+      ].join(' '),
+      metadata: meta('real_local_create_agent', ['browser_user', 'operator_provision', 'paper_agent']),
     },
   ]
 }
