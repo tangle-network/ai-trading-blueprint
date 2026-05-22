@@ -80,7 +80,9 @@ export function SecretsTab({ bot }: SecretsTabProps) {
   const queryClient = useQueryClient();
   const { data: detail, isLoading } = useBotDetail(bot.id, apiUrl, bot.operatorKind);
   const defaultProvider = (
-    DEFAULT_AI_PROVIDER === 'zai' || DEFAULT_AI_PROVIDER === 'tangle-router'
+    DEFAULT_AI_PROVIDER === 'zai' ||
+    DEFAULT_AI_PROVIDER === 'gemini' ||
+    DEFAULT_AI_PROVIDER === 'tangle-router'
       ? DEFAULT_AI_PROVIDER
       : 'anthropic'
   ) as AiProvider;

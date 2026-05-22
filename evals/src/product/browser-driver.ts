@@ -410,6 +410,7 @@ function arenaRealProvisionCases(baseUrl: string, maxTurns: number, intent?: str
       goal: [
         'You are a real Arena user using the local product. Create a new paper trading agent from the prompt box.',
         `Use this exact intent: "${prompt}"`,
+        'When the secrets step appears, do not choose "Use operator-provided key"; use the prefilled Gemini provider/API key and activate the agent with that key.',
         'Click the create or launch button and wait until the app opens the provisioned bot or chat surface.',
         'Do not use a wallet prompt, do not submit on-chain transactions, and do not claim profitability.',
       ].join(' '),

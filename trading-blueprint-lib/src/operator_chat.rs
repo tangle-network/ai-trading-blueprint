@@ -14,7 +14,7 @@ use tokio::time::sleep;
 
 static CHAT_TRANSCRIPTS: LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-const CHAT_AGENT_RUN_TIMEOUT_MS: u64 = 180_000;
+const DEFAULT_CHAT_AGENT_RUN_TIMEOUT_MS: u64 = 1_800_000;
 
 #[derive(Clone, Debug)]
 pub struct SidecarChatTarget {
@@ -151,7 +151,9 @@ fn request_timeout(path: &str, body: Option<&Value>) -> Duration {
         })
         .filter(|value| *value > 0);
     if path == "/agents/run" {
-        return Duration::from_millis(requested_ms.unwrap_or(CHAT_AGENT_RUN_TIMEOUT_MS));
+        return Duration::from_millis(
+            requested_ms.unwrap_or_else(default_chat_agent_run_timeout_ms),
+        );
     }
     requested_ms
         .map(Duration::from_millis)
@@ -401,7 +403,7 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
         "identifier": "default",
         "message": message,
         "sessionId": session_id.clone(),
-        "timeout": CHAT_AGENT_RUN_TIMEOUT_MS
+        "timeout": default_chat_agent_run_timeout_ms()
     });
     let result = send_chat_request(
         &target,
@@ -464,6 +466,14 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
         text,
         json!({ "transport": "agents/run", "status": status.as_u16() }),
     );
+}
+
+fn default_chat_agent_run_timeout_ms() -> u64 {
+    std::env::var("CHAT_AGENT_RUN_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CHAT_AGENT_RUN_TIMEOUT_MS)
 }
 
 fn parse_session_path(path: &str) -> Option<(String, String)> {

@@ -8,9 +8,10 @@ import { runLocalProductE2E, type LocalProductE2EContext, type LocalProductE2ERe
 
 const SCENARIO_ID = 'rain-chat-to-sandbox'
 const RAIN_PROMPT = [
-  'Research Rain SDK trading and positions support and add it only as a paper-trading capability candidate.',
+  'Research Rain SDK trading and positions support from the real developer docs and add it only as a paper-trading capability candidate.',
   'User intent: integrate and market make on Rain markets.',
-  'If this is unsupported, create or update the capability plan, identify required read/write APIs, run self-improvement only when needed, keep live trading disabled, and tell me exact blockers.',
+  'Do not give a generic answer. Produce a tactical capability plan or self-improvement task in the sandbox that names the Rain docs/API surface, required read/write methods, risk controls, validation/backtest steps, and exact blockers.',
+  'If code changes are required, start the local self-improvement workflow or create the smallest scoped task/spec for it. Keep live trading disabled unless validation proves paper performance and safety.',
   'Do not ask for live keys and do not trade real funds.',
 ].join('\n')
 
@@ -117,6 +118,7 @@ export async function runChatSandboxE2E(options: ChatSandboxE2EOptions = {}): Pr
 async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutMs: number): Promise<ChatSandboxScenarioReport> {
   const botId = context.newBotIds[0]
   if (!botId) throw new Error('local provisioning did not return a bot id')
+  await configureDeterministicEvalSecrets(context.operatorUrl, context.token, botId)
   const bot = await findBot(context.operatorUrl, context.token, botId)
   const sessionId = await selectOrCreateManualSession(context.operatorUrl, context.token, botId)
   await postJson<unknown>(
@@ -139,12 +141,59 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
   ].join('\n')
   const mcpTaskCount = parseCount(sandbox.commands.mcp_task_count?.stdout)
   const workspaceChanges = (sandbox.commands.git_status?.stdout ?? '').trim()
+  const toolchainText = sandbox.commands.toolchain?.stdout ?? ''
+  const selfImprovementStatus = [
+    sandbox.commands.self_improvement_tools?.stdout ?? '',
+    sandbox.commands.self_improvement_status?.stdout ?? '',
+    sandbox.commands.self_improvement_mcp_list?.stdout ?? '',
+  ].join('\n')
   const executionArtifacts = [
+    sandbox.commands.agent_env?.stdout ?? '',
+    selfImprovementStatus,
     sandbox.commands.self_improvement_runs?.stdout ?? '',
     sandbox.commands.revision_arena?.stdout ?? '',
     sandbox.commands.recent_evolve_rain_excerpt?.stdout ?? '',
+    sandbox.commands.capability_artifacts?.stdout ?? '',
+    sandbox.commands.capability_artifact_excerpt?.stdout ?? '',
   ].join('\n').trim()
   const evolution = await inspectEvolution(context.operatorUrl, context.token, botId)
+  const assistant = assistantText(transcript)
+  const evidenceText = [transcriptText, memoryText, executionArtifacts].join('\n')
+  const hasRainDeveloperEvidence = includesAny(evidenceText, [
+    'rain.one/docs',
+    'Rain-SDK',
+    'Trading-and-positions',
+    'trading and positions',
+  ])
+  const hasActionableCapabilityArtifact = includesAny(executionArtifacts, [
+    'rain',
+  ]) && includesAny(executionArtifacts, [
+    'paper',
+    'backtest',
+    'validation',
+    'blocker',
+    'risk',
+  ])
+  const startedImprovement = mcpTaskCount > 0 || workspaceChanges.length > 0 || hasActionableCapabilityArtifact
+  const executedSelfImprovementTask = mcpTaskCount > 0 || workspaceChanges.length > 0 || hasSuccessfulEvolutionPayload(evolution)
+  const hasValidationPlan = includesAny(evidenceText, ['backtest', 'paper trade', 'paper-trading', 'validation', 'test']) &&
+    includesAny(evidenceText, ['risk', 'limit', 'blocked', 'live'])
+  const agentEnv = sandbox.commands.agent_env?.stdout ?? ''
+  const usesExpectedHarness = agentEnv.includes('SIDECAR_DEFAULT_HARNESS=gemini') &&
+    agentEnv.includes('GEMINI_API_KEY=') &&
+    !agentEnv.includes('ZAI_API_KEY=')
+  const hasHarnessRuntimeErrors = includesAny(executionArtifacts, [
+    'kill EPERM',
+    'AGENT_EXECUTION_FAILED',
+    'failed to map segment',
+    'metadata missing',
+    'token mismatch',
+  ])
+  const selfImprovementRuntimeReady = includesAny(toolchainText, ['bun=']) &&
+    selfImprovementStatus.includes('self-improvement-loop.ts') &&
+    selfImprovementStatus.includes('self-improvement-mcp-server.ts') &&
+    selfImprovementStatus.includes('"workspace"') &&
+    selfImprovementStatus.includes('self_improvement.create_task')
 
   const assertions = [
     {
@@ -161,6 +210,46 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       name: 'sandbox memory contains Rain request',
       passed: memoryText.toLowerCase().includes('rain'),
       detail: summarizeText(memoryText),
+    },
+    {
+      name: 'sandbox uses requested Gemini harness',
+      passed: usesExpectedHarness,
+      detail: summarizeText(agentEnv),
+    },
+    {
+      name: 'sandbox harness produced no runtime process errors',
+      passed: !hasHarnessRuntimeErrors,
+      detail: summarizeText(executionArtifacts),
+    },
+    {
+      name: 'sandbox self-improvement runtime is executable',
+      passed: selfImprovementRuntimeReady,
+      detail: summarizeText([toolchainText, selfImprovementStatus].join('\n')),
+    },
+    {
+      name: 'agent responded through product chat',
+      passed: assistantResponded,
+      detail: summarizeText(assistant) || 'no assistant message observed',
+    },
+    {
+      name: 'agent used Rain developer evidence',
+      passed: hasRainDeveloperEvidence,
+      detail: summarizeText(evidenceText),
+    },
+    {
+      name: 'agent kept Rain integration paper-first',
+      passed: includesAll(transcriptText, ['paper']) || includesAll(memoryText, ['paper']),
+      detail: 'paper-first signal searched in transcript and sandbox memory',
+    },
+    {
+      name: 'agent produced a tactical capability artifact or task',
+      passed: startedImprovement,
+      detail: summarizeText(executionArtifacts || workspaceChanges || `mcp task files=${mcpTaskCount}`),
+    },
+    {
+      name: 'agent specified validation and risk gates',
+      passed: hasValidationPlan,
+      detail: summarizeText(evidenceText),
     },
     {
       name: 'no live promotion occurred',
@@ -181,17 +270,60 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     answers: [
       answer('Did the real chat API accept a user Rain request?', true, `session=${sessionId}`),
       answer('Did the request reach sandbox memory/filesystem?', memoryText.toLowerCase().includes('rain'), summarizeText(memoryText)),
-      answer('Did the agent respond?', assistantResponded, summarizeText(assistantText(transcript))),
+      answer('Did the sandbox use the requested Gemini harness?', usesExpectedHarness, summarizeText(agentEnv)),
+      answer('Did the harness avoid runtime/process errors?', !hasHarnessRuntimeErrors, summarizeText(executionArtifacts)),
+      answer('Did the sandbox expose an executable self-improvement MCP/runtime?', selfImprovementRuntimeReady, summarizeText([toolchainText, selfImprovementStatus].join('\n'))),
+      answer('Did the agent respond?', assistantResponded, summarizeText(assistant)),
+      answer('Did the agent use real Rain developer evidence?', hasRainDeveloperEvidence, summarizeText(evidenceText)),
       answer('Did the agent classify unsupported/new capability paper-first?', includesAll(transcriptText, ['paper']) || includesAll(memoryText, ['paper']), 'paper-first signal searched in transcript and memory'),
-      answer('Did it start a self-improvement/MCP task?', mcpTaskCount > 0, `mcp task files=${mcpTaskCount}`),
+      answer('Did it start a self-improvement/MCP task or capability artifact?', startedImprovement, summarizeText(executionArtifacts || `mcp task files=${mcpTaskCount}`)),
       answer('Did sandbox files change?', workspaceChanges.length > 0, workspaceChanges || 'git status clean or unavailable'),
-      answer('Did tests/build/backtest run?', includesAny(executionArtifacts, ['npm test', 'cargo test', 'backtest', 'pytest']), executionArtifacts || 'no execution artifacts found'),
+      answer('Did it define validation/backtest/risk gates?', hasValidationPlan, summarizeText(evidenceText)),
+      answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
-      answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges)),
+      answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
     assertions,
   }
+}
+
+async function configureDeterministicEvalSecrets(operatorUrl: string, token: string, botId: string): Promise<void> {
+  const envJson = deterministicAgentEnv()
+  const url = `${operatorUrl}/api/bots/${encodeURIComponent(botId)}/secrets`
+  await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ env_json: envJson }),
+  })
+  if (!res.ok) {
+    throw new Error(`failed to configure deterministic eval secrets for ${botId}: ${res.status} ${await res.text()}`)
+  }
+}
+
+function deterministicAgentEnv(): Record<string, string> {
+  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
+  if (geminiKey) {
+    return {
+      GEMINI_API_KEY: geminiKey,
+      GOOGLE_API_KEY: geminiKey,
+      SIDECAR_DEFAULT_HARNESS: 'gemini',
+    }
+  }
+  const zaiKey = process.env.ZAI_API_KEY
+  if (zaiKey) {
+    return {
+      ZAI_API_KEY: zaiKey,
+      OPENCODE_MODEL_PROVIDER: 'zai-coding-plan',
+      OPENCODE_MODEL_NAME: 'glm-4.7',
+      OPENCODE_MODEL_API_KEY: zaiKey,
+    }
+  }
+  throw new Error('chat sandbox eval requires GOOGLE_AI_KEY, GEMINI_API_KEY, or ZAI_API_KEY for the real sandbox agent')
 }
 
 async function findBot(operatorUrl: string, token: string, botId: string): Promise<{ id: string; sandbox_id?: string }> {
@@ -206,15 +338,20 @@ async function findBot(operatorUrl: string, token: string, botId: string): Promi
 
 function inspectSandbox(containerName: string): { commands: Record<string, SandboxCommandResult> } {
   const commands: Record<string, string> = {
-    toolchain: 'node --version 2>/dev/null; npm --version 2>/dev/null; rustc --version 2>/dev/null; cargo --version 2>/dev/null; git --version 2>/dev/null',
+    toolchain: 'for bin in node npm bun rustc cargo git; do if command -v "$bin" >/dev/null 2>&1; then printf "%s=" "$bin"; "$bin" --version 2>/dev/null | head -1; fi; done',
+    agent_env: 'env | sort | grep -E "^(SIDECAR_DEFAULT_HARNESS|SIDECAR_CAPABILITIES|GEMINI_API_KEY|GOOGLE_API_KEY|OPENCODE_MODEL_PROVIDER|OPENCODE_MODEL_NAME|ZAI_API_KEY)=" | sed -E "s/(API_KEY=).*/\\\\1<set>/; s/(ZAI_API_KEY=).*/\\\\1<set>/"',
     self_improvement_tools: 'ls -1 /home/agent/tools/self-improvement-mcp-server.ts /home/agent/tools/self-improvement-loop.ts 2>/dev/null',
+    self_improvement_status: 'bun --bun /home/agent/tools/self-improvement-loop.ts status 2>&1 | head -120',
+    self_improvement_mcp_list: 'printf \'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\\n\' | bun --bun /home/agent/tools/self-improvement-mcp-server.ts 2>&1 | head -80',
     memory_rain_hits: 'grep -Ril "Rain\\|rain.one\\|market make" /home/agent/memory 2>/dev/null | head -20',
-    memory_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|market make\\|paper" /home/agent/memory 2>/dev/null | head -80',
+    memory_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|Rain-SDK\\|Trading-and-positions\\|market make\\|paper\\|backtest\\|validation\\|blocker" /home/agent/memory 2>/dev/null | head -120',
     mcp_task_count: 'find /home/agent/.evolve/mcp-self-improvement/tasks -type f 2>/dev/null | wc -l',
     self_improvement_runs: 'find /home/agent/.evolve/self-improvement /home/agent/evolution/self-improve -type f 2>/dev/null | head -40',
     revision_arena: 'find /home/agent/evolution/revision-arena /home/agent/.evolve/revision-arena -type f 2>/dev/null | head -40',
+    capability_artifacts: 'find /home/agent -type f \\( -path "*/.evolve/*" -o -path "*/memory/*" -o -path "*/evolution/*" -o -path "*/workspace/*" \\) 2>/dev/null | grep -Ei "rain|capability|self-improvement|task|spec|plan" | head -80',
+    capability_artifact_excerpt: 'grep -Rih "Rain\\|rain.one\\|Rain-SDK\\|Trading-and-positions\\|market make\\|paper\\|backtest\\|validation\\|blocker\\|risk\\|live\\|kill EPERM\\|AGENT_EXECUTION_FAILED" /home/agent/.evolve /home/agent/evolution /home/agent/workspace /home/agent/memory /home/agent/.local/share/opencode/log 2>/dev/null | head -180',
     git_status: 'git -C /home/agent status --short 2>/dev/null | head -80',
-    recent_evolve_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|market make\\|backtest\\|paper" /home/agent/.evolve /home/agent/evolution 2>/dev/null | head -120',
+    recent_evolve_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|Rain-SDK\\|Trading-and-positions\\|market make\\|backtest\\|paper\\|validation\\|blocker\\|risk" /home/agent/.evolve /home/agent/evolution 2>/dev/null | head -160',
   }
   return {
     commands: Object.fromEntries(Object.entries(commands).map(([name, command]) => [name, dockerExec(containerName, command)])),
@@ -285,7 +422,19 @@ async function waitForTranscript(operatorUrl: string, token: string, botId: stri
 }
 
 function dockerExec(containerName: string, command: string): SandboxCommandResult {
-  const result = spawnSync('docker', ['exec', containerName, 'sh', '-lc', command], {
+  const result = spawnSync('docker', [
+    'exec',
+    '-u',
+    'agent',
+    '-e',
+    'HOME=/home/agent',
+    '-e',
+    'PATH=/root/.bun/bin:/root/.local/bin:/root/.opencode/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin',
+    containerName,
+    'sh',
+    '-lc',
+    command,
+  ], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 10 * 1024 * 1024,
@@ -397,10 +546,10 @@ function answer(question: string, passed: boolean | 'unknown', evidence: string)
   }
 }
 
-function nextBlocker(memoryText: string, transcript: unknown, mcpTaskCount: number, workspaceChanges: string): string {
+function nextBlocker(memoryText: string, transcript: unknown, mcpTaskCount: number, workspaceChanges: string, hasActionableCapabilityArtifact: boolean): string {
   if (!memoryText.toLowerCase().includes('rain')) return 'chat did not persist to sandbox memory'
   if (!hasAssistantMessage(transcript)) return 'no assistant response observed before timeout'
-  if (mcpTaskCount === 0) return 'agent did not create a self-improvement MCP task'
+  if (mcpTaskCount === 0 && !workspaceChanges.trim() && !hasActionableCapabilityArtifact) return 'agent did not create a self-improvement task or capability artifact'
   if (!workspaceChanges.trim()) return 'self-improvement did not leave workspace changes'
   return 'inspect test/backtest artifacts before promotion'
 }

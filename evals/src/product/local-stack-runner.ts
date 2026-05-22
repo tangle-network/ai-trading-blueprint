@@ -169,6 +169,8 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
       VITE_DEX_BASE_PAPER_TRADE: process.env.VITE_DEX_BASE_PAPER_TRADE ?? 'true',
       VITE_DEX_ETHEREUM_PAPER_TRADE: process.env.VITE_DEX_ETHEREUM_PAPER_TRADE ?? 'true',
       VITE_DEX_ARBITRUM_FORK_PAPER_TRADE: process.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE ?? 'true',
+      VITE_DEFAULT_AI_PROVIDER: process.env.VITE_DEFAULT_AI_PROVIDER ?? defaultAiProvider(),
+      VITE_DEFAULT_AI_API_KEY: process.env.VITE_DEFAULT_AI_API_KEY ?? defaultAiApiKey(),
     },
   })
   const append = (chunk: Buffer) => {
@@ -180,6 +182,21 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
     writeFileSync(logPath, `\nrun-devnet exited code=${code} signal=${signal}\n`, { flag: 'a' })
   })
   return child
+}
+
+function defaultAiProvider(): string {
+  if (process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY) return 'gemini'
+  if (process.env.ZAI_API_KEY) return 'zai'
+  if (process.env.TANGLE_API_KEY) return 'tangle-router'
+  return ''
+}
+
+function defaultAiApiKey(): string {
+  if (process.env.GOOGLE_AI_KEY) return process.env.GOOGLE_AI_KEY
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
+  if (process.env.ZAI_API_KEY) return process.env.ZAI_API_KEY
+  if (process.env.TANGLE_API_KEY) return process.env.TANGLE_API_KEY
+  return ''
 }
 
 async function createOperatorSession(operatorUrl: string, privateKey: string): Promise<{ token: string; expires_at: number }> {
