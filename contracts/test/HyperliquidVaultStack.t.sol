@@ -589,10 +589,6 @@ contract HyperliquidVaultStackTest is Test {
         HyperliquidMockCoreWriter mock = new HyperliquidMockCoreWriter();
         vm.etch(CORE_WRITER, address(mock).code);
 
-        vm.prank(operator);
-        vm.expectRevert(HyperliquidVault.ValidatorApprovalRequired.selector);
-        vault.returnUsdClassLiquidity(1_000_000, false);
-
         HyperliquidVault.FundMovementAuthorization memory singleSignerApproval =
             _usdClassAuthorization(vault, 1_000_000, false, 1, block.timestamp + 1 hours, false);
         vm.prank(operator);
@@ -613,9 +609,6 @@ contract HyperliquidVaultStackTest is Test {
             abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(uint64(1_000_000), false));
         HyperliquidVault.FundMovementAuthorization memory approval =
             _usdClassAuthorization(vault, 1_000_000, false, 7, block.timestamp + 1 hours, true);
-        vm.expectEmit(false, false, false, true, vaultAddr);
-        emit HyperliquidVault.HyperliquidUsdClassTransferSubmitted(1_000_000, false, expectedUsdAction);
-
         vm.prank(operator);
         vault.returnUsdClassLiquidity(1_000_000, false, approval);
 
@@ -641,10 +634,6 @@ contract HyperliquidVaultStackTest is Test {
         vm.etch(CORE_WRITER, address(mock).code);
 
         address destination = makeAddr("liquidity-destination");
-        vm.prank(admin);
-        vm.expectRevert(HyperliquidVault.ValidatorApprovalRequired.selector);
-        vault.returnSpotLiquidity(destination, 1_505, 2_000_000);
-
         HyperliquidVault.FundMovementAuthorization memory wrongDestinationApproval =
             _spotAuthorization(vault, makeAddr("attacker"), 1_505, 2_000_000, 10, block.timestamp + 1 hours, true);
         vm.prank(admin);
@@ -666,9 +655,6 @@ contract HyperliquidVaultStackTest is Test {
             abi.encodePacked(uint8(1), bytes3(uint24(6)), abi.encode(destination, uint64(1_505), uint64(2_000_000)));
         HyperliquidVault.FundMovementAuthorization memory approval =
             _spotAuthorization(vault, destination, 1_505, 2_000_000, 11, block.timestamp + 1 hours, true);
-        vm.expectEmit(true, false, false, true, vaultAddr);
-        emit HyperliquidVault.HyperliquidSpotSendSubmitted(destination, 1_505, 2_000_000, expectedSpotAction);
-
         vm.prank(admin);
         vault.returnSpotLiquidity(destination, 1_505, 2_000_000, approval);
 
@@ -705,18 +691,19 @@ contract HyperliquidVaultStackTest is Test {
     function test_nonOperatorCannotSubmitLiquidityReturnActions() public {
         (address vaultAddr,) = _createBotVault(1, bytes32("corewriter-return-acl-salt"));
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        HyperliquidVault.FundMovementAuthorization memory emptyApproval;
 
         vm.prank(user);
         vm.expectRevert();
-        vault.returnUsdClassLiquidity(1_000_000, false);
+        vault.returnUsdClassLiquidity(1_000_000, false, emptyApproval);
 
         vm.prank(operator);
         vm.expectRevert();
-        vault.returnSpotLiquidity(user, 1_505, 2_000_000);
+        vault.returnSpotLiquidity(user, 1_505, 2_000_000, emptyApproval);
 
         vm.prank(user);
         vm.expectRevert();
-        vault.returnSpotLiquidity(user, 1_505, 2_000_000);
+        vault.returnSpotLiquidity(user, 1_505, 2_000_000, emptyApproval);
     }
 
     function test_createBotVaultRejectsSignerConfigsBelowContractFloor() public {

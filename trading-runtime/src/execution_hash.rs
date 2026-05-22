@@ -24,6 +24,7 @@ pub const ACTION_KIND_COLLATERAL_RELEASE: u64 = 1;
 pub const ACTION_KIND_CLOB_ORDER: u64 = 2;
 pub const ACTION_KIND_HYPERLIQUID_ORDER: u64 = 3;
 pub const ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT: u64 = 4;
+pub const ACTION_EVM_USDC_TO_CORE: u32 = 0x00ff_ffff;
 
 pub fn execution_payload_typehash() -> B256 {
     keccak256(EXECUTION_PAYLOAD_TYPE.as_bytes())
@@ -414,6 +415,47 @@ pub fn build_hyperliquid_spot_send_fund_movement_hashes(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
+    vault: Address,
+    chain_id: u64,
+    system_address: Address,
+    amount: u64,
+    nonce: U256,
+    deadline: U256,
+    policy: HyperliquidFundMovementPolicy,
+) -> Result<HyperliquidFundMovementHashes, String> {
+    let action = encode_erc20_transfer_action(system_address, U256::from(amount));
+    Ok(HyperliquidFundMovementHashes {
+        intent_hash: hash_hyperliquid_fund_movement_intent_parts(
+            vault,
+            chain_id,
+            ACTION_EVM_USDC_TO_CORE,
+            system_address,
+            0,
+            amount,
+            true,
+            nonce,
+            deadline,
+            policy,
+        ),
+        execution_hash: hash_hyperliquid_fund_movement_execution_parts(
+            vault,
+            chain_id,
+            ACTION_EVM_USDC_TO_CORE,
+            &action,
+        ),
+        action,
+    })
+}
+
+fn encode_erc20_transfer_action(destination: Address, amount: U256) -> Bytes {
+    let mut action = Vec::with_capacity(4 + 64);
+    action.extend_from_slice(&keccak256("transfer(address,uint256)".as_bytes()).as_slice()[..4]);
+    action.extend_from_slice(&(destination, amount).abi_encode_params());
+    Bytes::from(action)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn hash_hyperliquid_fund_movement_intent_parts(
     vault: Address,
     chain_id: u64,
@@ -449,13 +491,16 @@ pub fn hash_hyperliquid_fund_movement_execution_parts(
     action_type: u32,
     action: &Bytes,
 ) -> B256 {
-    keccak256(SolValue::abi_encode(&(
-        hyperliquid_fund_movement_execution_typehash(),
-        vault,
-        U256::from(chain_id),
-        action_type,
-        action,
-    )))
+    keccak256(
+        (
+            hyperliquid_fund_movement_execution_typehash(),
+            vault,
+            U256::from(chain_id),
+            action_type,
+            action,
+        )
+            .abi_encode_params(),
+    )
 }
 
 fn hyperliquid_asset_key(asset: &AssetId) -> String {

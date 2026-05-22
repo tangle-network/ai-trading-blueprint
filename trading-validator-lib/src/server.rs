@@ -9,9 +9,12 @@ use crate::risk_evaluator::AiProvider;
 use crate::scoring;
 use crate::signer::ValidatorSigner;
 use trading_runtime::execution_hash::{
-    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_ORDER, ACTION_KIND_VAULT_EXECUTE, format_b256,
-    hash_approvals, hash_clob_order, hash_debt_reduction_payload_parts,
-    hash_execution_payload_parts, hash_health_factor_payload_parts, hash_hyperliquid_order,
+    ACTION_KIND_CLOB_ORDER, ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, ACTION_KIND_HYPERLIQUID_ORDER,
+    ACTION_KIND_VAULT_EXECUTE, HyperliquidFundMovementHashes, HyperliquidFundMovementPolicy,
+    build_hyperliquid_evm_usdc_to_core_fund_movement_hashes,
+    build_hyperliquid_usd_class_fund_movement_hashes, format_b256, hash_approvals, hash_clob_order,
+    hash_debt_reduction_payload_parts, hash_execution_payload_parts,
+    hash_health_factor_payload_parts, hash_hyperliquid_order,
 };
 use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
@@ -338,7 +341,20 @@ async fn handle_validate(
         }
     };
     request.intent = canonical_intent;
-    let expected_intent_hash = hash_intent(&request.intent);
+    let expected_intent_hash = match expected_intent_hash(&request) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::warn!(error = %e, "Rejecting validation request with invalid intent context");
+            return Json(reject_response(
+                0,
+                format!("{reasoning}; signature error: invalid intent context: {e}"),
+                validator_address,
+                signer_chain_id,
+                signer_contract,
+                validated_at,
+            ));
+        }
+    };
     if !hashes_match(&request.intent_hash, &expected_intent_hash) {
         tracing::warn!(
             supplied = %request.intent_hash,
@@ -606,7 +622,27 @@ fn parse_u256_decimal(value: &str, field_name: &str) -> Result<U256, String> {
     U256::from_str_radix(value, 10).map_err(|e| format!("invalid {field_name}: {e}"))
 }
 
+fn expected_intent_hash(request: &ValidateRequest) -> Result<String, String> {
+    if request.action_kind == ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
+        || request.intent.target_protocol == "hyperliquid_funding"
+    {
+        return Ok(format_b256(
+            expected_hyperliquid_fund_movement_hashes(request)?.intent_hash,
+        ));
+    }
+
+    Ok(hash_intent(&request.intent))
+}
+
 fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Result<String, String> {
+    if request.action_kind == ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
+        || request.intent.target_protocol == "hyperliquid_funding"
+    {
+        return Ok(format_b256(
+            expected_hyperliquid_fund_movement_hashes(request)?.execution_hash,
+        ));
+    }
+
     let intent_hash = parse_b256(intent_hash)?;
     let deadline = U256::from(request.deadline);
 
@@ -757,6 +793,100 @@ fn expected_execution_hash(request: &ValidateRequest, intent_hash: &str) -> Resu
     };
 
     Ok(format_b256(hash))
+}
+
+fn expected_hyperliquid_fund_movement_hashes(
+    request: &ValidateRequest,
+) -> Result<HyperliquidFundMovementHashes, String> {
+    let metadata = &request.intent.metadata;
+    let funding_action = metadata
+        .get("funding_action")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "metadata.funding_action required".to_string())?;
+
+    let vault = request
+        .vault_address
+        .parse::<Address>()
+        .map_err(|e| format!("invalid vault_address: {e}"))?;
+    let nonce = metadata_u256(metadata, "nonce")?;
+    let policy = HyperliquidFundMovementPolicy {
+        leverage_cap: metadata_u256(metadata, "leverage_cap")?,
+        max_trades_per_hour: metadata_u256(metadata, "max_trades_per_hour")?,
+        max_slippage_bps: metadata_u256(metadata, "max_slippage_bps")?,
+    };
+
+    match funding_action {
+        "usd_class_transfer" => {
+            let ntl = metadata_u64(metadata, "amount_ntl")?;
+            let to_perp = metadata
+                .get("to_perp")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| "metadata.to_perp required".to_string())?;
+            build_hyperliquid_usd_class_fund_movement_hashes(
+                vault,
+                request.intent.chain_id,
+                ntl,
+                to_perp,
+                nonce,
+                U256::from(request.deadline),
+                policy,
+            )
+        }
+        "evm_usdc_to_core" => {
+            let system_address = metadata_address(metadata, "system_address")?;
+            let amount = metadata_u64(metadata, "amount_evm_wei")?;
+            build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
+                vault,
+                request.intent.chain_id,
+                system_address,
+                amount,
+                nonce,
+                U256::from(request.deadline),
+                policy,
+            )
+        }
+        _ => Err(format!(
+            "unsupported Hyperliquid fund movement action {funding_action}"
+        )),
+    }
+}
+
+fn metadata_address(metadata: &serde_json::Value, field: &str) -> Result<Address, String> {
+    let value = metadata
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("metadata.{field} required"))?;
+    value
+        .parse::<Address>()
+        .map_err(|e| format!("invalid metadata.{field}: {e}"))
+}
+
+fn metadata_u64(metadata: &serde_json::Value, field: &str) -> Result<u64, String> {
+    let value = metadata
+        .get(field)
+        .ok_or_else(|| format!("metadata.{field} required"))?;
+    if let Some(value) = value.as_u64() {
+        return Ok(value);
+    }
+    let Some(value) = value.as_str() else {
+        return Err(format!("metadata.{field} must be a decimal string"));
+    };
+    value
+        .parse::<u64>()
+        .map_err(|e| format!("invalid metadata.{field}: {e}"))
+}
+
+fn metadata_u256(metadata: &serde_json::Value, field: &str) -> Result<U256, String> {
+    let value = metadata
+        .get(field)
+        .ok_or_else(|| format!("metadata.{field} required"))?;
+    if let Some(value) = value.as_u64() {
+        return Ok(U256::from(value));
+    }
+    let Some(value) = value.as_str() else {
+        return Err(format!("metadata.{field} must be a decimal string"));
+    };
+    U256::from_str_radix(value, 10).map_err(|e| format!("invalid metadata.{field}: {e}"))
 }
 
 fn format_action(action: &Action) -> String {
@@ -1596,6 +1726,178 @@ mod tests {
             ACTION_KIND_CLOB_ORDER,
         )
         .expect("signature must verify with CLOB action kind");
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_signer_uses_hyperliquid_fund_movement_hashes() {
+        use trading_runtime::execution_hash::{
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, HyperliquidFundMovementPolicy,
+            build_hyperliquid_usd_class_fund_movement_hashes, format_b256,
+        };
+        use trading_runtime::intent::TradeIntentBuilder;
+        use trading_runtime::{Action, signature_verify};
+
+        let contract_addr: Address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            .parse()
+            .unwrap();
+        let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+        let vault: Address = vault_address.parse().unwrap();
+        let server = ValidatorServer::new(9090)
+            .with_signer(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                31337,
+                contract_addr,
+            )
+            .unwrap();
+        let app = server.router();
+
+        let deadline = 9999999999u64;
+        let ntl = 1_000_000u64;
+        let nonce = U256::from(42u64);
+        let policy = HyperliquidFundMovementPolicy {
+            leverage_cap: U256::from(3u64),
+            max_trades_per_hour: U256::from(12u64),
+            max_slippage_bps: U256::from(100u64),
+        };
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("funding-test")
+            .action(Action::CollateralRelease)
+            .token_in("USDC")
+            .token_out("USDC")
+            .amount_in(rust_decimal::Decimal::new(1, 0))
+            .min_amount_out(rust_decimal::Decimal::ZERO)
+            .target_protocol("hyperliquid_funding")
+            .chain_id(31337)
+            .metadata(serde_json::json!({
+                "funding_action": "usd_class_transfer",
+                "amount_ntl": ntl.to_string(),
+                "to_perp": true,
+                "nonce": nonce.to_string(),
+                "leverage_cap": policy.leverage_cap.to_string(),
+                "max_trades_per_hour": policy.max_trades_per_hour.to_string(),
+                "max_slippage_bps": policy.max_slippage_bps.to_string()
+            }))
+            .build()
+            .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
+        let hashes = build_hyperliquid_usd_class_fund_movement_hashes(
+            vault,
+            intent.chain_id,
+            ntl,
+            true,
+            nonce,
+            U256::from(deadline),
+            policy,
+        )
+        .unwrap();
+        let intent_hash = format_b256(hashes.intent_hash);
+        let execution_hash = format_b256(hashes.execution_hash);
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": vault_address,
+            "deadline": deadline,
+            "action_kind": ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT,
+        });
+
+        let resp = post_validate(app, req_body.clone()).await;
+        assert_ne!(resp.signature, zero_signature());
+
+        let response = trading_runtime::ValidatorResponse {
+            validator: resp.validator,
+            score: resp.score,
+            signature: resp.signature,
+            reasoning: resp.reasoning,
+            chain_id: resp.chain_id,
+            verifying_contract: resp.verifying_contract,
+            validated_at: Some(resp.validated_at),
+        };
+        signature_verify::verify_validator_signature(
+            &response,
+            req_body["intent_hash"].as_str().unwrap(),
+            req_body["execution_hash"].as_str().unwrap(),
+            vault_address,
+            deadline,
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT,
+        )
+        .expect("signature must verify with fund movement action kind");
+    }
+
+    #[test]
+    fn test_hyperliquid_fund_movement_hashes_support_evm_usdc_to_core() {
+        use trading_runtime::Action;
+        use trading_runtime::execution_hash::{
+            HyperliquidFundMovementPolicy, build_hyperliquid_evm_usdc_to_core_fund_movement_hashes,
+            format_b256,
+        };
+
+        let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+        let vault: Address = vault_address.parse().unwrap();
+        let system_address: Address = "0x2000000000000000000000000000000000000000"
+            .parse()
+            .unwrap();
+        let amount = 10_000_000u64;
+        let nonce = U256::from(42u64);
+        let deadline = 9_999_999_999u64;
+        let policy = HyperliquidFundMovementPolicy {
+            leverage_cap: U256::from(3u64),
+            max_trades_per_hour: U256::from(12u64),
+            max_slippage_bps: U256::from(100u64),
+        };
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("funding-test")
+            .action(Action::CollateralRelease)
+            .token_in("USDC")
+            .token_out("USDC")
+            .amount_in(rust_decimal::Decimal::new(10, 0))
+            .min_amount_out(rust_decimal::Decimal::ZERO)
+            .target_protocol("hyperliquid_funding")
+            .chain_id(31337)
+            .metadata(serde_json::json!({
+                "funding_action": "evm_usdc_to_core",
+                "amount_evm_wei": amount.to_string(),
+                "system_address": system_address.to_string(),
+                "nonce": nonce.to_string(),
+                "leverage_cap": policy.leverage_cap.to_string(),
+                "max_trades_per_hour": policy.max_trades_per_hour.to_string(),
+                "max_slippage_bps": policy.max_slippage_bps.to_string()
+            }))
+            .build()
+            .unwrap();
+        let hashes = build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
+            vault,
+            intent.chain_id,
+            system_address,
+            amount,
+            nonce,
+            U256::from(deadline),
+            policy,
+        )
+        .unwrap();
+        let req = ValidateRequest {
+            intent,
+            intent_hash: "0x00".to_string(),
+            execution_hash: format_b256(hashes.execution_hash),
+            vault_address: vault_address.to_string(),
+            deadline,
+            action_kind: ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT,
+            strategy_type: None,
+            require_simulation: false,
+            execution_context: None,
+        };
+
+        let expected = expected_hyperliquid_fund_movement_hashes(&req).unwrap();
+        assert_eq!(
+            format_b256(expected.intent_hash),
+            format_b256(hashes.intent_hash)
+        );
+        assert_eq!(
+            format_b256(expected.execution_hash),
+            format_b256(hashes.execution_hash)
+        );
     }
 
     #[tokio::test]

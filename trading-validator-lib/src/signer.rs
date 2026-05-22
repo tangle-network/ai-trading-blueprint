@@ -59,9 +59,8 @@ impl ValidatorSigner {
 
     /// Sign a trade validation using EIP-712 typed data.
     ///
-    /// `action_kind` discriminates execute (0) vs collateral release (1),
-    /// matching `ACTION_KIND_EXECUTE` / `ACTION_KIND_RELEASE_COLLATERAL` in
-    /// `TradingVault.sol`.
+    /// `action_kind` discriminates the approved lane (vault execute, collateral
+    /// release, CLOB, Hyperliquid order, Hyperliquid fund movement, etc.).
     ///
     /// Returns the 65-byte signature (r, s, v) and the signer's address.
     pub fn sign_validation(

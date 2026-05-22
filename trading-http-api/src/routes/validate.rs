@@ -828,6 +828,7 @@ async fn validate(
                 require_simulation,
                 execution_hash_override,
                 action_kind,
+                ..ValidationExecutionOptions::default()
             },
         )
         .await
@@ -1315,6 +1316,7 @@ async fn validate_multi_bot(
                 require_simulation,
                 execution_hash_override,
                 action_kind,
+                ..ValidationExecutionOptions::default()
             },
         )
         .await
@@ -1327,7 +1329,7 @@ async fn validate_multi_bot(
     )))
 }
 
-async fn required_validator_signatures(
+pub(crate) async fn required_validator_signatures(
     vault_address: &str,
     rpc_url: Option<&str>,
     paper_trade: bool,
