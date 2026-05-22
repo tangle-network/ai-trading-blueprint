@@ -15,6 +15,16 @@ export interface LocalProductE2EOptions {
   startStack?: boolean
   keepStack?: boolean
   maxTurns?: number
+  afterProvision?: (context: LocalProductE2EContext) => Promise<unknown>
+}
+
+export interface LocalProductE2EContext {
+  baseUrl: string
+  operatorUrl: string
+  outputDir: string
+  token: string
+  newBotIds: string[]
+  newProvisionCallIds: string[]
 }
 
 export interface LocalProductE2EReport {
@@ -25,6 +35,7 @@ export interface LocalProductE2EReport {
   storage_state: string
   browser: ProductBrowserEvalReport
   assertions: Array<{ name: string; passed: boolean; detail: string }>
+  scenario?: unknown
 }
 
 interface BotListResponse {
@@ -89,6 +100,16 @@ export async function runLocalProductE2E(options: LocalProductE2EOptions = {}): 
         detail: after.newProvisionCallIds.join(', ') || 'no new provision call ids',
       },
     ]
+    const scenario = after.newBotIds.length === 1 && after.newProvisionCallIds.length === 1 && options.afterProvision
+      ? await options.afterProvision({
+        baseUrl,
+        operatorUrl,
+        outputDir,
+        token: session.token,
+        newBotIds: after.newBotIds,
+        newProvisionCallIds: after.newProvisionCallIds,
+      })
+      : undefined
 
     const report: LocalProductE2EReport = {
       suite: 'arena-real-local-product-e2e',
@@ -98,6 +119,7 @@ export async function runLocalProductE2E(options: LocalProductE2EOptions = {}): 
       storage_state: storageState,
       browser,
       assertions,
+      ...(scenario === undefined ? {} : { scenario }),
     }
     const outputPath = resolve(repoRoot, options.outputPath ?? `${outputDir}/report.json`)
     mkdirSync(dirname(outputPath), { recursive: true })
@@ -143,6 +165,10 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
       SESSION_AUTH_SECRET: process.env.SESSION_AUTH_SECRET ?? 'dev-secret-key-do-not-use-in-production',
       VITE_OPERATOR_E2E_AUTH_ADDRESS: e2eAddress,
       SIDECAR_PULL_IMAGE: process.env.SIDECAR_PULL_IMAGE ?? 'false',
+      DEFAULT_PAPER_TRADE: process.env.DEFAULT_PAPER_TRADE ?? 'true',
+      VITE_DEX_BASE_PAPER_TRADE: process.env.VITE_DEX_BASE_PAPER_TRADE ?? 'true',
+      VITE_DEX_ETHEREUM_PAPER_TRADE: process.env.VITE_DEX_ETHEREUM_PAPER_TRADE ?? 'true',
+      VITE_DEX_ARBITRUM_FORK_PAPER_TRADE: process.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE ?? 'true',
     },
   })
   const append = (chunk: Buffer) => {
