@@ -708,7 +708,7 @@ pub(crate) async fn ensure_sidecar_runtime_dirs(
 ) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown -R agent:agent /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; } && chmod -R u+rwX,g+rwX /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home 2>/dev/null || true'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup /home/agent/tools/strategies && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown -R agent:agent /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; } && chmod -R u+rwX,g+rwX /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home 2>/dev/null || true'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -875,6 +875,13 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/run-strategy.js",
         include_str!("../prompts/tools/run_strategy.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/README.md",
+        include_str!("../prompts/tools/strategies_readme.md"),
     )
     .await?;
     write_file_to_sidecar(
@@ -1245,6 +1252,10 @@ mod tests {
         let runner = include_str!("../prompts/tools/run_strategy.js");
         assert!(runner.contains("runStrategy(strategy"));
         assert!(runner.contains("missing strategy path"));
+
+        let readme = include_str!("../prompts/tools/strategies_readme.md");
+        assert!(readme.contains("async tick(ctx)"));
+        assert!(readme.contains("ctx.submitTrade()"));
     }
 }
 
