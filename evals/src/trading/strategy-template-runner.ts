@@ -22,6 +22,12 @@ interface Assertion {
   detail?: unknown
 }
 
+interface ApiRequest {
+  method: string
+  path: string
+  body: unknown
+}
+
 export interface StrategyTemplateEvalSummary {
   suite: 'strategy-templates'
   output: string
@@ -105,10 +111,12 @@ function readBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
-async function withFakeTradingApi<T>(fn: (baseUrl: string) => Promise<T>): Promise<T> {
+async function withFakeTradingApi<T>(fn: (baseUrl: string, requests: ApiRequest[]) => Promise<T>): Promise<T> {
+  const requests: ApiRequest[] = []
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
-    await readBody(req)
+    const body = await readBody(req)
+    requests.push({ method: req.method ?? 'GET', path, body })
 
     if (path === '/circuit-breaker/check') return respond(res, 200, { should_break: false })
     if (path === '/validate') return respond(res, 200, { approved: true, aggregate_score: 1, validator_responses: [] })
@@ -124,7 +132,7 @@ async function withFakeTradingApi<T>(fn: (baseUrl: string) => Promise<T>): Promi
   if (!address || typeof address === 'string') throw new Error('failed to bind fake trading API')
 
   try {
-    return await fn(`http://127.0.0.1:${address.port}`)
+    return await fn(`http://127.0.0.1:${address.port}`, requests)
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => (error ? rejectClose(error) : resolveClose()))
@@ -257,6 +265,56 @@ export async function runStrategyTemplateEval(options: { outputPath?: string } =
         'strategy wrote artifact directory',
       )
     }
+  })
+
+  await withFakeTradingApi(async (apiUrl, requests) => {
+    const strategyPath = join(workspace, 'tools', 'strategies', 'ui-visible-paper-strategy.js')
+    writeFileSync(strategyPath, `
+module.exports = {
+  id: 'ui-visible-paper-strategy',
+  async tick(ctx) {
+    return ctx.submitTrade({
+      action: 'swap',
+      token_in: 'USDC',
+      token_out: 'WETH',
+      amount_in: '100000000',
+      min_amount_out: '0',
+      reason: 'paper trade should be recorded for UI history',
+    })
+  },
+}
+`)
+    writeFileSync(
+      join(workspace, 'config', 'api.json'),
+      `${JSON.stringify({
+        api_url: apiUrl,
+        token: 'strategy-template-eval-token',
+        bot_id: 'strategy-template-eval',
+        paper_trade: true,
+        strategy_config: { paper_trade: true, strategy_type: 'strategy_template_eval' },
+      }, null, 2)}\n`,
+    )
+
+    const run = await runTemplate(workspace, {
+      file: '../ui-visible-paper-strategy.js',
+      sourceFile: '',
+      decisionExport: '',
+      expectedDecisionAction: '',
+      expectedRunAction: 'paper_executed',
+      fixture: {},
+    })
+    assert(assertions, 'paper-submit:process', run.status === 0, 'paper strategy exits successfully', run)
+    if (run.status === 0) {
+      const parsed = JSON.parse(run.stdout.trim()) as { ok?: boolean; decision?: { action?: string } }
+      assert(assertions, 'paper-submit:run-action', parsed.decision?.action === 'paper_executed', 'paper submit calls execute path', parsed)
+    }
+    assert(
+      assertions,
+      'paper-submit:execute-api',
+      requests.some((request) => request.path === '/execute'),
+      'paper submit reaches /execute so UI trade history can load it',
+      requests,
+    )
   })
 
   const logPath = join(workspace, 'logs', 'strategy-runs.jsonl')
