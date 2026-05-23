@@ -4,6 +4,7 @@ import { run, runShell } from '../lib/process.js'
 import { isoStamp, resolveRepo } from '../lib/repo.js'
 import { runSelfImprovementMcpEval } from '../self-improvement/mcp-eval.js'
 import { runProductBrowserEval } from '../product/browser-driver.js'
+import { runStrategyTemplateEval } from '../trading/strategy-template-runner.js'
 import { runTradingLifecycleEval } from '../trading/lifecycle-runner.js'
 import { runTradingPersonaAgentEvalBridge } from '../trading/persona-agent-eval.js'
 
@@ -39,6 +40,9 @@ export async function runFullEval(options: FullEvalOptions = {}) {
     reportPath: `.evolve/evals/full-personas-${stamp}.json`,
     traceDir: `.evolve/agent-eval/traces/full-personas-${stamp}`,
     runsJsonl: `.evolve/agent-eval/full-persona-runs-${stamp}.jsonl`,
+  }))
+  await gate(gates, 'strategy-templates-real-runner', async () => runStrategyTemplateEval({
+    outputPath: resolveRepo(`.evolve/evals/full-strategy-templates-${stamp}.json`),
   }))
   const productBrowserBad = options.productBrowserBad ?? process.env.FULL_EVAL_PRODUCT_BROWSER_BAD === '1'
   if (options.requireRealProductBrowser && !productBrowserBad) {

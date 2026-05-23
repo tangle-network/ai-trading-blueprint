@@ -1,6 +1,13 @@
 # Generated Strategies
 
 Write generated strategies as small CommonJS modules in `/home/agent/tools/strategies/`.
+Start from `/home/agent/tools/strategies/templates/` when the user intent matches one of the included patterns:
+
+- `market-maker.js` for spread capture with inventory skew.
+- `momentum-breakout.js` for bounded trend-following swaps.
+- `mean-reversion.js` for z-score dip/rip signals.
+- `portfolio-rebalance.js` for target-weight drift control.
+- `risk-off-guard.js` for drawdown, volatility, and loss-streak cooldown logic.
 
 ```js
 module.exports = {
