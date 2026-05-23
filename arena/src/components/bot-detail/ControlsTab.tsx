@@ -9,6 +9,7 @@ import { useBotControl } from '~/lib/hooks/useBotControl';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { useServiceInfo } from '~/lib/hooks/useServiceInfo';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import {
   Badge,
   Button,
@@ -144,6 +145,7 @@ interface ControlsTabProps {
 
 export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   const { address } = useAccount();
+  const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
   const { data: detail, isLoading: detailLoading } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const liveSummary = useBotLiveSummary({
     botId: bot.id,
@@ -159,9 +161,10 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   );
   const { service, remainingSeconds: serviceRemainingSeconds } = useServiceInfo(bot.serviceId || undefined);
 
+  const ownerAddress = address ?? operatorAuth.accountAddress;
   const isOwner = detail?.submitter_address
-    && address
-    && detail.submitter_address.toLowerCase() === address.toLowerCase();
+    && ownerAddress
+    && detail.submitter_address.toLowerCase() === ownerAddress.toLowerCase();
 
   if (detailLoading) {
     return (
