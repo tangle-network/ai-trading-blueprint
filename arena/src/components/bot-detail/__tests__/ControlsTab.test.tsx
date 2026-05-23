@@ -6,6 +6,8 @@ import type { Bot } from '~/lib/types/bot';
 import type { Trade } from '~/lib/types/trade';
 
 const mocks = vi.hoisted(() => ({
+  walletAddress: '0x1111111111111111111111111111111111111111' as string | undefined,
+  operatorAccountAddress: '0x1111111111111111111111111111111111111111' as string | null,
   writeContract: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
@@ -47,8 +49,23 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('wagmi', () => ({
-  useAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }),
+  useAccount: () => ({ address: mocks.walletAddress }),
   useWriteContract: () => ({ writeContract: mocks.writeContract, isPending: false }),
+}));
+
+vi.mock('~/lib/hooks/useOperatorAuth', () => ({
+  useOperatorAuth: () => ({
+    accountAddress: mocks.operatorAccountAddress,
+    token: 'token',
+    isAuthenticated: true,
+    isAuthenticating: false,
+    authCacheKey: 'auth-key',
+    authenticate: vi.fn(),
+    clearCachedToken: vi.fn(),
+    error: null,
+    getCachedToken: () => 'token',
+    getToken: () => Promise.resolve('token'),
+  }),
 }));
 
 vi.mock('sonner', () => ({
@@ -146,6 +163,8 @@ describe('ControlsTab', () => {
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
     mocks.updateConfigMutate.mockReset();
+    mocks.walletAddress = '0x1111111111111111111111111111111111111111';
+    mocks.operatorAccountAddress = '0x1111111111111111111111111111111111111111';
     mocks.detail.submitter_address = '0x1111111111111111111111111111111111111111';
     mocks.detail.paper_trade = true;
     mocks.detail.strategy_config = {
@@ -179,6 +198,17 @@ describe('ControlsTab', () => {
     render(<ControlsTab bot={makeBot()} />);
 
     expect(screen.getByText('177571563657601274')).toBeInTheDocument();
+  });
+
+  it('allows owner controls when the operator auth session owns the bot without a connected wallet', () => {
+    mocks.walletAddress = undefined;
+    mocks.operatorAccountAddress = '0x1111111111111111111111111111111111111111';
+    mocks.detail.submitter_address = '0x1111111111111111111111111111111111111111';
+
+    render(<ControlsTab bot={makeBot()} />);
+
+    expect(screen.queryByText('Owner only')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run Now' })).toBeInTheDocument();
   });
 
   it('shows a success toast when bot lifetime extension is submitted', async () => {

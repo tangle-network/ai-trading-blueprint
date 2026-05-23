@@ -14,6 +14,7 @@ interface OperatorAuthState {
 }
 
 interface OperatorAuth {
+  accountAddress: string | null;
   token: string | null;
   isAuthenticated: boolean;
   isAuthenticating: boolean;
@@ -273,6 +274,7 @@ export function useOperatorAuth(apiUrl: string): OperatorAuth {
   }, [address, apiUrl, cacheKey, signMessageAsync]);
 
   return {
+    accountAddress: address ?? null,
     authCacheKey: cacheKey,
     token: effectiveSession?.token ?? null,
     isAuthenticated: effectiveSession !== null,

@@ -99,10 +99,11 @@ export function SecretsTab({ bot }: SecretsTabProps) {
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const ownerAddress = address ?? auth.accountAddress;
   const isOwner = Boolean(
     detail?.submitter_address
-      && address
-      && detail.submitter_address.toLowerCase() === address.toLowerCase(),
+      && ownerAddress
+      && detail.submitter_address.toLowerCase() === ownerAddress.toLowerCase(),
   );
   const secretsConfigured = detail?.secrets_configured === true;
   const isAwaitingSecrets = detail?.lifecycle_status === 'awaiting_secrets';
