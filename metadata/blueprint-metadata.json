@@ -235,6 +235,33 @@
         "allowChainSwitch": true,
         "allowPopups": false
       }
-    }
+    },
+    "modes": [
+      {
+        "id": "cloud",
+        "label": "Cloud",
+        "description": "Many operators, capacity-weighted scheduling. Default trading fleet for most users.",
+        "blueprintId": 13,
+        "tagline": "Recommended"
+      },
+      {
+        "id": "instance",
+        "label": "Dedicated Instance",
+        "description": "Per-service singleton bot — one dedicated operator, no fleet sharing.",
+        "blueprintId": 14
+      },
+      {
+        "id": "tee",
+        "label": "TEE Instance",
+        "description": "Dedicated Instance + mandatory TEE attestation. For trades whose strategy code must remain confidential.",
+        "blueprintId": 15
+      },
+      {
+        "id": "validator",
+        "label": "NAV Validator",
+        "description": "Validator service that audits trade execution and publishes signed NAV attestations. Operator-side, not consumer.",
+        "blueprintId": 16
+      }
+    ]
   }
 }
