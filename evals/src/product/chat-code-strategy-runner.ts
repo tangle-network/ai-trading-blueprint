@@ -298,14 +298,6 @@ async function configureDeterministicEvalSecrets(operatorUrl: string, token: str
 }
 
 function deterministicAgentEnv(): Record<string, string> {
-  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
-  if (geminiKey) {
-    return {
-      GEMINI_API_KEY: geminiKey,
-      GOOGLE_API_KEY: geminiKey,
-      SIDECAR_DEFAULT_HARNESS: 'gemini',
-    }
-  }
   const zaiKey = process.env.ZAI_API_KEY
   if (zaiKey) {
     return {
@@ -313,6 +305,15 @@ function deterministicAgentEnv(): Record<string, string> {
       OPENCODE_MODEL_PROVIDER: 'zai-coding-plan',
       OPENCODE_MODEL_NAME: 'glm-4.7',
       OPENCODE_MODEL_API_KEY: zaiKey,
+      SIDECAR_DEFAULT_HARNESS: 'opencode',
+    }
+  }
+  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
+  if (geminiKey) {
+    return {
+      GEMINI_API_KEY: geminiKey,
+      GOOGLE_API_KEY: geminiKey,
+      SIDECAR_DEFAULT_HARNESS: 'gemini',
     }
   }
   throw new Error('chat-code strategy eval requires GOOGLE_AI_KEY, GEMINI_API_KEY, or ZAI_API_KEY for the real sandbox agent')

@@ -402,6 +402,7 @@ function arenaProductCases(baseUrl: string, maxTurns: number): BadCase[] {
 
 function arenaRealProvisionCases(baseUrl: string, maxTurns: number, intent?: string): BadCase[] {
   const prompt = intent ?? 'Create a conservative ETH/USDC Uniswap paper trading agent. Research momentum and mean reversion, backtest before live trading, and propose self-improvements only after validation.'
+  const provider = productAiProviderLabel()
   return [
     {
       id: 'arena-real-local-create-agent',
@@ -410,13 +411,28 @@ function arenaRealProvisionCases(baseUrl: string, maxTurns: number, intent?: str
       goal: [
         'You are a real Arena user using the local product. Create a new paper trading agent from the prompt box.',
         `Use this exact intent: "${prompt}"`,
-        'When the secrets step appears, do not choose "Use operator-provided key"; use the prefilled Gemini provider/API key and activate the agent with that key.',
+        `When the secrets step appears, do not choose "Use operator-provided key"; use the prefilled ${provider} provider/API key and activate the agent with that key.`,
         'Click the create or launch button and wait until the app opens the provisioned bot or chat surface.',
         'Do not use a wallet prompt, do not submit on-chain transactions, and do not claim profitability.',
       ].join(' '),
       metadata: meta('real_local_create_agent', ['browser_user', 'operator_provision', 'paper_agent']),
     },
   ]
+}
+
+function productAiProviderLabel(): string {
+  switch ((process.env.VITE_DEFAULT_AI_PROVIDER || '').toLowerCase()) {
+    case 'zai':
+      return 'Z.ai'
+    case 'tangle-router':
+      return 'Tangle Router'
+    case 'anthropic':
+      return 'Anthropic'
+    case 'gemini':
+      return 'Gemini'
+    default:
+      return 'selected'
+  }
 }
 
 function meta(flow: string, tags: string[]) {
