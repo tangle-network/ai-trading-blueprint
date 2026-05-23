@@ -73,10 +73,14 @@ else
 fi
 
 # Pass-through env. RegisterBlueprint.s.sol reads:
+#   PRIVATE_KEY             — deployer key. vm.startBroadcast(deployerKey) honors this
+#                             so every tx is signed by the funded address. Anvil
+#                             account 0 is used only as a fallback for local flows.
 #   TANGLE_CORE             — Tangle proxy address (required)
 #   TARGET_NETWORK          — optional override for chain-id detection
 #   EXISTING_USDC_ADDRESS   — pin specific stable for the local mock flow
 #   EXISTING_WETH_ADDRESS   — pin specific weth for the local mock flow
+PRIVATE_KEY="$PRIVATE_KEY" \
 TANGLE_CORE="$TANGLE_CORE" \
 TARGET_NETWORK="$TARGET_NETWORK" \
 EXISTING_USDC_ADDRESS="${EXISTING_USDC_ADDRESS:-}" \
