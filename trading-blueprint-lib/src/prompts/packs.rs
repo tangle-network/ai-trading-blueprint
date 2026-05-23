@@ -1671,7 +1671,7 @@ Workspace layout:
 
 Smart tools are pre-installed in `/home/agent/tools/`. They do the heavy lifting — you make decisions.
 
-For automated strategy code, read `/home/agent/tools/strategies/README.md`. Write small modules in `/home/agent/tools/strategies/` that export `async tick(ctx)`, then run one tick with `node /home/agent/tools/run-strategy.js /home/agent/tools/strategies/<name>.js`. Use `ctx.submitTrade()` so circuit breaker, validation, paper/live gating, execution, and logs stay centralized.
+For automated strategy code, read `/home/agent/tools/strategies/README.md`. Start from `/home/agent/tools/strategies/templates/` when a template matches the task. Write small modules in `/home/agent/tools/strategies/` that export `async tick(ctx)`, then run one tick with `node /home/agent/tools/run-strategy.js /home/agent/tools/strategies/<name>.js`. Use `ctx.submitTrade()` so circuit breaker, validation, paper/live gating, execution, and logs stay centralized.
 
 ### Core Workflow Tools (use these every tick)
 

@@ -11,6 +11,7 @@
     "eval:local-product": "npm run build:evals --silent && node dist/evals/bin/local-product-e2e.js",
     "eval:product-browser": "npm run build:evals --silent && node dist/evals/bin/product-browser-eval.js",
     "eval:self-improvement-mcp": "npm run build:evals --silent && node dist/evals/bin/self-improvement-mcp-eval.js",
+    "eval:strategy-templates": "npm run build:evals --silent && node dist/evals/bin/strategy-template-eval.js",
     "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",
     "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
     "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit"

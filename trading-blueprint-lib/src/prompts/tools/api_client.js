@@ -1,11 +1,14 @@
 // Trading API client module — shared by all tools
-// Reads config from /home/agent/config/api.json (written during activation)
+// Reads config from the activated agent workspace.
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const path = require('path');
 const { URL } = require('url');
 
 let _config = null;
+const AGENT_ROOT = process.env.AGENT_HOME || process.env.AGENT_WORKSPACE || '/home/agent';
+const CONFIG_FILE = process.env.TRADING_API_CONFIG || path.join(AGENT_ROOT, 'config', 'api.json');
 
 const TOKEN_DEFAULTS_BY_CHAIN = {
   1: {
@@ -29,7 +32,7 @@ const TOKEN_DEFAULTS_BY_CHAIN = {
 function loadConfig() {
   if (_config) return _config;
   try {
-    _config = JSON.parse(fs.readFileSync('/home/agent/config/api.json', 'utf8'));
+    _config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   } catch {
     _config = {
       api_url: process.env.TRADING_API_URL || 'http://localhost:9100',
