@@ -1381,6 +1381,16 @@ async fn list_chat_messages(
 ) -> Result<Response, (StatusCode, String)> {
     let (bot, target) = resolve_live_chat_target(&caller)?;
     let transcript_query = parse_transcript_message_query(query.as_deref());
+    if let Some(run) = replayable_run_for_session(&bot, &session_id)? {
+        return run_transcript_fallback_response(
+            &target,
+            &run,
+            &transcript_query,
+            query.as_deref(),
+        )
+        .await;
+    }
+
     match trading_blueprint_lib::operator_chat::proxy_chat_request(
         &target,
         reqwest::Method::GET,

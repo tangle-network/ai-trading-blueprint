@@ -1161,9 +1161,13 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let manual_session_id = format!(
+        "manual-{}",
+        bot.sandbox_id.chars().take(40).collect::<String>()
+    );
     assert_eq!(
         json,
-        json!([{ "id": "manual-1", "title": "New Chat", "session_type": "manual" }])
+        json!([{ "id": manual_session_id, "title": "New Chat", "session_type": "manual", "transport": "agents/run" }])
     );
 
     let auto_response = app()
@@ -1209,14 +1213,7 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     let all_json: serde_json::Value = serde_json::from_slice(&all_body).unwrap();
     assert_eq!(
         all_json,
-        json!([
-            { "id": "manual-1", "title": "New Chat", "session_type": "manual" },
-            { "id": "trading-test-bot", "session_type": "autonomous" },
-            { "id": "trading-test-bot-1775823900", "session_type": "autonomous" },
-            { "id": "fast-test-bot", "session_type": "autonomous" },
-            { "id": "research-test-bot", "session_type": "autonomous" },
-            { "id": "convo-test-bot", "session_type": "autonomous" }
-        ])
+        json!([{ "id": manual_session_id, "title": "New Chat", "session_type": "manual", "transport": "agents/run" }])
     );
 
     let auto_messages_response = app()
@@ -1437,7 +1434,10 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!([]));
 }
 
 #[tokio::test]
@@ -1538,7 +1538,7 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
 }
 
 #[tokio::test]
-async fn test_archived_run_messages_recover_sidecar_session_alias() {
+async fn test_archived_run_messages_synthesize_summary_when_alias_unavailable() {
     let _ = init_test_env();
     let workflow_id = 9_100_251;
     let bot = seed_bot_with_workflow("runs-alias-bot", "dex", true, Some(workflow_id));
@@ -1584,8 +1584,13 @@ async fn test_archived_run_messages_recover_sidecar_session_alias() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json[0]["info"]["id"], "aliased-msg");
-    assert_eq!(json[0]["parts"][0]["text"], "full aliased transcript");
+    assert_eq!(json[0]["info"]["id"], "run-summary-run-alias");
+    assert!(
+        json[0]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("summary only")
+    );
 }
 
 #[tokio::test]

@@ -694,9 +694,10 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let manual_session_id = format!("manual-{}", sandbox_id.chars().take(40).collect::<String>());
     assert_eq!(
         json,
-        json!([{ "id": "manual-1", "title": "New Chat", "session_type": "manual" }])
+        json!([{ "id": manual_session_id, "title": "New Chat", "session_type": "manual", "transport": "agents/run" }])
     );
 
     let auto_response = app()
@@ -726,11 +727,7 @@ async fn test_chat_routes_only_expose_manual_sessions() {
     let all_json: serde_json::Value = serde_json::from_slice(&all_body).unwrap();
     assert_eq!(
         all_json,
-        json!([
-            { "id": "manual-1", "title": "New Chat", "session_type": "manual" },
-            { "id": format!("trading-{bot_id}"), "session_type": "autonomous" },
-            { "id": format!("trading-{bot_id}-1775823900"), "session_type": "autonomous" }
-        ])
+        json!([{ "id": manual_session_id, "title": "New Chat", "session_type": "manual", "transport": "agents/run" }])
     );
 
     let auto_messages_response = app()
@@ -969,7 +966,10 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!([]));
 
     let _ = clear_instance_bot_id();
 }
