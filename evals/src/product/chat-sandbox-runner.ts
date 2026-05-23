@@ -221,9 +221,14 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
   const hasValidationPlan = includesAny(evidenceText, ['backtest', 'paper trade', 'paper-trading', 'validation', 'test']) &&
     includesAny(evidenceText, ['risk', 'limit', 'blocked', 'live'])
   const agentEnv = sandbox.commands.agent_env?.stdout ?? ''
-  const usesExpectedHarness = agentEnv.includes('SIDECAR_DEFAULT_HARNESS=gemini') &&
-    agentEnv.includes('GEMINI_API_KEY=') &&
-    !agentEnv.includes('ZAI_API_KEY=')
+  const usesExpectedHarness = (
+    agentEnv.includes('SIDECAR_DEFAULT_HARNESS=opencode') &&
+    agentEnv.includes('ZAI_API_KEY=') &&
+    agentEnv.includes('OPENCODE_MODEL_PROVIDER=zai-coding-plan')
+  ) || (
+    agentEnv.includes('SIDECAR_DEFAULT_HARNESS=gemini') &&
+    agentEnv.includes('GEMINI_API_KEY=')
+  )
   const hasHarnessRuntimeErrors = includesAny(executionArtifacts, [
     'kill EPERM',
     'AGENT_EXECUTION_FAILED',
@@ -254,7 +259,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: summarizeText(memoryText),
     },
     {
-      name: 'sandbox uses requested Gemini harness',
+      name: 'sandbox uses requested coding harness',
       passed: usesExpectedHarness,
       detail: summarizeText(agentEnv),
     },
@@ -317,7 +322,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     answers: [
       answer('Did the real chat API accept a user Rain request?', true, `session=${sessionId}`),
       answer('Did the request reach sandbox memory/filesystem?', memoryText.toLowerCase().includes('rain'), summarizeText(memoryText)),
-      answer('Did the sandbox use the requested Gemini harness?', usesExpectedHarness, summarizeText(agentEnv)),
+      answer('Did the sandbox use the requested coding harness?', usesExpectedHarness, summarizeText(agentEnv)),
       answer('Did the harness avoid runtime/process errors?', !hasHarnessRuntimeErrors, summarizeText(executionArtifacts)),
       answer('Did the sandbox expose an executable self-improvement MCP/runtime?', selfImprovementRuntimeReady, summarizeText([toolchainText, selfImprovementStatus].join('\n'))),
       answer('Did the agent respond?', assistantResponded, summarizeText(assistant)),
@@ -354,14 +359,6 @@ async function configureDeterministicEvalSecrets(operatorUrl: string, token: str
 }
 
 function deterministicAgentEnv(): Record<string, string> {
-  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
-  if (geminiKey) {
-    return {
-      GEMINI_API_KEY: geminiKey,
-      GOOGLE_API_KEY: geminiKey,
-      SIDECAR_DEFAULT_HARNESS: 'gemini',
-    }
-  }
   const zaiKey = process.env.ZAI_API_KEY
   if (zaiKey) {
     return {
@@ -369,6 +366,15 @@ function deterministicAgentEnv(): Record<string, string> {
       OPENCODE_MODEL_PROVIDER: 'zai-coding-plan',
       OPENCODE_MODEL_NAME: 'glm-4.7',
       OPENCODE_MODEL_API_KEY: zaiKey,
+      SIDECAR_DEFAULT_HARNESS: 'opencode',
+    }
+  }
+  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
+  if (geminiKey) {
+    return {
+      GEMINI_API_KEY: geminiKey,
+      GOOGLE_API_KEY: geminiKey,
+      SIDECAR_DEFAULT_HARNESS: 'gemini',
     }
   }
   throw new Error('chat sandbox eval requires GOOGLE_AI_KEY, GEMINI_API_KEY, or ZAI_API_KEY for the real sandbox agent')

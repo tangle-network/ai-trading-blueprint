@@ -1037,6 +1037,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/create-mcp-multishot-strategy-task.js",
+        include_str!("../prompts/tools/create_mcp_multishot_strategy_task.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/config/self-improvement-mcp.json",
         &json!({
             "name": "trading-self-improvement",

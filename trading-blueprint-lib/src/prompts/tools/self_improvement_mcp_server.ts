@@ -33,7 +33,7 @@ const TASKS_DIR = join(STATE_DIR, 'tasks');
 const WORKTREE_DIR = join(STATE_DIR, 'worktrees');
 function defaultCodingCommand() {
   if (process.env.SELF_IMPROVEMENT_CODING_COMMAND) return process.env.SELF_IMPROVEMENT_CODING_COMMAND;
-  if (process.env.SIDECAR_DEFAULT_HARNESS === 'gemini' || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+  if (process.env.SIDECAR_DEFAULT_HARNESS === 'gemini') {
     return 'sh -lc \'gemini --skip-trust --yolo -p "$(cat)"\'';
   }
   return 'sh -lc \'opencode run --dangerously-skip-permissions "$(cat)"\'';
@@ -504,7 +504,7 @@ async function executeTask(initialTask) {
   }
 }
 
-function createTask(args) {
+async function createTask(args) {
   const spec = String(args.spec || args.change || '').trim();
   if (spec.length < 20) throw new Error('spec/change must be at least 20 characters');
   const base = git('rev-parse HEAD', ROOT);
@@ -541,6 +541,10 @@ function createTask(args) {
   };
   task.variants = harnesses.map((harness) => createVariant(task, harness));
   saveTask(task);
+  if (args.wait_for_completion === true || args.wait_for_completion === 'true') {
+    await executeTask(task);
+    return summarizeTask(loadTask(task.task_id));
+  }
   setTimeout(() => {
     executeTask(task).catch((error) => appendLog(task.task_id, `unhandled task error: ${error.stack || error}`));
   }, 0);
@@ -695,6 +699,7 @@ const tools = {
           },
         },
         coding_command: { type: 'string' },
+        wait_for_completion: { type: 'boolean' },
       },
       required: [],
     },

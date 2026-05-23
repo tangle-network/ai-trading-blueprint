@@ -185,16 +185,16 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
 }
 
 function defaultAiProvider(): string {
-  if (process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY) return 'gemini'
   if (process.env.ZAI_API_KEY) return 'zai'
+  if (process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY) return 'gemini'
   if (process.env.TANGLE_API_KEY) return 'tangle-router'
   return ''
 }
 
 function defaultAiApiKey(): string {
+  if (process.env.ZAI_API_KEY) return process.env.ZAI_API_KEY
   if (process.env.GOOGLE_AI_KEY) return process.env.GOOGLE_AI_KEY
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
-  if (process.env.ZAI_API_KEY) return process.env.ZAI_API_KEY
   if (process.env.TANGLE_API_KEY) return process.env.TANGLE_API_KEY
   return ''
 }
