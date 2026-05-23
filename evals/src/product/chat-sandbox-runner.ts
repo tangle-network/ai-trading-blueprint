@@ -8,12 +8,13 @@ import { runLocalProductE2E, type LocalProductE2EContext, type LocalProductE2ERe
 
 const SCENARIO_ID = 'rain-chat-to-sandbox'
 const RAIN_PROMPT = [
-  'Research Rain SDK trading and positions support from the real developer docs and add it only as a paper-trading capability candidate.',
-  'User intent: integrate and market make on Rain markets.',
-  'Do not give a generic answer. Produce a tactical capability plan or self-improvement task in the sandbox that names the Rain docs/API surface, required read/write methods, risk controls, validation/backtest steps, and exact blockers.',
-  'This must prove the code-changing loop, not just planning. Start and complete the smallest local self-improvement MCP task that leaves a real patch in an isolated worktree. The task should create a bounded paper-only Rain capability artifact such as eval-artifacts/rain/paper-capability.json with fields for venue, mode, required read methods, simulated write methods, risk gates, validation gates, blockers, and no_live_keys=true.',
-  'Use deterministic tests for that task, for example JSON/schema checks and grep assertions against the created artifact. Keep the patch scoped to the artifact; do not add live trading code or dependencies.',
-  'If the MCP task cannot complete, write the exact blocking command and error into sandbox memory. Keep live trading disabled unless validation proves paper performance and safety.',
+  'Research Rain SDK trading and positions support from the real developer docs, then build a useful paper-trading prototype for a human user who asked: "integrate and market make on Rain markets."',
+  'Do not stop at a plan, checklist, metadata artifact, or docs. Use the local self-improvement MCP server to complete a real code-changing task in an isolated worktree.',
+  'The MCP task must build the smallest useful executable Rain paper-trading capability under tools/rain-paper/: typed market/position models, a deterministic fake Rain market fixture, a paper execution engine, a simple market-making strategy, and a run-demo script that prints and writes eval-artifacts/rain/demo-result.json.',
+  'The demo must show something a user can understand: selected Rain-like market, quotes/orders, simulated fills, final positions, PnL, risk blocks, and why live trading is still disabled.',
+  'Use Rain SDK method names from the docs as the adapter boundary: reads such as getPublicMarkets/getMarketDetails/getMarketPrices/getMarketLiquidity/getPortfolioValue, and simulated writes such as buildBuyOptionRawTx/buildLimitBuyOptionTx/buildSellOptionTx/buildClaimTx/buildAddLiquidityTx. Do not request live keys or submit real transactions.',
+  'The MCP task must run deterministic executable checks, not string-only checks. At minimum: bun test tools/rain-paper/rain-paper.test.ts and bun --bun tools/rain-paper/run-demo.ts. The tests must exercise the strategy, paper engine, PnL accounting, exposure/slippage/risk guards, and the demo artifact.',
+  'If the full prototype cannot complete, write the exact blocking command and error into sandbox memory and say what remains. Otherwise summarize the generated files, demo result, tests, and live-trading blockers.',
   'Do not ask for live keys and do not trade real funds.',
 ].join('\n')
 
@@ -154,6 +155,12 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     sandbox.commands.agent_env?.stdout ?? '',
     selfImprovementStatus,
     mcpTaskSummary,
+    sandbox.commands.rain_task_evidence?.stdout ?? '',
+    sandbox.commands.rain_patch_excerpt?.stdout ?? '',
+    sandbox.commands.rain_root_checks?.stdout ?? '',
+    sandbox.commands.rain_root_checks?.stderr ?? '',
+    sandbox.commands.rain_demo_artifact?.stdout ?? '',
+    sandbox.commands.rain_code_excerpt?.stdout ?? '',
     sandbox.commands.self_improvement_runs?.stdout ?? '',
     sandbox.commands.revision_arena?.stdout ?? '',
     sandbox.commands.recent_evolve_rain_excerpt?.stdout ?? '',
@@ -179,13 +186,37 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     'risk',
   ])
   const startedImprovement = mcpTaskCount > 0 || workspaceChanges.length > 0 || hasActionableCapabilityArtifact
-  const completedMcpTask = includesAny(mcpTaskSummary, ['"status":"completed"', '"status": "completed"']) &&
-    includesAny(mcpTaskSummary, ['rain', 'paper-capability']) &&
-    includesAny(mcpTaskSummary, ['eval-artifacts/rain/paper-capability.json']) &&
-    includesAny(mcpTaskSummary, ['"patch_sha256":"sha256:', '"patch_sha256": "sha256:']) &&
-    includesAny(mcpTaskSummary, ['"test_passed":1', '"test_passed": 1', '"test_passed":true', '"test_passed": true']) &&
-    includesAny(mcpTaskSummary, ['"diff_additions":']) &&
-    !includesAny(mcpTaskSummary, ['"diff_additions":0', '"diff_additions": 0'])
+  const rainTaskEvidence = sandbox.commands.rain_task_evidence?.stdout ?? ''
+  const rainDemoArtifact = sandbox.commands.rain_demo_artifact?.stdout ?? ''
+  const rainCodeExcerpt = sandbox.commands.rain_code_excerpt?.stdout ?? ''
+  const rainRootChecks = sandbox.commands.rain_root_checks
+  const rainRootCheckText = [rainRootChecks?.stdout ?? '', rainRootChecks?.stderr ?? ''].join('\n')
+  const completedMcpTask = includesAny(rainTaskEvidence, ['"status":"completed"', '"status": "completed"']) &&
+    includesAny(rainTaskEvidence, ['"patch_sha256":"sha256:', '"patch_sha256": "sha256:']) &&
+    includesAny(rainTaskEvidence, ['"test_passed":1', '"test_passed": 1', '"test_passed":true', '"test_passed": true']) &&
+    includesAny(rainTaskEvidence, ['"diff_additions":']) &&
+    !includesAny(rainTaskEvidence, ['"diff_additions":0', '"diff_additions": 0'])
+  const executableRainFilesPresent = includesAll([rainTaskEvidence, rainCodeExcerpt].join('\n'), [
+    'tools/rain-paper/',
+    'engine.ts',
+    'strategy.ts',
+    'run-demo',
+    'rain-paper.test',
+  ])
+  const rootRainPrototypeVerified = rainRootChecks?.status === 0 &&
+    includesAll(rainRootCheckText, ['bun test', 'tools/rain-paper/rain-paper.test.ts', 'run-demo', 'Demo result written']) &&
+    includesAll(rainDemoArtifact, ['demo-result.json', 'finalBalance', 'positions'])
+  const builtExecutableRainPrototype = (completedMcpTask || rootRainPrototypeVerified) &&
+    executableRainFilesPresent &&
+    includesAny(rainCodeExcerpt, ['class', 'function', 'export']) &&
+    includesAll([rainDemoArtifact, rainCodeExcerpt].join('\n').toLowerCase(), [
+      'pnl',
+      'position',
+      'fill',
+      'risk',
+      'bid',
+      'ask',
+    ])
   const executedSelfImprovementTask = completedMcpTask || workspaceChanges.length > 0 || hasSuccessfulEvolutionPayload(evolution)
   const hasValidationPlan = includesAny(evidenceText, ['backtest', 'paper trade', 'paper-trading', 'validation', 'test']) &&
     includesAny(evidenceText, ['risk', 'limit', 'blocked', 'live'])
@@ -258,9 +289,9 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: summarizeText(executionArtifacts || workspaceChanges || `mcp task files=${mcpTaskCount}`),
     },
     {
-      name: 'agent completed a validated code-change self-improvement task',
-      passed: completedMcpTask,
-      detail: summarizeText(mcpTaskSummary || `mcp task files=${mcpTaskCount}`),
+      name: 'agent completed an executable Rain paper-trading prototype',
+      passed: builtExecutableRainPrototype,
+      detail: summarizeText([rainTaskEvidence, rainRootCheckText, rainDemoArtifact, rainCodeExcerpt].join('\n') || `mcp task files=${mcpTaskCount}`),
     },
     {
       name: 'agent specified validation and risk gates',
@@ -293,7 +324,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did the agent use real Rain developer evidence?', hasRainDeveloperEvidence, summarizeText(evidenceText)),
       answer('Did the agent classify unsupported/new capability paper-first?', includesAll(transcriptText, ['paper']) || includesAll(memoryText, ['paper']), 'paper-first signal searched in transcript and memory'),
       answer('Did it start a self-improvement/MCP task or capability artifact?', startedImprovement, summarizeText(executionArtifacts || `mcp task files=${mcpTaskCount}`)),
-      answer('Did it complete a validated code-changing self-improvement task?', completedMcpTask, summarizeText(mcpTaskSummary || `mcp task files=${mcpTaskCount}`)),
+      answer('Did it complete an executable Rain paper-trading prototype?', builtExecutableRainPrototype, summarizeText([rainTaskEvidence, rainRootCheckText, rainDemoArtifact, rainCodeExcerpt].join('\n') || `mcp task files=${mcpTaskCount}`)),
       answer('Did sandbox files change?', workspaceChanges.length > 0, workspaceChanges || 'git status clean or unavailable'),
       answer('Did it define validation/backtest/risk gates?', hasValidationPlan, summarizeText(evidenceText)),
       answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
@@ -364,6 +395,11 @@ function inspectSandbox(containerName: string): { commands: Record<string, Sandb
     memory_rain_excerpt: 'grep -Rih "Rain\\|rain.one\\|Rain-SDK\\|Trading-and-positions\\|market make\\|paper\\|backtest\\|validation\\|blocker" /home/agent/memory 2>/dev/null | head -120',
     mcp_task_count: 'find /home/agent/.evolve/mcp-self-improvement/tasks -type f 2>/dev/null | wc -l',
     mcp_task_summary: 'find /home/agent/.evolve/mcp-self-improvement/tasks -maxdepth 1 -type f -name "*.json" 2>/dev/null | sort | tail -10 | xargs -r sed -n "1,220p"',
+    rain_task_evidence: 'node -e \'const fs=require("fs"),p="/home/agent/.evolve/mcp-self-improvement/tasks";const files=fs.existsSync(p)?fs.readdirSync(p).filter(f=>f.endsWith(".json")).map(f=>p+"/"+f).sort():[];const tasks=files.map(f=>JSON.parse(fs.readFileSync(f,"utf8"))).filter(t=>String(t.spec||"").toLowerCase().includes("rain"));const t=tasks[tasks.length-1];if(t){const variants=t.variants||[];const v=variants.find(x=>x.variant_id===t.winner_variant_id)||variants[variants.length-1]||{};console.log(JSON.stringify({task_id:t.task_id,status:t.status,winner_variant_id:t.winner_variant_id,worktree_path:t.worktree_path,patch_sha256:t.patch_sha256,files_changed:t.files_changed,tests:t.test_commands,diff_additions:v.diff_additions,test_passed:v.test_passed,variant_files_changed:v.files_changed,shots:(v.shots||[]).map(s=>({round:s.round,coding_ok:s.coding_ok,tests:(s.tests||[]).map(x=>({command:x.command,ok:x.ok,status:x.status})),files_changed:s.files_changed,diff_additions:s.diff_additions}))},null,2))}\'',
+    rain_patch_excerpt: 'find /home/agent/.evolve/mcp-self-improvement/tasks -maxdepth 1 -type f -name "*.patch" 2>/dev/null | sort | tail -3 | xargs -r sed -n "1,260p"',
+    rain_root_checks: 'cd /home/agent && if [ -f tools/rain-paper/rain-paper.test.ts ]; then echo "bun test tools/rain-paper/rain-paper.test.ts"; bun test tools/rain-paper/rain-paper.test.ts && echo "bun --bun tools/rain-paper/run-demo.ts"; bun --bun tools/rain-paper/run-demo.ts; fi',
+    rain_demo_artifact: 'find /home/agent/eval-artifacts /home/agent/.evolve/mcp-self-improvement/worktrees -path "*/eval-artifacts/rain/demo-result.json" -type f 2>/dev/null | sort | tail -5 | while read -r f; do echo "FILE:$f"; sed -n "1,220p" "$f"; done',
+    rain_code_excerpt: 'find /home/agent/tools/rain-paper /home/agent/.evolve/mcp-self-improvement/worktrees -path "*/tools/rain-paper/*" -type f 2>/dev/null | sort | head -30 | while read -r f; do echo "FILE:$f"; sed -n "1,120p" "$f"; done',
     self_improvement_runs: 'find /home/agent/.evolve/self-improvement /home/agent/evolution/self-improve -type f 2>/dev/null | head -40',
     revision_arena: 'find /home/agent/evolution/revision-arena /home/agent/.evolve/revision-arena -type f 2>/dev/null | head -40',
     capability_artifacts: 'find /home/agent -type f \\( -path "*/.evolve/*" -o -path "*/memory/*" -o -path "*/evolution/*" -o -path "*/workspace/*" \\) 2>/dev/null | grep -Ei "rain|capability|self-improvement|task|spec|plan" | head -80',
