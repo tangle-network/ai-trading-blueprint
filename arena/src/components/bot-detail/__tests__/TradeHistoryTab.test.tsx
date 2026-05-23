@@ -405,4 +405,31 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('0.4975')).toBeInTheDocument();
     expect(screen.getByText('0x1234...cdef')).toBeInTheDocument();
   });
+
+  it('labels and filters code-driven strategy trades', async () => {
+    const user = userEvent.setup();
+    setTrades([
+      makeTrade({
+        id: 'agent-trade',
+        decisionSource: 'agent_execution',
+      }),
+      makeTrade({
+        id: 'strategy-trade',
+        tokenIn: 'DAI',
+        tokenOut: 'WETH',
+        decisionSource: 'code_strategy',
+        strategyModuleId: 'template-momentum-breakout',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getAllByText('Agent').length).toBeGreaterThan(0);
+    expect(screen.getByText('Strategy Code')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Strategy code 1/i }));
+
+    expect(screen.getByText('DAI/WETH')).toBeInTheDocument();
+    expect(screen.queryByText('USDC/WETH')).not.toBeInTheDocument();
+  });
 });

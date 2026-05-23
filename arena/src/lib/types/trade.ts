@@ -49,6 +49,14 @@ export interface PredictionTradeMetadata {
   marketSlug?: string;
 }
 
+export type TradeDecisionSource =
+  | 'agent_execution'
+  | 'code_strategy'
+  | 'manual'
+  | 'backtest'
+  | 'unknown'
+  | string;
+
 /** Trade venue derived from target_protocol. */
 export type TradeVenue = 'clob' | 'dex' | 'perp' | 'yield' | 'prediction' | 'paper' | 'unknown';
 
@@ -90,6 +98,20 @@ export interface Trade {
   execution?: TradeExecutionDetails;
   /** Persisted Polymarket metadata for human-readable trade history labels. */
   predictionMetadata?: PredictionTradeMetadata;
+  /** Mechanism that produced the trade: agent execution, generated code strategy, manual, etc. */
+  decisionSource?: TradeDecisionSource;
+  /** Generated strategy module id or other strategy-level mechanism id. */
+  strategyModuleId?: string;
+  /** Sandbox revision that produced the trade, when known. */
+  revisionId?: string;
+  /** Candidate hash under paper evaluation, when known. */
+  candidateHash?: string;
+  /** Agent-supplied reason from trade metadata. */
+  agentReasoning?: string;
+  /** Machine-readable signal emitted by a strategy runner. */
+  runnerSignal?: unknown;
+  /** Harness version active when the trade was submitted. */
+  harnessVersion?: number;
 }
 
 /** Map target_protocol string to a display venue. */

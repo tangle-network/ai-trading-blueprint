@@ -74,9 +74,22 @@ function makeContext(strategyId, options = {}) {
   const risk = { ...defaultRisk(), ...(options.risk || {}) };
 
   async function submitTrade(intent, submitOptions = {}) {
+    const originalMetadata = intent.metadata && typeof intent.metadata === 'object' && !Array.isArray(intent.metadata)
+      ? intent.metadata
+      : {};
     const normalized = api.normalizeIntent({
       ...intent,
       strategy_id: intent.strategy_id || intent.strategyId || strategyId,
+      metadata: {
+        ...originalMetadata,
+        decision_source: originalMetadata.decision_source || 'code_strategy',
+        strategy_mechanism: originalMetadata.strategy_mechanism || 'sandbox_strategy_module',
+        strategy_module_id: originalMetadata.strategy_module_id || strategyId,
+        runner_signal: originalMetadata.runner_signal || {
+          strategy_id: strategyId,
+          submitted_at: nowIso(),
+        },
+      },
     });
     const preflight = await runPreflight(submitOptions.risk || risk);
     if (!preflight.ok) {

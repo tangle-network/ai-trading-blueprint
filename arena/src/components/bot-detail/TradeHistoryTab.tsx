@@ -57,6 +57,7 @@ function TradeTableHead() {
       <TableRow className="hover:bg-transparent">
         <TableHead>Time</TableHead>
         <TableHead>Action</TableHead>
+        <TableHead className="hidden md:table-cell">Source</TableHead>
         <TableHead className="hidden sm:table-cell">Venue</TableHead>
         <TableHead>Trade</TableHead>
         <TableHead className="text-right">Price</TableHead>
@@ -67,6 +68,48 @@ function TradeTableHead() {
       </TableRow>
     </TableHeader>
   );
+}
+
+type MechanismFilter = 'all' | 'agent_execution' | 'code_strategy' | 'revision';
+
+function tradeMechanismKey(trade: Trade): MechanismFilter {
+  if (trade.decisionSource === 'code_strategy') return 'code_strategy';
+  if (trade.revisionId || trade.candidateHash) return 'revision';
+  return 'agent_execution';
+}
+
+function getMechanismLabel(trade: Trade): string {
+  if (trade.decisionSource === 'code_strategy') return 'Strategy Code';
+  if (trade.revisionId || trade.candidateHash) return 'Revision';
+  if (trade.decisionSource === 'manual') return 'Manual';
+  if (trade.decisionSource === 'backtest') return 'Backtest';
+  return 'Agent';
+}
+
+function MechanismBadge({ trade }: { trade: Trade }) {
+  const key = tradeMechanismKey(trade);
+  const icon = key === 'code_strategy'
+    ? 'i-ph:code'
+    : key === 'revision'
+      ? 'i-ph:git-branch'
+      : 'i-ph:robot';
+  const titleParts = [
+    trade.decisionSource ? `source=${trade.decisionSource}` : null,
+    trade.strategyModuleId ? `strategy=${trade.strategyModuleId}` : null,
+    trade.revisionId ? `revision=${trade.revisionId}` : null,
+    trade.candidateHash ? `candidate=${trade.candidateHash}` : null,
+  ].filter(Boolean);
+
+  return (
+    <Badge variant="outline" className="text-xs gap-1" title={titleParts.join(' ') || undefined}>
+      <span className={`${icon} text-xs`} />
+      {getMechanismLabel(trade)}
+    </Badge>
+  );
+}
+
+function mechanismMatchesFilter(trade: Trade, filter: MechanismFilter): boolean {
+  return filter === 'all' || tradeMechanismKey(trade) === filter;
 }
 
 function truncateHash(hash: string): string {
@@ -198,6 +241,8 @@ export function TradeHistoryTab({
     refetchInterval: isLive ? 15_000 : false,
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [mechanismFilter, setMechanismFilter] = useState<MechanismFilter>('all');
+  const filteredTrades = trades?.filter((trade) => mechanismMatchesFilter(trade, mechanismFilter)) ?? [];
 
   if (isLoading) {
     return (
@@ -240,10 +285,45 @@ export function TradeHistoryTab({
   }
 
   return (
-    <Table>
-      <TradeTableHead />
-      <TableBody>
-        {trades.map((trade) => {
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {([
+          ['all', 'All'],
+          ['agent_execution', 'Agent'],
+          ['code_strategy', 'Strategy code'],
+          ['revision', 'Revisions'],
+        ] as const).map(([value, label]) => {
+          const count = value === 'all'
+            ? trades.length
+            : trades.filter((trade) => mechanismMatchesFilter(trade, value)).length;
+          const active = mechanismFilter === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setMechanismFilter(value)}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-data transition-colors ${
+                active
+                  ? 'border-arena-elements-textPrimary/30 bg-arena-elements-background-depth-3 text-arena-elements-textPrimary'
+                  : 'border-arena-elements-borderColor bg-transparent text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
+              }`}
+            >
+              {label}
+              <span className="text-arena-elements-textTertiary">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {filteredTrades.length === 0 ? (
+        <div className="rounded-lg border border-arena-elements-borderColor py-10 text-center text-sm text-arena-elements-textSecondary">
+          No trades match this source filter.
+        </div>
+      ) : (
+        <Table>
+          <TradeTableHead />
+          <TableBody>
+            {filteredTrades.map((trade) => {
           const responses = trade.validation?.responses ?? [];
           const signedCount = countUsableValidatorSignatures(responses);
           const validationDisplay = getTradeValidationDisplay(trade);
@@ -268,7 +348,7 @@ export function TradeHistoryTab({
                 },
               } : {})}
             >
-              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 9 : undefined}>
+              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 10 : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-2" onClick={(e) => e.stopPropagation()}>
@@ -283,6 +363,7 @@ export function TradeHistoryTab({
                       <Badge variant={getActionVariant(trade.action)} className="text-xs">
                         {getActionLabel(trade.action)}
                       </Badge>
+                      <MechanismBadge trade={trade} />
                       <VenueBadge venue={trade.venue} />
                       {trade.targetProtocol === 'polymarket_clob' ? (
                         <span
@@ -437,6 +518,9 @@ export function TradeHistoryTab({
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    <MechanismBadge trade={trade} />
+                  </TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <VenueBadge venue={trade.venue} />
                   </TableCell>
@@ -521,8 +605,10 @@ export function TradeHistoryTab({
               )}
             </TableRow>
           );
-        })}
-      </TableBody>
-    </Table>
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </div>
   );
 }
