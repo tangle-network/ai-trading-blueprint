@@ -1631,9 +1631,49 @@ fn metadata_string(metadata: &serde_json::Value, key: &str) -> Option<String> {
     }
 }
 
+fn metadata_u32(metadata: &serde_json::Value, key: &str) -> Option<u32> {
+    match metadata.get(key) {
+        Some(serde_json::Value::Number(value)) => {
+            value.as_u64().and_then(|value| u32::try_from(value).ok())
+        }
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+            value.parse::<u32>().ok()
+        }
+        _ => None,
+    }
+}
+
+fn intent_candidate_hash(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, "candidate_hash")
+        .or_else(|| metadata_string(metadata, "strategy_candidate_hash"))
+}
+
 fn intent_revision_id(metadata: &serde_json::Value) -> Option<String> {
     metadata_string(metadata, "revision_id")
         .or_else(|| metadata_string(metadata, "sandbox_revision_id"))
+}
+
+fn trade_decision_source(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, "decision_source")
+        .or_else(|| metadata_string(metadata, "source"))
+        .or_else(|| Some("agent_execution".to_string()))
+}
+
+fn trade_runner_signal(metadata: &serde_json::Value) -> Option<serde_json::Value> {
+    metadata
+        .get("runner_signal")
+        .or_else(|| metadata.get("strategy_signal"))
+        .filter(|value| !value.is_null())
+        .cloned()
+}
+
+fn trade_agent_reasoning(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, "agent_reasoning").or_else(|| metadata_string(metadata, "reason"))
+}
+
+fn trade_harness_version(metadata: &serde_json::Value) -> Option<u32> {
+    metadata_u32(metadata, "harness_version")
+        .or_else(|| metadata_u32(metadata, "strategy_harness_version"))
 }
 
 fn enforce_revision_execution_mode(
@@ -1929,12 +1969,11 @@ async fn execute_paper_trade(
         signal_price: None,
         fill_price: None,
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
-            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
@@ -2024,12 +2063,11 @@ async fn execute_paper_clob_trade(
         signal_price: None,
         fill_price: fill.average_price.map(|value| value.to_string()),
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: metadata_string(&req.intent.metadata, "candidate_hash")
-            .or_else(|| metadata_string(&req.intent.metadata, "strategy_candidate_hash")),
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
@@ -2294,12 +2332,12 @@ async fn execute_real_envelope_trade_inner(
         signal_price: None,
         fill_price: None,
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: None,
-        revision_id: None,
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2461,12 +2499,12 @@ async fn execute_real_trade_inner(
         signal_price: None,
         fill_price: None,
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: None,
-        revision_id: None,
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2561,12 +2599,12 @@ async fn execute_clob_trade(
         signal_price: None,
         fill_price: None,
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: None,
-        revision_id: None,
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2782,12 +2820,12 @@ async fn execute_hyperliquid_trade(
         signal_price: None,
         fill_price: None,
         signal_to_fill_ms: None,
-        decision_source: None,
-        runner_signal: None,
-        agent_reasoning: None,
-        harness_version: None,
-        candidate_hash: None,
-        revision_id: None,
+        decision_source: trade_decision_source(&req.intent.metadata),
+        runner_signal: trade_runner_signal(&req.intent.metadata),
+        agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
+        harness_version: trade_harness_version(&req.intent.metadata),
+        candidate_hash: intent_candidate_hash(&req.intent.metadata),
+        revision_id: intent_revision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -3569,6 +3607,48 @@ mod tests {
             amount_out.map(|value| value.to_string()),
             Some("3575".to_string())
         );
+    }
+
+    #[test]
+    fn trade_decision_metadata_defaults_to_agent_execution() {
+        let metadata = serde_json::Value::Null;
+        assert_eq!(
+            trade_decision_source(&metadata),
+            Some("agent_execution".to_string())
+        );
+        assert_eq!(trade_runner_signal(&metadata), None);
+        assert_eq!(trade_harness_version(&metadata), None);
+    }
+
+    #[test]
+    fn trade_decision_metadata_extracts_code_strategy_attribution() {
+        let metadata = serde_json::json!({
+            "decision_source": "code_strategy",
+            "runner_signal": { "strategy_id": "template-momentum-breakout" },
+            "agent_reasoning": "breakout confirmed",
+            "harness_version": 7,
+            "candidate_hash": "0xcandidate",
+            "revision_id": "rev-2"
+        });
+
+        assert_eq!(
+            trade_decision_source(&metadata),
+            Some("code_strategy".to_string())
+        );
+        assert_eq!(
+            trade_runner_signal(&metadata),
+            Some(serde_json::json!({ "strategy_id": "template-momentum-breakout" }))
+        );
+        assert_eq!(
+            trade_agent_reasoning(&metadata),
+            Some("breakout confirmed".to_string())
+        );
+        assert_eq!(trade_harness_version(&metadata), Some(7));
+        assert_eq!(
+            intent_candidate_hash(&metadata),
+            Some("0xcandidate".to_string())
+        );
+        assert_eq!(intent_revision_id(&metadata), Some("rev-2".to_string()));
     }
 
     #[test]

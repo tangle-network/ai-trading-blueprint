@@ -28,6 +28,7 @@ fn trading_agent_package_json() -> String {
         "private": true,
         "scripts": {
             "serve": "opencode serve",
+            "strategy:tick": "node /home/agent/tools/run-strategy.js",
             "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.ts run",
             "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.ts status",
             "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
@@ -707,7 +708,7 @@ pub(crate) async fn ensure_sidecar_runtime_dirs(
 ) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown -R agent:agent /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; } && chmod -R u+rwX,g+rwX /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home 2>/dev/null || true'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup /home/agent/tools/strategies/templates && chmod 0775 /home/agent/.sidecar /home/agent/.sidecar/state /home/agent/.sidecar/state/opencode /home/agent/.sidecar/state/sessions /home/agent/.opencode && { chown -R agent:agent /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home /home/agent/config /home/agent/memory /home/agent/tools 2>/dev/null || true; } && chmod -R u+rwX,g+rwX /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home 2>/dev/null || true'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -860,6 +861,62 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/api-client.js",
         include_str!("../prompts/tools/api_client.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategy-sdk.js",
+        include_str!("../prompts/tools/strategy_sdk.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/run-strategy.js",
+        include_str!("../prompts/tools/run_strategy.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/README.md",
+        include_str!("../prompts/tools/strategies_readme.md"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/templates/market-maker.js",
+        include_str!("../prompts/tools/strategy_templates/market_maker.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/templates/momentum-breakout.js",
+        include_str!("../prompts/tools/strategy_templates/momentum_breakout.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/templates/mean-reversion.js",
+        include_str!("../prompts/tools/strategy_templates/mean_reversion.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/templates/portfolio-rebalance.js",
+        include_str!("../prompts/tools/strategy_templates/portfolio_rebalance.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/strategies/templates/risk-off-guard.js",
+        include_str!("../prompts/tools/strategy_templates/risk_off_guard.js"),
     )
     .await?;
     write_file_to_sidecar(
@@ -1146,6 +1203,10 @@ mod tests {
             serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
         assert_eq!(package["scripts"]["serve"], "opencode serve");
         assert_eq!(
+            package["scripts"]["strategy:tick"],
+            "node /home/agent/tools/run-strategy.js"
+        );
+        assert_eq!(
             package["scripts"]["self-improve:status"],
             "bun --bun /home/agent/tools/self-improvement-loop.ts status"
         );
@@ -1210,6 +1271,69 @@ mod tests {
         assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
         assert!(tool.contains("self_improvement.cancel"));
         assert!(tool.contains("self_improvement.promote_candidate"));
+    }
+
+    #[test]
+    fn strategy_sdk_exposes_simple_generated_strategy_contract() {
+        let sdk = include_str!("../prompts/tools/strategy_sdk.js");
+        assert!(sdk.contains("strategy module must export async tick(ctx)"));
+        assert!(sdk.contains("submitTrade"));
+        assert!(sdk.contains("checkCircuitBreaker"));
+        assert!(sdk.contains("validate(normalized)"));
+        assert!(sdk.contains("paper trade submitted to operator API for unified trade history"));
+        assert!(sdk.contains("writeArtifact"));
+        assert!(sdk.contains("'strategy-runs.jsonl'"));
+
+        let runner = include_str!("../prompts/tools/run_strategy.js");
+        assert!(runner.contains("runStrategy(strategy"));
+        assert!(runner.contains("missing strategy path"));
+
+        let readme = include_str!("../prompts/tools/strategies_readme.md");
+        assert!(readme.contains("async tick(ctx)"));
+        assert!(readme.contains("ctx.submitTrade()"));
+        assert!(readme.contains("strategies/templates"));
+    }
+
+    #[test]
+    fn strategy_templates_are_deployable_and_use_shared_safety_path() {
+        let templates = [
+            (
+                "market-maker.js",
+                include_str!("../prompts/tools/strategy_templates/market_maker.js"),
+                "decideMarketMaker",
+            ),
+            (
+                "momentum-breakout.js",
+                include_str!("../prompts/tools/strategy_templates/momentum_breakout.js"),
+                "decideMomentum",
+            ),
+            (
+                "mean-reversion.js",
+                include_str!("../prompts/tools/strategy_templates/mean_reversion.js"),
+                "decideMeanReversion",
+            ),
+            (
+                "portfolio-rebalance.js",
+                include_str!("../prompts/tools/strategy_templates/portfolio_rebalance.js"),
+                "decideRebalance",
+            ),
+            (
+                "risk-off-guard.js",
+                include_str!("../prompts/tools/strategy_templates/risk_off_guard.js"),
+                "decideRiskOff",
+            ),
+        ];
+
+        for (name, source, decide_fn) in templates {
+            assert!(source.contains("async function tick(ctx)"), "{name}");
+            assert!(source.contains("ctx.writeArtifact"), "{name}");
+            assert!(source.contains(decide_fn), "{name}");
+            assert!(source.contains("module.exports"), "{name}");
+        }
+
+        let api_client = include_str!("../prompts/tools/api_client.js");
+        assert!(api_client.contains("TRADING_API_CONFIG"));
+        assert!(api_client.contains("AGENT_HOME"));
     }
 }
 
