@@ -181,4 +181,33 @@ describe('useBotApi trade mapping helpers', () => {
       marketSlug: 'eth-above-4000-june-30',
     });
   });
+
+  it('maps persisted trade mechanism attribution', () => {
+    const trade = mapApiTrade({
+      id: 'trade-6',
+      bot_id: 'bot-1',
+      timestamp: '2026-04-07T00:00:00Z',
+      action: 'buy',
+      token_in: 'USDC',
+      token_out: 'WETH',
+      amount_in: '100',
+      min_amount_out: '0',
+      target_protocol: 'uniswap_v3',
+      paper_trade: true,
+      valuation_status: 'unpriced',
+      decision_source: 'code_strategy',
+      runner_signal: { strategy_id: 'template-momentum-breakout' },
+      agent_reasoning: 'breakout confirmed',
+      harness_version: 3,
+      candidate_hash: '0xcandidate',
+      revision_id: 'rev-3',
+    }, 'Bot');
+
+    expect(trade.decisionSource).toBe('code_strategy');
+    expect(trade.strategyModuleId).toBe('template-momentum-breakout');
+    expect(trade.agentReasoning).toBe('breakout confirmed');
+    expect(trade.harnessVersion).toBe(3);
+    expect(trade.candidateHash).toBe('0xcandidate');
+    expect(trade.revisionId).toBe('rev-3');
+  });
 });

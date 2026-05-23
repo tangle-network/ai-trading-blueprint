@@ -75,6 +75,12 @@ interface ApiTrade {
     market_slug?: string;
   };
   valuation_status?: 'priced' | 'value_only' | 'unpriced';
+  decision_source?: string;
+  runner_signal?: unknown;
+  agent_reasoning?: string;
+  harness_version?: number;
+  candidate_hash?: string;
+  revision_id?: string;
 }
 
 type TradeStatusInput = {
@@ -337,7 +343,21 @@ export function mapApiTrade(
     validation,
     execution,
     predictionMetadata,
+    decisionSource: trade.decision_source,
+    strategyModuleId: extractStrategyModuleId(trade.runner_signal),
+    revisionId: trade.revision_id,
+    candidateHash: trade.candidate_hash,
+    agentReasoning: trade.agent_reasoning,
+    runnerSignal: trade.runner_signal,
+    harnessVersion: trade.harness_version,
   };
+}
+
+function extractStrategyModuleId(signal: unknown): string | undefined {
+  if (!signal || typeof signal !== 'object' || Array.isArray(signal)) return undefined;
+  const record = signal as Record<string, unknown>;
+  const value = record.strategy_module_id ?? record.strategy_id ?? record.id;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
