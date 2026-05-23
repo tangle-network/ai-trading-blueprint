@@ -36,7 +36,7 @@ Run one tick:
 node /home/agent/tools/run-strategy.js /home/agent/tools/strategies/example-strategy.js
 ```
 
-`ctx.submitTrade()` owns the safety path: circuit breaker, intent normalization, validator/API validation, paper/live gate, execution, and JSONL logging. Strategy code should focus on signals and return `ctx.skip(reason)` when there is no safe trade.
+`ctx.submitTrade()` owns the safety path: circuit breaker, intent normalization, validator/API validation, paper/live gate, execution, and JSONL logging. In paper mode it still calls the operator `/execute` endpoint so the trade appears in the same UI trade history as agent-driven trades. Use `ctx.submitTrade(intent, { dryRun: true })` only for local validation with no recorded trade. Strategy code should focus on signals and return `ctx.skip(reason)` when there is no safe trade.
 
 Useful `ctx` helpers:
 

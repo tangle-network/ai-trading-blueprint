@@ -1280,7 +1280,7 @@ mod tests {
         assert!(sdk.contains("submitTrade"));
         assert!(sdk.contains("checkCircuitBreaker"));
         assert!(sdk.contains("validate(normalized)"));
-        assert!(sdk.contains("trade validated but live execution is disabled"));
+        assert!(sdk.contains("paper trade submitted to operator API for unified trade history"));
         assert!(sdk.contains("writeArtifact"));
         assert!(sdk.contains("'strategy-runs.jsonl'"));
 

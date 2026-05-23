@@ -100,12 +100,24 @@ function makeContext(strategyId, options = {}) {
       });
     }
 
-    if (submitOptions.dryRun === true || mode !== 'live') {
+    if (submitOptions.dryRun === true) {
       return logDecision({
         action: 'paper_validated',
-        reason: 'trade validated but live execution is disabled',
+        reason: 'trade validated but execution was explicitly disabled',
         intent: normalized,
         validation: validationBody,
+        mode,
+      });
+    }
+
+    if (mode !== 'live') {
+      const execution = await api.execute(normalized, validationBody);
+      return logDecision({
+        action: execution.status < 400 ? 'paper_executed' : 'paper_execution_failed',
+        reason: 'paper trade submitted to operator API for unified trade history',
+        intent: normalized,
+        validation: validationBody,
+        execution: execution.data || execution.body || execution,
         mode,
       });
     }
