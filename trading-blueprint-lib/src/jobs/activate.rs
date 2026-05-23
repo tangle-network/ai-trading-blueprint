@@ -28,6 +28,7 @@ fn trading_agent_package_json() -> String {
         "private": true,
         "scripts": {
             "serve": "opencode serve",
+            "strategy:tick": "node /home/agent/tools/run-strategy.js",
             "self-improve": "bun --bun /home/agent/tools/self-improvement-loop.ts run",
             "self-improve:status": "bun --bun /home/agent/tools/self-improvement-loop.ts status",
             "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
@@ -865,6 +866,20 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/strategy-sdk.js",
+        include_str!("../prompts/tools/strategy_sdk.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/run-strategy.js",
+        include_str!("../prompts/tools/run_strategy.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/update-phase.js",
         include_str!("../prompts/tools/update_phase.js"),
     )
@@ -1146,6 +1161,10 @@ mod tests {
             serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
         assert_eq!(package["scripts"]["serve"], "opencode serve");
         assert_eq!(
+            package["scripts"]["strategy:tick"],
+            "node /home/agent/tools/run-strategy.js"
+        );
+        assert_eq!(
             package["scripts"]["self-improve:status"],
             "bun --bun /home/agent/tools/self-improvement-loop.ts status"
         );
@@ -1210,6 +1229,22 @@ mod tests {
         assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
         assert!(tool.contains("self_improvement.cancel"));
         assert!(tool.contains("self_improvement.promote_candidate"));
+    }
+
+    #[test]
+    fn strategy_sdk_exposes_simple_generated_strategy_contract() {
+        let sdk = include_str!("../prompts/tools/strategy_sdk.js");
+        assert!(sdk.contains("strategy module must export async tick(ctx)"));
+        assert!(sdk.contains("submitTrade"));
+        assert!(sdk.contains("checkCircuitBreaker"));
+        assert!(sdk.contains("validate(normalized)"));
+        assert!(sdk.contains("trade validated but live execution is disabled"));
+        assert!(sdk.contains("writeArtifact"));
+        assert!(sdk.contains("'strategy-runs.jsonl'"));
+
+        let runner = include_str!("../prompts/tools/run_strategy.js");
+        assert!(runner.contains("runStrategy(strategy"));
+        assert!(runner.contains("missing strategy path"));
     }
 }
 
