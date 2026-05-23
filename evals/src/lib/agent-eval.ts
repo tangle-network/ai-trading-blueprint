@@ -2,9 +2,17 @@ import { pathToFileURL } from 'node:url'
 
 export interface AgentEvalModule {
   FileSystemTraceStore: new (args: { dir: string }) => unknown
+  FileSystemFeedbackTrajectoryStore?: new (args: { dir: string }) => {
+    save(trajectory: unknown): Promise<void>
+    list(filter?: unknown): Promise<unknown[]>
+  }
   TraceEmitter: new (store: unknown, args?: { runId?: string }) => TraceEmitterLike
   validateRunRecord: (record: unknown) => unknown
+  callLlmJson?: <T = unknown>(req: unknown, opts?: unknown) => Promise<{ value: T; result: unknown }>
   createFeedbackTrajectory?: (input: unknown) => unknown
+  runMultiShotOptimization?: <P = unknown>(config: unknown) => Promise<unknown>
+  trialTraceFromMultiShotTrial?: (trial: unknown) => unknown
+  analyzeOptimizationResult?: (opts: unknown) => Promise<unknown>
 }
 
 export interface TraceEmitterLike {
