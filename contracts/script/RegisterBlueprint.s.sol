@@ -34,8 +34,12 @@ interface ITangle {
 contract RegisterBlueprint is Script {
     event log_string(string value);
 
-    // Anvil well-known keys
-    uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    // Anvil well-known keys (fallback for local-only flows that don't set PRIVATE_KEY).
+    // For live networks the wrapper sets PRIVATE_KEY and we honour it instead — see
+    // _resolveDeployerKey() below. Hardcoding the anvil key into vm.startBroadcast
+    // would override the deployer that funded the broadcast, sending every tx from
+    // an unfunded address and tripping the RPC's eth_estimateGas pre-flight.
+    uint256 constant ANVIL_DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
     // Tangle protocol address default (deterministic from Anvil state snapshot).
     // Overridable per-network via the `TANGLE_CORE` env var (the bash wrapper /
@@ -107,7 +111,8 @@ contract RegisterBlueprint is Script {
     }
 
     function run() external {
-        address deployer = vm.addr(DEPLOYER_KEY);
+        uint256 deployerKey = vm.envOr("PRIVATE_KEY", ANVIL_DEPLOYER_KEY);
+        address deployer = vm.addr(deployerKey);
 
         // Tangle protocol address is env-overridable so the same script can
         // target local Anvil (default) or any deployed network (Base Sepolia,
@@ -121,7 +126,7 @@ contract RegisterBlueprint is Script {
         // (e.g. dry-run simulations on a different chain).
         TokenSet memory tokens = _resolveTokenSet();
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(deployerKey);
 
         // ── Deploy Multicall3 (required by viem) ──────────────────────
         // Deploy to temp address then copy code to canonical address
