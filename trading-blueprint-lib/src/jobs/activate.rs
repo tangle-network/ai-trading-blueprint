@@ -45,6 +45,56 @@ fn trading_agent_package_json() -> String {
     .to_string()
 }
 
+fn trading_agent_opencode_config_json() -> String {
+    json!({
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "zai-coding-plan": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Z.AI Coding Plan",
+                "options": {
+                    "baseURL": "https://api.z.ai/api/coding/paas/v4",
+                    "apiKey": "{env:ZAI_API_KEY}",
+                },
+                "models": {
+                    "glm-4.7": {
+                        "name": "GLM-4.7",
+                        "limit": {
+                            "context": 128000,
+                            "output": 32000,
+                        },
+                    },
+                },
+            },
+            "openrouter": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "OpenRouter-compatible",
+                "options": {
+                    "baseURL": "{env:OPENCODE_MODEL_BASE_URL}",
+                    "apiKey": "{env:OPENCODE_MODEL_API_KEY}",
+                },
+                "models": {
+                    "anthropic/claude-sonnet-4-6": {
+                        "name": "Claude Sonnet 4.6",
+                        "limit": {
+                            "context": 200000,
+                            "output": 32000,
+                        },
+                    },
+                    "deepseek-v4-pro": {
+                        "name": "DeepSeek V4 Pro",
+                        "limit": {
+                            "context": 128000,
+                            "output": 32000,
+                        },
+                    },
+                },
+            },
+        },
+    })
+    .to_string()
+}
+
 /// Per-bot mutex preventing concurrent activate/wipe operations.
 /// Ensures only one lifecycle operation runs per bot at a time (RACE-3, RACE-6).
 static BOT_LIFECYCLE_LOCKS: std::sync::LazyLock<
@@ -822,6 +872,13 @@ pub(crate) async fn write_prebuilt_tools(
         &trading_agent_package_json(),
     )
     .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/.config/opencode/opencode.jsonc",
+        &trading_agent_opencode_config_json(),
+    )
+    .await?;
 
     // Write API config so tools can find the Trading HTTP API
     let config_json = serde_json::json!({
@@ -1083,7 +1140,7 @@ cd /home/agent
 git init -q
 git config user.email "trading-agent@tangle.local"
 git config user.name "Trading Agent"
-git add package.json config tools memory .opencode 2>/dev/null || true
+git add package.json config tools memory .config .opencode 2>/dev/null || true
 if ! git diff --cached --quiet; then
   git commit -q -m "Initialize trading agent workspace"
 fi
@@ -1113,7 +1170,7 @@ pub(crate) async fn write_file_to_sidecar(
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
         command: format!(
-            r#"node -e "require('fs').writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
+            r#"node -e "const fs=require('fs'); const path=require('path'); fs.mkdirSync(path.dirname(process.argv[1]), {{ recursive: true }}); fs.writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
         ),
         cwd: String::new(),
         env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
@@ -1228,6 +1285,37 @@ mod tests {
     }
 
     #[test]
+    fn trading_agent_opencode_config_registers_eval_providers_without_secrets() {
+        let config: serde_json::Value =
+            serde_json::from_str(&trading_agent_opencode_config_json()).expect("valid config json");
+        assert_eq!(
+            config["provider"]["zai-coding-plan"]["npm"],
+            "@ai-sdk/openai-compatible"
+        );
+        assert_eq!(
+            config["provider"]["zai-coding-plan"]["options"]["baseURL"],
+            "https://api.z.ai/api/coding/paas/v4"
+        );
+        assert_eq!(
+            config["provider"]["zai-coding-plan"]["options"]["apiKey"],
+            "{env:ZAI_API_KEY}"
+        );
+        assert!(config["provider"]["zai-coding-plan"]["models"]["glm-4.7"].is_object());
+        assert_eq!(
+            config["provider"]["openrouter"]["options"]["baseURL"],
+            "{env:OPENCODE_MODEL_BASE_URL}"
+        );
+        assert_eq!(
+            config["provider"]["openrouter"]["options"]["apiKey"],
+            "{env:OPENCODE_MODEL_API_KEY}"
+        );
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(!serialized.contains("sk-"));
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("api_key"));
+    }
+
+    #[test]
     fn self_improvement_loop_uses_tangle_agent_packages_and_existing_api() {
         let tool = include_str!("../prompts/tools/self_improvement_loop.ts");
         assert!(tool.contains("@tangle-network/agent-eval"));
@@ -1269,11 +1357,18 @@ mod tests {
         assert!(tool.contains("highest_readiness"));
         assert!(tool.contains("self_improvement.create_task"));
         assert!(tool.contains("self_improvement.list_tasks"));
+        assert!(tool.contains("OPENCODE_MODEL_PROVIDER"));
+        assert!(tool.contains("${provider}/${model}"));
         assert!(tool.contains("max_results"));
         assert!(tool.contains("git worktree add"));
         assert!(tool.contains("max_shots"));
         assert!(tool.contains("runCodingAgent"));
         assert!(tool.contains("runTests"));
+        assert!(tool.contains("recoverInterruptedTask"));
+        assert!(tool.contains("taskHasLiveOwner"));
+        assert!(tool.contains("TASK_LOCK_HEARTBEAT_MS"));
+        assert!(tool.contains("process.kill(-child.pid"));
+        assert!(tool.contains("recovering interrupted task state from worktree"));
         assert!(tool.contains("add -N ."));
         assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
         assert!(tool.contains("self_improvement.cancel"));

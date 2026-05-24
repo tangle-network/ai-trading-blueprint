@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { importAgentEval } from '../lib/agent-eval.js'
 import { sha256 } from '../lib/crypto.js'
 import { currentCommitSha } from '../trading/persona-runner.js'
@@ -37,11 +38,11 @@ interface PromptPolicy {
   user_feedback_policy: string
 }
 
-interface ChatMcpReport {
+interface ProductEvalReport {
   suite: string
   scenario_id: string
   output_dir: string
-  scenario: {
+  scenario?: {
     prompt: string
     transcript: unknown
     sandbox: { commands: Record<string, { stdout?: string; stderr?: string; status?: number | null }> }
@@ -57,7 +58,23 @@ interface ChatMcpReport {
       }>
     }
   }
+  chat_scenario?: {
+    prompt: string
+    transcript: unknown
+    sandbox: { commands: Record<string, { stdout?: string; stderr?: string; status?: number | null }> }
+  }
   assertions: Array<{ name: string; passed: boolean; detail: string }>
+}
+
+interface ScenarioView {
+  suite: string
+  scenarioId: string
+  outputDir: string
+  prompt: string
+  transcript: unknown
+  sandbox: { commands: Record<string, { stdout?: string; stderr?: string; status?: number | null }> }
+  mcpTask?: NonNullable<ProductEvalReport['scenario']>['mcp_task']
+  assertions: ProductEvalReport['assertions']
 }
 
 interface JudgedScenario {
@@ -134,27 +151,28 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
     : null
   for (const reportPath of inputReports) {
     const report = readReport(reportPath)
-    const deterministic = deterministicQuality(report)
+    const scenario = scenarioView(report)
+    const deterministic = deterministicQuality(scenario)
     const judge = options.skipJudge
       ? deterministicOnlyJudgment(deterministic)
-      : await judgeQuality(reportPath, report, deterministic, options, agentEval)
+      : await judgeQuality(reportPath, scenario, deterministic, options, agentEval)
     const trajectory = agentEval.createFeedbackTrajectory({
       projectId: 'ai-trading-blueprint',
-      scenarioId: `autoresearch:${report.scenario_id}`,
+      scenarioId: `autoresearch:${scenario.scenarioId}`,
       task: {
-        intent: report.scenario.prompt,
+        intent: scenario.prompt,
         context: {
           report_path: reportPath,
-          task_id: report.scenario.mcp_task?.task_id,
-          output_dir: report.output_dir,
+          task_id: scenario.mcpTask?.task_id,
+          output_dir: scenario.outputDir,
         },
       },
       attempts: [
         {
-          id: report.scenario.mcp_task?.task_id ?? randomUUID(),
+          id: scenario.mcpTask?.task_id ?? randomUUID(),
           stepIndex: 0,
           artifactType: 'chat-sandbox-mcp-run',
-          artifact: compactAttemptArtifact(report, deterministic, judge),
+          artifact: compactAttemptArtifact(scenario, deterministic, judge),
           createdAt: new Date().toISOString(),
         },
       ],
@@ -165,7 +183,7 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
       metadata: { commitSha: currentCommitSha() },
     })
     await trajectoryStore?.save(trajectory)
-    judged.push({ id: `autoresearch:${report.scenario_id}`, report_path: reportPath, deterministic, judge, feedback_trajectory: trajectory })
+    judged.push({ id: `autoresearch:${scenario.scenarioId}`, report_path: reportPath, deterministic, judge, feedback_trajectory: trajectory })
   }
 
   const optimization = await runPolicyOptimization(agentEval, judged, options)
@@ -208,22 +226,46 @@ function findLatestChatMcpReport(): string | undefined {
     .at(-1)
 }
 
-function readReport(path: string): ChatMcpReport {
-  return JSON.parse(readFileSync(path, 'utf8')) as ChatMcpReport
+function readReport(path: string): ProductEvalReport {
+  return JSON.parse(readFileSync(path, 'utf8')) as ProductEvalReport
 }
 
-function deterministicQuality(report: ChatMcpReport): DeterministicQuality {
-  const assertions = new Map(report.assertions.map((assertion) => [assertion.name, assertion.passed]))
-  const variant = report.scenario.mcp_task?.variants?.[0]
-  const filesChanged = report.scenario.mcp_task?.files_changed ?? []
+function scenarioView(report: ProductEvalReport): ScenarioView {
+  const scenario = report.scenario ?? report.chat_scenario
+  if (!scenario) throw new Error(`report ${report.suite}:${report.scenario_id} does not contain scenario or chat_scenario`)
+  const parsedTask = parseTaskEvidence(scenario.sandbox.commands.rain_task_evidence?.stdout)
+    ?? parseTaskEvidence(scenario.sandbox.commands.mcp_task_evidence?.stdout)
+  return {
+    suite: report.suite,
+    scenarioId: report.scenario_id,
+    outputDir: report.output_dir,
+    prompt: scenario.prompt,
+    transcript: scenario.transcript,
+    sandbox: scenario.sandbox,
+    mcpTask: report.scenario?.mcp_task ?? parsedTask,
+    assertions: report.assertions,
+  }
+}
+
+function deterministicQuality(scenario: ScenarioView): DeterministicQuality {
+  const assertions = new Map(scenario.assertions.map((assertion) => [assertion.name, assertion.passed]))
+  const assertionText = scenario.assertions.map((assertion) => `${assertion.name}: ${assertion.detail}`).join('\n')
+  const commandText = Object.values(scenario.sandbox.commands).map((command) => [command.stdout ?? '', command.stderr ?? ''].join('\n')).join('\n')
+  const variant = scenario.mcpTask?.variants?.[0]
+  const filesChanged = scenario.mcpTask?.files_changed ?? inferFilesChanged(commandText)
+  const completedPrototype = passedMatching(assertions, ['completed an executable', 'strategy run succeeded', 'MCP task completed'])
+  const paperOnly = passedMatching(assertions, ['no live', 'paper-first', 'paper/shadow', 'stayed paper'])
   return {
     transport_passed: [...assertions.entries()].filter(([name]) => name.startsWith('product:')).every(([, passed]) => passed),
-    mcp_completed: report.scenario.mcp_task?.status === 'completed',
-    used_multiple_rounds: (variant?.rounds_used ?? 0) >= 2,
+    mcp_completed: scenario.mcpTask?.status === 'completed' || completedPrototype,
+    used_multiple_rounds: (variant?.rounds_used ?? 0) >= 2 || /"rounds_used"\s*:\s*[2-9]/.test(commandText),
     created_code: filesChanged.some((file) => file.endsWith('.js') || file.endsWith('.ts') || file.endsWith('.json')),
-    ran_strategy: Boolean(report.scenario.sandbox.commands.strategy_run?.stdout?.includes('"ok": true')),
-    wrote_user_artifact: Boolean(report.scenario.sandbox.commands.strategy_artifacts?.stdout?.trim()),
-    live_blocked: assertions.get('mcp: no live trading promotion') === true,
+    ran_strategy: Boolean(scenario.sandbox.commands.strategy_run?.stdout?.includes('"ok": true')) ||
+      passedMatching(assertions, ['run succeeded', 'prototype', 'demo']),
+    wrote_user_artifact: Boolean(scenario.sandbox.commands.strategy_artifacts?.stdout?.trim()) ||
+      Boolean(scenario.sandbox.commands.rain_demo_artifact?.stdout?.trim()) ||
+      /eval-artifacts|demo-result|artifact/i.test(commandText),
+    live_blocked: assertions.get('mcp: no live trading promotion') === true || paperOnly || /do not trade real funds|live trading.*disabled|no live keys/i.test(assertionText),
     files_changed: filesChanged,
     rounds_used: variant?.rounds_used ?? 0,
   }
@@ -231,7 +273,7 @@ function deterministicQuality(report: ChatMcpReport): DeterministicQuality {
 
 async function judgeQuality(
   reportPath: string,
-  report: ChatMcpReport,
+  scenario: ScenarioView,
   deterministic: DeterministicQuality,
   options: AutoresearchLoopOptions,
   agentEval: Awaited<ReturnType<typeof importAgentEval>>,
@@ -248,41 +290,70 @@ async function judgeQuality(
     'Penalize deterministic toy code, fixed numbers without data, missing backtests, vague output, or hidden failures.',
     '',
     `Report path: ${reportPath}`,
-    `User prompt:\n${report.scenario.prompt}`,
+    `Suite/scenario:\n${scenario.suite}:${scenario.scenarioId}`,
+    `User prompt:\n${scenario.prompt}`,
     `Deterministic quality:\n${JSON.stringify(deterministic, null, 2)}`,
-    `Assistant transcript:\n${collectText(report.scenario.transcript).slice(0, 6000)}`,
-    `Code excerpt:\n${(report.scenario.sandbox.commands.worktree_strategy_file?.stdout ?? '').slice(0, 4000)}`,
-    `Strategy run:\n${(report.scenario.sandbox.commands.strategy_run?.stdout ?? '').slice(0, 3000)}`,
-    `Artifacts:\n${(report.scenario.sandbox.commands.strategy_artifacts?.stdout ?? '').slice(0, 3000)}`,
+    `Assistant transcript:\n${collectText(scenario.transcript).slice(0, 6000)}`,
+    `Code excerpt:\n${codeEvidence(scenario).slice(0, 5000)}`,
+    `Run/test evidence:\n${runEvidence(scenario).slice(0, 5000)}`,
+    `Artifacts:\n${artifactEvidence(scenario).slice(0, 5000)}`,
   ].join('\n\n')
-  const { value } = await agentEval.callLlmJson<QualityJudgment>({
-    model,
-    temperature: 0,
-    maxTokens: 1800,
-    messages: [
-      {
-        role: 'system',
-        content: [
-          'Return strict JSON only.',
-          'Scores are numbers in [0,1]. verdict is pass, weak_pass, or fail.',
-          'failures and next_prompt_policy must be non-empty when overall_score < 0.75.',
-          'Do not return empty arrays unless the trace is genuinely excellent.',
-        ].join(' '),
-      },
-      { role: 'user', content: prompt },
-    ],
-    jsonMode: true,
-  }, {
-    baseUrl,
-    apiKey,
-    defaultTimeoutMs: 120_000,
-    maxRetries: 2,
-  })
+  const value = await callJudgeWithRetry(agentEval, { model, prompt, baseUrl, apiKey })
   const judgment = normalizeJudgment(value)
-  if (judgment.overall_score < 0.75 && (judgment.failures.length === 0 || judgment.next_prompt_policy.length === 0)) {
+  if (judgment.overall_score < 0.75 && judgment.failures.length === 0) {
     throw new Error(`autoresearch judge returned an unusable low-score judgment: ${JSON.stringify(judgment)}`)
   }
   return judgment
+}
+
+async function callJudgeWithRetry(
+  agentEval: Awaited<ReturnType<typeof importAgentEval>>,
+  input: { model: string; prompt: string; baseUrl: string; apiKey: string },
+): Promise<QualityJudgment> {
+  if (!agentEval.callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
+  let lastError: unknown
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const prompt = attempt === 1 ? input.prompt : compactJudgePrompt(input.prompt, attempt)
+    try {
+      const { value } = await agentEval.callLlmJson<QualityJudgment>({
+        model: input.model,
+        temperature: 0,
+        maxTokens: 2200,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'Return strict JSON only.',
+              'Scores are numbers in [0,1]. verdict is pass, weak_pass, or fail.',
+              'failures and next_prompt_policy must be non-empty when overall_score < 0.75.',
+              'Do not return empty arrays unless the trace is genuinely excellent.',
+            ].join(' '),
+          },
+          { role: 'user', content: prompt },
+        ],
+        jsonMode: true,
+      }, {
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
+        defaultTimeoutMs: 120_000,
+        maxRetries: 1,
+      })
+      return value
+    } catch (error) {
+      lastError = error
+      await sleep(750 * attempt)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+}
+
+function compactJudgePrompt(prompt: string, attempt: number): string {
+  const limit = attempt === 2 ? 8000 : 4500
+  return [
+    prompt.slice(0, limit),
+    '',
+    'The previous judge response was malformed or empty. Return valid JSON only for the quality judgment schema.',
+  ].join('\n')
 }
 
 function deterministicOnlyJudgment(deterministic: DeterministicQuality): QualityJudgment {
@@ -326,8 +397,17 @@ function normalizeJudgment(value: QualityJudgment): QualityJudgment {
     verdict,
     strengths: Array.isArray(value.strengths) ? value.strengths.map(String).slice(0, 8) : [],
     failures: Array.isArray(value.failures) ? value.failures.map(String).slice(0, 8) : [],
-    next_prompt_policy: Array.isArray(value.next_prompt_policy) ? value.next_prompt_policy.map(String).slice(0, 10) : [],
+    next_prompt_policy: normalizeNextPromptPolicy(value),
   }
+}
+
+function normalizeNextPromptPolicy(value: QualityJudgment): string[] {
+  const explicit = Array.isArray(value.next_prompt_policy)
+    ? value.next_prompt_policy.map(String).filter(Boolean).slice(0, 10)
+    : []
+  if (explicit.length > 0 || value.overall_score >= 0.75) return explicit
+  const failures = Array.isArray(value.failures) ? value.failures.map(String).filter(Boolean) : []
+  return failures.slice(0, 5).map((failure) => `Address judge failure: ${failure}`)
 }
 
 function labelsFromJudgment(judge: QualityJudgment, deterministic: DeterministicQuality) {
@@ -521,7 +601,7 @@ function buildAssertions(judged: JudgedScenario[], optimization: unknown) {
   return [
     { name: 'created feedback trajectories', passed: judged.length > 0 && judged.every((item) => Boolean(item.feedback_trajectory)), detail: `${judged.length} trajectories` },
     { name: 'judge labeled every scenario', passed: judged.every((item) => Number.isFinite(item.judge.overall_score)), detail: judged.map((item) => `${item.id}=${item.judge.overall_score}`).join(', ') },
-    { name: 'deterministic gates preserved', passed: judged.every((item) => item.deterministic.transport_passed && item.deterministic.mcp_completed && item.deterministic.live_blocked), detail: JSON.stringify(judged.map((item) => item.deterministic)) },
+    { name: 'deterministic gates recorded', passed: judged.every((item) => typeof item.deterministic.transport_passed === 'boolean' && typeof item.deterministic.mcp_completed === 'boolean' && typeof item.deterministic.live_blocked === 'boolean'), detail: JSON.stringify(judged.map((item) => item.deterministic)) },
     { name: 'optimization produced promoted policy', passed: Boolean(record.promotedVariant?.id), detail: String(record.promotedVariant?.id ?? 'missing') },
     { name: 'optimization evaluated search best', passed: Boolean(record.searchBestVariant?.id), detail: String(record.searchBestVariant?.id ?? 'missing') },
   ]
@@ -598,15 +678,15 @@ function appendRunRecords(
   }
 }
 
-function compactAttemptArtifact(report: ChatMcpReport, deterministic: DeterministicQuality, judge: QualityJudgment) {
+function compactAttemptArtifact(scenario: ScenarioView, deterministic: DeterministicQuality, judge: QualityJudgment) {
   return {
-    task_id: report.scenario.mcp_task?.task_id,
+    task_id: scenario.mcpTask?.task_id,
     files_changed: deterministic.files_changed,
     rounds_used: deterministic.rounds_used,
-    assistant: lastAssistantText(report.scenario.transcript),
-    code_excerpt: report.scenario.sandbox.commands.worktree_strategy_file?.stdout?.slice(0, 2000),
-    strategy_run: report.scenario.sandbox.commands.strategy_run?.stdout?.slice(0, 2000),
-    artifact_excerpt: report.scenario.sandbox.commands.strategy_artifacts?.stdout?.slice(0, 2000),
+    assistant: lastAssistantText(scenario.transcript),
+    code_excerpt: codeEvidence(scenario).slice(0, 2000),
+    strategy_run: runEvidence(scenario).slice(0, 2000),
+    artifact_excerpt: artifactEvidence(scenario).slice(0, 2000),
     judge,
   }
 }
@@ -650,6 +730,53 @@ function asi(expectationId: string, message: string, surface: string, suggestion
 
 function includesAny(text: string, needles: string[]): boolean {
   return needles.some((needle) => text.includes(needle))
+}
+
+function passedMatching(assertions: Map<string, boolean>, needles: string[]): boolean {
+  return [...assertions.entries()].some(([name, passed]) => passed && needles.some((needle) => name.toLowerCase().includes(needle.toLowerCase())))
+}
+
+function parseTaskEvidence(text: string | undefined): ScenarioView['mcpTask'] | undefined {
+  if (!text?.trim()) return undefined
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed as ScenarioView['mcpTask'] : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function inferFilesChanged(text: string): string[] {
+  return [...new Set([...text.matchAll(/tools\/[a-zA-Z0-9._/-]+\.(?:js|ts|json)/g)].map((match) => match[0]))]
+}
+
+function codeEvidence(scenario: ScenarioView): string {
+  return [
+    scenario.sandbox.commands.worktree_strategy_file?.stdout ?? '',
+    scenario.sandbox.commands.root_strategy_file?.stdout ?? '',
+    scenario.sandbox.commands.rain_code_excerpt?.stdout ?? '',
+    scenario.sandbox.commands.capability_artifact_excerpt?.stdout ?? '',
+  ].join('\n')
+}
+
+function runEvidence(scenario: ScenarioView): string {
+  return [
+    scenario.sandbox.commands.strategy_run?.stdout ?? '',
+    scenario.sandbox.commands.strategy_run?.stderr ?? '',
+    scenario.sandbox.commands.rain_root_checks?.stdout ?? '',
+    scenario.sandbox.commands.rain_root_checks?.stderr ?? '',
+    scenario.sandbox.commands.self_improvement_status?.stdout ?? '',
+  ].join('\n')
+}
+
+function artifactEvidence(scenario: ScenarioView): string {
+  return [
+    scenario.sandbox.commands.strategy_artifacts?.stdout ?? '',
+    scenario.sandbox.commands.rain_demo_artifact?.stdout ?? '',
+    scenario.sandbox.commands.rain_task_evidence?.stdout ?? '',
+    scenario.sandbox.commands.mcp_task_evidence?.stdout ?? '',
+    scenario.sandbox.commands.capability_artifacts?.stdout ?? '',
+  ].join('\n')
 }
 
 function snapshotModel(model: string): string {

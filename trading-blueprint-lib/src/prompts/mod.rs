@@ -310,7 +310,9 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         _ => MULTI_FRAGMENT,
     };
 
-    format!("{base}\n## Strategy\n{strategy_fragment}\n\n{MEMORY_BLOCK}")
+    format!(
+        "{base}\n## Strategy\n{strategy_fragment}\n\n{SELF_IMPROVEMENT_BLOCK}\n\n{MEMORY_BLOCK}"
+    )
 }
 
 fn supported_assets_prompt_line(strategy_config: &serde_json::Value) -> String {
@@ -396,6 +398,24 @@ Updated: 2026-04-19T19:00Z | Iteration: 58
 - 58 iterations, 12 trades (0 wins), capital preserved at $999.8K
 - Self-built tools: indicators.js, regime-detector, trade-quality-scorer
 ```"#;
+
+const SELF_IMPROVEMENT_BLOCK: &str = r#"## Self-Improvement Contract
+
+When your owner asks for a new protocol integration, market-making strategy, trading venue, research/backtest capability, tool, prompt, or code change, treat it as a code-changing self-improvement task.
+
+Use the local MCP server instead of manual one-shot edits:
+- Server: `/home/agent/tools/self-improvement-mcp-server.ts`
+- Tools: `self_improvement.create_task`, `status`, `logs`, `patch`, `backtest`, `promote_candidate`
+- Required default: `wait_for_completion: true`, `max_rounds >= 3`, executable test commands, paper/shadow only
+
+Completion means verified behavior, not an answer:
+1. Create a tactical spec with the user intent, files to create/change, safety constraints, and executable acceptance tests.
+2. Dispatch `self_improvement.create_task` with deterministic tests that exercise the real generated code path.
+3. Inspect `status` and `logs`. If tests fail, artifacts are missing, or the task is incomplete, continue through MCP with the exact failure evidence. Do not report success from a failed or partial task.
+4. Only summarize completion after the task has a passing winner, patch/candidate evidence, user-visible artifacts, and live trading remains blocked unless explicitly authorized by the validator/trading API flow.
+5. If all rounds fail, report the blocker, failed commands, files changed, and the next exact continuation prompt. Mark memory as in-progress, not complete.
+
+Never ask for live keys to build a new capability. Start with research, paper trading, fixtures/replay/backtests, risk gates, and promotion blockers."#;
 
 /// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
 pub fn build_fast_tick_prompt(strategy_type: &str, validation_trust: ValidationTrust) -> String {
@@ -945,6 +965,40 @@ mod tests {
         assert!(
             prompt.contains("Execution RPC"),
             "yield system prompt should surface execution RPC context"
+        );
+    }
+
+    #[test]
+    fn test_build_system_prompt_requires_mcp_continuation_for_owner_code_requests() {
+        let prompt = build_system_prompt("dex", &test_config());
+
+        assert!(
+            prompt.contains("## Self-Improvement Contract"),
+            "system prompt should include the self-improvement contract"
+        );
+        assert!(
+            prompt.contains("self_improvement.create_task"),
+            "system prompt should require the local MCP task API"
+        );
+        assert!(
+            prompt.contains("wait_for_completion: true"),
+            "system prompt should default MCP tasks to wait for completion"
+        );
+        assert!(
+            prompt.contains("max_rounds >= 3"),
+            "system prompt should require multi-shot continuation"
+        );
+        assert!(
+            prompt.contains("If tests fail"),
+            "system prompt should feed failing verification back into MCP"
+        );
+        assert!(
+            prompt.contains("Do not report success"),
+            "system prompt should forbid claiming success from partial work"
+        );
+        assert!(
+            prompt.contains("paper/shadow"),
+            "system prompt should keep generated capabilities paper/shadow-only"
         );
     }
 

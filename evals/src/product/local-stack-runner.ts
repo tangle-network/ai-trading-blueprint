@@ -131,24 +131,46 @@ export async function runLocalProductE2E(options: LocalProductE2EOptions = {}): 
     return report
   } finally {
     if (stack && !options.keepStack) {
-      stack.kill('SIGTERM')
+      stopProcessGroup(stack, 'SIGTERM')
       await sleep(1_000)
-      if (!stack.killed) stack.kill('SIGKILL')
+      stopProcessGroup(stack, 'SIGKILL')
+    }
+  }
+}
+
+function stopProcessGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (!child.pid) return
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    try {
+      child.kill(signal)
+    } catch {
+      // Best-effort cleanup for local eval infrastructure.
     }
   }
 }
 
 function preflight(): void {
   for (const command of ['anvil', 'forge', 'cast', 'docker', 'bad', 'pnpm']) {
-    const found = spawnSync('sh', ['-lc', `command -v ${command}`], { encoding: 'utf8' })
+    const found = spawnSync('sh', ['-lc', `command -v ${command}`], { encoding: 'utf8', timeout: 10_000 })
     if (found.status !== 0) throw new Error(`Missing required command on PATH: ${command}`)
   }
-  const docker = spawnSync('docker', ['info'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-  if (docker.status !== 0) throw new Error(`Docker is not reachable:\n${docker.stderr}`)
+  const docker = spawnSync('docker', ['info'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 })
+  if (docker.status !== 0) throw new Error(`Docker is not reachable:\n${docker.stderr || docker.error?.message || 'docker info failed'}`)
+
+  const occupied = spawnSync('sh', ['-lc', 'lsof -nP -iTCP:1337 -iTCP:8545 -iTCP:9100 -iTCP:9101 -iTCP:9200 -iTCP:9201 -sTCP:LISTEN'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10_000,
+  })
+  if (occupied.status === 0 && occupied.stdout.trim()) {
+    throw new Error(`Local product E2E ports are already occupied; stop the stale devnet before running:\n${occupied.stdout}`)
+  }
 
   const image = process.env.SIDECAR_IMAGE ?? 'blueprint-sidecar:all-harness'
   const pullEnabled = process.env.SIDECAR_PULL_IMAGE === 'true'
-  const localImage = spawnSync('docker', ['image', 'inspect', image], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const localImage = spawnSync('docker', ['image', 'inspect', image], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 })
   if (localImage.status !== 0) {
     const remoteHint = pullEnabled ? ' The operator may pull remote images, but this eval requires a pre-pulled image so failures are caught before the full devnet starts.' : ''
     throw new Error(`Missing local sidecar image ${image}. Build or pull it before running the real product E2E.${remoteHint}`)
@@ -159,6 +181,7 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
   const logPath = resolve(outputDir, 'run-devnet.log')
   const child = spawn('bash', ['scripts/run-devnet.sh'], {
     cwd: repoRoot,
+    detached: true,
     env: {
       ...process.env,
       START_VALIDATOR: process.env.START_VALIDATOR ?? 'false',
@@ -364,6 +387,7 @@ function cast(args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 10 * 1024 * 1024,
+    timeout: 20_000,
   })
   if (result.status !== 0) throw new Error(`cast ${args.slice(0, 2).join(' ')} failed: ${result.stderr}`)
   return result.stdout.trim()

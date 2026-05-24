@@ -399,6 +399,11 @@ async fn run_backed_chat_response(
 }
 
 async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: String) {
+    if should_route_owner_message_to_self_improvement(&message) {
+        run_self_improvement_mcp_turn(&target, &session_id, &message).await;
+        return;
+    }
+
     let run_body = json!({
         "identifier": "default",
         "message": message,
@@ -466,6 +471,220 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
         text,
         json!({ "transport": "agents/run", "status": status.as_u16() }),
     );
+}
+
+fn should_route_owner_message_to_self_improvement(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let asks_for_change = [
+        "build",
+        "implement",
+        "integrate",
+        "add support",
+        "create",
+        "write",
+        "prototype",
+        "new protocol",
+        "market make",
+        "tool",
+        "code",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let code_surface = [
+        "self-improvement",
+        "mcp",
+        "paper-trading",
+        "paper trading",
+        "backtest",
+        "run-demo",
+        "tests",
+        "tools/",
+        "sdk",
+        "protocol integration",
+        "integration",
+        "provider",
+        "venue",
+        "trading",
+        "market",
+        "strategy",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    asks_for_change && code_surface
+}
+
+async fn run_self_improvement_mcp_turn(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    message: &str,
+) {
+    let args = json!({
+        "spec": self_improvement_task_spec(message),
+        "constraints": "Paper/shadow only. Do not request live keys. Do not submit real transactions. Preserve validator/trading API safety gates. If verification fails, continue through MCP rounds and record the exact blocker.",
+        "max_rounds": 4,
+        "coding_timeout_ms": 240000,
+        "test_timeout_ms": 120000,
+        "review_timeout_ms": 120000,
+        "wait_for_completion": false,
+        "test_commands": self_improvement_test_commands(message),
+    });
+    let command = r#"node <<'NODE'
+const { spawnSync } = require('node:child_process');
+const args = JSON.parse(process.env.SELF_IMPROVEMENT_TASK_ARGS || '{}');
+const input = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'tools/call',
+  params: { name: 'self_improvement.create_task', arguments: args }
+}) + '\n';
+const result = spawnSync('bun', ['--bun', '/home/agent/tools/self-improvement-mcp-server.ts'], {
+  cwd: '/home/agent',
+  input,
+  encoding: 'utf8',
+  timeout: Number(process.env.MCP_TIMEOUT_MS || 1200000),
+  maxBuffer: 64 * 1024 * 1024,
+});
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+if (result.error) {
+  console.error(result.error.stack || result.error.message || String(result.error));
+  process.exit(1);
+}
+process.exit(result.status ?? 1);
+NODE"#;
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: command.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: json!({
+            "SELF_IMPROVEMENT_TASK_ARGS": args.to_string(),
+            "MCP_TIMEOUT_MS": default_chat_agent_run_timeout_ms().to_string(),
+        })
+        .to_string(),
+        timeout_ms: default_chat_agent_run_timeout_ms(),
+    };
+
+    let text = match ai_agent_sandbox_blueprint_lib::run_exec_request(
+        &exec_req,
+        &target.sidecar_token,
+    )
+    .await
+    {
+        Ok(response) => {
+            let status = if response.exit_code == 0 {
+                "dispatched"
+            } else {
+                "failed"
+            };
+            format!(
+                "Self-improvement MCP task {status}. The request was routed through `self_improvement.create_task` with async multi-shot verification; task status can be checked with `self_improvement.status` or `self_improvement.list_tasks`.\n\nstdout:\n{}\n\nstderr:\n{}",
+                trim_for_transcript(&response.stdout, 12_000),
+                trim_for_transcript(&response.stderr, 4_000),
+            )
+        }
+        Err(error) => format!(
+            "Self-improvement MCP task lost its live exec transport. The product routed the owner request to MCP, then attempted recovery from persisted task state.\n\ntransport_error: {error}\n\nrecovery:\n{}",
+            run_mcp_recovery_summary(target).await
+        ),
+    };
+
+    append_transcript_message(
+        target,
+        session_id,
+        "assistant",
+        text,
+        json!({ "transport": "self-improvement-mcp", "status": "dispatched_or_blocked" }),
+    );
+}
+
+async fn run_mcp_recovery_summary(target: &SidecarChatTarget) -> String {
+    let command = r#"printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"self_improvement.list_tasks","arguments":{"max_results":3}}}\n' | bun --bun /home/agent/tools/self-improvement-mcp-server.ts"#;
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: command.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: "{}".to_string(),
+        timeout_ms: default_chat_agent_run_timeout_ms(),
+    };
+
+    match ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token).await {
+        Ok(response) => format!(
+            "exit_code={}\nstdout:\n{}\nstderr:\n{}",
+            response.exit_code,
+            trim_for_transcript(&response.stdout, 8_000),
+            trim_for_transcript(&response.stderr, 2_000)
+        ),
+        Err(error) => format!("recovery_failed: {error}"),
+    }
+}
+
+fn self_improvement_task_spec(message: &str) -> String {
+    format!(
+        "Owner requested a code-changing trading-agent capability through chat. Complete it as a small, tactical, paper-only self-improvement task.\n\nOwner request:\n{message}\n\nAcceptance: create durable code/artifacts, run deterministic executable checks, continue through failures for the allowed rounds, and leave live trading blocked unless separately authorized by the validator/trading API flow."
+    )
+}
+
+fn self_improvement_test_commands(message: &str) -> Vec<String> {
+    let commands = extract_bun_commands(message);
+    if commands.is_empty() {
+        return vec!["bun --bun /home/agent/tools/self-improvement-loop.ts status".to_string()];
+    }
+    commands
+}
+
+fn extract_bun_commands(message: &str) -> Vec<String> {
+    let normalized = message.replace(['\n', '\r'], " ");
+    let mut commands = Vec::new();
+    let mut offset = 0;
+    while let Some(relative) = normalized[offset..].find("bun ") {
+        let start = offset + relative;
+        if start >= 2 && &normalized[start - 2..start] == "--" {
+            offset = start + "bun ".len();
+            continue;
+        }
+        let tail = &normalized[start..];
+        let mut end = tail.len();
+        for delimiter in [
+            " and ",
+            " before ",
+            ",",
+            ";",
+            ". The ",
+            ". If ",
+            ". Otherwise",
+        ] {
+            if let Some(index) = tail.find(delimiter) {
+                end = end.min(index);
+            }
+        }
+        let command = tail[..end]
+            .trim()
+            .trim_matches('`')
+            .trim_matches('"')
+            .trim()
+            .to_string();
+        if command.starts_with("bun ") && command.len() > "bun ".len() {
+            commands.push(command);
+        }
+        offset = start + "bun ".len();
+    }
+    commands.sort();
+    commands.dedup();
+    commands
+}
+
+fn trim_for_transcript(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    let prefix = value.chars().take(max_chars).collect::<String>();
+    format!(
+        "{}...\n[truncated {} chars]",
+        prefix,
+        char_count.saturating_sub(max_chars)
+    )
 }
 
 fn default_chat_agent_run_timeout_ms() -> u64 {
@@ -599,6 +818,56 @@ mod tests {
         for session_id in ["manual-1", "session-abc", "conversation-with-owner"] {
             assert!(!is_autonomous_chat_session(bot_id, session_id));
         }
+    }
+
+    #[test]
+    fn routes_owner_code_change_requests_to_self_improvement_mcp() {
+        let source = include_str!("operator_chat.rs");
+        assert!(source.contains("\"wait_for_completion\": false"));
+        assert!(source.contains("self_improvement.status"));
+
+        assert!(should_route_owner_message_to_self_improvement(
+            "Research Rain SDK, build a paper-trading prototype under tools/rain-paper, and run bun test tools/rain-paper/rain-paper.test.ts"
+        ));
+        assert!(should_route_owner_message_to_self_improvement(
+            "Integrate Rain and market make with a paper strategy first"
+        ));
+        assert!(!should_route_owner_message_to_self_improvement(
+            "What is my current ETH position?"
+        ));
+        assert!(!should_route_owner_message_to_self_improvement(
+            "What strategy would you use for ETH today?"
+        ));
+    }
+
+    #[test]
+    fn extracts_requested_rain_verification_commands() {
+        let commands = self_improvement_test_commands(
+            "Run bun test tools/rain-paper/rain-paper.test.ts and bun --bun tools/rain-paper/run-demo.ts before reporting success.",
+        );
+
+        assert_eq!(
+            commands,
+            vec![
+                "bun --bun tools/rain-paper/run-demo.ts".to_string(),
+                "bun test tools/rain-paper/rain-paper.test.ts".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_generic_bun_verification_commands_without_fixture_names() {
+        let commands = self_improvement_test_commands(
+            "At minimum: bun test tools/foo/foo.test.ts and bun --bun tools/foo/run-demo.ts. The tests must exercise behavior.",
+        );
+
+        assert_eq!(
+            commands,
+            vec![
+                "bun --bun tools/foo/run-demo.ts".to_string(),
+                "bun test tools/foo/foo.test.ts".to_string(),
+            ]
+        );
     }
 
     fn init_test_env() -> tempfile::TempDir {
