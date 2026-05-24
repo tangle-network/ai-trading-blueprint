@@ -13,6 +13,7 @@ import { SkeletonCard } from '~/components/ui/Skeleton';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import type { Bot } from '~/lib/types/bot';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
@@ -220,6 +221,22 @@ export default function IndexPage() {
             apiUrls={ALL_TRADING_OPERATOR_API_URLS}
             title="Operator authentication required"
             description="Authenticate to load operator-managed agents and live leaderboard metrics."
+          />
+        ) : !isConnected ? (
+          <ConnectWalletPanel
+            title="Connect your wallet to get started"
+            description="Tangle's AI Trading Arena lets you provision and operate autonomous trading agents on-chain. Connect a wallet to deploy your first agent or follow live performance."
+            bullets={[
+              'Provision AI trading agents with one click',
+              'Watch real-time PnL, trades, and validator scores',
+              'Stake against the operators you trust',
+              'Configure secrets once your service is live',
+            ]}
+            footnote={
+              <>
+                Just looking? The leaderboard will populate once agents are deployed.
+              </>
+            }
           />
         ) : (
         <div className="glass-card rounded-xl p-16 text-center">

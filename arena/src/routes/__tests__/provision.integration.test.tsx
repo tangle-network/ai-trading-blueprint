@@ -11,7 +11,14 @@ vi.mock('react-router', () => ({
 }));
 
 vi.mock('wagmi', () => ({
-  useAccount: () => ({ address: undefined, isConnected: false, chainId: undefined }),
+  useAccount: () => ({
+    // ProvisionPage renders a wallet-gate ConnectWalletPanel when isConnected
+    // is false. This integration test exercises wizard-dialog wiring, so we
+    // simulate a connected wallet to reach the wizard render path.
+    address: '0x0000000000000000000000000000000000000001',
+    isConnected: true,
+    chainId: 0,
+  }),
   useWriteContract: () => ({
     writeContract: vi.fn(),
     data: undefined,
