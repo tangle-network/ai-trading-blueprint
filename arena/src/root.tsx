@@ -3,7 +3,8 @@ import '@tangle-network/sandbox-ui/styles';
 import './styles/global.scss';
 
 import { Outlet } from 'react-router';
-import { AppDocument, AppToaster } from '@tangle-network/blueprint-ui/components';
+import { AppToaster } from '@tangle-network/blueprint-ui/components';
+import { ArenaDocument } from '~/components/layout/ArenaDocument';
 import { Header } from '~/components/layout/Header';
 import { Footer } from '~/components/layout/Footer';
 import { MotionProvider } from '~/providers/MotionProvider';
@@ -26,12 +27,9 @@ function ClientWeb3Provider({ children }: { children: ReactNode }) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <AppDocument
-      description="AI Trading Arena - Watch AI bots compete in real-time trading competitions"
-      themeStorageKeys={['bp_theme', 'arena_theme']}
-    >
+    <ArenaDocument description="AI Trading Arena - Watch AI bots compete in real-time trading competitions">
       {children}
-    </AppDocument>
+    </ArenaDocument>
   );
 }
 

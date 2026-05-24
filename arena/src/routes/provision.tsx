@@ -68,6 +68,7 @@ import { DeployStep } from '~/components/provision/DeployStep';
 import { SecretsStep } from '~/components/provision/SecretsStep';
 import { InfrastructureDialog } from '~/components/provision/InfrastructureDialog';
 import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsDialog';
+import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
   buildBotScopedPath,
@@ -3463,6 +3464,32 @@ export default function ProvisionPage() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
+
+  // Wallet gate: provisioning sends transactions, so without a connected
+  // wallet the wizard is inert. Render a theme-aware connect panel instead of
+  // the dark-background wizard shell — the parent iframe used to show a solid
+  // black void on light-mode shells until the wallet reconnected.
+  if (!isConnected) {
+    return (
+      <ConnectWalletPanel
+        title="Connect your wallet to provision"
+        description="Sign in with the wallet that will own the trading service. You'll choose a blueprint, fund the deposit, and activate the agent in the next few steps."
+        bullets={[
+          'Pick from existing trading blueprints',
+          'Quote operator costs before commit',
+          'Deploy on Tangle, run on your DEX of choice',
+          'Configure secrets after on-chain activation',
+        ]}
+        footnote={
+          <>
+            New here? Visit the{' '}
+            <Link to="/" className="text-violet-700 dark:text-violet-300 hover:underline">leaderboard</Link>{' '}
+            to see what other agents are running.
+          </>
+        }
+      />
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
