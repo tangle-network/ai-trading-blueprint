@@ -3,6 +3,25 @@ import { hydrateRoot } from 'react-dom/client';
 import { HydratedRouter } from 'react-router/dom';
 import { readUrlTheme } from '~/lib/theme/urlTheme';
 
+// localStorage access throws when the iframe is sandboxed without
+// `allow-same-origin` — embedding shells sometimes drop this flag for
+// hardening. Wrap every access so a throw doesn't abort hydration and leave
+// the parent with an empty iframe rectangle.
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignored */
+  }
+}
+
 // Migrate localStorage keys from arena_* to bp_* (one-time, before hydration)
 const KEY_MIGRATIONS: [string, string][] = [
   ['arena_theme', 'bp_theme'],
@@ -10,8 +29,9 @@ const KEY_MIGRATIONS: [string, string][] = [
   ['arena_selected_chain', 'bp_selected_chain'],
 ];
 for (const [oldKey, newKey] of KEY_MIGRATIONS) {
-  if (!localStorage.getItem(newKey) && localStorage.getItem(oldKey)) {
-    localStorage.setItem(newKey, localStorage.getItem(oldKey)!);
+  const oldValue = safeLocalStorageGet(oldKey);
+  if (!safeLocalStorageGet(newKey) && oldValue) {
+    safeLocalStorageSet(newKey, oldValue);
   }
 }
 
@@ -22,7 +42,7 @@ for (const [oldKey, newKey] of KEY_MIGRATIONS) {
 // hot but the query string may have changed) still wins over stale storage.
 const urlTheme = readUrlTheme(window.location.search);
 if (urlTheme) {
-  localStorage.setItem('bp_theme', urlTheme);
+  safeLocalStorageSet('bp_theme', urlTheme);
   document.querySelector('html')?.setAttribute('data-theme', urlTheme);
 }
 
