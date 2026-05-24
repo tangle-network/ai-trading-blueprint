@@ -37,16 +37,30 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          # The pnpm workspace lives at arena/, not repo root, so point
+          # setup-node at the right lockfile for caching.
+          cache-dependency-path: arena/pnpm-lock.yaml
 
       - name: Install dependencies
+        working-directory: arena
         run: pnpm install --frozen-lockfile
 
       - name: Build arena UI
-        run: pnpm -C arena run build
+        working-directory: arena
+        run: pnpm run build
+
+      # `cloudflare/wrangler-action` tries to install wrangler via `pnpm add`
+      # which fails on workspace-root repos (`ERR_PNPM_ADDING_TO_ROOT`). Install
+      # it ourselves via npm and shell out directly.
+      - name: Install wrangler
+        run: npm i -g wrangler@^3
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy arena/build/client --project-name=trading-arena --branch=main --commit-hash=${{ github.sha }} --commit-message="${{ github.event.head_commit.message }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler pages deploy arena/build/client \
+            --project-name=trading-arena \
+            --branch=main \
+            --commit-hash=${{ github.sha }}
