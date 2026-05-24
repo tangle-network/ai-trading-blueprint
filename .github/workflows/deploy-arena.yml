@@ -1,0 +1,52 @@
+name: Deploy arena UI to Cloudflare Pages
+
+# Auto-deploys the React Router SPA at `arena/` to Cloudflare Pages
+# (project: trading-arena → https://trading-arena.blueprint.tangle.tools).
+#
+# Before this existed the project was wired as "direct upload" in Cloudflare
+# with no git source, so every CSP / dapp-host / runtime-backend change had to
+# be deployed by a human running `wrangler pages deploy` locally — which
+# silently broke when nobody noticed an old commit on main hadn't shipped.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'arena/**'
+      - '.github/workflows/deploy-arena.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-arena-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build arena UI
+        run: pnpm -C arena run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy arena/build/client --project-name=trading-arena --branch=main --commit-hash=${{ github.sha }} --commit-message="${{ github.event.head_commit.message }}"
