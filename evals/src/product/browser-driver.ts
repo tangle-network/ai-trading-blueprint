@@ -411,8 +411,10 @@ function arenaRealProvisionCases(baseUrl: string, maxTurns: number, intent?: str
       goal: [
         'You are a real Arena user using the local product. Create a new paper trading agent from the prompt box.',
         `Use this exact intent: "${prompt}"`,
-        `When the secrets step appears, do not choose "Use operator-provided key"; use the prefilled ${provider} provider/API key and activate the agent with that key.`,
-        'Click the create or launch button and wait until the app opens the provisioned bot or chat surface.',
+        `This local /create flow already has dev auth and the ${provider} provider/API key preloaded; it does not show a separate secrets step.`,
+        'Click Create Agent exactly once. If the button says "Provisioning your trading agent...", wait patiently for up to 120 seconds.',
+        'Do not click strategy template buttons, do not retype the prompt, do not retry while provisioning, and do not use script injection.',
+        'The backend may take 30-90 seconds because it creates and activates a real sandbox. Finish only after the app opens the provisioned bot/chat surface or shows a concrete error message.',
         'Do not use a wallet prompt, do not submit on-chain transactions, and do not claim profitability.',
       ].join(' '),
       metadata: meta('real_local_create_agent', ['browser_user', 'operator_provision', 'paper_agent']),

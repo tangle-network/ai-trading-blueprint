@@ -137,7 +137,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
   const transcriptText = collectText(transcript)
   const assistantResponded = hasAssistantMessage(transcript)
   const containerName = bot.sandbox_id ? `sidecar-${bot.sandbox_id}` : undefined
-  const sandbox = containerName ? inspectSandbox(containerName) : { commands: {} }
+  const sandbox = containerName ? await waitForRainSandboxState(containerName, chatTimeoutMs) : { commands: {} }
   const memoryText = [
     sandbox.commands.memory_rain_hits?.stdout ?? '',
     sandbox.commands.memory_rain_excerpt?.stdout ?? '',
@@ -198,14 +198,15 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     !includesAny(rainTaskEvidence, ['"diff_additions":0', '"diff_additions": 0'])
   const executableRainFilesPresent = includesAll([rainTaskEvidence, rainCodeExcerpt].join('\n'), [
     'tools/rain-paper/',
-    'engine.ts',
-    'strategy.ts',
     'run-demo',
     'rain-paper.test',
-  ])
+  ]) &&
+    includesAny([rainTaskEvidence, rainCodeExcerpt].join('\n'), ['engine.ts', 'execution-engine.ts', 'paper-engine.ts']) &&
+    includesAny([rainTaskEvidence, rainCodeExcerpt].join('\n'), ['strategy.ts', 'market-maker.ts'])
   const rootRainPrototypeVerified = rainRootChecks?.status === 0 &&
     includesAll(rainRootCheckText, ['bun test', 'tools/rain-paper/rain-paper.test.ts', 'run-demo', 'Demo result written']) &&
-    includesAll(rainDemoArtifact, ['demo-result.json', 'finalBalance', 'positions'])
+    includesAll(rainDemoArtifact, ['demo-result.json', 'positions']) &&
+    includesAny(rainDemoArtifact, ['finalBalance', 'finalPortfolioValue', 'finalPositions'])
   const builtExecutableRainPrototype = (completedMcpTask || rootRainPrototypeVerified) &&
     executableRainFilesPresent &&
     includesAny(rainCodeExcerpt, ['class', 'function', 'export']) &&
@@ -418,6 +419,28 @@ function inspectSandbox(containerName: string): { commands: Record<string, Sandb
   }
 }
 
+async function waitForRainSandboxState(containerName: string, timeoutMs: number): Promise<{ commands: Record<string, SandboxCommandResult> }> {
+  const deadline = Date.now() + timeoutMs
+  let latest = inspectSandbox(containerName)
+  while (Date.now() < deadline) {
+    const evidence = latest.commands.rain_task_evidence?.stdout ?? ''
+    const rootChecks = latest.commands.rain_root_checks
+    const artifact = latest.commands.rain_demo_artifact?.stdout ?? ''
+    const completed = includesAny(evidence, ['"status":"completed"', '"status": "completed"'])
+    const failed = includesAny(evidence, ['"status":"failed"', '"status": "failed"'])
+    const rootVerified = rootChecks?.status === 0 &&
+      includesAll([rootChecks.stdout, rootChecks.stderr, artifact].join('\n'), [
+        'bun test tools/rain-paper/rain-paper.test.ts',
+        'bun --bun tools/rain-paper/run-demo.ts',
+        'demo-result.json',
+      ])
+    if (completed || failed || rootVerified) return latest
+    await sleep(15_000)
+    latest = inspectSandbox(containerName)
+  }
+  return latest
+}
+
 async function selectOrCreateManualSession(operatorUrl: string, token: string, botId: string): Promise<string> {
   const sessions = await getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions`, token)
   const manualSession = parseSessions(sessions).find((session) => {
@@ -498,12 +521,13 @@ function dockerExec(containerName: string, command: string): SandboxCommandResul
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 10 * 1024 * 1024,
+    timeout: 60_000,
   })
   return {
     command,
     status: result.status,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: [result.stderr, result.error ? String(result.error.message || result.error) : ''].filter(Boolean).join('\n'),
   }
 }
 

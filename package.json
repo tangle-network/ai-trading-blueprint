@@ -6,6 +6,7 @@
   "scripts": {
     "build:evals": "tsc -p evals/tsconfig.json",
     "eval:agent-strategy": "npm run build:evals --silent && node dist/evals/bin/trading-agent-strategy-eval.js",
+    "eval:autoresearch-loop": "npm run build:evals --silent && node dist/evals/bin/autoresearch-loop-eval.js",
     "eval:full": "npm run build:evals --silent && node dist/evals/bin/full-eval.js",
     "eval:chat-code-strategy": "npm run build:evals --silent && node dist/evals/bin/chat-code-strategy-e2e.js",
     "eval:chat-mcp-strategy": "npm run build:evals --silent && node dist/evals/bin/chat-mcp-strategy-e2e.js",

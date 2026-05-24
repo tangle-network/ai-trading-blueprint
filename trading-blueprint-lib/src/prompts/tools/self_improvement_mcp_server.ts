@@ -14,6 +14,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -36,11 +37,22 @@ function defaultCodingCommand() {
   if (process.env.SIDECAR_DEFAULT_HARNESS === 'gemini') {
     return 'sh -lc \'gemini --skip-trust --yolo -p "$(cat)"\'';
   }
+  if (process.env.OPENCODE_MODEL_PROVIDER && process.env.OPENCODE_MODEL_NAME) {
+    const provider = process.env.OPENCODE_MODEL_PROVIDER.replace(/'/g, '');
+    const model = process.env.OPENCODE_MODEL_NAME.replace(/'/g, '');
+    return `sh -lc 'opencode run --dangerously-skip-permissions -m "${provider}/${model}" "$(cat)"'`;
+  }
+  if (process.env.OPENCODE_MODEL_NAME) {
+    const model = process.env.OPENCODE_MODEL_NAME.replace(/'/g, '');
+    return `sh -lc 'opencode run --dangerously-skip-permissions -m "${model}" "$(cat)"'`;
+  }
   return 'sh -lc \'opencode run --dangerously-skip-permissions "$(cat)"\'';
 }
 
 const DEFAULT_CODING_COMMAND = defaultCodingCommand();
 const DEFAULT_REVIEW_COMMAND = process.env.SELF_IMPROVEMENT_REVIEW_COMMAND || '';
+const TASK_LOCK_HEARTBEAT_MS = 10_000;
+const TASK_LOCK_STALE_MS = 45_000;
 const DEFAULT_TESTS = [
   'cargo fmt --check',
   'cargo check -p trading-blueprint-lib',
@@ -85,6 +97,10 @@ function patchPath(taskId) {
   return join(TASKS_DIR, `${taskId}.patch`);
 }
 
+function lockPath(taskId) {
+  return join(TASKS_DIR, `${taskId}.lock`);
+}
+
 function loadTask(taskId) {
   return JSON.parse(readFileSync(taskPath(taskId), 'utf8'));
 }
@@ -95,6 +111,41 @@ function saveTask(task) {
   const clean = JSON.parse(JSON.stringify(task));
   writeFileSync(taskPath(task.task_id), `${JSON.stringify(clean, null, 2)}\n`, 'utf8');
   return clean;
+}
+
+function writeTaskLock(taskId) {
+  ensureDir(TASKS_DIR);
+  writeFileSync(lockPath(taskId), JSON.stringify({ pid: process.pid, updated_at: nowIso() }), 'utf8');
+}
+
+function clearTaskLock(taskId) {
+  try {
+    const raw = readFileSync(lockPath(taskId), 'utf8');
+    const lock = JSON.parse(raw);
+    if (Number(lock.pid) === process.pid) unlinkSync(lockPath(taskId));
+  } catch {}
+}
+
+function processIsAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function taskHasLiveOwner(task) {
+  try {
+    const lock = JSON.parse(readFileSync(lockPath(task.task_id), 'utf8'));
+    const pid = Number(lock.pid);
+    const updatedAt = Date.parse(lock.updated_at || '');
+    const fresh = Number.isFinite(updatedAt) && Date.now() - updatedAt < TASK_LOCK_STALE_MS;
+    return fresh && processIsAlive(pid);
+  } catch {
+    return false;
+  }
 }
 
 function appendLog(taskId, message) {
@@ -275,13 +326,24 @@ function runCodingAgent(task, variant, round) {
         SELF_IMPROVEMENT_TASK_ID: task.task_id,
         SELF_IMPROVEMENT_VARIANT_ID: variant.variant_id,
       },
+      detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     activeTasks.get(task.task_id).children.set(variant.variant_id, child);
     const timeout = setTimeout(() => {
       appendLog(task.task_id, `${variant.variant_id}: coding timed out after ${task.coding_timeout_ms}ms`);
-      child.kill('SIGTERM');
+      try {
+        process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        child.kill('SIGTERM');
+      }
+      setTimeout(() => {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {}
+      }, 5_000).unref();
     }, task.coding_timeout_ms);
+    timeout.unref();
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
@@ -461,9 +523,107 @@ function selectWinner(task) {
   return approved.sort((a, b) => byDiff(a) - byDiff(b) || byReadiness(b) - byReadiness(a))[0];
 }
 
+function finalizeTaskWithWinner(task, winner) {
+  task.winner_variant_id = winner.variant_id;
+  task.status = 'completed';
+  task.completed_at = nowIso();
+  const patch = diffPatch(winner);
+  writeFileSync(patchPath(task.task_id), patch, 'utf8');
+  task.patch_sha256 = `sha256:${createHash('sha256').update(patch).digest('hex')}`;
+  task.files_changed = winner.files_changed;
+  task.worktree_path = winner.worktree_path;
+  task.test_commands = winner.shots.at(-1)?.tests?.map((test) => test.command) || task.test_commands;
+  saveTask(task);
+  appendLog(task.task_id, `task completed with winner ${winner.variant_id}`);
+  return task;
+}
+
+async function recoverInterruptedTask(task) {
+  if (activeTasks.has(task.task_id)) return task;
+  if (taskHasLiveOwner(task)) return task;
+  const hasRoundsRemaining = task.variants.some((variant) => (variant.rounds_used || 0) < task.max_rounds);
+  const recoverableFailed = task.status === 'failed'
+    && ['no_approved_variant', 'no_approved_variant_after_recovery'].includes(String(task.failure || ''))
+    && hasRoundsRemaining;
+  if (recoverableFailed) {
+    task.status = 'running';
+    task.completed_at = null;
+    task.failure = null;
+    appendLog(task.task_id, 'continuing failed task because recovery left unused rounds');
+    saveTask(task);
+    await executeTask(task);
+    return loadTask(task.task_id);
+  }
+  if (task.status !== 'running') return task;
+  const updatedAt = Date.parse(task.updated_at || task.started_at || task.created_at || '');
+  if (Number.isFinite(updatedAt) && Date.now() - updatedAt < 30_000) return task;
+
+  let recovered = false;
+  for (const variant of task.variants) {
+    if (TERMINAL_VARIANT_STATES.has(variant.state)) continue;
+    if (!variant.worktree_path || !existsSync(variant.worktree_path)) continue;
+
+    appendLog(task.task_id, `${variant.variant_id}: recovering interrupted task state from worktree`);
+    const patch = updateVariantFromDiff(variant);
+    const noChanges = patch.trim().length === 0;
+    const tests = noChanges ? [] : runTests(task, variant);
+    const testsPassed = !noChanges && tests.every((result) => result.ok);
+    variant.test_passed = testsPassed ? 1 : 0;
+    if (variant.shots.length === 0) {
+      variant.shots.push({
+        round: variant.rounds_used || 1,
+        coding_ok: true,
+        coding_exit: 0,
+        tests,
+        review: null,
+        diff_additions: variant.diff_additions,
+        diff_deletions: variant.diff_deletions,
+        files_changed: variant.files_changed,
+        recovered: true,
+      });
+    }
+    if (testsPassed) {
+      variant.state = 'approved';
+      variant.errored_reason = null;
+      recovered = true;
+      appendLog(task.task_id, `${variant.variant_id}: recovered and approved from existing worktree`);
+    } else {
+      variant.state = noChanges ? 'errored' : 'ci_failed';
+      variant.errored_reason = noChanges ? 'interrupted_no_changes' : 'interrupted_ci_failed';
+      variant.current_feedback = noChanges
+        ? 'Interrupted task produced no diff.'
+        : `Interrupted task has failing deterministic checks:\n${tests.filter((result) => !result.ok).map((result) => `${result.command}\n${result.stderr || result.stdout || result.error || ''}`).join('\n\n')}`;
+      recovered = true;
+      appendLog(task.task_id, `${variant.variant_id}: recovered with ${variant.errored_reason}`);
+    }
+  }
+
+  if (!recovered) return task;
+  saveTask(task);
+  const winner = selectWinner(task);
+  if (winner) return finalizeTaskWithWinner(task, winner);
+  const canContinue = task.variants.some((variant) => (variant.rounds_used || 0) < task.max_rounds);
+  if (canContinue) {
+    appendLog(task.task_id, 'continuing interrupted task after recovery feedback');
+    await executeTask(task);
+    return loadTask(task.task_id);
+  }
+  if (task.variants.every((variant) => TERMINAL_VARIANT_STATES.has(variant.state))) {
+    task.status = 'failed';
+    task.completed_at = nowIso();
+    task.failure = 'no_approved_variant_after_recovery';
+    appendLog(task.task_id, 'task failed after recovery: no approved variant');
+    saveTask(task);
+  }
+  return task;
+}
+
 async function executeTask(initialTask) {
   const runtime = { children: new Map() };
   activeTasks.set(initialTask.task_id, runtime);
+  writeTaskLock(initialTask.task_id);
+  const heartbeat = setInterval(() => writeTaskLock(initialTask.task_id), TASK_LOCK_HEARTBEAT_MS);
+  heartbeat.unref();
   let task = saveTask({ ...initialTask, status: 'running', started_at: nowIso() });
   try {
     // Keep variant execution sequential for now. The state store is intentionally
@@ -482,17 +642,7 @@ async function executeTask(initialTask) {
       return;
     }
 
-    task.winner_variant_id = winner.variant_id;
-    task.status = 'completed';
-    task.completed_at = nowIso();
-    const patch = diffPatch(winner);
-    writeFileSync(patchPath(task.task_id), patch, 'utf8');
-    task.patch_sha256 = `sha256:${createHash('sha256').update(patch).digest('hex')}`;
-    task.files_changed = winner.files_changed;
-    task.worktree_path = winner.worktree_path;
-    task.test_commands = winner.shots.at(-1)?.tests?.map((test) => test.command) || task.test_commands;
-    saveTask(task);
-    appendLog(task.task_id, `task completed with winner ${winner.variant_id}`);
+    finalizeTaskWithWinner(task, winner);
   } catch (error) {
     task.status = 'failed';
     task.completed_at = nowIso();
@@ -500,6 +650,8 @@ async function executeTask(initialTask) {
     appendLog(task.task_id, `task failed: ${task.failure}`);
     saveTask(task);
   } finally {
+    clearInterval(heartbeat);
+    clearTaskLock(initialTask.task_id);
     activeTasks.delete(initialTask.task_id);
   }
 }
@@ -545,9 +697,13 @@ async function createTask(args) {
     await executeTask(task);
     return summarizeTask(loadTask(task.task_id));
   }
-  setTimeout(() => {
-    executeTask(task).catch((error) => appendLog(task.task_id, `unhandled task error: ${error.stack || error}`));
-  }, 0);
+  const child = spawn(process.argv[0], ['--bun', process.argv[1], 'run-task', task.task_id], {
+    cwd: ROOT,
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+  child.unref();
   return summarizeTask(task);
 }
 
@@ -574,11 +730,11 @@ function summarizeTask(task) {
   };
 }
 
-function statusTask(args) {
-  return loadTask(String(args.task_id));
+async function statusTask(args) {
+  return recoverInterruptedTask(loadTask(String(args.task_id)));
 }
 
-function listTasks(args = {}) {
+async function listTasks(args = {}) {
   ensureDir(TASKS_DIR);
   const maxResults = Math.min(
     Math.max(1, Number(args.max_results || 50)),
@@ -591,7 +747,7 @@ function listTasks(args = {}) {
     .reverse();
   for (const name of names) {
     try {
-      out.push(summarizeTask(loadTask(name.replace(/\.json$/, ''))));
+      out.push(summarizeTask(await recoverInterruptedTask(loadTask(name.replace(/\.json$/, '')))));
     } catch {
       continue;
     }
@@ -611,11 +767,11 @@ function winningVariant(task) {
     || task.variants[0];
 }
 
-function patchTask(args) {
+async function patchTask(args) {
   const taskId = String(args.task_id);
   const saved = patchPath(taskId);
   if (existsSync(saved)) return readFileSync(saved, 'utf8');
-  const task = loadTask(taskId);
+  const task = await recoverInterruptedTask(loadTask(taskId));
   const variant = args.variant_id
     ? task.variants.find((v) => v.variant_id === String(args.variant_id))
     : winningVariant(task);
@@ -638,8 +794,8 @@ function cancelTask(args) {
   return saveTask(task);
 }
 
-function backtestTask(args) {
-  const task = loadTask(String(args.task_id));
+async function backtestTask(args) {
+  const task = await recoverInterruptedTask(loadTask(String(args.task_id)));
   if (task.status !== 'completed') throw new Error('task must be completed before backtest');
   const variant = winningVariant(task);
   const command = args.command ? String(args.command) : 'bun --bun /home/agent/tools/self-improvement-loop.ts status';
@@ -648,11 +804,11 @@ function backtestTask(args) {
   return result;
 }
 
-function promoteCandidate(args) {
-  const task = loadTask(String(args.task_id));
+async function promoteCandidate(args) {
+  const task = await recoverInterruptedTask(loadTask(String(args.task_id)));
   if (task.status !== 'completed') throw new Error('task must be completed before promotion');
   const variant = winningVariant(task);
-  const patch = patchTask({ task_id: task.task_id, variant_id: variant.variant_id });
+  const patch = await patchTask({ task_id: task.task_id, variant_id: variant.variant_id });
   const summary = {
     task_id: task.task_id,
     winner_variant_id: variant.variant_id,
@@ -755,17 +911,28 @@ async function handle(message) {
 ensureDir(TASKS_DIR);
 ensureDir(WORKTREE_DIR);
 
-const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on('line', async (line) => {
-  if (!line.trim()) return;
-  try {
-    const response = await handle(JSON.parse(line));
-    if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
-  } catch (error) {
-    let id = null;
+if (process.argv[2] === 'run-task') {
+  const taskId = process.argv[3];
+  executeTask(loadTask(taskId)).then(
+    () => process.exit(0),
+    (error) => {
+      appendLog(taskId || 'unknown', `unhandled task error: ${error.stack || error}`);
+      process.exit(1);
+    },
+  );
+} else {
+  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  rl.on('line', async (line) => {
+    if (!line.trim()) return;
     try {
-      id = JSON.parse(line).id ?? null;
-    } catch {}
-    process.stdout.write(`${JSON.stringify(rpcError(id, -32000, String(error.message || error)))}\n`);
-  }
-});
+      const response = await handle(JSON.parse(line));
+      if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
+    } catch (error) {
+      let id = null;
+      try {
+        id = JSON.parse(line).id ?? null;
+      } catch {}
+      process.stdout.write(`${JSON.stringify(rpcError(id, -32000, String(error.message || error)))}\n`);
+    }
+  });
+}

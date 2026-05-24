@@ -1673,6 +1673,8 @@ Smart tools are pre-installed in `/home/agent/tools/`. They do the heavy lifting
 
 For automated strategy code, read `/home/agent/tools/strategies/README.md`. Start from `/home/agent/tools/strategies/templates/` when a template matches the task. Write small modules in `/home/agent/tools/strategies/` that export `async tick(ctx)`, then run one tick with `node /home/agent/tools/run-strategy.js /home/agent/tools/strategies/<name>.js`. Use `ctx.submitTrade()` so circuit breaker, validation, paper/live gating, execution, and logs stay centralized.
 
+{self_improvement_contract}
+
 ### Core Workflow Tools (use these every tick)
 
 {core_workflow_tools}
@@ -1753,6 +1755,7 @@ Endpoints:
                 protocols.join(", ")
             ))
             .unwrap_or_default(),
+        self_improvement_contract = super::SELF_IMPROVEMENT_BLOCK,
         iteration_protocol = iteration_protocol,
         core_workflow_tools = core_workflow_tools,
         typical_iteration = typical_iteration,
@@ -2127,6 +2130,14 @@ mod tests {
         assert!(
             content.contains("Pre-Built Tools"),
             "must have pre-built tools section"
+        );
+        assert!(
+            content.contains("## Self-Improvement Contract"),
+            "profile instructions must carry the self-improvement contract used by chat runs"
+        );
+        assert!(
+            content.contains("self_improvement.create_task") && content.contains("max_rounds >= 3"),
+            "profile instructions must force code-changing work through MCP multi-shot tasks"
         );
     }
 
