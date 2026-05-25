@@ -13,8 +13,10 @@ import {
   tangleLocal,
 } from '~/lib/contracts/chains';
 import { http } from 'wagmi';
-import { detectTangleCloudParentOrigin } from '~/lib/wallet/detectParentOrigin';
-import { parentBridgeConnector } from '~/lib/wallet/parentBridgeConnector';
+import {
+  detectTangleCloudParentOrigin,
+  parentBridgeConnector,
+} from '@tangle-network/blueprint-ui/wallet';
 
 function isLocalRpcUrl(rpcUrl: string | undefined): boolean {
   if (!rpcUrl) return false;
@@ -59,7 +61,18 @@ const walletChains = getArenaWalletChains();
 
 // Detect Tangle Cloud iframe context once at module load. The detection reads
 // `document.referrer` + `window.location` — stable for the iframe's lifetime.
-const PARENT_ORIGIN = detectTangleCloudParentOrigin();
+// Thread `VITE_TANGLE_CLOUD_ORIGINS` (comma-separated) into the library's
+// origin allowlist. The library doesn't read `import.meta.env` itself so it
+// stays bundler-agnostic; the app injects what its env can resolve.
+const EXTRA_PARENT_ORIGINS = (
+  import.meta.env.VITE_TANGLE_CLOUD_ORIGINS as string | undefined
+)
+  ?.split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const PARENT_ORIGIN = detectTangleCloudParentOrigin({
+  extraOrigins: EXTRA_PARENT_ORIGINS,
+});
 export const isEmbeddedInTangleCloud = PARENT_ORIGIN !== null;
 
 const baseDefaultConfig = getDefaultConfig({
