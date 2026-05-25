@@ -2129,27 +2129,37 @@ async fn get_revision_arena(
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let canary_revision = bot_canary_revision(&bot);
+    let canary_revision_id = canary_revision
+        .as_ref()
+        .and_then(|revision| revision.get("revision_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
     let revisions = runs
         .into_iter()
-        .map(|run| {
+        .filter_map(|run| {
             let status = run.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
             let tests_passed = run.get("tests_passed").and_then(serde_json::Value::as_bool).unwrap_or(false);
             let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
             let task_id = run.get("task_id").and_then(serde_json::Value::as_str).unwrap_or("unknown");
-            let can_execute_live = status == "completed" && tests_passed && patch_sha.is_some();
-            let blockers = if can_execute_live {
-                vec!["User approval and validator live-execution handoff required before fund access.".to_string()]
+            let revision_id = revision_id_for_task(task_id);
+            if canary_revision_id.as_deref() == Some(revision_id.as_str()) {
+                return None;
+            }
+            let ready = status == "completed" && tests_passed && patch_sha.is_some();
+            let blockers = if ready {
+                vec!["User approval can stage this candidate as canary paper/live-sim; real fund access still requires validator/trading API live handoff.".to_string()]
             } else {
                 vec![
                     "Candidate has not passed deterministic MCP checks.".to_string(),
                     "Live execution remains blocked until an approved paper/shadow candidate exists.".to_string(),
                 ]
             };
-            json!({
-                "revision_id": format!("mcp-{task_id}"),
+            Some(json!({
+                "revision_id": revision_id,
                 "display_name": format!("Self-improvement {task_id}"),
                 "source": "self-improvement-mcp",
-                "status": if can_execute_live { "candidate" } else if status == "failed" { "failed" } else { status },
+                "status": if ready { "candidate" } else if status == "failed" { "failed" } else { status },
                 "run_mode": "paper",
                 "can_execute_live": false,
                 "parent_revision_id": "rev-0",
@@ -2162,7 +2172,7 @@ async fn get_revision_arena(
                 "promotion_approved": false,
                 "promotion_blockers": blockers,
                 "paper_evidence": serde_json::Value::Null,
-            })
+            }))
         })
         .collect::<Vec<_>>();
 
@@ -2189,11 +2199,15 @@ async fn get_revision_arena(
         "paper_evidence": bot.baseline_backtest,
     })];
     all_revisions.extend(revisions);
+    if let Some(canary) = canary_revision {
+        all_revisions.push(canary);
+    }
+    let active_revision_id = canary_revision_id.unwrap_or_else(|| "rev-0".to_string());
 
     Ok(Json(json!({
         "bot_id": bot.id,
         "invariant": "Only the active approved revision may touch execution keys or vault funds; MCP candidates are paper/shadow until deterministic checks, user approval, and validator gates pass.",
-        "active_revision_id": "rev-0",
+        "active_revision_id": active_revision_id,
         "live_revision_id": if bot.paper_trade { serde_json::Value::Null } else { serde_json::Value::String("rev-0".to_string()) },
         "revisions": all_revisions,
         "modes": [
@@ -2201,7 +2215,7 @@ async fn get_revision_arena(
             { "mode": "backtest", "can_touch_funds": false, "description": "Offline replay against deterministic data." },
             { "mode": "paper", "can_touch_funds": false, "description": "Paper execution with no live transaction authority." },
             { "mode": "shadow", "can_touch_funds": false, "description": "Observe live markets without submitting orders." },
-            { "mode": "canary", "can_touch_funds": true, "description": "Limited live exposure after explicit approval and validator gates." },
+            { "mode": "canary", "can_touch_funds": false, "description": "Approved paper/live-sim observation before validator-gated live exposure." },
             { "mode": "live", "can_touch_funds": true, "description": "Full live execution only for approved active revisions." }
         ]
     })))
@@ -2211,6 +2225,81 @@ async fn get_revision_arena(
 struct PromoteRevisionRequest {
     revision_id: Option<String>,
     confirm_live: Option<bool>,
+}
+
+fn revision_id_for_task(task_id: &str) -> String {
+    format!("mcp-{task_id}")
+}
+
+fn bot_canary_revision(bot: &TradingBotRecord) -> Option<serde_json::Value> {
+    bot.strategy_config
+        .get("revision_arena")
+        .and_then(|value| value.get("canary_revision"))
+        .cloned()
+}
+
+fn canary_revision_from_candidate(run: &serde_json::Value) -> Option<serde_json::Value> {
+    let task_id = run.get("task_id").and_then(serde_json::Value::as_str)?;
+    let patch_sha = run
+        .get("patch_sha256")
+        .and_then(serde_json::Value::as_str)?;
+    Some(json!({
+        "revision_id": revision_id_for_task(task_id),
+        "display_name": format!("Canary {}", task_id),
+        "source": "self-improvement-mcp",
+        "status": "active",
+        "run_mode": "canary",
+        "can_execute_live": false,
+        "can_touch_funds": false,
+        "parent_revision_id": "rev-0",
+        "run_id": task_id,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "user_intent": run.get("spec").and_then(serde_json::Value::as_str).unwrap_or("Approved paper candidate"),
+        "patch_sha256": patch_sha,
+        "files_changed": run.get("files_changed").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+        "tests": run.get("tests").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+        "promotion_approved": true,
+        "promotion_blockers": [
+            "Canary is approved for paper/live-sim observation only.",
+            "Real fund access remains disabled until validator/trading API live handoff is implemented."
+        ],
+        "paper_evidence": {
+            "candidate_hash": patch_sha,
+            "revision_id": revision_id_for_task(task_id),
+            "trades": 0,
+            "total_return_pct": 0,
+            "max_drawdown_pct": 0
+        }
+    }))
+}
+
+fn persist_canary_revision(
+    bot: &TradingBotRecord,
+    revision: serde_json::Value,
+) -> Result<(), ApiError> {
+    let mut config = bot.strategy_config.clone();
+    if !config.is_object() {
+        config = json!({});
+    }
+    let object = config.as_object_mut().ok_or_else(|| {
+        ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, "invalid strategy config")
+    })?;
+    let revision_arena = object.entry("revision_arena").or_insert_with(|| json!({}));
+    if !revision_arena.is_object() {
+        *revision_arena = json!({});
+    }
+    revision_arena
+        .as_object_mut()
+        .expect("revision arena object")
+        .insert("canary_revision".to_string(), revision);
+
+    state::bots()
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&state::bot_key(&bot.id), |record| {
+            record.strategy_config = config.clone();
+        })
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(())
 }
 
 async fn promote_revision_candidate(
@@ -2277,14 +2366,24 @@ async fn promote_revision_candidate(
             None,
         ));
     }
-    Err(error_json(
-        StatusCode::CONFLICT,
-        "promotion_blocked",
-        "Live promotion handoff is intentionally blocked in this operator path until validator/trading API promotion is wired to apply approved MCP patches.",
-        Some(bot.id),
-        Some(bot.sandbox_id),
-        None,
-    ))
+    let revision = canary_revision_from_candidate(run).ok_or_else(|| {
+        error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate is missing task id or patch hash.",
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        )
+    })?;
+    persist_canary_revision(&bot, revision.clone()).map_err(api_error_response)?;
+    Ok(Json(json!({
+        "status": "canary_promoted",
+        "bot_id": bot.id,
+        "sandbox_id": bot.sandbox_id,
+        "revision": revision,
+        "message": "Candidate approved into canary paper/live-sim mode. Real fund access remains disabled until validator/trading API live handoff is implemented."
+    })))
 }
 
 async fn read_self_improvement_tasks(

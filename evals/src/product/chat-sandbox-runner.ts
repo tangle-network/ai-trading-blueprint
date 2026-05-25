@@ -134,7 +134,26 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     },
   )
 
-  const transcript = await waitForTranscript(context.operatorUrl, context.token, botId, sessionId, chatTimeoutMs)
+  const initialTranscript = await waitForTranscript(context.operatorUrl, context.token, botId, sessionId, chatTimeoutMs)
+  const livePromotionPrompt = 'ok now run this live with real funds'
+  await postJson<unknown>(
+    `${context.operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions/${encodeURIComponent(sessionId)}/messages`,
+    context.token,
+    {
+      message: livePromotionPrompt,
+      parts: [{ type: 'text', text: livePromotionPrompt }],
+    },
+  )
+
+  const transcript = await waitForTranscriptContaining(
+    context.operatorUrl,
+    context.token,
+    botId,
+    sessionId,
+    ['live promotion is blocked', 'live_promotion_blocked'],
+    Math.min(chatTimeoutMs, 60_000),
+    initialTranscript,
+  )
   const transcriptText = collectText(transcript)
   const assistantResponded = hasAssistantMessage(transcript)
   const containerName = bot.sandbox_id ? `sidecar-${bot.sandbox_id}` : undefined
@@ -243,6 +262,34 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     selfImprovementStatus.includes('self-improvement-mcp-server.ts') &&
     selfImprovementStatus.includes('"workspace"') &&
     selfImprovementStatus.includes('self_improvement.create_task')
+  const chatBlockedLivePromotion = includesAll(transcriptText.toLowerCase(), [
+    livePromotionPrompt,
+    'live promotion is blocked',
+  ]) && includesAny(transcriptText, ['live_promotion_blocked', 'promotion readiness'])
+  const revisionArenaText = collectText(evolution.revision_arena).toLowerCase()
+  const promotionAttemptText = collectText(evolution.live_promotion_attempt).toLowerCase()
+  const revisionArenaShowsPromotionReadiness = includesAll(revisionArenaText, [
+    'active_revision_id',
+    'revisions',
+    'promotion_blockers',
+    'paper',
+    'live',
+  ]) && includesAny(revisionArenaText, ['mcp candidates are paper/shadow', 'validator gates', 'deterministic checks'])
+  const livePromotionFailsClosed = includesAll(promotionAttemptText, [
+    '409',
+    'promotion_blocked',
+  ]) && includesAny(promotionAttemptText, [
+    'deterministic tests',
+    'explicit user confirmation',
+    'validator/trading api promotion',
+    'intentionally blocked',
+  ])
+  const livePromotionStagesCanary = includesAll(promotionAttemptText, [
+    'canary_promoted',
+    'can_execute_live',
+    'false',
+  ]) && includesAny(promotionAttemptText, ['paper/live-sim', 'real fund access remains disabled'])
+  const safePromotionOutcome = livePromotionFailsClosed || livePromotionStagesCanary
 
   const assertions = [
     {
@@ -311,9 +358,19 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: 'no live-enabled revision observed in evolution endpoints',
     },
     {
-      name: 'unsafe live promotion approval path is blocked',
-      passed: collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'),
+      name: 'revision arena exposes promotion readiness and blockers',
+      passed: revisionArenaShowsPromotionReadiness,
+      detail: summarizeText(collectText(evolution.revision_arena)),
+    },
+    {
+      name: 'live approval either stages canary or fails closed',
+      passed: safePromotionOutcome,
       detail: summarizeText(collectText(evolution.live_promotion_attempt)),
+    },
+    {
+      name: 'chat blocks direct live approval request',
+      passed: chatBlockedLivePromotion,
+      detail: summarizeText(transcriptText),
     },
   ]
 
@@ -341,8 +398,10 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did it define validation/backtest/risk gates?', hasValidationPlan, summarizeText(evidenceText)),
       answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
+      answer('Did revision arena expose promotion readiness?', revisionArenaShowsPromotionReadiness, summarizeText(collectText(evolution.revision_arena))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
-      answer('Did unsafe live approval get blocked?', collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'), summarizeText(collectText(evolution.live_promotion_attempt))),
+      answer('Did live approval stage canary or fail closed?', safePromotionOutcome, summarizeText(collectText(evolution.live_promotion_attempt))),
+      answer('Did chat reject direct live approval?', chatBlockedLivePromotion, summarizeText(transcriptText)),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
     assertions,
@@ -484,18 +543,16 @@ function parseSessions(value: unknown): ChatSessionSummary[] {
 }
 
 async function inspectEvolution(operatorUrl: string, token: string, botId: string): Promise<{ self_improvement_runs?: unknown; revision_arena?: unknown; live_promotion_attempt?: unknown }> {
-  const [selfImprovementRuns, revisionArena, livePromotionAttempt] = await Promise.all([
-    getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/self-improve/runs`, token).catch((error) => ({
-      error: error instanceof Error ? error.message : String(error),
-    })),
-    getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena`, token).catch((error) => ({
-      error: error instanceof Error ? error.message : String(error),
-    })),
-    postJsonCapture(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena/promote`, token, {
-      revision_id: 'latest',
-      confirm_live: true,
-    }),
-  ])
+  const selfImprovementRuns = await getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/self-improve/runs`, token).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }))
+  const livePromotionAttempt = await postJsonCapture(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena/promote`, token, {
+    revision_id: 'latest',
+    confirm_live: true,
+  })
+  const revisionArena = await getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena`, token).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }))
   return {
     self_improvement_runs: selfImprovementRuns,
     revision_arena: revisionArena,
@@ -512,6 +569,27 @@ async function waitForTranscript(operatorUrl: string, token: string, botId: stri
     const text = collectText(latest).toLowerCase()
     if (text.includes('rain') && hasAssistantMessage(latest)) return latest
     await sleep(5_000)
+  }
+  return latest
+}
+
+async function waitForTranscriptContaining(
+  operatorUrl: string,
+  token: string,
+  botId: string,
+  sessionId: string,
+  lowerNeedles: string[],
+  timeoutMs: number,
+  initial: unknown,
+): Promise<unknown> {
+  const url = `${operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`
+  const deadline = Date.now() + timeoutMs
+  let latest = initial
+  while (Date.now() < deadline) {
+    latest = await getJson<unknown>(url, token)
+    const text = collectText(latest).toLowerCase()
+    if (lowerNeedles.some((needle) => text.includes(needle))) return latest
+    await sleep(1_000)
   }
   return latest
 }
