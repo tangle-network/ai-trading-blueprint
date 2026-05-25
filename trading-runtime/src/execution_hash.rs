@@ -25,6 +25,7 @@ pub const ACTION_KIND_CLOB_ORDER: u64 = 2;
 pub const ACTION_KIND_HYPERLIQUID_ORDER: u64 = 3;
 pub const ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT: u64 = 4;
 pub const ACTION_EVM_USDC_TO_CORE: u32 = 0x00ff_ffff;
+pub const HYPERLIQUID_DEFAULT_PERP_DEX_INDEX: u32 = 0;
 
 pub fn execution_payload_typehash() -> B256 {
     keccak256(EXECUTION_PAYLOAD_TYPE.as_bytes())
@@ -418,19 +419,19 @@ pub fn build_hyperliquid_spot_send_fund_movement_hashes(
 pub fn build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
     vault: Address,
     chain_id: u64,
-    system_address: Address,
+    core_deposit_wallet: Address,
     amount: u64,
     nonce: U256,
     deadline: U256,
     policy: HyperliquidFundMovementPolicy,
 ) -> Result<HyperliquidFundMovementHashes, String> {
-    let action = encode_erc20_transfer_action(system_address, U256::from(amount));
+    let action = encode_core_deposit_wallet_action(vault, U256::from(amount));
     Ok(HyperliquidFundMovementHashes {
         intent_hash: hash_hyperliquid_fund_movement_intent_parts(
             vault,
             chain_id,
             ACTION_EVM_USDC_TO_CORE,
-            system_address,
+            core_deposit_wallet,
             0,
             amount,
             true,
@@ -448,10 +449,14 @@ pub fn build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
     })
 }
 
-fn encode_erc20_transfer_action(destination: Address, amount: U256) -> Bytes {
-    let mut action = Vec::with_capacity(4 + 64);
-    action.extend_from_slice(&keccak256("transfer(address,uint256)".as_bytes()).as_slice()[..4]);
-    action.extend_from_slice(&(destination, amount).abi_encode_params());
+fn encode_core_deposit_wallet_action(recipient: Address, amount: U256) -> Bytes {
+    let mut action = Vec::with_capacity(4 + 96);
+    action.extend_from_slice(
+        &keccak256("depositFor(address,uint256,uint32)".as_bytes()).as_slice()[..4],
+    );
+    action.extend_from_slice(
+        &(recipient, amount, HYPERLIQUID_DEFAULT_PERP_DEX_INDEX).abi_encode_params(),
+    );
     Bytes::from(action)
 }
 
@@ -668,6 +673,32 @@ mod tests {
         .unwrap();
         assert_ne!(hashes.intent_hash, changed_amount.intent_hash);
         assert_ne!(hashes.execution_hash, changed_amount.execution_hash);
+    }
+
+    #[test]
+    fn evm_usdc_to_core_action_uses_explicit_vault_recipient() {
+        let vault = Address::from([0x11u8; 20]);
+        let core_deposit_wallet = Address::from([0x22u8; 20]);
+        let policy = HyperliquidFundMovementPolicy {
+            leverage_cap: U256::from(2),
+            max_trades_per_hour: U256::from(12),
+            max_slippage_bps: U256::from(50),
+        };
+
+        let hashes = build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
+            vault,
+            998,
+            core_deposit_wallet,
+            10_000_000,
+            U256::from(9),
+            U256::from(1_800_000_000u64),
+            policy,
+        )
+        .unwrap();
+
+        assert_eq!(&hashes.action[..4], &[0xc2, 0x3c, 0x54, 0x5a]);
+        assert_eq!(hashes.action.len(), 4 + 96);
+        assert_eq!(&hashes.action[16..36], vault.as_slice());
     }
 
     #[test]

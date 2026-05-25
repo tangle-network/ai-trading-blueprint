@@ -80,6 +80,8 @@ sol! {
 const CORE_USDC_WEI_PER_USDC: u64 = 100_000_000;
 const EVM_USDC_WEI_PER_USDC: u64 = 1_000_000;
 const HYPERLIQUID_USDC_SPOT_TOKEN: u64 = 0;
+const HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET: &str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
+const HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET: &str = "0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206";
 const FUNDING_PROTOCOL: &str = "hyperliquid_funding";
 const FUNDING_POLL_ATTEMPTS: usize = 10;
 const FUNDING_POLL_DELAY_MS: u64 = 2_000;
@@ -128,7 +130,7 @@ pub struct EvmUsdcToCoreResponse {
     pub status: String,
     pub tx_hash: String,
     pub amount_wei: u64,
-    pub system_address: String,
+    pub core_deposit_wallet: String,
     pub funding_status_before: HyperliquidFundingStatus,
 }
 
@@ -228,7 +230,7 @@ async fn post_evm_usdc_to_core(
         status: "submitted".to_string(),
         tx_hash: transfer.tx_hash,
         amount_wei: transfer.amount_wei,
-        system_address: transfer.system_address.to_string(),
+        core_deposit_wallet: transfer.core_deposit_wallet.to_string(),
         funding_status_before: status,
     }))
 }
@@ -281,30 +283,58 @@ async fn post_prepare_perp_margin(
                 ),
             ));
         }
+        if !before.can_move_idle_evm_to_core {
+            return Err((StatusCode::CONFLICT, before.reason.clone()));
+        }
 
         let transfer = submit_evm_usdc_to_core(&state, &bot, evm_needed).await?;
         evm_to_core_tx_hash = Some(transfer.tx_hash);
         moved_evm_to_core_usdc = Some(evm_needed.to_string());
-        core_ready = wait_for_funding_status(&state, &bot, Some(required_margin), |status| {
-            parse_decimal(&status.core_spot_usdc, "core_spot_usdc")
-                .map(|core| core >= required_margin)
-                .unwrap_or(false)
+        core_ready = wait_for_funding_status(&state, &bot, Some(requested), |status| {
+            let Ok(current_margin) = parse_decimal(&status.perp_margin_usdc, "perp_margin_usdc")
+            else {
+                return false;
+            };
+            if current_margin >= requested {
+                return true;
+            }
+
+            let Ok(current_core) = parse_decimal(&status.core_spot_usdc, "core_spot_usdc") else {
+                return false;
+            };
+            current_core >= requested - current_margin
         })
         .await?;
         after_evm_to_core = Some(core_ready.clone());
     }
 
+    let latest_margin = parse_decimal(&core_ready.perp_margin_usdc, "perp_margin_usdc")?;
+    if latest_margin >= requested {
+        return Ok(Json(PreparePerpMarginResponse {
+            status: "prepared".to_string(),
+            requested_usdc: requested.to_string(),
+            moved_evm_to_core_usdc,
+            moved_core_to_perp_usdc: None,
+            evm_to_core_tx_hash,
+            usd_class_tx_hash: None,
+            funding_status_before: before,
+            funding_status_after_evm_to_core: after_evm_to_core,
+            funding_status_after: core_ready,
+        }));
+    }
+
+    let remaining_margin = requested - latest_margin;
     let latest_core = parse_decimal(&core_ready.core_spot_usdc, "core_spot_usdc")?;
-    if latest_core < required_margin {
+    if latest_core < remaining_margin {
         return Err((
             StatusCode::BAD_GATEWAY,
             format!(
-                "Timed out waiting for Core spot USDC before perp funding: need {required_margin}, got {latest_core}"
+                "Timed out waiting for fundable Hyperliquid USDC: need {remaining_margin} more perp margin, got {latest_margin} perp margin and {latest_core} Core spot"
             ),
         ));
     }
 
-    let usd_transfer = submit_usd_class_transfer(&state, &bot, required_margin, true).await?;
+    let usd_transfer = submit_usd_class_transfer(&state, &bot, remaining_margin, true).await?;
     let after = wait_for_funding_status(&state, &bot, Some(requested), |status| {
         parse_decimal(&status.perp_margin_usdc, "perp_margin_usdc")
             .map(|margin| margin >= requested)
@@ -316,7 +346,7 @@ async fn post_prepare_perp_margin(
         status: "prepared".to_string(),
         requested_usdc: requested.to_string(),
         moved_evm_to_core_usdc,
-        moved_core_to_perp_usdc: Some(required_margin.to_string()),
+        moved_core_to_perp_usdc: Some(remaining_margin.to_string()),
         evm_to_core_tx_hash,
         usd_class_tx_hash: Some(usd_transfer.tx_hash),
         funding_status_before: before,
@@ -333,7 +363,7 @@ struct UsdClassTransferSubmission {
 struct EvmUsdcToCoreSubmission {
     tx_hash: String,
     amount_wei: u64,
-    system_address: Address,
+    core_deposit_wallet: Address,
 }
 
 async fn submit_usd_class_transfer(
@@ -434,14 +464,14 @@ async fn submit_evm_usdc_to_core(
     let chain_client = matching_chain_client(state, bot)?;
     let vault = parse_address(&bot.vault_address, "vault address")?;
     let amount_wei = decimal_usdc_to_evm_wei(amount)?;
-    let system_address = hyperliquid_token_system_address(HYPERLIQUID_USDC_SPOT_TOKEN);
+    let core_deposit_wallet = require_core_deposit_wallet(&chain_client)?;
     let deadline = Utc::now().timestamp() as u64 + state.validation_deadline_secs;
     let nonce = next_nonce();
     let policy = read_fund_movement_policy(bot, vault).await?;
     let hashes = build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
         vault,
         bot.chain_id,
-        system_address,
+        core_deposit_wallet,
         amount_wei,
         nonce,
         U256::from(deadline),
@@ -452,7 +482,7 @@ async fn submit_evm_usdc_to_core(
         &chain_client,
         vault,
         ACTION_EVM_USDC_TO_CORE,
-        system_address,
+        core_deposit_wallet,
         HYPERLIQUID_USDC_SPOT_TOKEN,
         amount_wei,
         true,
@@ -469,7 +499,7 @@ async fn submit_evm_usdc_to_core(
         serde_json::json!({
             "funding_action": "evm_usdc_to_core",
             "amount_evm_wei": amount_wei.to_string(),
-            "system_address": system_address.to_string(),
+            "core_deposit_wallet": core_deposit_wallet.to_string(),
         }),
         nonce,
         deadline,
@@ -506,7 +536,7 @@ async fn submit_evm_usdc_to_core(
     )
     .await?;
     let calldata = IHyperliquidVaultFunding::returnSpotLiquidityCall {
-        destination: system_address,
+        destination: core_deposit_wallet,
         token: HYPERLIQUID_USDC_SPOT_TOKEN,
         weiAmount: amount_wei,
         authorization,
@@ -517,7 +547,7 @@ async fn submit_evm_usdc_to_core(
     Ok(EvmUsdcToCoreSubmission {
         tx_hash,
         amount_wei,
-        system_address,
+        core_deposit_wallet,
     })
 }
 
@@ -721,6 +751,7 @@ async fn funding_status(
     let core_total_usdc = parse_decimal(&nav.hyperliquid_equity, "hyperliquid_equity")?;
     let perp_margin_usdc = parse_decimal(&account.account_value, "account_value")?;
     let core_spot_usdc = (core_total_usdc - perp_margin_usdc).max(Decimal::ZERO);
+    let core_deposit_supported = core_deposit_wallet_for_bot(state, bot).await?.is_some();
 
     Ok(classify_funding_status(
         idle_evm_usdc,
@@ -728,6 +759,7 @@ async fn funding_status(
         perp_margin_usdc,
         core_total_usdc,
         requested,
+        core_deposit_supported,
     ))
 }
 
@@ -737,6 +769,7 @@ fn classify_funding_status(
     perp_margin_usdc: Decimal,
     core_total_usdc: Decimal,
     requested: Option<Decimal>,
+    core_deposit_supported: bool,
 ) -> HyperliquidFundingStatus {
     let enough_core_spot = requested.is_none_or(|amount| core_spot_usdc >= amount);
     let enough_perp_margin = requested.is_none_or(|amount| perp_margin_usdc >= amount);
@@ -751,14 +784,16 @@ fn classify_funding_status(
                 "core_spot_available",
                 "Core spot USDC is available and can be moved to perp margin.",
                 true,
-                idle_evm_usdc > Decimal::ZERO,
+                core_deposit_supported && idle_evm_usdc > Decimal::ZERO,
             )
         } else {
             (
                 "insufficient_core_spot",
                 "Core spot USDC exists, but not enough for the requested transfer. Idle EVM USDC can be bridged into Core if available.",
                 false,
-                idle_evm_usdc > Decimal::ZERO && enough_idle_evm_to_cover_gap,
+                core_deposit_supported
+                    && idle_evm_usdc > Decimal::ZERO
+                    && enough_idle_evm_to_cover_gap,
             )
         }
     } else if perp_margin_usdc > Decimal::ZERO && enough_perp_margin {
@@ -769,10 +804,17 @@ fn classify_funding_status(
             false,
         )
     } else if idle_evm_usdc > Decimal::ZERO {
-        if enough_idle_evm {
+        if !core_deposit_supported {
+            (
+                "evm_to_core_route_unavailable",
+                "Idle HyperEVM USDC is available, but this deployed vault does not support CoreDepositWallet deposits. Redeploy or migrate before funding HyperCore.",
+                false,
+                false,
+            )
+        } else if enough_idle_evm {
             (
                 "idle_evm_usdc_available",
-                "Idle HyperEVM USDC can be moved to HyperCore, then moved to perp margin.",
+                "Idle HyperEVM USDC can be deposited through CoreDepositWallet, then moved to perp margin.",
                 false,
                 true,
             )
@@ -1004,6 +1046,39 @@ fn validation_scores(validation: &trading_runtime::types::ValidationResult) -> V
         .collect()
 }
 
+async fn core_deposit_wallet_for_bot(
+    state: &MultiBotTradingState,
+    bot: &BotContext,
+) -> Result<Option<Address>, (StatusCode, String)> {
+    let chain_client = matching_chain_client(state, bot)?;
+    core_deposit_wallet(chain_client.chain_id)
+}
+
+fn core_deposit_wallet(chain_id: u64) -> Result<Option<Address>, (StatusCode, String)> {
+    let wallet = match chain_id {
+        999 => HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET,
+        998 => HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET,
+        _ => return Ok(None),
+    };
+    Address::from_str(wallet).map(Some).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Configured Hyperliquid CoreDepositWallet address is invalid: {e}"),
+        )
+    })
+}
+
+fn require_core_deposit_wallet(
+    chain_client: &trading_runtime::chain::ChainClient,
+) -> Result<Address, (StatusCode, String)> {
+    core_deposit_wallet(chain_client.chain_id)?.ok_or_else(|| {
+        (
+            StatusCode::CONFLICT,
+            "Hyperliquid CoreDepositWallet deposits are only supported on HyperEVM mainnet (999) and testnet (998).".to_string(),
+        )
+    })
+}
+
 fn matching_chain_client(
     state: &MultiBotTradingState,
     bot: &BotContext,
@@ -1055,13 +1130,6 @@ fn decimal_usdc_to_evm_wei(amount: Decimal) -> Result<u64, (StatusCode, String)>
             "amount_usdc exceeds uint64 EVM USDC amount".to_string(),
         )
     })
-}
-
-fn hyperliquid_token_system_address(token: u64) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[0] = 0x20;
-    bytes[12..20].copy_from_slice(&token.to_be_bytes());
-    Address::from(bytes)
 }
 
 fn parse_positive_decimal(value: &str, field: &str) -> Result<Decimal, (StatusCode, String)> {
@@ -1117,12 +1185,29 @@ mod tests {
             Decimal::ZERO,
             Decimal::ZERO,
             Some(Decimal::new(1, 0)),
+            true,
         );
 
         assert_eq!(status.state, "idle_evm_usdc_available");
         assert!(!status.can_move_core_spot_to_perp);
         assert!(status.can_move_idle_evm_to_core);
-        assert!(status.reason.contains("moved to HyperCore"));
+        assert!(status.reason.contains("CoreDepositWallet"));
+    }
+
+    #[test]
+    fn status_blocks_idle_evm_when_vault_lacks_core_deposit_support() {
+        let status = classify_funding_status(
+            Decimal::new(5, 0),
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Some(Decimal::new(1, 0)),
+            false,
+        );
+
+        assert_eq!(status.state, "evm_to_core_route_unavailable");
+        assert!(!status.can_move_idle_evm_to_core);
+        assert!(status.reason.contains("Redeploy or migrate"));
     }
 
     #[test]
@@ -1133,6 +1218,7 @@ mod tests {
             Decimal::ZERO,
             Decimal::new(12, 0),
             Some(Decimal::new(10, 0)),
+            true,
         );
 
         assert_eq!(status.state, "core_spot_available");
@@ -1152,14 +1238,6 @@ mod tests {
         assert_eq!(
             decimal_usdc_to_evm_wei(Decimal::new(125, 1)).unwrap(),
             12_500_000
-        );
-    }
-
-    #[test]
-    fn derives_hyperliquid_usdc_system_address() {
-        assert_eq!(
-            hyperliquid_token_system_address(0).to_string(),
-            "0x2000000000000000000000000000000000000000"
         );
     }
 }

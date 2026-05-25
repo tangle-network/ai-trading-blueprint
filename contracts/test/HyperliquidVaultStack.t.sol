@@ -21,6 +21,13 @@ contract HyperliquidMockCoreWriter {
 }
 
 contract HyperliquidVaultStackTest is Test {
+    uint256 internal constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
+    uint64 internal constant WITHDRAWAL_EPOCH_SECONDS = 1 days;
+    bytes32 internal constant HYPERLIQUID_FUND_MOVEMENT_TYPEHASH = keccak256(
+        "HyperliquidFundMovement(address vault,uint256 chainId,uint24 actionType,address destination,uint64 token,uint64 amount,bool direction,uint256 nonce,uint256 deadline,uint256 leverageCap,uint256 maxTradesPerHour,uint256 maxSlippageBps)"
+    );
+    bytes32 internal constant HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH =
+        keccak256("HyperliquidFundMovementExecution(address vault,uint256 chainId,uint24 actionType,bytes action)");
     address internal constant CORE_WRITER = 0x3333333333333333333333333333333333333333;
     address internal constant SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
     address internal constant ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
@@ -58,8 +65,8 @@ contract HyperliquidVaultStackTest is Test {
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
-    function test_hyperliquidFundMovementActionKindIsDistinctFromOrder() public view {
-        assertEq(implementation.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT(), 4);
+    function test_hyperliquidFundMovementActionKindIsDistinctFromOrder() public pure {
+        assertEq(ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, 4);
     }
 
     function test_implementationInitializeRevertsButFactoryCloneInitializes() public {
@@ -391,8 +398,8 @@ contract HyperliquidVaultStackTest is Test {
         assertEq(vault.accountingShareSupply(), 1_400e6);
         assertEq(vault.nextFulfillableWithdrawalRequestId(), 1);
         assertFalse(vault.isWithdrawalRequestEligible(aliceRequest));
-        assertEq(vault.withdrawalRequestEligibleAt(aliceRequest), vault.WITHDRAWAL_EPOCH_SECONDS());
-        assertEq(vault.withdrawalRequestEligibleAt(bobRequest), vault.WITHDRAWAL_EPOCH_SECONDS());
+        assertEq(vault.withdrawalRequestEligibleAt(aliceRequest), WITHDRAWAL_EPOCH_SECONDS);
+        assertEq(vault.withdrawalRequestEligibleAt(bobRequest), WITHDRAWAL_EPOCH_SECONDS);
     }
 
     function test_directFulfillCannotBypassRoleEligibilityOrEarlierSettleableRequest() public {
@@ -853,7 +860,7 @@ contract HyperliquidVaultStackTest is Test {
         bytes memory action = abi.encodePacked(uint8(1), bytes3(uint24(7)), abi.encode(ntl, toPerp));
         bytes32 intentHash = keccak256(
             abi.encode(
-                vault.HYPERLIQUID_FUND_MOVEMENT_TYPEHASH(),
+                HYPERLIQUID_FUND_MOVEMENT_TYPEHASH,
                 address(vault),
                 block.chainid,
                 uint24(7),
@@ -869,9 +876,7 @@ contract HyperliquidVaultStackTest is Test {
             )
         );
         bytes32 executionHash = keccak256(
-            abi.encode(
-                vault.HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH(), address(vault), block.chainid, uint24(7), action
-            )
+            abi.encode(HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH, address(vault), block.chainid, uint24(7), action)
         );
 
         authorization.nonce = nonce;
@@ -887,7 +892,7 @@ contract HyperliquidVaultStackTest is Test {
             address(vault),
             authorization.scores[0],
             deadline,
-            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
         authorization.signatures[1] = _signValidation(
             validator2Key,
@@ -896,7 +901,7 @@ contract HyperliquidVaultStackTest is Test {
             address(vault),
             authorization.scores[1],
             deadline,
-            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
     }
 
@@ -943,7 +948,7 @@ contract HyperliquidVaultStackTest is Test {
             address(vault),
             authorization.scores[0],
             deadline,
-            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
         if (quorum) {
             authorization.signatures[1] = _signValidation(
@@ -953,7 +958,7 @@ contract HyperliquidVaultStackTest is Test {
                 address(vault),
                 authorization.scores[1],
                 deadline,
-                vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+                ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
             );
         }
     }

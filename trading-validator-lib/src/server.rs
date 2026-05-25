@@ -833,12 +833,12 @@ fn expected_hyperliquid_fund_movement_hashes(
             )
         }
         "evm_usdc_to_core" => {
-            let system_address = metadata_address(metadata, "system_address")?;
+            let core_deposit_wallet = metadata_address(metadata, "core_deposit_wallet")?;
             let amount = metadata_u64(metadata, "amount_evm_wei")?;
             build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
                 vault,
                 request.intent.chain_id,
-                system_address,
+                core_deposit_wallet,
                 amount,
                 nonce,
                 U256::from(request.deadline),
@@ -1836,7 +1836,7 @@ mod tests {
 
         let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
         let vault: Address = vault_address.parse().unwrap();
-        let system_address: Address = "0x2000000000000000000000000000000000000000"
+        let core_deposit_wallet: Address = "0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206"
             .parse()
             .unwrap();
         let amount = 10_000_000u64;
@@ -1859,7 +1859,7 @@ mod tests {
             .metadata(serde_json::json!({
                 "funding_action": "evm_usdc_to_core",
                 "amount_evm_wei": amount.to_string(),
-                "system_address": system_address.to_string(),
+                "core_deposit_wallet": core_deposit_wallet.to_string(),
                 "nonce": nonce.to_string(),
                 "leverage_cap": policy.leverage_cap.to_string(),
                 "max_trades_per_hour": policy.max_trades_per_hour.to_string(),
@@ -1870,7 +1870,7 @@ mod tests {
         let hashes = build_hyperliquid_evm_usdc_to_core_fund_movement_hashes(
             vault,
             intent.chain_id,
-            system_address,
+            core_deposit_wallet,
             amount,
             nonce,
             U256::from(deadline),

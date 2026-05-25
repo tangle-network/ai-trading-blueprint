@@ -28,6 +28,7 @@ contract RevertingGoldenVectorCoreWriter {
 }
 
 contract HyperliquidCoreWriterEncodingTest is Test {
+    uint256 internal constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
     address internal constant CORE_WRITER = 0x3333333333333333333333333333333333333333;
 
     MockERC20 internal usdc;
@@ -265,7 +266,7 @@ contract HyperliquidCoreWriterEncodingTest is Test {
         uint256 deadline
     ) internal view returns (bytes memory) {
         bytes32 digest = tradeValidator.computeDigest(
-            intentHash, executionHash, address(vault), score, deadline, vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            intentHash, executionHash, address(vault), score, deadline, ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);

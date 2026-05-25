@@ -10,8 +10,9 @@ import "../src/VaultShareDeployer.sol";
 import "./helpers/Setup.sol";
 
 contract HyperliquidVaultEvmUsdcBridgeTest is Test {
+    uint256 private constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
     uint24 private constant ACTION_EVM_USDC_TO_CORE = 0x00ffffff;
-    address private constant USDC_SYSTEM_ADDRESS = 0x2000000000000000000000000000000000000000;
+    address private constant CORE_DEPOSIT_WALLET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
 
     MockERC20 internal usdc;
     HyperliquidTradeValidator internal tradeValidator;
@@ -28,6 +29,7 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
     uint256 internal validator2Key;
 
     function setUp() public {
+        vm.chainId(998);
         (validator1, validator1Key) = makeAddrAndKey("validator1");
         (validator2, validator2Key) = makeAddrAndKey("validator2");
         validator3 = makeAddr("validator3");
@@ -43,18 +45,22 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         factory.setVaultDeployers(vaultDeployer, shareDeployer);
     }
 
-    function test_validQuorumApprovalPermitsIdleEvmUsdcBridgeOnlyToHypercoreSystemAddress() public {
+    function test_validQuorumApprovalPermitsIdleEvmUsdcDepositThroughCoreDepositWallet() public {
         (address vaultAddr,) = _createBotVault();
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        MockCoreDepositWallet depositWallet = new MockCoreDepositWallet(usdc);
+        vm.etch(CORE_DEPOSIT_WALLET, address(depositWallet).code);
+
         uint256 amount = 10e6;
         usdc.mint(vaultAddr, amount);
 
-        bytes memory action =
-            abi.encodeWithSelector(bytes4(keccak256("transfer(address,uint256)")), USDC_SYSTEM_ADDRESS, amount);
+        bytes memory action = abi.encodeWithSelector(
+            bytes4(keccak256("depositFor(address,uint256,uint32)")), vaultAddr, amount, uint32(0)
+        );
         HyperliquidVault.FundMovementAuthorization memory approval = _authorization(
             vault,
             ACTION_EVM_USDC_TO_CORE,
-            USDC_SYSTEM_ADDRESS,
+            CORE_DEPOSIT_WALLET,
             0,
             uint64(amount),
             true,
@@ -64,10 +70,37 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         );
 
         vm.prank(operator);
-        vault.returnSpotLiquidity(USDC_SYSTEM_ADDRESS, 0, uint64(amount), approval);
+        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), approval);
 
         assertEq(usdc.balanceOf(vaultAddr), 0);
-        assertEq(usdc.balanceOf(USDC_SYSTEM_ADDRESS), amount);
+        assertEq(usdc.balanceOf(CORE_DEPOSIT_WALLET), amount);
+        assertEq(MockCoreDepositWallet(CORE_DEPOSIT_WALLET).lastRecipient(), vaultAddr);
+        assertEq(usdc.allowance(vaultAddr, CORE_DEPOSIT_WALLET), 0);
+    }
+
+    function test_directSystemUsdcReturnRequiresOperatorPath() public {
+        (address vaultAddr,) = _createBotVault();
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        uint256 amount = 10e6;
+        usdc.mint(vaultAddr, amount);
+
+        HyperliquidVault.FundMovementAuthorization memory approval;
+        bytes32 operatorRole = vault.OPERATOR_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(HyperliquidVault.AccessControlUnauthorizedAccount.selector, admin, operatorRole)
+        );
+        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), approval);
+    }
+
+    function test_idleEvmUsdcDepositRejectsMismatchedCoreDepositApproval() public {
+        (address vaultAddr,) = _createBotVault();
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        MockCoreDepositWallet depositWallet = new MockCoreDepositWallet(usdc);
+        vm.etch(CORE_DEPOSIT_WALLET, address(depositWallet).code);
+
+        uint256 amount = 10e6;
+        usdc.mint(vaultAddr, amount);
 
         address wrongSystemAddress = makeAddr("wrong-system-address");
         HyperliquidVault.FundMovementAuthorization memory wrongApproval = _authorization(
@@ -79,12 +112,13 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
             true,
             32,
             block.timestamp + 1 hours,
-            abi.encodeWithSelector(bytes4(keccak256("transfer(address,uint256)")), wrongSystemAddress, amount)
+            abi.encodeWithSelector(
+                bytes4(keccak256("depositFor(address,uint256,uint32)")), vaultAddr, amount, uint32(0)
+            )
         );
-        usdc.mint(vaultAddr, amount);
         vm.prank(operator);
         vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
-        vault.returnSpotLiquidity(USDC_SYSTEM_ADDRESS, 0, uint64(amount), wrongApproval);
+        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), wrongApproval);
     }
 
     function _createBotVault() internal returns (address vault, address share) {
@@ -135,7 +169,7 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
             address(vault),
             authorization.scores[0],
             deadline,
-            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
         authorization.signatures[1] = _signValidation(
             validator2Key,
@@ -144,7 +178,7 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
             address(vault),
             authorization.scores[1],
             deadline,
-            vault.ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT()
+            ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT
         );
     }
 
@@ -160,5 +194,20 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         bytes32 digest = tradeValidator.computeDigest(intentHash, executionHash, vault, score, deadline, actionKind);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
+    }
+}
+
+contract MockCoreDepositWallet {
+    MockERC20 private immutable usdc;
+    address public lastRecipient;
+
+    constructor(MockERC20 _usdc) {
+        usdc = _usdc;
+    }
+
+    function depositFor(address recipient, uint256 amount, uint32 destination) external {
+        lastRecipient = recipient;
+        require(destination == 0, "unexpected destination");
+        require(usdc.transferFrom(msg.sender, address(this), amount), "transfer failed");
     }
 }
