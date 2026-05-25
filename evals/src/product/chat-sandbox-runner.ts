@@ -284,6 +284,12 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     'validator/trading api promotion',
     'intentionally blocked',
   ])
+  const livePromotionStagesCanary = includesAll(promotionAttemptText, [
+    'canary_promoted',
+    'can_execute_live',
+    'false',
+  ]) && includesAny(promotionAttemptText, ['paper/live-sim', 'real fund access remains disabled'])
+  const safePromotionOutcome = livePromotionFailsClosed || livePromotionStagesCanary
 
   const assertions = [
     {
@@ -357,8 +363,8 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: summarizeText(collectText(evolution.revision_arena)),
     },
     {
-      name: 'unsafe live promotion approval path is blocked',
-      passed: livePromotionFailsClosed,
+      name: 'live approval either stages canary or fails closed',
+      passed: safePromotionOutcome,
       detail: summarizeText(collectText(evolution.live_promotion_attempt)),
     },
     {
@@ -394,7 +400,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
       answer('Did revision arena expose promotion readiness?', revisionArenaShowsPromotionReadiness, summarizeText(collectText(evolution.revision_arena))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
-      answer('Did unsafe live approval get blocked?', livePromotionFailsClosed, summarizeText(collectText(evolution.live_promotion_attempt))),
+      answer('Did live approval stage canary or fail closed?', safePromotionOutcome, summarizeText(collectText(evolution.live_promotion_attempt))),
       answer('Did chat reject direct live approval?', chatBlockedLivePromotion, summarizeText(transcriptText)),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
@@ -537,18 +543,16 @@ function parseSessions(value: unknown): ChatSessionSummary[] {
 }
 
 async function inspectEvolution(operatorUrl: string, token: string, botId: string): Promise<{ self_improvement_runs?: unknown; revision_arena?: unknown; live_promotion_attempt?: unknown }> {
-  const [selfImprovementRuns, revisionArena, livePromotionAttempt] = await Promise.all([
-    getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/self-improve/runs`, token).catch((error) => ({
-      error: error instanceof Error ? error.message : String(error),
-    })),
-    getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena`, token).catch((error) => ({
-      error: error instanceof Error ? error.message : String(error),
-    })),
-    postJsonCapture(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena/promote`, token, {
-      revision_id: 'latest',
-      confirm_live: true,
-    }),
-  ])
+  const selfImprovementRuns = await getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/self-improve/runs`, token).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }))
+  const livePromotionAttempt = await postJsonCapture(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena/promote`, token, {
+    revision_id: 'latest',
+    confirm_live: true,
+  })
+  const revisionArena = await getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena`, token).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }))
   return {
     self_improvement_runs: selfImprovementRuns,
     revision_arena: revisionArena,

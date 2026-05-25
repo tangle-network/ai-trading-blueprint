@@ -1558,7 +1558,34 @@ async fn test_evolution_revision_arena_exposes_mcp_tasks_and_blocks_live_promoti
             .contains("MCP candidates are paper/shadow")
     );
 
-    let promote_response = app()
+    let blocked_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/evolution/revision-arena/promote",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({ "revision_id": "mcp-sit-failed", "confirm_live": true }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_response.status(), StatusCode::CONFLICT);
+    let blocked_body = blocked_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let blocked_json: serde_json::Value = serde_json::from_slice(&blocked_body).unwrap();
+    assert_eq!(blocked_json["code"], "promotion_blocked");
+
+    let promoted_response = app()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -1575,20 +1602,49 @@ async fn test_evolution_revision_arena_exposes_mcp_tasks_and_blocks_live_promoti
         )
         .await
         .unwrap();
-    assert_eq!(promote_response.status(), StatusCode::CONFLICT);
-    let promote_body = promote_response
+    assert_eq!(promoted_response.status(), StatusCode::OK);
+    let promoted_body = promoted_response
         .into_body()
         .collect()
         .await
         .unwrap()
         .to_bytes();
-    let promote_json: serde_json::Value = serde_json::from_slice(&promote_body).unwrap();
-    assert_eq!(promote_json["code"], "promotion_blocked");
+    let promoted_json: serde_json::Value = serde_json::from_slice(&promoted_body).unwrap();
+    assert_eq!(promoted_json["status"], "canary_promoted");
+    assert_eq!(promoted_json["revision"]["revision_id"], "mcp-sit-ready");
+    assert_eq!(promoted_json["revision"]["run_mode"], "canary");
+    assert_eq!(promoted_json["revision"]["can_execute_live"], false);
+
+    let promoted_arena_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/evolution/revision-arena", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(promoted_arena_response.status(), StatusCode::OK);
+    let promoted_arena_body = promoted_arena_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let promoted_arena_json: serde_json::Value =
+        serde_json::from_slice(&promoted_arena_body).unwrap();
+    assert_eq!(promoted_arena_json["active_revision_id"], "mcp-sit-ready");
+    assert!(promoted_arena_json["live_revision_id"].is_null());
     assert!(
-        promote_json["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("intentionally blocked")
+        promoted_arena_json["revisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|revision| revision["revision_id"] == "mcp-sit-ready"
+                && revision["status"] == "active"
+                && revision["run_mode"] == "canary"
+                && revision["can_execute_live"] == false)
     );
 }
 
