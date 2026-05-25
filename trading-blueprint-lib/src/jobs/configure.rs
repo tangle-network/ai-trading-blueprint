@@ -15,17 +15,35 @@ pub async fn configure_core(
 
     let new_strategy_config = strategy_config_json.to_string();
     let new_risk_params = risk_params_json.to_string();
+    let parsed_strategy_config = if !new_strategy_config.trim().is_empty() {
+        serde_json::from_str::<serde_json::Value>(&new_strategy_config).ok()
+    } else {
+        None
+    };
+    let next_harness_json = if let Some(config) = parsed_strategy_config.as_ref() {
+        if let Some(obj) = config.as_object() {
+            let harness = super::provision::harness_for_strategy_config(obj)?;
+            serde_json::to_value(harness).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     crate::state::bots()?
         .update(&bot_key(&bot_id), |b| {
             if !new_strategy_config.trim().is_empty()
-                && let Ok(config) = serde_json::from_str::<serde_json::Value>(&new_strategy_config)
+                && let Some(config) = parsed_strategy_config.as_ref()
             {
                 // Check for paper_trade toggle in strategy config
                 if let Some(paper_val) = config.get("paper_trade").and_then(|v| v.as_bool()) {
                     b.paper_trade = paper_val;
                 }
-                b.strategy_config = config;
+                b.strategy_config = config.clone();
+            }
+            if let Some(harness_json) = &next_harness_json {
+                b.harness_json = harness_json.clone();
             }
             if !new_risk_params.trim().is_empty() {
                 b.risk_params = serde_json::from_str(&new_risk_params).unwrap_or_default();
@@ -70,6 +88,7 @@ pub async fn configure_core(
                 &updated_bot.trading_api_token,
                 &updated_bot.operator_address,
                 &updated_bot.strategy_config,
+                &updated_bot.harness_json,
             )
             .await
             {

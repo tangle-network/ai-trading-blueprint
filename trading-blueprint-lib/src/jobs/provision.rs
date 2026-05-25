@@ -27,6 +27,8 @@ const HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER: &str = "corewriter_on_provisio
 const HYPERLIQUID_API_WALLET_APPROVAL_PENDING: &str = "pending_corewriter_approval";
 const HYPERLIQUID_API_WALLET_APPROVAL_SUBMITTED: &str = "submitted_corewriter_approval";
 const HYPERLIQUID_API_WALLET_APPROVAL_FAILED: &str = "failed_corewriter_approval";
+const MIN_OWNER_POSITION_FRACTION: f64 = 0.01;
+const MAX_OWNER_POSITION_FRACTION: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VaultBinding {
@@ -190,6 +192,65 @@ fn parse_u64_config(value: &Value) -> Option<u64> {
         Value::String(value) => value.trim().parse().ok(),
         _ => None,
     }
+}
+
+fn parse_f64_config(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(value) => value.as_f64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn owner_position_sizing_fraction(
+    strategy_config: &Map<String, Value>,
+) -> Result<Option<f64>, String> {
+    let Some(raw_position_sizing) = strategy_config.get("position_sizing") else {
+        return Ok(None);
+    };
+
+    let position_sizing = raw_position_sizing
+        .as_object()
+        .ok_or_else(|| "strategy_config_json.position_sizing must be a JSON object".to_string())?;
+
+    if let Some(method) = position_sizing.get("method").and_then(Value::as_str)
+        && method.trim() != "fixed_fraction"
+    {
+        return Err(
+            "strategy_config_json.position_sizing.method must be fixed_fraction".to_string(),
+        );
+    }
+
+    let Some(raw_fraction) = position_sizing.get("fraction") else {
+        return Err("strategy_config_json.position_sizing.fraction is required".to_string());
+    };
+    let fraction = parse_f64_config(raw_fraction).ok_or_else(|| {
+        "strategy_config_json.position_sizing.fraction must be a number".to_string()
+    })?;
+
+    if !fraction.is_finite()
+        || !(MIN_OWNER_POSITION_FRACTION..=MAX_OWNER_POSITION_FRACTION).contains(&fraction)
+    {
+        return Err(format!(
+            "strategy_config_json.position_sizing.fraction must be between {MIN_OWNER_POSITION_FRACTION} and {MAX_OWNER_POSITION_FRACTION}"
+        ));
+    }
+
+    Ok(Some(fraction))
+}
+
+pub(crate) fn harness_for_strategy_config(
+    strategy_config: &Map<String, Value>,
+) -> Result<trading_runtime::backtest::HarnessConfig, String> {
+    let mut harness = trading_runtime::backtest::HarnessConfig::default();
+    if let Some(fraction) = owner_position_sizing_fraction(strategy_config)? {
+        harness.position_sizing =
+            trading_runtime::backtest::PositionSizing::FixedFraction { fraction };
+    }
+    harness
+        .validate()
+        .map_err(|errors| format!("Harness validation failed: {}", errors.join("; ")))?;
+    Ok(harness)
 }
 
 fn configured_protocol_chain_id(
@@ -821,6 +882,8 @@ pub async fn provision_core(
     let vault_binding = parse_vault_binding(strategy_config_obj, &request)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
+    let harness = harness_for_strategy_config(strategy_config_obj)
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
 
     // 2. Get operator context for shared config (if initialized)
     let op_ctx = crate::context::operator_context();
@@ -1162,8 +1225,7 @@ pub async fn provision_core(
         trading_loop_cron: request.trading_loop_cron.clone(),
         call_id,
         service_id,
-        harness_json: serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
-            .unwrap_or_default(),
+        harness_json: serde_json::to_value(&harness).unwrap_or_default(),
         validation_trust: validation_trust.unwrap_or_default(),
         baseline_backtest: None,
         renewal_webhook_url,
@@ -1441,6 +1503,45 @@ mod tests {
                 .and_then(Value::as_str),
             Some(HYPERLIQUID_API_WALLET_APPROVAL_COREWRITER)
         );
+    }
+
+    #[test]
+    fn owner_position_sizing_overrides_default_harness_fraction() {
+        let config = serde_json::json!({
+            "position_sizing": {
+                "method": "fixed_fraction",
+                "fraction": 0.15
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let harness = harness_for_strategy_config(&config).unwrap();
+
+        match harness.position_sizing {
+            trading_runtime::backtest::PositionSizing::FixedFraction { fraction } => {
+                assert_eq!(fraction, 0.15);
+            }
+            _ => panic!("expected fixed-fraction position sizing"),
+        }
+    }
+
+    #[test]
+    fn owner_position_sizing_rejects_unsafe_fraction() {
+        let config = serde_json::json!({
+            "position_sizing": {
+                "method": "fixed_fraction",
+                "fraction": 1.5
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let err = harness_for_strategy_config(&config).unwrap_err();
+
+        assert!(err.contains("position_sizing.fraction must be between"));
     }
 
     #[test]

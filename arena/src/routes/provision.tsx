@@ -104,8 +104,33 @@ import {
 import type { BotLifecycleStatus, ValidationTrust } from '~/lib/types/bot';
 
 export const FIRECRACKER_RUNTIME_SUPPORTED = false;
+export const DEFAULT_POSITION_SIZE_PCT = 10;
+export const MIN_POSITION_SIZE_PCT = 1;
+export const MAX_POSITION_SIZE_PCT = 100;
 
 export type RuntimeBackend = 'docker' | 'firecracker' | 'tee';
+
+export function parsePositionSizePct(value: string | undefined): {
+  ok: true;
+  pct: number;
+  fraction: number;
+} | {
+  ok: false;
+  message: string;
+} {
+  const raw = value?.trim();
+  const pct = raw ? Number(raw) : DEFAULT_POSITION_SIZE_PCT;
+  if (!Number.isFinite(pct)) {
+    return { ok: false, message: 'Position size must be a number.' };
+  }
+  if (pct < MIN_POSITION_SIZE_PCT || pct > MAX_POSITION_SIZE_PCT) {
+    return {
+      ok: false,
+      message: `Position size must be between ${MIN_POSITION_SIZE_PCT}% and ${MAX_POSITION_SIZE_PCT}%.`,
+    };
+  }
+  return { ok: true, pct, fraction: pct / 100 };
+}
 
 interface StrategyConfigOptions {
   runtimeBackend: RuntimeBackend;
@@ -121,6 +146,7 @@ interface StrategyConfigOptions {
   conversationEnabled?: boolean;
   researchEnabled?: boolean;
   assetUniverse?: DexAssetUniverse;
+  positionSizePct?: string;
 }
 
 interface ProvisionStrategyConfigOptions extends StrategyConfigOptions {
@@ -632,6 +658,7 @@ export function buildStrategyConfigForProvision({
   conversationEnabled = true,
   researchEnabled = true,
   assetUniverse,
+  positionSizePct,
 }: StrategyConfigOptions): Record<string, unknown> {
   const config: Record<string, unknown> = {
     runtime_backend: resolveRuntimeBackendForProvision(
@@ -651,6 +678,15 @@ export function buildStrategyConfigForProvision({
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
   if (assetUniverse) config.asset_universe = assetUniverse;
+  if (positionSizePct != null) {
+    const parsedPositionSize = parsePositionSizePct(positionSizePct);
+    if (parsedPositionSize.ok && parsedPositionSize.pct !== DEFAULT_POSITION_SIZE_PCT) {
+      config.position_sizing = {
+        method: 'fixed_fraction',
+        fraction: parsedPositionSize.fraction,
+      };
+    }
+  }
   if (conversationCron || researchCron || !conversationEnabled || !researchEnabled) {
     config.workflow_schedules = {
       ...(conversationCron ? { conversation_cron: conversationCron } : {}),
@@ -723,6 +759,10 @@ export function buildProvisionStrategyConfig({
 }: ProvisionStrategyConfigOptions): Record<string, unknown> {
   const config = buildStrategyConfigForProvision({
     ...strategyConfigOptions,
+    positionSizePct:
+      strategyType === 'hyperliquid_perp'
+        ? strategyConfigOptions.positionSizePct
+        : undefined,
     protocolChainId: includeExecutionTarget
       ? executionConfig?.protocolChainId
       : undefined,
@@ -1414,6 +1454,7 @@ export default function ProvisionPage() {
   const [customCron, setCustomCron] = useState('');
   const [customConversationCron, setCustomConversationCron] = useState('');
   const [customResearchCron, setCustomResearchCron] = useState('');
+  const [positionSizePct, setPositionSizePct] = useState(String(DEFAULT_POSITION_SIZE_PCT));
   const [conversationEnabled, setConversationEnabled] = useState(true);
   const [researchEnabled, setResearchEnabled] = useState(true);
   const [baseAssetAddress, setBaseAssetAddress] = useState<Address>(
@@ -2129,6 +2170,12 @@ export default function ProvisionPage() {
           if (usesExecutionTarget && !executionConfig) {
             throw new Error('Execution target is incomplete');
           }
+          if (strategyType === 'hyperliquid_perp') {
+            const parsedPositionSize = parsePositionSizePct(positionSizePct);
+            if (!parsedPositionSize.ok) {
+              throw new Error(parsedPositionSize.message);
+            }
+          }
           const instanceVaultAddress =
             selectedBlueprint && !selectedBlueprint.isFleet
               ? await resolveInstanceVaultAddressForProvision(
@@ -2154,6 +2201,7 @@ export default function ProvisionPage() {
             conversationEnabled,
             researchEnabled,
             assetUniverse: dexAssetUniverse,
+            positionSizePct,
             effectiveCron,
             validatorServiceIds: resolvedValidatorIds.ids,
             vaultAddress: instanceVaultAddress,
@@ -2224,6 +2272,7 @@ export default function ProvisionPage() {
       validatorMode,
       customValidatorIds,
       validationTrust,
+      positionSizePct,
       customExpertKnowledge,
       customInstructions,
       operatorApiUrl,
@@ -2605,6 +2654,13 @@ export default function ProvisionPage() {
       );
       return;
     }
+    if (strategyType === 'hyperliquid_perp') {
+      const parsedPositionSize = parsePositionSizePct(positionSizePct);
+      if (!parsedPositionSize.ok) {
+        toast.error(parsedPositionSize.message);
+        return;
+      }
+    }
 
     const strategyConfig = buildProvisionStrategyConfig({
       strategyType,
@@ -2621,6 +2677,7 @@ export default function ProvisionPage() {
       conversationEnabled,
       researchEnabled,
       assetUniverse: dexAssetUniverse,
+      positionSizePct,
     });
 
     const bp = selectedBlueprint ?? TRADING_BLUEPRINTS[0];
@@ -3776,6 +3833,8 @@ export default function ProvisionPage() {
         setCustomConversationCron={setCustomConversationCron}
         customResearchCron={customResearchCron}
         setCustomResearchCron={setCustomResearchCron}
+        positionSizePct={positionSizePct}
+        setPositionSizePct={setPositionSizePct}
         conversationEnabled={conversationEnabled}
         setConversationEnabled={setConversationEnabled}
         researchEnabled={researchEnabled}

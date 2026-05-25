@@ -497,6 +497,7 @@ pub async fn activate_bot_with_secrets(
             &bot.trading_api_token,
             &bot.operator_address,
             &bot.strategy_config,
+            &bot.harness_json,
         )
         .await
         {
@@ -863,6 +864,7 @@ pub(crate) async fn write_prebuilt_tools(
     api_token: &str,
     operator_address: &str,
     strategy_config: &serde_json::Value,
+    harness_json: &serde_json::Value,
 ) -> Result<(), String> {
     // Write workspace package.json with OpenCode plus Tangle self-improvement packages.
     write_file_to_sidecar(
@@ -901,9 +903,14 @@ pub(crate) async fn write_prebuilt_tools(
     .await?;
 
     // Write default harness config for meta-harness evolution
-    let default_harness = trading_runtime::backtest::HarnessConfig::default();
+    let effective_harness = if harness_json.is_null() {
+        serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        harness_json.clone()
+    };
     let harness_json =
-        serde_json::to_string_pretty(&default_harness).unwrap_or_else(|_| "{}".to_string());
+        serde_json::to_string_pretty(&effective_harness).unwrap_or_else(|_| "{}".to_string());
     write_file_to_sidecar(
         sidecar_url,
         token,
