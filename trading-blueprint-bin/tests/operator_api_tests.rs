@@ -578,6 +578,39 @@ async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_self_improvement_sidecar(tasks_stdout: serde_json::Value) -> String {
+    let app = Router::new().route(
+        "/terminals/commands",
+        post(move || {
+            let tasks_stdout = tasks_stdout.clone();
+            async move {
+                Json(json!({
+                    "success": true,
+                    "result": {
+                        "exitCode": 0,
+                        "stdout": tasks_stdout.to_string(),
+                        "stderr": "",
+                        "duration": 25
+                    }
+                }))
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock self-improvement sidecar");
+    let addr = listener
+        .local_addr()
+        .expect("mock self-improvement sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock self-improvement sidecar");
+    });
+    format!("http://{addr}")
+}
+
 async fn spawn_mock_chat_sidecar_with_message_status(
     bot_id: &str,
     message_status: StatusCode,
@@ -1438,6 +1471,125 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json, json!([]));
+}
+
+#[tokio::test]
+async fn test_evolution_revision_arena_exposes_mcp_tasks_and_blocks_live_promotion() {
+    let _ = init_test_env();
+    let bot = seed_bot("revision-arena-bot", "dex", true);
+    let auth = test_auth_header(SUBMITTER);
+    let sidecar_url = spawn_mock_self_improvement_sidecar(json!({
+        "runs": [
+            {
+                "task_id": "sit-failed",
+                "status": "failed",
+                "created_at": "2026-05-25T00:00:00.000Z",
+                "spec": "Build a failed paper candidate",
+                "patch_sha256": null,
+                "files_changed": ["tools/example/paper.test.ts"],
+                "tests": ["bun test tools/example/paper.test.ts"],
+                "tests_passed": false
+            },
+            {
+                "task_id": "sit-ready",
+                "status": "completed",
+                "created_at": "2026-05-25T00:01:00.000Z",
+                "spec": "Build a completed paper candidate",
+                "patch_sha256": "sha256:abc123",
+                "files_changed": ["tools/example/run-demo.ts"],
+                "tests": ["bun test tools/example/paper.test.ts"],
+                "tests_passed": true
+            }
+        ]
+    }))
+    .await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    let runs_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/evolution/self-improve/runs", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runs_response.status(), StatusCode::OK);
+    let runs_body = runs_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let runs_json: serde_json::Value = serde_json::from_slice(&runs_body).unwrap();
+    assert_eq!(runs_json["bot_id"], bot.id);
+    assert_eq!(runs_json["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(runs_json["runs"][1]["task_id"], "sit-ready");
+
+    let arena_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/evolution/revision-arena", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(arena_response.status(), StatusCode::OK);
+    let arena_body = arena_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let arena_json: serde_json::Value = serde_json::from_slice(&arena_body).unwrap();
+    assert_eq!(arena_json["active_revision_id"], "rev-0");
+    assert!(arena_json["live_revision_id"].is_null());
+    assert_eq!(arena_json["revisions"].as_array().unwrap().len(), 3);
+    assert_eq!(arena_json["revisions"][2]["revision_id"], "mcp-sit-ready");
+    assert_eq!(arena_json["revisions"][2]["status"], "candidate");
+    assert_eq!(arena_json["revisions"][2]["can_execute_live"], false);
+    assert!(
+        arena_json["invariant"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("MCP candidates are paper/shadow")
+    );
+
+    let promote_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/evolution/revision-arena/promote",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({ "revision_id": "mcp-sit-ready", "confirm_live": true }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(promote_response.status(), StatusCode::CONFLICT);
+    let promote_body = promote_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let promote_json: serde_json::Value = serde_json::from_slice(&promote_body).unwrap();
+    assert_eq!(promote_json["code"], "promotion_blocked");
+    assert!(
+        promote_json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("intentionally blocked")
+    );
 }
 
 #[tokio::test]

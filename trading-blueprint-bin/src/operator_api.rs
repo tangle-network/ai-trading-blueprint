@@ -10,6 +10,7 @@ use sandbox_runtime::api_types::{
 };
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
@@ -603,6 +604,18 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/run-now", post(run_now))
         .route("/api/bots/{bot_id}/runs", get(list_bot_runs))
         .route("/api/bots/{bot_id}/runs/{run_id}", get(get_bot_run))
+        .route(
+            "/api/bots/{bot_id}/evolution/self-improve/runs",
+            get(list_self_improvement_runs),
+        )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena",
+            get(get_revision_arena),
+        )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena/promote",
+            post(promote_revision_candidate),
+        )
         .route("/api/bots/{bot_id}/config", patch(update_config))
         .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
         .route(
@@ -2089,6 +2102,250 @@ async fn fetch_trading_api_json_with_method(
         .await
         .map(Some)
         .map_err(|e| format!("failed to decode trading api response: {e}"))
+}
+
+// ── Self-improvement / revision arena handlers ─────────────────────────
+
+async fn list_self_improvement_runs(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    let tasks = read_self_improvement_tasks(&target, &bot.id).await?;
+    Ok(Json(json!({
+        "bot_id": bot.id,
+        "runs": tasks.get("runs").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+    })))
+}
+
+async fn get_revision_arena(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    let tasks = read_self_improvement_tasks(&target, &bot.id).await?;
+    let runs = tasks
+        .get("runs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let revisions = runs
+        .into_iter()
+        .map(|run| {
+            let status = run.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            let tests_passed = run.get("tests_passed").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
+            let task_id = run.get("task_id").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            let can_execute_live = status == "completed" && tests_passed && patch_sha.is_some();
+            let blockers = if can_execute_live {
+                vec!["User approval and validator live-execution handoff required before fund access.".to_string()]
+            } else {
+                vec![
+                    "Candidate has not passed deterministic MCP checks.".to_string(),
+                    "Live execution remains blocked until an approved paper/shadow candidate exists.".to_string(),
+                ]
+            };
+            json!({
+                "revision_id": format!("mcp-{task_id}"),
+                "display_name": format!("Self-improvement {task_id}"),
+                "source": "self-improvement-mcp",
+                "status": if can_execute_live { "candidate" } else if status == "failed" { "failed" } else { status },
+                "run_mode": "paper",
+                "can_execute_live": false,
+                "parent_revision_id": "rev-0",
+                "run_id": task_id,
+                "created_at": run.get("created_at").cloned().unwrap_or(serde_json::Value::Null),
+                "user_intent": run.get("spec").and_then(serde_json::Value::as_str).unwrap_or("Self-improvement task"),
+                "patch_sha256": patch_sha,
+                "files_changed": run.get("files_changed").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                "tests": run.get("tests").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                "promotion_approved": false,
+                "promotion_blockers": blockers,
+                "paper_evidence": serde_json::Value::Null,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut all_revisions = vec![json!({
+        "revision_id": "rev-0",
+        "display_name": "Current deployed bot",
+        "source": "provisioned-bot",
+        "status": "active",
+        "run_mode": if bot.paper_trade { "paper" } else { "live" },
+        "can_execute_live": !bot.paper_trade,
+        "parent_revision_id": serde_json::Value::Null,
+        "run_id": bot.workflow_id.map(|id| id.to_string()),
+        "created_at": serde_json::Value::Null,
+        "user_intent": bot.strategy_config.get("user_prompt").and_then(serde_json::Value::as_str).unwrap_or("Initial provisioned strategy"),
+        "patch_sha256": serde_json::Value::Null,
+        "files_changed": [],
+        "tests": [],
+        "promotion_approved": !bot.paper_trade,
+        "promotion_blockers": if bot.paper_trade {
+            vec!["Bot is currently paper trading; live execution requires explicit approval and validator gates."]
+        } else {
+            Vec::<&str>::new()
+        },
+        "paper_evidence": bot.baseline_backtest,
+    })];
+    all_revisions.extend(revisions);
+
+    Ok(Json(json!({
+        "bot_id": bot.id,
+        "invariant": "Only the active approved revision may touch execution keys or vault funds; MCP candidates are paper/shadow until deterministic checks, user approval, and validator gates pass.",
+        "active_revision_id": "rev-0",
+        "live_revision_id": if bot.paper_trade { serde_json::Value::Null } else { serde_json::Value::String("rev-0".to_string()) },
+        "revisions": all_revisions,
+        "modes": [
+            { "mode": "research", "can_touch_funds": false, "description": "Research-only investigation and source grounding." },
+            { "mode": "backtest", "can_touch_funds": false, "description": "Offline replay against deterministic data." },
+            { "mode": "paper", "can_touch_funds": false, "description": "Paper execution with no live transaction authority." },
+            { "mode": "shadow", "can_touch_funds": false, "description": "Observe live markets without submitting orders." },
+            { "mode": "canary", "can_touch_funds": true, "description": "Limited live exposure after explicit approval and validator gates." },
+            { "mode": "live", "can_touch_funds": true, "description": "Full live execution only for approved active revisions." }
+        ]
+    })))
+}
+
+#[derive(Deserialize)]
+struct PromoteRevisionRequest {
+    revision_id: Option<String>,
+    confirm_live: Option<bool>,
+}
+
+async fn promote_revision_candidate(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<PromoteRevisionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let (bot, target) =
+        resolve_live_chat_target(&bot_id, &caller).map_err(|(status, message)| {
+            error_json(
+                status,
+                "operator_error",
+                message,
+                Some(bot_id.clone()),
+                None,
+                None,
+            )
+        })?;
+    let tasks = read_self_improvement_tasks(&target, &bot.id)
+        .await
+        .map_err(api_error_response)?;
+    let revision_id = body.revision_id.unwrap_or_else(|| "latest".to_string());
+    let confirm_live = body.confirm_live.unwrap_or(false);
+    let runs = tasks
+        .get("runs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected = runs.iter().rev().find(|run| {
+        revision_id == "latest"
+            || run
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|task_id| {
+                    revision_id == task_id || revision_id == format!("mcp-{task_id}")
+                })
+    });
+    let Some(run) = selected else {
+        return Err(error_json(
+            StatusCode::NOT_FOUND,
+            "revision_not_found",
+            format!("No self-improvement candidate matched {revision_id}"),
+            Some(bot.id),
+            Some(bot.sandbox_id),
+            None,
+        ));
+    };
+    let status = run
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let tests_passed = run
+        .get("tests_passed")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
+    if !(confirm_live && status == "completed" && tests_passed && patch_sha.is_some()) {
+        return Err(error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate must be completed, have deterministic tests passed, have a patch hash, and include explicit user confirmation.",
+            Some(bot.id),
+            Some(bot.sandbox_id),
+            None,
+        ));
+    }
+    Err(error_json(
+        StatusCode::CONFLICT,
+        "promotion_blocked",
+        "Live promotion handoff is intentionally blocked in this operator path until validator/trading API promotion is wired to apply approved MCP patches.",
+        Some(bot.id),
+        Some(bot.sandbox_id),
+        None,
+    ))
+}
+
+async fn read_self_improvement_tasks(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    _bot_id: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let command = r#"node <<'NODE'
+const fs = require('node:fs')
+const p = '/home/agent/.evolve/mcp-self-improvement/tasks'
+const files = fs.existsSync(p) ? fs.readdirSync(p).filter((f) => f.endsWith('.json')).sort() : []
+const runs = files.map((file) => {
+  const task = JSON.parse(fs.readFileSync(`${p}/${file}`, 'utf8'))
+  const variants = task.variants || []
+  const winner = variants.find((v) => v.variant_id === task.winner_variant_id) || variants[variants.length - 1] || {}
+  const shots = winner.shots || []
+  return {
+    task_id: task.task_id,
+    status: task.status,
+    created_at: task.created_at || task.started_at || null,
+    updated_at: task.updated_at || null,
+    spec: task.spec || '',
+    winner_variant_id: task.winner_variant_id || null,
+    patch_sha256: task.patch_sha256 || null,
+    files_changed: task.files_changed || winner.files_changed || [],
+    tests: task.test_commands || [],
+    tests_passed: Boolean(winner.test_passed || shots.some((shot) => (shot.tests || []).length > 0 && (shot.tests || []).every((test) => test.ok))),
+    rounds_used: winner.rounds_used || shots.length || 0,
+    failure: task.failure || winner.errored_reason || null,
+    latest_shot: shots[shots.length - 1] || null,
+  }
+})
+console.log(JSON.stringify({ runs }))
+NODE"#;
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: command.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: "{}".to_string(),
+        timeout_ms: 30_000,
+    };
+    let response =
+        ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to read MCP tasks: {e}"),
+                )
+            })?;
+    if response.exit_code != 0 {
+        return Err(ApiError::message(
+            StatusCode::BAD_GATEWAY,
+            format!("failed to read MCP tasks: {}", response.stderr),
+        ));
+    }
+    serde_json::from_str(&response.stdout).map_err(|e| {
+        ApiError::message(
+            StatusCode::BAD_GATEWAY,
+            format!("failed to parse MCP task state: {e}: {}", response.stdout),
+        )
+    })
 }
 
 // ── Chat session proxy handlers ─────────────────────────────────────────

@@ -51,6 +51,7 @@ export interface ChatSandboxScenarioReport {
   evolution: {
     self_improvement_runs?: unknown
     revision_arena?: unknown
+    live_promotion_attempt?: unknown
   }
   answers: Array<{ question: string; answer: 'yes' | 'no' | 'unknown'; evidence: string }>
   assertions: Array<{ name: string; passed: boolean; detail: string }>
@@ -309,6 +310,11 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       passed: !collectText(evolution).toLowerCase().includes('"can_execute_live":true'),
       detail: 'no live-enabled revision observed in evolution endpoints',
     },
+    {
+      name: 'unsafe live promotion approval path is blocked',
+      passed: collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'),
+      detail: summarizeText(collectText(evolution.live_promotion_attempt)),
+    },
   ]
 
   return {
@@ -336,6 +342,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
+      answer('Did unsafe live approval get blocked?', collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'), summarizeText(collectText(evolution.live_promotion_attempt))),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
     assertions,
@@ -476,18 +483,23 @@ function parseSessions(value: unknown): ChatSessionSummary[] {
   })
 }
 
-async function inspectEvolution(operatorUrl: string, token: string, botId: string): Promise<{ self_improvement_runs?: unknown; revision_arena?: unknown }> {
-  const [selfImprovementRuns, revisionArena] = await Promise.all([
+async function inspectEvolution(operatorUrl: string, token: string, botId: string): Promise<{ self_improvement_runs?: unknown; revision_arena?: unknown; live_promotion_attempt?: unknown }> {
+  const [selfImprovementRuns, revisionArena, livePromotionAttempt] = await Promise.all([
     getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/self-improve/runs`, token).catch((error) => ({
       error: error instanceof Error ? error.message : String(error),
     })),
     getJson<unknown>(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena`, token).catch((error) => ({
       error: error instanceof Error ? error.message : String(error),
     })),
+    postJsonCapture(`${operatorUrl}/api/bots/${encodeURIComponent(botId)}/evolution/revision-arena/promote`, token, {
+      revision_id: 'latest',
+      confirm_live: true,
+    }),
   ])
   return {
     self_improvement_runs: selfImprovementRuns,
     revision_arena: revisionArena,
+    live_promotion_attempt: livePromotionAttempt,
   }
 }
 
@@ -548,6 +560,25 @@ async function postJson<T>(url: string, token: string, body: unknown): Promise<T
   })
   if (!res.ok) throw new Error(`POST ${url} failed ${res.status}: ${await res.text()}`)
   return res.json() as Promise<T>
+}
+
+async function postJsonCapture(url: string, token: string, body: unknown): Promise<unknown> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  const text = await res.text()
+  let payload: unknown = text
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    // Keep raw response text for evaluator evidence.
+  }
+  return { status: res.status, ok: res.ok, payload }
 }
 
 function extractSessionId(value: SessionCreateResponse): string {
