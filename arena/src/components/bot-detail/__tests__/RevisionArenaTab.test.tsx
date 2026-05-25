@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWrapper } from "~/test/mocks";
 
@@ -118,5 +118,76 @@ describe("RevisionArenaTab", () => {
     expect(screen.getByText("missing persisted paper trading evidence")).toBeInTheDocument();
     expect(screen.getByText("strategy.rs")).toBeInTheDocument();
     expect(screen.getAllByText("none").length).toBeGreaterThan(0);
+  });
+
+  it("lets the user approve or reject candidate revisions", async () => {
+    const { RevisionArenaTab } = await import("../RevisionArenaTab");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        expect(url).toBe(
+          "http://localhost:9201/api/bots/bot-1/evolution/revision-arena/decision",
+        );
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          revision_id: "mcp-sr-1",
+          action: "approve",
+          confirm_live: true,
+        });
+        return jsonResponse({ status: "canary_promoted" });
+      }
+      return jsonResponse({
+        bot_id: "bot-1",
+        invariant:
+          "Only the active approved revision may touch execution keys or vault funds.",
+        active_revision_id: "rev-0",
+        live_revision_id: null,
+        revisions: [
+          {
+            revision_id: "mcp-sr-1",
+            display_name: "Candidate 1",
+            source: "self-improvement-mcp",
+            status: "candidate",
+            run_mode: "paper",
+            can_execute_live: false,
+            parent_revision_id: "rev-0",
+            run_id: "sr-1",
+            created_at: "2026-05-20T10:00:00Z",
+            user_intent: "Improve the strategy after backtesting.",
+            patch_sha256: "sha256:abcdef1234567890",
+            files_changed: ["strategy.rs"],
+            tests: ["cargo test"],
+            promotion_approved: false,
+            promotion_blockers: ["User approval can stage this candidate."],
+            paper_evidence: {
+              trades: 12,
+              total_return_pct: 3.4,
+              max_drawdown_pct: 1.2,
+            },
+          },
+        ],
+        modes: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RevisionArenaTab
+        botId="bot-1"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    fireEvent.click(await screen.findByText("Approve"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:9201/api/bots/bot-1/evolution/revision-arena/decision",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(screen.getByText("Reject")).toBeInTheDocument();
   });
 });

@@ -1742,6 +1742,112 @@ async fn test_evolution_revision_arena_promotes_ready_candidate_to_live_for_live
 }
 
 #[tokio::test]
+async fn test_evolution_revision_arena_rejects_candidate_and_blocks_later_approval() {
+    let _ = init_test_env();
+    let bot = seed_bot("revision-arena-reject-bot", "dex", true);
+    let auth = test_auth_header(SUBMITTER);
+    let sidecar_url = spawn_mock_self_improvement_sidecar(json!({
+        "runs": [{
+            "task_id": "sit-reject-ready",
+            "status": "completed",
+            "created_at": "2026-05-25T00:01:00.000Z",
+            "spec": "Build a rejected paper candidate",
+            "patch_sha256": "sha256:reject123",
+            "files_changed": ["tools/example/run-demo.ts"],
+            "tests": ["bun test tools/example/paper.test.ts"],
+            "tests_passed": true
+        }]
+    }))
+    .await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    let reject_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/evolution/revision-arena/decision",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({
+                        "revision_id": "mcp-sit-reject-ready",
+                        "action": "reject",
+                        "reason": "Backtest drawdown is too high"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reject_response.status(), StatusCode::OK);
+    let reject_body = reject_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let reject_json: serde_json::Value = serde_json::from_slice(&reject_body).unwrap();
+    assert_eq!(reject_json["status"], "rejected");
+    assert_eq!(reject_json["revision_id"], "mcp-sit-reject-ready");
+
+    let promote_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/evolution/revision-arena/promote",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({ "revision_id": "mcp-sit-reject-ready", "confirm_live": true })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(promote_response.status(), StatusCode::CONFLICT);
+    let promote_body = promote_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let promote_json: serde_json::Value = serde_json::from_slice(&promote_body).unwrap();
+    assert_eq!(promote_json["code"], "promotion_blocked");
+
+    let arena_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/evolution/revision-arena", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(arena_response.status(), StatusCode::OK);
+    let arena_body = arena_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let arena_json: serde_json::Value = serde_json::from_slice(&arena_body).unwrap();
+    assert!(arena_json["revisions"].as_array().unwrap().iter().any(
+        |revision| revision["revision_id"] == "mcp-sit-reject-ready"
+            && revision["status"] == "rejected"
+            && revision["rejection"]["reason"] == "Backtest drawdown is too high"
+    ));
+}
+
+#[tokio::test]
 async fn test_chat_live_approval_promotes_latest_ready_candidate_for_live_capable_bot() {
     let _ = init_test_env();
     let bot = seed_bot("chat-live-promotion-bot", "dex", true);

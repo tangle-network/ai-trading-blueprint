@@ -3,11 +3,13 @@ import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import {
   type RevisionArenaEntry,
   type RevisionRunMode,
+  useRevisionDecision,
   useRevisionArena,
 } from "~/lib/hooks/useBotApi";
 import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { OperatorAccessCard } from "~/components/operator/OperatorAccessCard";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
+import { Button } from "@tangle-network/blueprint-ui/components";
 
 interface RevisionArenaTabProps {
   botId: string;
@@ -83,9 +85,20 @@ function shortHash(value?: string | null): string {
   return value.length > 18 ? `${value.slice(0, 18)}...` : value;
 }
 
-function RevisionRow({ revision }: { revision: RevisionArenaEntry }) {
+function RevisionRow({
+  revision,
+  onApprove,
+  onReject,
+  decisionPending,
+}: {
+  revision: RevisionArenaEntry;
+  onApprove: (revisionId: string) => void;
+  onReject: (revisionId: string) => void;
+  decisionPending: boolean;
+}) {
   const blockerCount = revision.promotion_blockers.length;
   const changedFiles = revision.files_changed.slice(0, 4);
+  const canDecide = revision.source === "self-improvement-mcp" && revision.status === "candidate";
 
   return (
     <div className="border-b border-arena-elements-dividerColor/50 px-4 py-4 last:border-b-0">
@@ -112,6 +125,27 @@ function RevisionRow({ revision }: { revision: RevisionArenaEntry }) {
         <div className="text-right text-[11px] font-data text-arena-elements-textTertiary">
           <div>{formatTime(revision.created_at)}</div>
           <div className="mt-1">{shortHash(revision.patch_sha256)}</div>
+          {canDecide && (
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                size="sm"
+                onClick={() => onApprove(revision.revision_id)}
+                disabled={decisionPending}
+                className="h-7 px-3 text-[11px]"
+              >
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onReject(revision.revision_id)}
+                disabled={decisionPending}
+                className="h-7 px-3 text-[11px]"
+              >
+                Reject
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -161,6 +195,17 @@ function RevisionRow({ revision }: { revision: RevisionArenaEntry }) {
         </div>
       )}
 
+      {revision.rejection?.reason && (
+        <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+          <div className="text-[11px] font-data font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            Rejected
+          </div>
+          <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+            {revision.rejection.reason}
+          </p>
+        </div>
+      )}
+
       {revision.paper_evidence && (
         <div className="mt-3 grid gap-2 text-[11px] font-data text-arena-elements-textSecondary sm:grid-cols-3">
           <div>
@@ -195,11 +240,27 @@ export function RevisionArenaTab({
     enabled: verificationState !== "unverified",
     refetchInterval: 15_000,
   });
+  const decision = useRevisionDecision(botId, {
+    operatorApiUrl,
+    operatorKind,
+  });
 
   const sortedRevisions = useMemo(
     () => query.data?.revisions ?? [],
     [query.data?.revisions],
   );
+
+  const approveRevision = (revisionId: string) => {
+    decision.mutate({ revisionId, action: "approve", confirmLive: true });
+  };
+
+  const rejectRevision = (revisionId: string) => {
+    decision.mutate({
+      revisionId,
+      action: "reject",
+      reason: "Rejected by user in Arena",
+    });
+  };
 
   if (verificationState === "unverified") {
     return (
@@ -274,7 +335,13 @@ export function RevisionArenaTab({
 
       <section className="glass-card overflow-hidden rounded-xl border border-arena-elements-dividerColor">
         {sortedRevisions.map((revision) => (
-          <RevisionRow key={revision.revision_id} revision={revision} />
+          <RevisionRow
+            key={revision.revision_id}
+            revision={revision}
+            onApprove={approveRevision}
+            onReject={rejectRevision}
+            decisionPending={decision.isPending}
+          />
         ))}
       </section>
 

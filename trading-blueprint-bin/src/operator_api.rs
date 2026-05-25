@@ -616,6 +616,10 @@ pub fn build_operator_router() -> Router {
             "/api/bots/{bot_id}/evolution/revision-arena/promote",
             post(promote_revision_candidate),
         )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena/decision",
+            post(decide_revision_candidate),
+        )
         .route("/api/bots/{bot_id}/config", patch(update_config))
         .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
         .route(
@@ -2135,6 +2139,7 @@ async fn get_revision_arena(
         .and_then(|revision| revision.get("revision_id"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
+    let rejected_revisions = bot_rejected_revisions(&bot);
     let revisions = runs
         .into_iter()
         .filter_map(|run| {
@@ -2146,8 +2151,17 @@ async fn get_revision_arena(
             if canary_revision_id.as_deref() == Some(revision_id.as_str()) {
                 return None;
             }
+            let rejection = rejected_revisions.get(&revision_id);
             let ready = status == "completed" && tests_passed && patch_sha.is_some();
-            let blockers = if ready && bot_allows_live_revision_promotion(&bot) {
+            let blockers = if let Some(rejection) = rejection {
+                vec![format!(
+                    "Rejected by owner: {}",
+                    rejection
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("No reason provided")
+                )]
+            } else if ready && bot_allows_live_revision_promotion(&bot) {
                 vec!["User approval can promote this candidate into the live path; trades still require configured trading API and validator/risk gates.".to_string()]
             } else if ready {
                 vec!["User approval can stage this candidate as canary paper/live-sim; configure live mode and user secrets before fund access.".to_string()]
@@ -2161,7 +2175,7 @@ async fn get_revision_arena(
                 "revision_id": revision_id,
                 "display_name": format!("Self-improvement {task_id}"),
                 "source": "self-improvement-mcp",
-                "status": if ready { "candidate" } else if status == "failed" { "failed" } else { status },
+                "status": if rejection.is_some() { "rejected" } else if ready { "candidate" } else if status == "failed" { "failed" } else { status },
                 "run_mode": "paper",
                 "can_execute_live": false,
                 "parent_revision_id": "rev-0",
@@ -2173,6 +2187,7 @@ async fn get_revision_arena(
                 "tests": run.get("tests").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
                 "promotion_approved": false,
                 "promotion_blockers": blockers,
+                "rejection": rejection.cloned(),
                 "paper_evidence": serde_json::Value::Null,
             }))
         })
@@ -2245,6 +2260,14 @@ struct PromoteRevisionRequest {
     confirm_live: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct RevisionDecisionRequest {
+    revision_id: Option<String>,
+    action: String,
+    reason: Option<String>,
+    confirm_live: Option<bool>,
+}
+
 fn revision_id_for_task(task_id: &str) -> String {
     format!("mcp-{task_id}")
 }
@@ -2254,6 +2277,15 @@ fn bot_canary_revision(bot: &TradingBotRecord) -> Option<serde_json::Value> {
         .get("revision_arena")
         .and_then(|value| value.get("canary_revision"))
         .cloned()
+}
+
+fn bot_rejected_revisions(bot: &TradingBotRecord) -> serde_json::Map<String, serde_json::Value> {
+    bot.strategy_config
+        .get("revision_arena")
+        .and_then(|value| value.get("rejected_revisions"))
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn bot_has_user_secrets(bot: &TradingBotRecord) -> bool {
@@ -2339,6 +2371,50 @@ fn persist_canary_revision(
     Ok(())
 }
 
+fn persist_rejected_revision(
+    bot: &TradingBotRecord,
+    revision_id: &str,
+    reason: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let mut config = bot.strategy_config.clone();
+    if !config.is_object() {
+        config = json!({});
+    }
+    let object = config.as_object_mut().ok_or_else(|| {
+        ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, "invalid strategy config")
+    })?;
+    let revision_arena = object.entry("revision_arena").or_insert_with(|| json!({}));
+    if !revision_arena.is_object() {
+        *revision_arena = json!({});
+    }
+    let arena = revision_arena
+        .as_object_mut()
+        .expect("revision arena object");
+    let rejected = arena
+        .entry("rejected_revisions")
+        .or_insert_with(|| json!({}));
+    if !rejected.is_object() {
+        *rejected = json!({});
+    }
+    let rejection = json!({
+        "revision_id": revision_id,
+        "reason": reason,
+        "rejected_at": chrono::Utc::now().to_rfc3339(),
+    });
+    rejected
+        .as_object_mut()
+        .expect("rejected revisions object")
+        .insert(revision_id.to_string(), rejection.clone());
+
+    state::bots()
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&state::bot_key(&bot.id), |record| {
+            record.strategy_config = config.clone();
+        })
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(rejection)
+}
+
 async fn promote_revision_candidate(
     SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
@@ -2363,6 +2439,87 @@ async fn promote_revision_candidate(
     )
     .await
     .map(Json)
+}
+
+async fn decide_revision_candidate(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<RevisionDecisionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let (bot, target) =
+        resolve_live_chat_target(&bot_id, &caller).map_err(|(status, message)| {
+            error_json(
+                status,
+                "operator_error",
+                message,
+                Some(bot_id.clone()),
+                None,
+                None,
+            )
+        })?;
+    let revision_id = body.revision_id.unwrap_or_else(|| "latest".to_string());
+    match body.action.as_str() {
+        "approve" => promote_revision_for_bot(
+            &bot,
+            &target,
+            revision_id,
+            body.confirm_live.unwrap_or(true),
+        )
+        .await
+        .map(Json),
+        "reject" => {
+            let tasks = read_self_improvement_tasks(&target, &bot.id)
+                .await
+                .map_err(api_error_response)?;
+            let runs = tasks
+                .get("runs")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let selected = runs.iter().rev().find(|run| {
+                revision_id == "latest"
+                    || run
+                        .get("task_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|task_id| {
+                            revision_id == task_id || revision_id == format!("mcp-{task_id}")
+                        })
+            });
+            let Some(run) = selected else {
+                return Err(error_json(
+                    StatusCode::NOT_FOUND,
+                    "revision_not_found",
+                    format!("No self-improvement candidate matched {revision_id}"),
+                    Some(bot.id),
+                    Some(bot.sandbox_id),
+                    None,
+                ));
+            };
+            let task_id = run
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let revision_id = revision_id_for_task(task_id);
+            let reason = body.reason.as_deref().unwrap_or("Rejected by owner");
+            let rejection = persist_rejected_revision(&bot, &revision_id, reason)
+                .map_err(api_error_response)?;
+            Ok(Json(json!({
+                "status": "rejected",
+                "bot_id": bot.id,
+                "sandbox_id": bot.sandbox_id,
+                "revision_id": revision_id,
+                "rejection": rejection,
+            })))
+        }
+        _ => Err(error_json(
+            StatusCode::BAD_REQUEST,
+            "invalid_revision_decision",
+            "Revision decision action must be approve or reject.",
+            Some(bot.id),
+            Some(bot.sandbox_id),
+            None,
+        )),
+    }
 }
 
 async fn promote_revision_for_bot(
@@ -2407,6 +2564,21 @@ async fn promote_revision_for_bot(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
+    let task_revision_id = run
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .map(revision_id_for_task)
+        .unwrap_or_else(|| revision_id.clone());
+    if bot_rejected_revisions(bot).contains_key(&task_revision_id) {
+        return Err(error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate was rejected by the owner.",
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        ));
+    }
     if !(confirm_live && status == "completed" && tests_passed && patch_sha.is_some()) {
         return Err(error_json(
             StatusCode::CONFLICT,
