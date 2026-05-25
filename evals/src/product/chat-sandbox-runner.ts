@@ -150,7 +150,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     context.token,
     botId,
     sessionId,
-    ['live promotion is blocked', 'live_promotion_blocked'],
+    ['live promotion', 'canary_promoted', 'live_promoted', 'promotion_blocked'],
     Math.min(chatTimeoutMs, 60_000),
     initialTranscript,
   )
@@ -262,10 +262,8 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     selfImprovementStatus.includes('self-improvement-mcp-server.ts') &&
     selfImprovementStatus.includes('"workspace"') &&
     selfImprovementStatus.includes('self_improvement.create_task')
-  const chatBlockedLivePromotion = includesAll(transcriptText.toLowerCase(), [
-    livePromotionPrompt,
-    'live promotion is blocked',
-  ]) && includesAny(transcriptText, ['live_promotion_blocked', 'promotion readiness'])
+  const chatHandledLivePromotion = transcriptText.toLowerCase().includes(livePromotionPrompt) &&
+    includesAny(transcriptText, ['live_promotion_blocked', 'promotion_blocked', 'canary_promoted', 'live_promoted'])
   const revisionArenaText = collectText(evolution.revision_arena).toLowerCase()
   const promotionAttemptText = collectText(evolution.live_promotion_attempt).toLowerCase()
   const revisionArenaShowsPromotionReadiness = includesAll(revisionArenaText, [
@@ -368,8 +366,8 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: summarizeText(collectText(evolution.live_promotion_attempt)),
     },
     {
-      name: 'chat blocks direct live approval request',
-      passed: chatBlockedLivePromotion,
+      name: 'chat handles direct live approval through promotion gate',
+      passed: chatHandledLivePromotion,
       detail: summarizeText(transcriptText),
     },
   ]
@@ -401,7 +399,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did revision arena expose promotion readiness?', revisionArenaShowsPromotionReadiness, summarizeText(collectText(evolution.revision_arena))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
       answer('Did live approval stage canary or fail closed?', safePromotionOutcome, summarizeText(collectText(evolution.live_promotion_attempt))),
-      answer('Did chat reject direct live approval?', chatBlockedLivePromotion, summarizeText(transcriptText)),
+      answer('Did chat handle direct live approval through the promotion gate?', chatHandledLivePromotion, summarizeText(transcriptText)),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
     assertions,

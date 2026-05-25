@@ -804,6 +804,16 @@ fn append_transcript_message(
     }
 }
 
+pub fn append_operator_transcript_message(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    role: &str,
+    text: String,
+    metadata: Value,
+) {
+    append_transcript_message(target, session_id, role, text, metadata);
+}
+
 pub async fn proxy_chat_events(
     target: SidecarChatTarget,
     session_id: Option<String>,

@@ -1649,6 +1649,176 @@ async fn test_evolution_revision_arena_exposes_mcp_tasks_and_blocks_live_promoti
 }
 
 #[tokio::test]
+async fn test_evolution_revision_arena_promotes_ready_candidate_to_live_for_live_capable_bot() {
+    let _ = init_test_env();
+    let bot = seed_bot("revision-arena-live-bot", "dex", true);
+    let auth = test_auth_header(SUBMITTER);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.paper_trade = false;
+            record.strategy_config = json!({
+                "paper_trade": false,
+                "max_slippage": 0.5
+            });
+        })
+        .expect("mark bot live-capable");
+    let sidecar_url = spawn_mock_self_improvement_sidecar(json!({
+        "runs": [{
+            "task_id": "sit-live-ready",
+            "status": "completed",
+            "created_at": "2026-05-25T00:01:00.000Z",
+            "spec": "Build a completed live-ready candidate",
+            "patch_sha256": "sha256:live123",
+            "files_changed": ["tools/example/run-demo.ts"],
+            "tests": ["bun test tools/example/paper.test.ts"],
+            "tests_passed": true
+        }]
+    }))
+    .await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    let promoted_response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/evolution/revision-arena/promote",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({ "revision_id": "latest", "confirm_live": true }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(promoted_response.status(), StatusCode::OK);
+    let promoted_body = promoted_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let promoted_json: serde_json::Value = serde_json::from_slice(&promoted_body).unwrap();
+    assert_eq!(promoted_json["status"], "live_promoted");
+    assert_eq!(
+        promoted_json["revision"]["revision_id"],
+        "mcp-sit-live-ready"
+    );
+    assert_eq!(promoted_json["revision"]["run_mode"], "live");
+    assert_eq!(promoted_json["revision"]["can_execute_live"], true);
+    assert_eq!(promoted_json["revision"]["can_touch_funds"], true);
+
+    let arena_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/evolution/revision-arena", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(arena_response.status(), StatusCode::OK);
+    let arena_body = arena_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let arena_json: serde_json::Value = serde_json::from_slice(&arena_body).unwrap();
+    assert_eq!(arena_json["active_revision_id"], "mcp-sit-live-ready");
+    assert_eq!(arena_json["live_revision_id"], "mcp-sit-live-ready");
+    assert!(arena_json["revisions"].as_array().unwrap().iter().any(
+        |revision| revision["revision_id"] == "mcp-sit-live-ready"
+            && revision["run_mode"] == "live"
+            && revision["can_execute_live"] == true
+            && revision["can_touch_funds"] == true
+    ));
+}
+
+#[tokio::test]
+async fn test_chat_live_approval_promotes_latest_ready_candidate_for_live_capable_bot() {
+    let _ = init_test_env();
+    let bot = seed_bot("chat-live-promotion-bot", "dex", true);
+    let auth = test_auth_header(SUBMITTER);
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.paper_trade = false;
+            record.strategy_config = json!({ "paper_trade": false });
+        })
+        .expect("mark bot live-capable");
+    let sidecar_url = spawn_mock_self_improvement_sidecar(json!({
+        "runs": [{
+            "task_id": "sit-chat-live-ready",
+            "status": "completed",
+            "created_at": "2026-05-25T00:01:00.000Z",
+            "spec": "Build a chat-promoted live candidate",
+            "patch_sha256": "sha256:chatlive123",
+            "files_changed": ["tools/example/run-demo.ts"],
+            "tests": ["bun test tools/example/paper.test.ts"],
+            "tests_passed": true
+        }]
+    }))
+    .await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    let session_id = "manual-live-approval";
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/{session_id}/messages",
+                    bot.id
+                ))
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(
+                    json!({ "message": "ok now run this live with real funds" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let messages_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/{session_id}/messages",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(messages_response.status(), StatusCode::OK);
+    let messages_body = messages_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let messages_json: serde_json::Value = serde_json::from_slice(&messages_body).unwrap();
+    let transcript = serde_json::to_string(&messages_json).unwrap();
+    assert!(transcript.contains("live_promoted"), "{transcript}");
+    assert!(
+        transcript.contains("mcp-sit-chat-live-ready"),
+        "{transcript}"
+    );
+}
+
+#[tokio::test]
 async fn test_archived_transcript_replay_honors_limit_and_cursor() {
     let _ = init_test_env();
     let bot = seed_bot_with_workflow("runs-paged-bot", "dex", true, Some(9_100_201));
