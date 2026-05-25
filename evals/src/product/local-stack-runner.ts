@@ -33,6 +33,7 @@ export interface LocalProductE2EReport {
   operator_url: string
   output_dir: string
   storage_state: string
+  create_driver: 'bad' | 'product-api'
   browser: ProductBrowserEvalReport
   assertions: Array<{ name: string; passed: boolean; detail: string }>
   scenario?: unknown
@@ -71,23 +72,27 @@ export async function runLocalProductE2E(options: LocalProductE2EOptions = {}): 
     const beforeProvisions = await listProvisions(operatorUrl)
     const intent = `Local E2E ${Date.now()}: create a conservative ETH/USDC Uniswap paper trading agent. Research momentum and mean reversion, backtest before live trading, and propose self-improvements only after validation.`
 
+    const createDriver = process.env.ARENA_E2E_CREATE_DRIVER === 'product-api' ? 'product-api' : 'bad'
     const browser = runProductBrowserEval({
       baseUrl,
       outputDir: resolve(outputDir, 'bad'),
-      runBad: true,
+      runBad: createDriver === 'bad',
       realProvision: true,
       realProvisionIntent: intent,
       storageStatePath: storageState,
       maxTurns: options.maxTurns ?? 32,
     })
+    if (createDriver === 'product-api') {
+      await createBotThroughProductApi(operatorUrl, session.token, intent)
+    }
 
     const after = await waitForProvisionDelta(operatorUrl, session.token, beforeBots.ids, beforeProvisions.callIds, 240_000)
     const browserEvidence = summarizeBrowserEvidence(browser)
     const assertions = [
       {
-        name: 'browser agent exercised create flow',
-        passed: browserEvidence.passed,
-        detail: browserEvidence.detail,
+        name: 'product create flow exercised',
+        passed: createDriver === 'product-api' || browserEvidence.passed,
+        detail: createDriver === 'product-api' ? 'created through frontend operator proxy with real auth token' : browserEvidence.detail,
       },
       {
         name: 'operator recorded a new bot',
@@ -117,6 +122,7 @@ export async function runLocalProductE2E(options: LocalProductE2EOptions = {}): 
       operator_url: operatorUrl,
       output_dir: outputDir,
       storage_state: storageState,
+      create_driver: createDriver,
       browser,
       assertions,
       ...(scenario === undefined ? {} : { scenario }),
@@ -194,6 +200,9 @@ function startDevnet(e2eAddress: string, outputDir: string): ChildProcessWithout
       VITE_DEX_ARBITRUM_FORK_PAPER_TRADE: process.env.VITE_DEX_ARBITRUM_FORK_PAPER_TRADE ?? 'true',
       VITE_DEFAULT_AI_PROVIDER: process.env.VITE_DEFAULT_AI_PROVIDER ?? defaultAiProvider(),
       VITE_DEFAULT_AI_API_KEY: process.env.VITE_DEFAULT_AI_API_KEY ?? defaultAiApiKey(),
+      BLUEPRINT_STATE_DIR: process.env.BLUEPRINT_STATE_DIR ?? resolve(outputDir, 'state/cloud'),
+      INSTANCE_BLUEPRINT_STATE_DIR: process.env.INSTANCE_BLUEPRINT_STATE_DIR ?? resolve(outputDir, 'state/instance'),
+      VALIDATOR_BLUEPRINT_STATE_DIR: process.env.VALIDATOR_BLUEPRINT_STATE_DIR ?? resolve(outputDir, 'state/validator'),
     },
   })
   const append = (chunk: Buffer) => {
@@ -283,6 +292,22 @@ async function listProvisions(operatorUrl: string): Promise<{ callIds: Set<strin
   return {
     callIds: new Set(json.provisions.map((item) => String(item.call_id ?? '')).filter(Boolean)),
   }
+}
+
+async function createBotThroughProductApi(operatorUrl: string, token: string, prompt: string): Promise<void> {
+  const promptLower = prompt.toLowerCase()
+  const strategyType = promptLower.includes('yield') || promptLower.includes('lending') || promptLower.includes('aave')
+    ? 'yield'
+    : promptLower.includes('polymarket') || promptLower.includes('prediction') || promptLower.includes('politics')
+      ? 'prediction'
+      : promptLower.includes('perp') || promptLower.includes('leverage') || promptLower.includes('futures')
+        ? 'perp'
+        : 'dex'
+  await postJsonWithToken(`${operatorUrl}/api/bots`, token, {
+    prompt,
+    name: prompt.slice(0, 50),
+    strategy_type: strategyType,
+  })
 }
 
 function parseBotList(value: unknown): BotListResponse {
@@ -375,6 +400,19 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`POST ${url} failed ${res.status}: ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
+async function postJsonWithToken<T>(url: string, token: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`POST ${url} failed ${res.status}: ${await res.text()}`)
