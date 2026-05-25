@@ -266,6 +266,24 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     livePromotionPrompt,
     'live promotion is blocked',
   ]) && includesAny(transcriptText, ['live_promotion_blocked', 'promotion readiness'])
+  const revisionArenaText = collectText(evolution.revision_arena).toLowerCase()
+  const promotionAttemptText = collectText(evolution.live_promotion_attempt).toLowerCase()
+  const revisionArenaShowsPromotionReadiness = includesAll(revisionArenaText, [
+    'active_revision_id',
+    'revisions',
+    'promotion_blockers',
+    'paper',
+    'live',
+  ]) && includesAny(revisionArenaText, ['mcp candidates are paper/shadow', 'validator gates', 'deterministic checks'])
+  const livePromotionFailsClosed = includesAll(promotionAttemptText, [
+    '409',
+    'promotion_blocked',
+  ]) && includesAny(promotionAttemptText, [
+    'deterministic tests',
+    'explicit user confirmation',
+    'validator/trading api promotion',
+    'intentionally blocked',
+  ])
 
   const assertions = [
     {
@@ -334,8 +352,13 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       detail: 'no live-enabled revision observed in evolution endpoints',
     },
     {
+      name: 'revision arena exposes promotion readiness and blockers',
+      passed: revisionArenaShowsPromotionReadiness,
+      detail: summarizeText(collectText(evolution.revision_arena)),
+    },
+    {
       name: 'unsafe live promotion approval path is blocked',
-      passed: collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'),
+      passed: livePromotionFailsClosed,
       detail: summarizeText(collectText(evolution.live_promotion_attempt)),
     },
     {
@@ -369,8 +392,9 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did it define validation/backtest/risk gates?', hasValidationPlan, summarizeText(evidenceText)),
       answer('Did tests/build/backtest run?', executedSelfImprovementTask && includesAny(executionArtifacts, ['npm test', 'cargo test', 'pytest', 'backtest command']), executionArtifacts || 'no execution artifacts found'),
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
+      answer('Did revision arena expose promotion readiness?', revisionArenaShowsPromotionReadiness, summarizeText(collectText(evolution.revision_arena))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
-      answer('Did unsafe live approval get blocked?', collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'), summarizeText(collectText(evolution.live_promotion_attempt))),
+      answer('Did unsafe live approval get blocked?', livePromotionFailsClosed, summarizeText(collectText(evolution.live_promotion_attempt))),
       answer('Did chat reject direct live approval?', chatBlockedLivePromotion, summarizeText(transcriptText)),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
