@@ -80,11 +80,28 @@ sol! {
 const CORE_USDC_WEI_PER_USDC: u64 = 100_000_000;
 const EVM_USDC_WEI_PER_USDC: u64 = 1_000_000;
 const HYPERLIQUID_USDC_SPOT_TOKEN: u64 = 0;
-const HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET: &str = "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7";
+const HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET: &str = "0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24";
 const HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET: &str = "0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206";
+const HYPERLIQUID_MAINNET_INFO_URL: &str = "https://api.hyperliquid.xyz/info";
 const FUNDING_PROTOCOL: &str = "hyperliquid_funding";
 const FUNDING_POLL_ATTEMPTS: usize = 10;
 const FUNDING_POLL_DELAY_MS: u64 = 2_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HyperliquidChainAddresses {
+    core_deposit_wallet: Address,
+}
+
+#[derive(Clone, Debug)]
+struct CoreDepositRouteReadiness {
+    available: bool,
+    unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HyperliquidUserRoleResponse {
+    role: String,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct HyperliquidFundingStatus {
@@ -464,7 +481,8 @@ async fn submit_evm_usdc_to_core(
     let chain_client = matching_chain_client(state, bot)?;
     let vault = parse_address(&bot.vault_address, "vault address")?;
     let amount_wei = decimal_usdc_to_evm_wei(amount)?;
-    let core_deposit_wallet = require_core_deposit_wallet(&chain_client)?;
+    let core_deposit_wallet = require_core_deposit_wallet(&chain_client).await?;
+    ensure_core_deposit_recipient_eligible(chain_client.chain_id, vault).await?;
     let deadline = Utc::now().timestamp() as u64 + state.validation_deadline_secs;
     let nonce = next_nonce();
     let policy = read_fund_movement_policy(bot, vault).await?;
@@ -751,7 +769,7 @@ async fn funding_status(
     let core_total_usdc = parse_decimal(&nav.hyperliquid_equity, "hyperliquid_equity")?;
     let perp_margin_usdc = parse_decimal(&account.account_value, "account_value")?;
     let core_spot_usdc = (core_total_usdc - perp_margin_usdc).max(Decimal::ZERO);
-    let core_deposit_supported = core_deposit_wallet_for_bot(state, bot).await?.is_some();
+    let core_deposit_readiness = core_deposit_route_readiness_for_bot(state, bot).await?;
 
     Ok(classify_funding_status(
         idle_evm_usdc,
@@ -759,7 +777,8 @@ async fn funding_status(
         perp_margin_usdc,
         core_total_usdc,
         requested,
-        core_deposit_supported,
+        core_deposit_readiness.available,
+        core_deposit_readiness.unavailable_reason,
     ))
 }
 
@@ -770,6 +789,7 @@ fn classify_funding_status(
     core_total_usdc: Decimal,
     requested: Option<Decimal>,
     core_deposit_supported: bool,
+    core_deposit_unavailable_reason: Option<String>,
 ) -> HyperliquidFundingStatus {
     let enough_core_spot = requested.is_none_or(|amount| core_spot_usdc >= amount);
     let enough_perp_margin = requested.is_none_or(|amount| perp_margin_usdc >= amount);
@@ -807,7 +827,9 @@ fn classify_funding_status(
         if !core_deposit_supported {
             (
                 "evm_to_core_route_unavailable",
-                "Idle HyperEVM USDC is available, but this deployed vault does not support CoreDepositWallet deposits. Redeploy or migrate before funding HyperCore.",
+                core_deposit_unavailable_reason.as_deref().unwrap_or(
+                    "Idle HyperEVM USDC is available, but this deployed vault does not support CoreDepositWallet deposits. Redeploy or migrate before funding HyperCore.",
+                ),
                 false,
                 false,
             )
@@ -1046,37 +1068,152 @@ fn validation_scores(validation: &trading_runtime::types::ValidationResult) -> V
         .collect()
 }
 
-async fn core_deposit_wallet_for_bot(
+async fn core_deposit_route_readiness_for_bot(
     state: &MultiBotTradingState,
     bot: &BotContext,
-) -> Result<Option<Address>, (StatusCode, String)> {
+) -> Result<CoreDepositRouteReadiness, (StatusCode, String)> {
     let chain_client = matching_chain_client(state, bot)?;
-    core_deposit_wallet(chain_client.chain_id)
+    let Some(addresses) = hyperliquid_chain_addresses(chain_client.chain_id)? else {
+        return Ok(CoreDepositRouteReadiness {
+            available: false,
+            unavailable_reason: Some(
+                "Hyperliquid CoreDepositWallet deposits are only supported on HyperEVM mainnet (999) and testnet (998)."
+                    .to_string(),
+            ),
+        });
+    };
+    ensure_core_deposit_wallet_contract(&chain_client, addresses.core_deposit_wallet).await?;
+    let vault = parse_address(&bot.vault_address, "vault address")?;
+    if let Err((_, reason)) =
+        ensure_core_deposit_recipient_eligible(chain_client.chain_id, vault).await
+    {
+        return Ok(CoreDepositRouteReadiness {
+            available: false,
+            unavailable_reason: Some(reason),
+        });
+    }
+    Ok(CoreDepositRouteReadiness {
+        available: true,
+        unavailable_reason: None,
+    })
 }
 
-fn core_deposit_wallet(chain_id: u64) -> Result<Option<Address>, (StatusCode, String)> {
-    let wallet = match chain_id {
+fn hyperliquid_chain_addresses(
+    chain_id: u64,
+) -> Result<Option<HyperliquidChainAddresses>, (StatusCode, String)> {
+    let core_deposit_wallet = match chain_id {
         999 => HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET,
         998 => HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET,
         _ => return Ok(None),
     };
-    Address::from_str(wallet).map(Some).map_err(|e| {
+    let core_deposit_wallet = Address::from_str(core_deposit_wallet).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Configured Hyperliquid CoreDepositWallet address is invalid: {e}"),
         )
-    })
+    })?;
+    Ok(Some(HyperliquidChainAddresses {
+        core_deposit_wallet,
+    }))
 }
 
-fn require_core_deposit_wallet(
+async fn require_core_deposit_wallet(
     chain_client: &trading_runtime::chain::ChainClient,
 ) -> Result<Address, (StatusCode, String)> {
-    core_deposit_wallet(chain_client.chain_id)?.ok_or_else(|| {
+    let addresses = hyperliquid_chain_addresses(chain_client.chain_id)?.ok_or_else(|| {
         (
             StatusCode::CONFLICT,
             "Hyperliquid CoreDepositWallet deposits are only supported on HyperEVM mainnet (999) and testnet (998).".to_string(),
         )
-    })
+    })?;
+    ensure_core_deposit_wallet_contract(chain_client, addresses.core_deposit_wallet).await?;
+    Ok(addresses.core_deposit_wallet)
+}
+
+async fn ensure_core_deposit_wallet_contract(
+    chain_client: &trading_runtime::chain::ChainClient,
+    core_deposit_wallet: Address,
+) -> Result<(), (StatusCode, String)> {
+    let code = chain_client
+        .provider
+        .get_code_at(core_deposit_wallet)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid CoreDepositWallet code check failed: {e}"),
+            )
+        })?;
+    if code.is_empty() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "Configured Hyperliquid CoreDepositWallet has no contract code on chain {}: {core_deposit_wallet}",
+                chain_client.chain_id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_core_deposit_recipient_eligible(
+    chain_id: u64,
+    recipient: Address,
+) -> Result<(), (StatusCode, String)> {
+    if chain_id != 998 {
+        return Ok(());
+    }
+
+    let role = hyperliquid_mainnet_user_role(recipient).await?;
+    if let Some(reason) = testnet_recipient_unavailable_reason(recipient, &role) {
+        return Err((StatusCode::CONFLICT, reason));
+    }
+    Ok(())
+}
+
+fn testnet_recipient_unavailable_reason(recipient: Address, mainnet_role: &str) -> Option<String> {
+    if mainnet_role.eq_ignore_ascii_case("missing") {
+        Some(format!(
+            "Hyperliquid testnet CoreDepositWallet deposits require the recipient to already exist on HyperCore mainnet; recipient {recipient:#x} has mainnet userRole=missing"
+        ))
+    } else {
+        None
+    }
+}
+
+async fn hyperliquid_mainnet_user_role(user: Address) -> Result<String, (StatusCode, String)> {
+    let response = reqwest::Client::new()
+        .post(HYPERLIQUID_MAINNET_INFO_URL)
+        .json(&serde_json::json!({
+            "type": "userRole",
+            "user": format!("{user:#x}"),
+        }))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid mainnet userRole check failed: {e}"),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid mainnet userRole check returned {status}: {body}"),
+        ));
+    }
+    response
+        .json::<HyperliquidUserRoleResponse>()
+        .await
+        .map(|body| body.role)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Hyperliquid mainnet userRole decode failed: {e}"),
+            )
+        })
 }
 
 fn matching_chain_client(
@@ -1178,6 +1315,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chain_registry_uses_circle_core_deposit_wallets() {
+        let mainnet = hyperliquid_chain_addresses(999)
+            .unwrap()
+            .expect("mainnet supported");
+        let testnet = hyperliquid_chain_addresses(998)
+            .unwrap()
+            .expect("testnet supported");
+
+        assert_eq!(
+            mainnet.core_deposit_wallet,
+            Address::from_str("0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24").unwrap()
+        );
+        assert_eq!(
+            testnet.core_deposit_wallet,
+            Address::from_str("0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206").unwrap()
+        );
+        assert_eq!(hyperliquid_chain_addresses(31337).unwrap(), None);
+    }
+
+    #[test]
     fn status_identifies_idle_evm_as_deployable_to_core() {
         let status = classify_funding_status(
             Decimal::new(5, 0),
@@ -1186,6 +1343,7 @@ mod tests {
             Decimal::ZERO,
             Some(Decimal::new(1, 0)),
             true,
+            None,
         );
 
         assert_eq!(status.state, "idle_evm_usdc_available");
@@ -1203,6 +1361,7 @@ mod tests {
             Decimal::ZERO,
             Some(Decimal::new(1, 0)),
             false,
+            None,
         );
 
         assert_eq!(status.state, "evm_to_core_route_unavailable");
@@ -1219,10 +1378,40 @@ mod tests {
             Decimal::new(12, 0),
             Some(Decimal::new(10, 0)),
             true,
+            None,
         );
 
         assert_eq!(status.state, "core_spot_available");
         assert!(status.can_move_core_spot_to_perp);
+    }
+
+    #[test]
+    fn status_uses_specific_core_deposit_unavailable_reason() {
+        let status = classify_funding_status(
+            Decimal::new(5, 0),
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Some(Decimal::new(1, 0)),
+            false,
+            Some("recipient is not eligible for testnet HyperCore deposits".to_string()),
+        );
+
+        assert_eq!(status.state, "evm_to_core_route_unavailable");
+        assert_eq!(
+            status.reason,
+            "recipient is not eligible for testnet HyperCore deposits"
+        );
+    }
+
+    #[test]
+    fn testnet_recipient_requires_mainnet_hypercore_state() {
+        let recipient = Address::from([0xa6; 20]);
+        let reason = testnet_recipient_unavailable_reason(recipient, "missing").unwrap();
+
+        assert!(reason.contains("already exist on HyperCore mainnet"));
+        assert!(reason.contains("userRole=missing"));
+        assert!(testnet_recipient_unavailable_reason(recipient, "user").is_none());
     }
 
     #[test]

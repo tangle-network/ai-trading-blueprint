@@ -12,7 +12,8 @@ import "./helpers/Setup.sol";
 contract HyperliquidVaultEvmUsdcBridgeTest is Test {
     uint256 private constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
     uint24 private constant ACTION_EVM_USDC_TO_CORE = 0x00ffffff;
-    address private constant CORE_DEPOSIT_WALLET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
+    address private constant CORE_DEPOSIT_WALLET_TESTNET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
+    address private constant CORE_DEPOSIT_WALLET_MAINNET = 0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24;
 
     MockERC20 internal usdc;
     HyperliquidTradeValidator internal tradeValidator;
@@ -46,10 +47,36 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
     }
 
     function test_validQuorumApprovalPermitsIdleEvmUsdcDepositThroughCoreDepositWallet() public {
+        _assertDepositThroughCoreDepositWallet(CORE_DEPOSIT_WALLET_TESTNET);
+    }
+
+    function test_mainnetUsesCircleHyperEvmCoreDepositWallet() public {
+        vm.chainId(999);
+        _assertDepositThroughCoreDepositWallet(CORE_DEPOSIT_WALLET_MAINNET);
+    }
+
+    function test_mainnetOperatorCannotUseLegacyBridgeAddressForEvmUsdcDeposit() public {
+        (address vaultAddr,) = _createBotVault();
+        HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
+        vm.chainId(999);
+        address legacyBridge = 0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7;
+        uint256 amount = 10e6;
+        usdc.mint(vaultAddr, amount);
+
+        HyperliquidVault.FundMovementAuthorization memory approval;
+        bytes32 adminRole = vault.DEFAULT_ADMIN_ROLE();
+        vm.prank(operator);
+        vm.expectRevert(
+            abi.encodeWithSelector(HyperliquidVault.AccessControlUnauthorizedAccount.selector, operator, adminRole)
+        );
+        vault.returnSpotLiquidity(legacyBridge, 0, uint64(amount), approval);
+    }
+
+    function _assertDepositThroughCoreDepositWallet(address coreDepositWallet) internal {
         (address vaultAddr,) = _createBotVault();
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         MockCoreDepositWallet depositWallet = new MockCoreDepositWallet(usdc);
-        vm.etch(CORE_DEPOSIT_WALLET, address(depositWallet).code);
+        vm.etch(coreDepositWallet, address(depositWallet).code);
 
         uint256 amount = 10e6;
         usdc.mint(vaultAddr, amount);
@@ -60,7 +87,7 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         HyperliquidVault.FundMovementAuthorization memory approval = _authorization(
             vault,
             ACTION_EVM_USDC_TO_CORE,
-            CORE_DEPOSIT_WALLET,
+            coreDepositWallet,
             0,
             uint64(amount),
             true,
@@ -70,12 +97,12 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         );
 
         vm.prank(operator);
-        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), approval);
+        vault.returnSpotLiquidity(coreDepositWallet, 0, uint64(amount), approval);
 
         assertEq(usdc.balanceOf(vaultAddr), 0);
-        assertEq(usdc.balanceOf(CORE_DEPOSIT_WALLET), amount);
-        assertEq(MockCoreDepositWallet(CORE_DEPOSIT_WALLET).lastRecipient(), vaultAddr);
-        assertEq(usdc.allowance(vaultAddr, CORE_DEPOSIT_WALLET), 0);
+        assertEq(usdc.balanceOf(coreDepositWallet), amount);
+        assertEq(MockCoreDepositWallet(coreDepositWallet).lastRecipient(), vaultAddr);
+        assertEq(usdc.allowance(vaultAddr, coreDepositWallet), 0);
     }
 
     function test_directSystemUsdcReturnRequiresOperatorPath() public {
@@ -90,14 +117,14 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(HyperliquidVault.AccessControlUnauthorizedAccount.selector, admin, operatorRole)
         );
-        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), approval);
+        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET_TESTNET, 0, uint64(amount), approval);
     }
 
     function test_idleEvmUsdcDepositRejectsMismatchedCoreDepositApproval() public {
         (address vaultAddr,) = _createBotVault();
         HyperliquidVault vault = HyperliquidVault(payable(vaultAddr));
         MockCoreDepositWallet depositWallet = new MockCoreDepositWallet(usdc);
-        vm.etch(CORE_DEPOSIT_WALLET, address(depositWallet).code);
+        vm.etch(CORE_DEPOSIT_WALLET_TESTNET, address(depositWallet).code);
 
         uint256 amount = 10e6;
         usdc.mint(vaultAddr, amount);
@@ -118,7 +145,7 @@ contract HyperliquidVaultEvmUsdcBridgeTest is Test {
         );
         vm.prank(operator);
         vm.expectRevert(HyperliquidVault.ValidatorApprovalRejected.selector);
-        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET, 0, uint64(amount), wrongApproval);
+        vault.returnSpotLiquidity(CORE_DEPOSIT_WALLET_TESTNET, 0, uint64(amount), wrongApproval);
     }
 
     function _createBotVault() internal returns (address vault, address share) {
