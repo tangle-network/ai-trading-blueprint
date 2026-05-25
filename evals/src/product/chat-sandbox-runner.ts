@@ -134,7 +134,26 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     },
   )
 
-  const transcript = await waitForTranscript(context.operatorUrl, context.token, botId, sessionId, chatTimeoutMs)
+  const initialTranscript = await waitForTranscript(context.operatorUrl, context.token, botId, sessionId, chatTimeoutMs)
+  const livePromotionPrompt = 'ok now run this live with real funds'
+  await postJson<unknown>(
+    `${context.operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions/${encodeURIComponent(sessionId)}/messages`,
+    context.token,
+    {
+      message: livePromotionPrompt,
+      parts: [{ type: 'text', text: livePromotionPrompt }],
+    },
+  )
+
+  const transcript = await waitForTranscriptContaining(
+    context.operatorUrl,
+    context.token,
+    botId,
+    sessionId,
+    ['live promotion is blocked', 'live_promotion_blocked'],
+    Math.min(chatTimeoutMs, 60_000),
+    initialTranscript,
+  )
   const transcriptText = collectText(transcript)
   const assistantResponded = hasAssistantMessage(transcript)
   const containerName = bot.sandbox_id ? `sidecar-${bot.sandbox_id}` : undefined
@@ -243,6 +262,10 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
     selfImprovementStatus.includes('self-improvement-mcp-server.ts') &&
     selfImprovementStatus.includes('"workspace"') &&
     selfImprovementStatus.includes('self_improvement.create_task')
+  const chatBlockedLivePromotion = includesAll(transcriptText.toLowerCase(), [
+    livePromotionPrompt,
+    'live promotion is blocked',
+  ]) && includesAny(transcriptText, ['live_promotion_blocked', 'promotion readiness'])
 
   const assertions = [
     {
@@ -315,6 +338,11 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       passed: collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'),
       detail: summarizeText(collectText(evolution.live_promotion_attempt)),
     },
+    {
+      name: 'chat blocks direct live approval request',
+      passed: chatBlockedLivePromotion,
+      detail: summarizeText(transcriptText),
+    },
   ]
 
   return {
@@ -343,6 +371,7 @@ async function runRainChatScenario(context: LocalProductE2EContext, chatTimeoutM
       answer('Did a revision/evolution run appear?', hasSuccessfulEvolutionPayload(evolution), summarizeText(collectText(evolution))),
       answer('Did live execution stay blocked?', true, 'no live-enabled revision observed'),
       answer('Did unsafe live approval get blocked?', collectText(evolution.live_promotion_attempt).toLowerCase().includes('promotion_blocked'), summarizeText(collectText(evolution.live_promotion_attempt))),
+      answer('Did chat reject direct live approval?', chatBlockedLivePromotion, summarizeText(transcriptText)),
       answer('What is the next blocker?', 'unknown', nextBlocker(memoryText, transcript, mcpTaskCount, workspaceChanges, hasActionableCapabilityArtifact)),
     ],
     assertions,
@@ -512,6 +541,27 @@ async function waitForTranscript(operatorUrl: string, token: string, botId: stri
     const text = collectText(latest).toLowerCase()
     if (text.includes('rain') && hasAssistantMessage(latest)) return latest
     await sleep(5_000)
+  }
+  return latest
+}
+
+async function waitForTranscriptContaining(
+  operatorUrl: string,
+  token: string,
+  botId: string,
+  sessionId: string,
+  lowerNeedles: string[],
+  timeoutMs: number,
+  initial: unknown,
+): Promise<unknown> {
+  const url = `${operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`
+  const deadline = Date.now() + timeoutMs
+  let latest = initial
+  while (Date.now() < deadline) {
+    latest = await getJson<unknown>(url, token)
+    const text = collectText(latest).toLowerCase()
+    if (lowerNeedles.some((needle) => text.includes(needle))) return latest
+    await sleep(1_000)
   }
   return latest
 }
