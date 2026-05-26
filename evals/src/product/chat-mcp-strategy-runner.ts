@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { importAgentEval, type TraceEmitterLike } from '../lib/agent-eval.js'
+import { FileSystemTraceStore, TraceEmitter, validateRunRecord } from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
 import { repoRoot } from '../lib/repo.js'
 import { runLocalProductE2E, type LocalProductE2EContext, type LocalProductE2EReport } from './local-stack-runner.js'
@@ -384,12 +384,12 @@ async function writeAgentEvalTrace(outputDir: string, report: ChatMcpStrategyE2E
   const traceDir = resolve(outputDir, 'agent-eval-traces')
   mkdirSync(traceDir, { recursive: true })
   try {
-    const agentEval = await importAgentEval()
-    const store = new agentEval.FileSystemTraceStore({ dir: traceDir })
+    // (direct imports — agent-eval 0.45)
+    const store = new FileSystemTraceStore({ dir: traceDir })
     const runId = `${SCENARIO_ID}-${Date.now()}`
-    const emitter = new agentEval.TraceEmitter(store, { runId })
+    const emitter = new TraceEmitter(store, { runId })
     await recordTrace(emitter, report)
-    const record = agentEval.validateRunRecord({
+    const record = validateRunRecord({
       runId,
       experimentId: report.suite,
       candidateId: 'product-chat-mcp-multishot',
@@ -420,14 +420,51 @@ function snapshotModel(model: string): string {
   return `${model}@2026-05-23`
 }
 
-async function recordTrace(emitter: TraceEmitterLike, report: ChatMcpStrategyE2EReport): Promise<void> {
-  await emitter.startRun({ suite: report.suite, scenario_id: report.scenario_id, prompt_hash: sha256(report.scenario.prompt) })
-  const provision = await emitter.tool({ name: 'local product provisioning', toolName: 'runLocalProductE2E' })
-  await provision.end({ assertions: report.product.assertions, bot_id: report.scenario.bot_id, sandbox_id: report.scenario.sandbox_id })
-  const chat = await emitter.tool({ name: 'product chat MCP request', toolName: 'operator chat api' })
-  await chat.end({ session_id: report.scenario.session_id, transcript: report.scenario.transcript })
-  const mcp = await emitter.tool({ name: 'sandbox MCP multi-shot task', toolName: 'self_improvement.create_task/status/patch/promote' })
-  await mcp.end({ task: report.scenario.mcp_task, commands: report.scenario.sandbox.commands })
-  await emitter.recordArtifact({ name: 'chat-mcp-strategy-report', mimeType: 'application/json', value: report })
-  await emitter.endRun({ status: report.assertions.every((assertion) => assertion.passed) ? 'passed' : 'failed', assertions: report.assertions })
+async function recordTrace(emitter: TraceEmitter, report: ChatMcpStrategyE2EReport): Promise<void> {
+  await emitter.startRun({
+    scenarioId: report.scenario_id,
+    variantId: report.suite,
+    layer: 'app-runtime',
+    tags: { prompt_hash: sha256(report.scenario.prompt) },
+  })
+  const provision = await emitter.tool({
+    name: 'local product provisioning',
+    toolName: 'runLocalProductE2E',
+    args: { suite: report.suite },
+  })
+  await provision.end({
+    result: { assertions: report.product.assertions, bot_id: report.scenario.bot_id, sandbox_id: report.scenario.sandbox_id },
+    latencyMs: 0,
+  })
+  const chat = await emitter.tool({
+    name: 'product chat MCP request',
+    toolName: 'operator chat api',
+    args: { session_id: report.scenario.session_id },
+  })
+  await chat.end({ result: { transcript: report.scenario.transcript }, latencyMs: 0 })
+  const mcp = await emitter.tool({
+    name: 'sandbox MCP multi-shot task',
+    toolName: 'self_improvement.create_task/status/patch/promote',
+    args: { sandbox_id: report.scenario.sandbox_id },
+  })
+  await mcp.end({
+    result: { task: report.scenario.mcp_task, commands: report.scenario.sandbox.commands },
+    latencyMs: 0,
+  })
+  const reportJson = JSON.stringify(report)
+  const small = reportJson.length <= 60000
+  await emitter.recordArtifact({
+    contentType: 'application/json',
+    sizeBytes: Buffer.byteLength(reportJson, 'utf8'),
+    hash: sha256(reportJson).replace(/^sha256:/, ''),
+    ...(small ? { inlineContent: reportJson } : {}),
+  })
+  const pass = report.assertions.every((assertion) => assertion.passed)
+  const notes = report.assertions.filter((a) => !a.passed).map((a) => `${a.name}: ${a.detail ?? 'failed'}`).join('\n')
+  await emitter.endRun({
+    pass,
+    score: pass ? 1 : 0,
+    failureClass: pass ? 'success' : 'instruction_following',
+    ...(notes ? { notes } : {}),
+  })
 }
