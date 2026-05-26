@@ -11,6 +11,7 @@ pub mod envelope;
 pub mod envelope_registry;
 pub mod error;
 pub mod evals;
+pub mod evolution;
 pub mod execution_hash;
 pub mod executor;
 pub mod fees;
