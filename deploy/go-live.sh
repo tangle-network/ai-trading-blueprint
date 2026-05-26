@@ -74,6 +74,13 @@ EXECUTION_RPC_URL="${EXECUTION_RPC_URL:-https://rpc.hyperliquid-testnet.xyz/evm}
 # HYPERLIQUID_TESTNET=1). Separate from the operator key by design.
 HYPERLIQUID_API_WALLET_PRIVATE_KEY="${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}"
 
+# When set to a release tag (e.g. v0.1.3), download the published operator
+# (and, if RUN_VALIDATOR=1, validator) binaries from GitHub Releases instead of
+# building from source on the box. Releases ship both x86_64- and
+# aarch64-unknown-linux-gnu (since v0.1.3) so this works on ARM cax* boxes too.
+# Cuts ~30-min source builds + ~10 GB of `target/` to a ~11 MB download.
+USE_RELEASE_BINARY="${USE_RELEASE_BINARY:-}"
+
 if [[ -z "${TANGLE_CONTRACT:-}" && -f "$TNT_CORE_DEPLOYMENT_MANIFEST" ]]; then
   # shellcheck source=/dev/null
   source "$REPO_DIR/scripts/load-base-sepolia-env.sh" "$TNT_CORE_DEPLOYMENT_MANIFEST"
@@ -247,7 +254,7 @@ if [ "$SKIP_BUILD" = "1" ]; then
   echo "=== Step 2: skipped (SKIP_BUILD=1) ==="
 else
   echo "=== Step 2: Build on $SERVER_IP ==="
-  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" RUN_VALIDATOR="$RUN_VALIDATOR" bash <<'REMOTE'
+  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" RUN_VALIDATOR="$RUN_VALIDATOR" USE_RELEASE_BINARY="$USE_RELEASE_BINARY" bash <<'REMOTE'
 set -euo pipefail
 source ~/.cargo/env
 
@@ -258,12 +265,40 @@ git fetch --all --tags
 git checkout "$REPO_REF"
 git pull --ff-only origin "$REPO_REF" || true
 
-CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
-ls -lh target/release/trading-blueprint | awk '{print "Binary: "$5}'
+if [[ -n "${USE_RELEASE_BINARY:-}" ]]; then
+  # Download pre-built operator (and, if RUN_VALIDATOR=1, validator) binaries
+  # from GitHub Releases instead of compiling on-box. Matches host arch;
+  # v0.1.3+ ships both x86_64- and aarch64-unknown-linux-gnu via the matrix
+  # release.yml. Cuts a ~30 min build + ~10 GB target/ to an ~11 MB download.
+  TAG="$USE_RELEASE_BINARY"
+  case "$(uname -m)" in
+    aarch64|arm64) TGT="aarch64-unknown-linux-gnu" ;;
+    x86_64|amd64)  TGT="x86_64-unknown-linux-gnu" ;;
+    *) echo "ERROR: unsupported arch $(uname -m); unset USE_RELEASE_BINARY to build from source" >&2; exit 1 ;;
+  esac
+  mkdir -p target/release
+  BINS=("trading-blueprint")
+  [[ "${RUN_VALIDATOR:-0}" = "1" ]] && BINS+=("trading-validator")
+  for b in "${BINS[@]}"; do
+    A="${b}-${TGT}.tar.xz"
+    URL="https://github.com/tangle-network/ai-trading-blueprint/releases/download/${TAG}/${A}"
+    echo "downloading ${URL}"
+    curl -fsSL "${URL}" -o "/tmp/${A}"
+    curl -fsSL "${URL}.sha256" -o "/tmp/${A}.sha256"
+    (cd /tmp && sha256sum -c "${A}.sha256")
+    tar -xJf "/tmp/${A}" -C target/release
+    chmod +x "target/release/${b}"
+    ls -lh "target/release/${b}" | awk -v n="$b" '{print n": "$5}'
+    rm -f "/tmp/${A}" "/tmp/${A}.sha256"
+  done
+else
+  CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
+  ls -lh target/release/trading-blueprint | awk '{print "Binary: "$5}'
 
-if [[ "${RUN_VALIDATOR:-0}" = "1" ]]; then
-  CARGO_BUILD_JOBS=2 cargo build --release -p trading-validator-bin
-  ls -lh target/release/trading-validator | awk '{print "Validator binary: "$5}'
+  if [[ "${RUN_VALIDATOR:-0}" = "1" ]]; then
+    CARGO_BUILD_JOBS=2 cargo build --release -p trading-validator-bin
+    ls -lh target/release/trading-validator | awk '{print "Validator binary: "$5}'
+  fi
 fi
 
 # Install cargo-tangle (the BPM) from the blueprint SDK.
