@@ -2224,6 +2224,15 @@ async fn execute_real_envelope_trade_inner(
     use trading_runtime::envelope::params_builder::build_envelope_shape;
     use trading_runtime::executor::{decimal_to_u256, get_adapter};
 
+    // Fee-aware pre-trade gate. Refuses (a) any protocol we have no canonical
+    // fee schedule for (so we never trade blind), and (b) any notional below
+    // the venue's min-worth-submitting floor (where venue fees + gas alone
+    // would eat most plausible profit). The agent's loop prompt also carries
+    // the full schedule so reasoning is fee-aware upstream — this is the
+    // runtime safety net, not the primary check.
+    trading_runtime::protocol_fees::gate_min_notional(&intent.target_protocol, intent.amount_in)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
     let adapter = get_adapter(
         &intent.target_protocol,
         Some(executor.chain_client().chain_id),

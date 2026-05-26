@@ -21,6 +21,7 @@ pub mod market_data;
 pub mod multicall;
 pub mod polymarket_clob;
 pub mod portfolio;
+pub mod protocol_fees;
 pub mod signature_verify;
 pub mod simulator;
 pub mod solana;
