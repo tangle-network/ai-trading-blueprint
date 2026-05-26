@@ -1,272 +1,58 @@
-# Reusable release workflow for Tangle blueprint operators.
-# Copy this to .github/workflows/release.yml in each blueprint repo.
-#
-# Triggers on version tags (v0.1.0, v1.2.3, etc.).
-# Builds for linux/amd64, linux/arm64, macOS/arm64.
-# Uploads binaries + sha256 checksums as GitHub Release assets.
-#
-# Prerequisites:
-#   - Cargo.toml has [[bin]] with the operator binary name
-#   - rust-toolchain.toml pins the Rust version (e.g. 1.91)
-#
-# Usage:
-#   git tag v0.1.0 && git push origin v0.1.0
-
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build a release for'
+        required: true
 
 permissions:
   contents: write
-  packages: write
 
 env:
   CARGO_TERM_COLOR: always
-  # Use cmake builder for aws-lc-sys to bypass GCC memcmp bug in cross containers
-  AWS_LC_SYS_CMAKE_BUILDER: 1
-  # The binary name from [[bin]] in operator/Cargo.toml.
-  # Override per repo if different.
   BINARY_NAME: ${{ vars.BINARY_NAME || 'trading-blueprint' }}
+  TARGET: x86_64-unknown-linux-gnu
 
 jobs:
-  # ── Gate: full workspace must pass tests before any release artifact is built. ──
-  gate:
-    name: Gate (build + test)
-    uses: ./.github/workflows/ci.yml
-
-  # ── Docker images → GHCR. ──────────────────────────────────────────────────
-  docker:
-    name: Build and push Docker image
-    needs: gate
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}/${{ env.BINARY_NAME }}
-          tags: |
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ── Changelog generation. ─────────────────────────────────────────────────
-  changelog:
-    name: Generate changelog
-    needs: gate
-    runs-on: ubuntu-latest
-    outputs:
-      changelog: ${{ steps.gen.outputs.changelog }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Generate changelog from commits since last tag
-        id: gen
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname \
-                       | grep -v "^${TAG}$" | head -n1 || true)
-
-          if [ -z "$PREV_TAG" ]; then
-            RANGE=""
-            HEADER="### Changes since first commit"
-          else
-            RANGE="${PREV_TAG}..${TAG}"
-            HEADER="### Changes since ${PREV_TAG}"
-          fi
-
-          {
-            echo "$HEADER"
-            echo
-            git log --pretty=format:'- %s (%h)' $RANGE
-          } > CHANGELOG_FRAGMENT.md
-
-          # Multi-line output for downstream jobs.
-          {
-            echo 'changelog<<__CHANGELOG_EOF__'
-            cat CHANGELOG_FRAGMENT.md
-            echo
-            echo '__CHANGELOG_EOF__'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Upload changelog fragment
-        uses: actions/upload-artifact@v4
-        with:
-          name: changelog-fragment
-          path: CHANGELOG_FRAGMENT.md
-
-  build:
-    needs: gate
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            use_cross: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
-          - target: aarch64-apple-darwin
-            os: macos-14
-            use_cross: false
-
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-
-      - name: Install system dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install protobuf
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
+        run: cargo build --release --bin "$BINARY_NAME"
+
+      - name: Package archive + checksum
         run: |
-          BUILD_CMD="cargo"
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            BUILD_CMD="cross"
-          fi
-          $BUILD_CMD build --release --target ${{ matrix.target }}
-
-      - name: Package archive
-        run: |
-          BIN="target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}"
-          ARCHIVE="${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.xz"
-
-          # Strip debug symbols (saves 50-80% size)
-          if command -v llvm-strip &>/dev/null; then
-            llvm-strip "$BIN" 2>/dev/null || true
-          elif command -v strip &>/dev/null; then
-            strip "$BIN" 2>/dev/null || true
-          fi
-
-          tar -cJf "$ARCHIVE" -C "$(dirname "$BIN")" "${{ env.BINARY_NAME }}"
-
-          # Generate checksums
+          BIN="target/release/${BINARY_NAME}"
+          test -f "$BIN" || { echo "::error::binary not found: $BIN"; exit 1; }
+          strip "$BIN" 2>/dev/null || true
+          ARCHIVE="${BINARY_NAME}-${TARGET}.tar.xz"
+          tar -cJf "$ARCHIVE" -C target/release "$BINARY_NAME"
           sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          echo "SHA256_FILE=${ARCHIVE}.sha256" >> "$GITHUB_ENV"
-          echo "Binary size: $(du -h "$BIN" | cut -f1)"
-          echo "Archive size: $(du -h "$ARCHIVE" | cut -f1)"
           cat "${ARCHIVE}.sha256"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
-          path: |
-            ${{ env.ARCHIVE }}
-            ${{ env.SHA256_FILE }}
-
-  release:
-    needs: [build, docker, changelog]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          CHANGELOG_BODY: ${{ needs.changelog.outputs.changelog }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-
-          # Collect all archives and checksums (under artifacts/<name>/...).
-          FILES=$(find artifacts/ -name "*.tar.xz" -o -name "*.sha256" | sort)
-
-          # Build platform-table notes inline for shell composition.
-          PLATFORM_TABLE="## Binary Downloads
-
-          | Platform | Archive | SHA256 |
-          |----------|---------|--------|"
-
-          for f in $(find artifacts/ -name "*.tar.xz" | sort); do
-            BASENAME=$(basename "$f")
-            SHA=$(cat "${f}.sha256" | awk '{print $1}')
-            TARGET=$(echo "$BASENAME" | sed "s/${BINARY_NAME}-//" | sed 's/\.tar\.xz//')
-            PLATFORM_TABLE="$PLATFORM_TABLE
-          | \`$TARGET\` | \`$BASENAME\` | \`${SHA:0:16}...\` |"
-          done
-
-          # Compose the full release body: changelog → binaries → docker.
-          NOTES="$CHANGELOG_BODY
-
-          $PLATFORM_TABLE
-
-          ### Verify checksums
-          \`\`\`bash
-          sha256sum -c *.sha256
-          \`\`\`
-
-          ### Install (binary)
-          \`\`\`bash
-          curl -sSL https://github.com/${{ github.repository }}/releases/download/$TAG/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.xz | tar xJ
-          chmod +x ${BINARY_NAME}
-          \`\`\`
-
-          ### Install (Docker)
-          \`\`\`bash
-          docker pull ghcr.io/${{ github.repository }}/${BINARY_NAME}:${TAG#v}
-          \`\`\`
-          "
-
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "$NOTES" \
-            $FILES
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binary \`${TARGET}\`. Verify: sha256sum -c ${ARCHIVE}.sha256"
+          gh release upload "$TAG" "$ARCHIVE" "${ARCHIVE}.sha256" --repo "$GITHUB_REPOSITORY" --clobber
