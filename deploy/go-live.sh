@@ -58,6 +58,22 @@ BLUEPRINT_DEFINITION="${BLUEPRINT_DEFINITION:-$REPO_DIR/blueprint-definition.jso
 OPERATOR_STAKE_AMOUNT="${OPERATOR_STAKE_AMOUNT:-1000000000000000000}"
 TNT_CORE_DEPLOYMENT_MANIFEST="${TNT_CORE_DEPLOYMENT_MANIFEST:-$MANIFEST_DEFAULT}"
 
+# ── Same-box Hyperliquid validator (HTTP-only, 1-of-1) + execution wiring ──────
+# When RUN_VALIDATOR=1, the trading-validator binary runs as a second systemd
+# unit on this box in HTTP-only mode (SERVICE_ID=0). The operator's HTTP API is
+# pointed at it via VALIDATOR_ENDPOINTS and trusts its EIP-712 signer via
+# TRADING_ENVELOPE_TRUSTED_SIGNERS. The validator signs over the EXECUTION chain
+# domain (Hyperliquid/HyperEVM 998 by default), distinct from the Tangle chain.
+RUN_VALIDATOR="${RUN_VALIDATOR:-0}"
+VALIDATOR_SIGNER_KEY="${VALIDATOR_SIGNER_KEY:-}"
+VALIDATOR_HTTP_PORT="${VALIDATOR_HTTP_PORT:-9090}"
+EXECUTION_CHAIN_ID="${EXECUTION_CHAIN_ID:-998}"
+EXECUTION_TRADE_VALIDATOR_ADDRESS="${EXECUTION_TRADE_VALIDATOR_ADDRESS:-}"
+EXECUTION_RPC_URL="${EXECUTION_RPC_URL:-https://rpc.hyperliquid-testnet.xyz/evm}"
+# Hyperliquid agent/API wallet that signs orders on Hyperliquid (testnet when
+# HYPERLIQUID_TESTNET=1). Separate from the operator key by design.
+HYPERLIQUID_API_WALLET_PRIVATE_KEY="${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}"
+
 if [[ -z "${TANGLE_CONTRACT:-}" && -f "$TNT_CORE_DEPLOYMENT_MANIFEST" ]]; then
   # shellcheck source=/dev/null
   source "$REPO_DIR/scripts/load-base-sepolia-env.sh" "$TNT_CORE_DEPLOYMENT_MANIFEST"
@@ -79,6 +95,21 @@ fi
 OPERATOR_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || true)"
 [ -n "$OPERATOR_ADDRESS" ] || { echo "ERROR: 'cast' (foundry) is required"; exit 1; }
 [ -f "$BLUEPRINT_DEFINITION" ] || { echo "ERROR: blueprint definition not found: $BLUEPRINT_DEFINITION"; exit 1; }
+
+if [[ "$RUN_VALIDATOR" = "1" ]]; then
+  : "${VALIDATOR_SIGNER_KEY:?RUN_VALIDATOR=1 requires VALIDATOR_SIGNER_KEY (the EIP-712 signing key; needs no on-chain funds)}"
+  : "${EXECUTION_TRADE_VALIDATOR_ADDRESS:?RUN_VALIDATOR=1 requires EXECUTION_TRADE_VALIDATOR_ADDRESS (on-chain TradeValidator on the execution chain)}"
+  VALIDATOR_SIGNER_ADDRESS="$(cast wallet address --private-key "$VALIDATOR_SIGNER_KEY" 2>/dev/null || true)"
+  [ -n "$VALIDATOR_SIGNER_ADDRESS" ] || { echo "ERROR: VALIDATOR_SIGNER_KEY is not a valid private key"; exit 1; }
+  # Point the operator's HTTP API at the local validator and trust its signer.
+  VALIDATOR_ENDPOINTS="${VALIDATOR_ENDPOINTS:-http://127.0.0.1:${VALIDATOR_HTTP_PORT}}"
+  if [[ -n "${TRADING_ENVELOPE_TRUSTED_SIGNERS:-}" ]]; then
+    TRADING_ENVELOPE_TRUSTED_SIGNERS="${TRADING_ENVELOPE_TRUSTED_SIGNERS},${VALIDATOR_SIGNER_ADDRESS}"
+  else
+    TRADING_ENVELOPE_TRUSTED_SIGNERS="$VALIDATOR_SIGNER_ADDRESS"
+  fi
+  echo "Validator (HTTP-only) enabled: signer=$VALIDATOR_SIGNER_ADDRESS port=$VALIDATOR_HTTP_PORT execChain=$EXECUTION_CHAIN_ID"
+fi
 
 if ! command -v cargo-tangle >/dev/null 2>&1; then
   echo "ERROR: cargo-tangle is required locally" >&2
@@ -132,6 +163,12 @@ if [[ -n "${POLYMARKET_API_SECRET:-}" ]]; then
 fi
 if [[ -n "${POLYMARKET_API_PASSPHRASE:-}" ]]; then
   AI_PROVIDER_SETTINGS+="POLYMARKET_API_PASSPHRASE=${POLYMARKET_API_PASSPHRASE}"$'\n'
+fi
+if [[ -n "${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="HYPERLIQUID_API_WALLET_PRIVATE_KEY=${HYPERLIQUID_API_WALLET_PRIVATE_KEY}"$'\n'
+fi
+if [[ -n "${TRADING_ENVELOPE_TRUSTED_SIGNERS:-}" ]]; then
+  AI_PROVIDER_SETTINGS+="TRADING_ENVELOPE_TRUSTED_SIGNERS=${TRADING_ENVELOPE_TRUSTED_SIGNERS}"$'\n'
 fi
 
 # Shared cargo-tangle args for commands that talk to the chain.
@@ -210,7 +247,7 @@ if [ "$SKIP_BUILD" = "1" ]; then
   echo "=== Step 2: skipped (SKIP_BUILD=1) ==="
 else
   echo "=== Step 2: Build on $SERVER_IP ==="
-  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" bash <<'REMOTE'
+  ssh "root@$SERVER_IP" env REPO_URL="$REPO_URL" REPO_REF="$REPO_REF" RUN_VALIDATOR="$RUN_VALIDATOR" bash <<'REMOTE'
 set -euo pipefail
 source ~/.cargo/env
 
@@ -223,6 +260,11 @@ git pull --ff-only origin "$REPO_REF" || true
 
 CARGO_BUILD_JOBS=2 cargo build --release -p trading-blueprint-bin
 ls -lh target/release/trading-blueprint | awk '{print "Binary: "$5}'
+
+if [[ "${RUN_VALIDATOR:-0}" = "1" ]]; then
+  CARGO_BUILD_JOBS=2 cargo build --release -p trading-validator-bin
+  ls -lh target/release/trading-validator | awk '{print "Validator binary: "$5}'
+fi
 
 # Install cargo-tangle (the BPM) from the blueprint SDK.
 [ -d /opt/trading-blueprint/blueprint-sdk ] || \
@@ -409,6 +451,69 @@ systemctl daemon-reload
 REMOTE
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Step 7b: Install + start the same-box validator (HTTP-only, 1-of-1)
+# ──────────────────────────────────────────────────────────────────────────────
+if [[ "$RUN_VALIDATOR" = "1" ]]; then
+  echo "=== Step 7b: Install validator systemd unit ==="
+  ssh "root@$SERVER_IP" \
+    env VALIDATOR_SIGNER_KEY="$VALIDATOR_SIGNER_KEY" \
+        VALIDATOR_HTTP_PORT="$VALIDATOR_HTTP_PORT" \
+        EXECUTION_CHAIN_ID="$EXECUTION_CHAIN_ID" \
+        EXECUTION_TRADE_VALIDATOR_ADDRESS="$EXECUTION_TRADE_VALIDATOR_ADDRESS" \
+        EXECUTION_RPC_URL="$EXECUTION_RPC_URL" \
+        VALIDATOR_SIGNER_ADDRESS="$VALIDATOR_SIGNER_ADDRESS" \
+        bash <<REMOTE
+set -euo pipefail
+cat > /opt/trading-blueprint/repo/validator.env <<EOF
+# HTTP-only validator (SERVICE_ID=0): signs envelopes/intents over the execution
+# chain EIP-712 domain. Needs no on-chain funds — the signer address is trusted
+# by the operator via TRADING_ENVELOPE_TRUSTED_SIGNERS and configured into vaults.
+SERVICE_ID=0
+VALIDATOR_HTTP_PORT=${VALIDATOR_HTTP_PORT}
+PRIVATE_KEY=${VALIDATOR_SIGNER_KEY}
+OPERATOR_ADDRESS=${VALIDATOR_SIGNER_ADDRESS}
+EXECUTION_CHAIN_ID=${EXECUTION_CHAIN_ID}
+EXECUTION_TRADE_VALIDATOR_ADDRESS=${EXECUTION_TRADE_VALIDATOR_ADDRESS}
+EXECUTION_RPC_URL=${EXECUTION_RPC_URL}
+EOF
+chmod 600 /opt/trading-blueprint/repo/validator.env
+
+cat > /etc/systemd/system/trading-validator.service <<'EOF'
+[Unit]
+Description=Tangle Trading Validator (HTTP-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/trading-blueprint/repo
+EnvironmentFile=/opt/trading-blueprint/repo/validator.env
+Environment=RUST_LOG=info,trading_validator=debug
+ExecStart=/opt/trading-blueprint/repo/target/release/trading-validator
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-validator
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable trading-validator
+systemctl restart trading-validator
+sleep 3
+systemctl status trading-validator --no-pager | head -10
+echo "--- validator health ---"
+curl -fsS "http://127.0.0.1:${VALIDATOR_HTTP_PORT}/health" 2>/dev/null | head -1 || echo "(no /health yet — check journal)"
+REMOTE
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Step 8: Start the BPM
 # ──────────────────────────────────────────────────────────────────────────────
 echo "=== Step 8: Start BPM ==="
@@ -435,3 +540,14 @@ Watch logs:  ssh root@$SERVER_IP journalctl -fu blueprint-manager
 Status:      ssh root@$SERVER_IP systemctl status blueprint-manager
 Restart:     ssh root@$SERVER_IP systemctl restart blueprint-manager
 EOF
+
+if [[ "$RUN_VALIDATOR" = "1" ]]; then
+  cat <<EOF
+  Validator:    http://127.0.0.1:$VALIDATOR_HTTP_PORT (HTTP-only, signer $VALIDATOR_SIGNER_ADDRESS)
+  Exec chain:   $EXECUTION_CHAIN_ID  TradeValidator: $EXECUTION_TRADE_VALIDATOR_ADDRESS
+  Validator logs: ssh root@$SERVER_IP journalctl -fu trading-validator
+
+  Provision a bot vault with this validator as the 1-of-1 signer:
+    signers=[$VALIDATOR_SIGNER_ADDRESS]  required_signatures=1
+EOF
+fi
