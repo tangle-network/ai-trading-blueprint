@@ -2,7 +2,13 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statS
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { importAgentEval } from '../lib/agent-eval.js'
+import {
+  FileSystemFeedbackTrajectoryStore,
+  type FeedbackLabel,
+  callLlmJson,
+  createFeedbackTrajectory,
+  validateRunRecord,
+} from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
 import { currentCommitSha } from '../trading/persona-runner.js'
 import { isoStamp, repoRoot, resolveRepo } from '../lib/repo.js'
@@ -140,14 +146,12 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
   const trajectoryDir = resolveRepo(options.trajectoryDir ?? '.evolve/agent-eval/feedback/product-autoresearch')
   const runsJsonl = resolveRepo(options.runsJsonl ?? '.evolve/agent-eval/product-autoresearch-runs.jsonl')
   const inputReports = normalizeInputReports(options.input)
-  const agentEval = await importAgentEval()
+  // (direct imports — agent-eval 0.45)
 
-  if (!agentEval.createFeedbackTrajectory) throw new Error('agent-eval createFeedbackTrajectory is required')
-  if (!agentEval.runMultiShotOptimization) throw new Error('agent-eval runMultiShotOptimization is required')
 
   const judged: JudgedScenario[] = []
-  const trajectoryStore = agentEval.FileSystemFeedbackTrajectoryStore
-    ? new agentEval.FileSystemFeedbackTrajectoryStore({ dir: trajectoryDir })
+  const trajectoryStore = FileSystemFeedbackTrajectoryStore
+    ? new FileSystemFeedbackTrajectoryStore({ dir: trajectoryDir })
     : null
   for (const reportPath of inputReports) {
     const report = readReport(reportPath)
@@ -155,8 +159,8 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
     const deterministic = deterministicQuality(scenario)
     const judge = options.skipJudge
       ? deterministicOnlyJudgment(deterministic)
-      : await judgeQuality(reportPath, scenario, deterministic, options, agentEval)
-    const trajectory = agentEval.createFeedbackTrajectory({
+      : await judgeQuality(reportPath, scenario, deterministic, options)
+    const trajectory = createFeedbackTrajectory({
       projectId: 'ai-trading-blueprint',
       scenarioId: `autoresearch:${scenario.scenarioId}`,
       task: {
@@ -171,7 +175,7 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
         {
           id: scenario.mcpTask?.task_id ?? randomUUID(),
           stepIndex: 0,
-          artifactType: 'chat-sandbox-mcp-run',
+          artifactType: 'action',
           artifact: compactAttemptArtifact(scenario, deterministic, judge),
           createdAt: new Date().toISOString(),
         },
@@ -186,7 +190,7 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
     judged.push({ id: `autoresearch:${scenario.scenarioId}`, report_path: reportPath, deterministic, judge, feedback_trajectory: trajectory })
   }
 
-  const optimization = await runPolicyOptimization(agentEval, judged, options)
+  const optimization = await runPolicyOptimization(judged, options)
   const promotedPolicy = extractPromotedPolicy(optimization) ?? BASELINE_POLICY
   const assertions = buildAssertions(judged, optimization)
   const report: AutoresearchLoopReport = {
@@ -203,7 +207,7 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
 
   mkdirSync(dirname(outputPath), { recursive: true })
   writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
-  appendRunRecords(agentEval, runsJsonl, report, options)
+  appendRunRecords(runsJsonl, report, options)
   if (assertions.some((assertion) => !assertion.passed)) {
     throw new Error(`autoresearch loop failed: ${assertions.map((a) => `${a.name}=${a.passed}`).join(', ')}`)
   }
@@ -276,9 +280,8 @@ async function judgeQuality(
   scenario: ScenarioView,
   deterministic: DeterministicQuality,
   options: AutoresearchLoopOptions,
-  agentEval: Awaited<ReturnType<typeof importAgentEval>>,
 ): Promise<QualityJudgment> {
-  if (!agentEval.callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
+  if (!callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
   const model = options.model ?? process.env.BAD_TANGLE_ROUTER_MODEL ?? 'deepseek-v4-pro'
   const baseUrl = options.baseUrl ?? process.env.BAD_TANGLE_ROUTER_BASE_URL ?? process.env.TANGLE_ROUTER_BASE_URL ?? 'https://router.tangle.tools/v1'
   const apiKey = options.apiKey ?? process.env.BAD_TANGLE_ROUTER_API_KEY ?? process.env.TANGLE_API_KEY
@@ -298,7 +301,7 @@ async function judgeQuality(
     `Run/test evidence:\n${runEvidence(scenario).slice(0, 5000)}`,
     `Artifacts:\n${artifactEvidence(scenario).slice(0, 5000)}`,
   ].join('\n\n')
-  const value = await callJudgeWithRetry(agentEval, { model, prompt, baseUrl, apiKey })
+  const value = await callJudgeWithRetry({ model, prompt, baseUrl, apiKey })
   const judgment = normalizeJudgment(value)
   if (judgment.overall_score < 0.75 && judgment.failures.length === 0) {
     throw new Error(`autoresearch judge returned an unusable low-score judgment: ${JSON.stringify(judgment)}`)
@@ -307,15 +310,14 @@ async function judgeQuality(
 }
 
 async function callJudgeWithRetry(
-  agentEval: Awaited<ReturnType<typeof importAgentEval>>,
   input: { model: string; prompt: string; baseUrl: string; apiKey: string },
 ): Promise<QualityJudgment> {
-  if (!agentEval.callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
+  if (!callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const prompt = attempt === 1 ? input.prompt : compactJudgePrompt(input.prompt, attempt)
     try {
-      const { value } = await agentEval.callLlmJson<QualityJudgment>({
+      const { value } = await callLlmJson<QualityJudgment>({
         model: input.model,
         temperature: 0,
         maxTokens: 2200,
@@ -410,12 +412,12 @@ function normalizeNextPromptPolicy(value: QualityJudgment): string[] {
   return failures.slice(0, 5).map((failure) => `Address judge failure: ${failure}`)
 }
 
-function labelsFromJudgment(judge: QualityJudgment, deterministic: DeterministicQuality) {
+function labelsFromJudgment(judge: QualityJudgment, deterministic: DeterministicQuality): FeedbackLabel[] {
   const now = new Date().toISOString()
-  const labels: Array<Record<string, unknown>> = [
+  const labels: FeedbackLabel[] = [
     {
       source: 'judge',
-      kind: 'quality_score',
+      kind: 'rate',
       value: judge.overall_score,
       reason: judge.failures.join('; ') || judge.strengths.join('; '),
       severity: judge.verdict === 'fail' ? 'error' : judge.verdict === 'weak_pass' ? 'warning' : 'info',
@@ -423,7 +425,7 @@ function labelsFromJudgment(judge: QualityJudgment, deterministic: Deterministic
     },
     {
       source: 'environment',
-      kind: 'deterministic_gates',
+      kind: 'metric_outcome',
       value: deterministic,
       reason: 'Product, MCP, code, artifact, strategy-run, and live-promotion gates.',
       severity: Object.values(deterministic).includes(false) ? 'error' : 'info',
@@ -433,7 +435,7 @@ function labelsFromJudgment(judge: QualityJudgment, deterministic: Deterministic
   for (const failure of judge.failures) {
     labels.push({
       source: 'judge',
-      kind: 'improvement_required',
+      kind: 'revision_request',
       value: 'rejected',
       reason: failure,
       severity: 'warning',
@@ -443,67 +445,56 @@ function labelsFromJudgment(judge: QualityJudgment, deterministic: Deterministic
   return labels
 }
 
+// Policy enumeration: the original `runMultiShotOptimization` invocation was
+// effectively a tournament over three hand-tuned PromptPolicy candidates
+// plus optional `proposePolicyMutations`-generated variants. agent-eval 0.45
+// removed `runMultiShotOptimization` in favour of `runImprovementLoop`,
+// which expects a `MutableSurface` + a code-or-prompt mutator. The three
+// policies here are not code, and reflective mutation is overkill for a
+// three-way tournament. We do the same enumeration in-process, score each
+// candidate per scenario, average across scenarios, and emit an object
+// shaped like the upstream call so downstream `extractPromotedPolicy` +
+// `buildAssertions` consumers stay unchanged.
 async function runPolicyOptimization(
-  agentEval: Awaited<ReturnType<typeof importAgentEval>>,
   judged: JudgedScenario[],
-  options: AutoresearchLoopOptions,
-): Promise<unknown> {
-  const runMultiShotOptimization = agentEval.runMultiShotOptimization
-  if (!runMultiShotOptimization) throw new Error('agent-eval runMultiShotOptimization is required')
-  const variants = [
+  _options: AutoresearchLoopOptions,
+): Promise<{
+  promotedVariant: { id: string; payload: PromptPolicy }
+  searchBestVariant: { id: string; payload: PromptPolicy }
+  trials: Array<{ id: string; payload: PromptPolicy; meanScore: number; perScenario: Record<string, number> }>
+}> {
+  const candidates = [
     variant('baseline', 'Current mechanics-first chat-to-MCP policy', 0, BASELINE_POLICY),
     variant('research-first', 'Research and backtest before coding/promotion', 0, RESEARCH_FIRST_POLICY),
     variant('user-visible', 'Dopamine/usefulness artifact policy', 0, USER_VISIBLE_POLICY),
   ]
-  const scenarioIds = judged.map((item) => item.id)
-  const byScenario = new Map(judged.map((item) => [item.id, item]))
-  return runMultiShotOptimization<PromptPolicy>({
-    runId: `autoresearch-${Date.now()}`,
-    target: 'trading-agent-self-improvement-prompt-policy',
-    seedVariants: variants,
-    searchScenarioIds: scenarioIds,
-    reps: 1,
-    generations: 2,
-    populationSize: 4,
-    scoreConcurrency: 2,
-    runner: {
-      run({ variant: candidate, scenarioId }: { variant: { payload: PromptPolicy }; scenarioId: string }) {
-        const item = byScenario.get(scenarioId)
-        if (!item) throw new Error(`unknown scenario ${scenarioId}`)
-        return {
-          trace: {
-            scenarioId,
-            transcript: collectPolicyTrace(candidate.payload, item),
-            output: { policy: candidate.payload, judgment: item.judge, deterministic: item.deterministic },
-            artifacts: [item.feedback_trajectory],
-            metadata: { report_path: item.report_path },
-          },
-          costUsd: 0,
-          durationMs: 0,
-          tokenUsage: { input: 0, output: 0 },
-        }
-      },
-    },
-    scorer: {
-      score({ variant: candidate, run }: { variant: { payload: PromptPolicy }; run: { trace: { output?: unknown } } }) {
-        const output = run.trace.output as { judgment: QualityJudgment; deterministic: DeterministicQuality }
-        const policy = candidate.payload
-        const score = scorePolicyAgainstJudgment(policy, output.judgment, output.deterministic)
-        return {
-          score: score.score,
-          ok: score.score >= 0.55,
-          metrics: score.metrics,
-          asi: score.asi,
-          emitted: JSON.stringify({ policy, score }, null, 2),
-        }
-      },
-    },
-    mutateAdapter: {
-      async mutate({ parent, bottomTrials, childCount, generation }: { parent: { payload: PromptPolicy }; bottomTrials: unknown[]; childCount: number; generation: number }) {
-        return proposePolicyMutations(parent.payload, bottomTrials, childCount, generation)
-      },
-    },
+  const trials = candidates.map((candidate) => {
+    const perScenario: Record<string, number> = {}
+    let total = 0
+    for (const item of judged) {
+      const s = scorePolicyAgainstJudgment(candidate.payload, item.judge, item.deterministic)
+      perScenario[item.id] = s.score
+      total += s.score
+    }
+    return {
+      id: candidate.id,
+      payload: candidate.payload,
+      meanScore: judged.length > 0 ? total / judged.length : 0,
+      perScenario,
+    }
   })
+  trials.sort((a, b) => b.meanScore - a.meanScore)
+  const best = trials[0] ?? {
+    id: 'baseline',
+    payload: BASELINE_POLICY,
+    meanScore: 0,
+    perScenario: {},
+  }
+  return {
+    promotedVariant: { id: best.id, payload: best.payload },
+    searchBestVariant: { id: best.id, payload: best.payload },
+    trials,
+  }
 }
 
 function scorePolicyAgainstJudgment(policy: PromptPolicy, judge: QualityJudgment, deterministic: DeterministicQuality) {
@@ -608,7 +599,6 @@ function buildAssertions(judged: JudgedScenario[], optimization: unknown) {
 }
 
 function appendRunRecords(
-  agentEval: Awaited<ReturnType<typeof importAgentEval>>,
   path: string,
   report: AutoresearchLoopReport,
   options: AutoresearchLoopOptions,
@@ -632,7 +622,7 @@ function appendRunRecords(
       live_blocked: item.deterministic.live_blocked ? 1 : 0,
       rounds_used: item.deterministic.rounds_used,
     }
-    const record = agentEval.validateRunRecord({
+    const record = validateRunRecord({
       runId: randomUUID(),
       experimentId: report.suite,
       candidateId: 'autoresearch-judge',

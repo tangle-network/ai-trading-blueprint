@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { importAgentEval, type TraceEmitterLike } from '../lib/agent-eval.js'
+import { FileSystemTraceStore, TraceEmitter } from '@tangle-network/agent-eval'
 import { repoRoot } from '../lib/repo.js'
 import { runLocalProductE2E, type LocalProductE2EContext, type LocalProductE2EReport } from './local-stack-runner.js'
 
@@ -749,9 +749,9 @@ async function writeAgentEvalTrace(outputDir: string, report: ChatSandboxE2ERepo
   const traceDir = resolve(outputDir, 'agent-eval-traces')
   mkdirSync(traceDir, { recursive: true })
   try {
-    const agentEval = await importAgentEval()
-    const store = new agentEval.FileSystemTraceStore({ dir: traceDir })
-    const emitter = new agentEval.TraceEmitter(store, { runId: `${SCENARIO_ID}-${Date.now()}` })
+    // (direct imports — agent-eval 0.45)
+    const store = new FileSystemTraceStore({ dir: traceDir })
+    const emitter = new TraceEmitter(store, { runId: `${SCENARIO_ID}-${Date.now()}` })
     await recordTrace(emitter, report)
   } catch (error) {
     writeFileSync(resolve(traceDir, 'agent-eval-import-error.json'), `${JSON.stringify({
@@ -761,32 +761,55 @@ async function writeAgentEvalTrace(outputDir: string, report: ChatSandboxE2ERepo
   writeFileSync(resolve(traceDir, 'raw-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8')
 }
 
-async function recordTrace(emitter: TraceEmitterLike, report: ChatSandboxE2EReport): Promise<void> {
+async function recordTrace(emitter: TraceEmitter, report: ChatSandboxE2EReport): Promise<void> {
   await emitter.startRun({
-    suite: report.suite,
-    scenario_id: report.scenario_id,
-    prompt: report.chat_scenario.prompt,
+    scenarioId: report.scenario_id,
+    variantId: report.suite,
+    layer: 'app-runtime',
+    tags: { prompt: report.chat_scenario.prompt.slice(0, 120) },
   })
-  const provision = await emitter.tool({ name: 'local product provisioning', toolName: 'runLocalProductE2E' })
+  const provision = await emitter.tool({
+    name: 'local product provisioning',
+    toolName: 'runLocalProductE2E',
+    args: { suite: report.suite },
+  })
   await provision.end({
-    assertions: report.product.assertions,
-    bot_id: report.chat_scenario.bot_id,
-    sandbox_id: report.chat_scenario.sandbox_id,
+    result: {
+      assertions: report.product.assertions,
+      bot_id: report.chat_scenario.bot_id,
+      sandbox_id: report.chat_scenario.sandbox_id,
+    },
+    latencyMs: 0,
   })
-  const chat = await emitter.tool({ name: 'real chat exchange', toolName: 'operator chat api' })
-  await chat.end({
-    session_id: report.chat_scenario.session_id,
-    transcript: report.chat_scenario.transcript,
+  const chat = await emitter.tool({
+    name: 'real chat exchange',
+    toolName: 'operator chat api',
+    args: { session_id: report.chat_scenario.session_id },
   })
-  const inspect = await emitter.tool({ name: 'sandbox inspection', toolName: 'docker exec' })
-  await inspect.end(report.chat_scenario.sandbox)
+  await chat.end({ result: { transcript: report.chat_scenario.transcript }, latencyMs: 0 })
+  const inspect = await emitter.tool({
+    name: 'sandbox inspection',
+    toolName: 'docker exec',
+    args: { sandbox_id: report.chat_scenario.sandbox_id },
+  })
+  await inspect.end({ result: report.chat_scenario.sandbox, latencyMs: 0 })
+
+  const answersJson = JSON.stringify(report.chat_scenario.answers)
   await emitter.recordArtifact({
-    name: 'scenario answers',
-    mimeType: 'application/json',
-    value: report.chat_scenario.answers,
+    contentType: 'application/json',
+    sizeBytes: Buffer.byteLength(answersJson, 'utf8'),
+    hash: '',
+    inlineContent: answersJson,
   })
+  const pass = report.assertions.every((assertion) => assertion.passed)
+  const notes = report.assertions
+    .filter((assertion) => !assertion.passed)
+    .map((assertion) => `${assertion.name}: ${assertion.detail ?? 'failed'}`)
+    .join('\n')
   await emitter.endRun({
-    status: report.assertions.every((assertion) => assertion.passed) ? 'passed' : 'failed',
-    assertions: report.assertions,
+    pass,
+    score: pass ? 1 : 0,
+    failureClass: pass ? 'success' : 'instruction_following',
+    ...(notes ? { notes } : {}),
   })
 }

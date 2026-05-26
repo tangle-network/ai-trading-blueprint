@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { importAgentEval } from '../lib/agent-eval.js'
+import { validateRunRecord } from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
 import { isoStamp, repoRoot, resolveRepo } from '../lib/repo.js'
 import { createTask, hasBun, statusAndPatch, waitForTerminal } from '../self-improvement/mcp-eval.js'
@@ -239,10 +239,10 @@ function validateAgentStrategyResult(
 }
 
 async function emitRunRecord(summary: AgentStrategyEvalSummary, scenarioId: string): Promise<void> {
-  const agentEval = await importAgentEval().catch(() => null)
-  if (!agentEval) return
+  // (direct imports — agent-eval 0.45)
+  
   mkdirSync(dirname(summary.runs_jsonl), { recursive: true })
-  const record = agentEval.validateRunRecord({
+  const record = validateRunRecord({
     runId: randomUUID(),
     experimentId: summary.suite,
     candidateId: 'sandbox-opencode-strategy-artifact',

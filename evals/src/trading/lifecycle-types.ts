@@ -32,7 +32,13 @@ export interface StrategyRevision {
   turn: number
   userIntent: LifecycleUserIntent
   description: string
-  artifactType: 'harness_config' | 'code_change' | 'research_plan' | 'no_change'
+  // Aligned with agent-eval's `FeedbackArtifactType` so strategy revisions
+  // flow into `createFeedbackTrajectory` attempts without re-mapping:
+  //   plan      = HarnessConfig revision
+  //   code      = source-level change
+  //   research  = research / discovery plan
+  //   decision  = no-op or rollback decision
+  artifactType: 'plan' | 'code' | 'research' | 'decision'
   riskPosture: 'risk_off' | 'balanced' | 'aggressive'
   testsRun: string[]
   backtestScenarioIds: string[]

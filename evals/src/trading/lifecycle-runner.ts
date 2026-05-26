@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { importAgentEval } from '../lib/agent-eval.js'
+import { createFeedbackTrajectory, validateRunRecord } from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
 import { currentCommitSha, runPersonaSuite } from './persona-runner.js'
 import { type PersonaEvalResult } from './persona-types.js'
@@ -412,9 +412,10 @@ function deterministicRevisionDescription(persona: TradingLifecyclePersona, inte
 }
 
 function artifactTypeForIntent(intent: string): StrategyRevision['artifactType'] {
-  if (intent === 'find_new_pairs' || intent === 'unsupported_market_request' || intent === 'profitability_claim_check') return 'research_plan'
-  if (intent === 'rollback_request') return 'no_change'
-  return 'harness_config'
+  // Map trading-lifecycle intents to canonical FeedbackArtifactType values.
+  if (intent === 'find_new_pairs' || intent === 'unsupported_market_request' || intent === 'profitability_claim_check') return 'research'
+  if (intent === 'rollback_request') return 'decision'
+  return 'plan'
 }
 
 function validateLifecycle(
@@ -540,7 +541,7 @@ function errorLabel(source: LifecycleLabel['source'], kind: string, value: strin
 }
 
 async function maybeEmitFeedbackTrajectories(runs: TradingLifecycleRun[], feedbackJsonlPath: string): Promise<void> {
-  const agentEval = await importAgentEval().catch(() => null)
+  // (direct imports — agent-eval 0.45)
   mkdirSync(dirname(feedbackJsonlPath), { recursive: true })
   for (const run of runs) {
     const input = {
@@ -562,16 +563,24 @@ async function maybeEmitFeedbackTrajectories(runs: TradingLifecycleRun[], feedba
         realInfra: revision.realInfra,
         createdAt: new Date().toISOString(),
       })),
+      // LifecycleLabel uses a domain-specific `kind` taxonomy
+      // (`accepted`, `safety_check`, …); agent-eval's FeedbackLabelKind is
+      // a closed enum. Map our taxonomy onto the closest agent-eval kind.
       labels: run.validation.labels.map((label) => ({
-        ...label,
+        source: label.source,
+        kind: mapLifecycleLabelKindToFeedbackKind(label.kind),
+        value: label.value,
+        reason: label.reason,
+        severity: label.severity,
         createdAt: new Date().toISOString(),
+        metadata: { lifecycle_kind: label.kind },
       })),
       metadata: {
         configHash: sha256(run.persona),
         outcome: run.validation,
       },
     }
-    const trajectory = agentEval?.createFeedbackTrajectory ? agentEval.createFeedbackTrajectory(input) : input
+    const trajectory = createFeedbackTrajectory(input)
     appendFileSync(feedbackJsonlPath, `${JSON.stringify(trajectory)}\n`, 'utf8')
   }
 }
@@ -665,4 +674,44 @@ interface RevisionArenaEntry {
 
 function findArenaRevision(arena: RevisionArenaResponse, revisionId: string): RevisionArenaEntry | undefined {
   return arena.revisions.find((revision) => revision.revision_id === revisionId)
+}
+
+/**
+ * Map our domain-specific lifecycle label kinds onto agent-eval's closed
+ * FeedbackLabelKind enum. The lifecycle taxonomy is preserved on the
+ * resulting label's `metadata.lifecycle_kind` so downstream consumers can
+ * recover the original tag.
+ */
+function mapLifecycleLabelKindToFeedbackKind(kind: string): import('@tangle-network/agent-eval').FeedbackLabelKind {
+  switch (kind) {
+    case 'accepted':
+    case 'approved':
+      return 'approve'
+    case 'rejected':
+    case 'failed':
+      return 'reject'
+    case 'selected':
+      return 'select'
+    case 'edited':
+    case 'revised':
+      return 'edit'
+    case 'ranked':
+      return 'rank'
+    case 'rated':
+    case 'scored':
+      return 'rate'
+    case 'comment':
+    case 'note':
+      return 'comment'
+    case 'safety_check':
+    case 'policy_violation':
+    case 'blocked':
+      return 'policy_block'
+    case 'metric_outcome':
+    case 'gate_result':
+    case 'live_blocked':
+      return 'metric_outcome'
+    default:
+      return 'comment'
+  }
 }
