@@ -170,7 +170,14 @@ async fn get_candles_multi_bot(
     Ok(Json(GetCandlesResponse { candles, total }))
 }
 
-// ── Fetch historical candles from Binance public API ───────────────────
+// ── Fetch historical candles from a configurable source ────────────────
+//
+// `source` (optional): one of "hyperliquid", "binance" (default), "coinbase".
+// Aliases like "hl"/"cb" and "_perp"/"_spot" suffixes also resolve. Each
+// source is implemented in `trading_runtime::candle_sources` and pages
+// against its venue's published endpoint (no auth required for any of them).
+// Strategies that execute on Hyperliquid should backfill from `hyperliquid`
+// — their native fills are what the backtest needs to model.
 
 #[derive(Deserialize)]
 pub struct FetchHistoricalRequest {
@@ -179,6 +186,11 @@ pub struct FetchHistoricalRequest {
     pub interval: String,
     #[serde(default = "default_fetch_limit")]
     pub limit: u32,
+    /// Optional venue id. Defaults to `binance` for backwards compatibility
+    /// with the prior single-source endpoint. Pass `"hyperliquid"` to pull
+    /// HL native candles, or `"coinbase"` for the US-regulated reference.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 fn default_interval() -> String {
@@ -238,18 +250,27 @@ async fn fetch_historical_inner(
     let limit = req.limit.min(5000);
     let interval = parse_interval(&req.interval)?;
 
+    // Dispatch: explicit source overrides the historical Binance default.
+    let source = match req.source.as_deref() {
+        None | Some("") => trading_runtime::candle_sources::Source::Binance,
+        Some(name) => trading_runtime::candle_sources::Source::parse(name)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?,
+    };
+
     let mut fetched = std::collections::HashMap::new();
     let mut total_stored = 0;
 
     for token in &req.tokens {
-        let candles = trading_runtime::backtest::fetch_candles(token, interval, limit)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Fetch failed for {token}: {e}"),
-                )
-            })?;
+        let candles = trading_runtime::candle_sources::fetch_from_source(
+            source, token, interval, limit,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Fetch failed for {token} from {}: {e}", source.name()),
+            )
+        })?;
 
         let stored: Vec<StoredCandle> = candles
             .iter()
