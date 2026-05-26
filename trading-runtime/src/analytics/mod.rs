@@ -32,18 +32,16 @@ pub mod walk_forward;
 
 /// Deterministic xorshift64* PRNG. Returns `u64` in one step.
 ///
-/// We use this instead of pulling `rand` because bootstrap + Monte Carlo
-/// + evolution only need a uniform `usize`-indexing source; `rand`'s
-/// feature surface (entropy sources, distribution types) is overkill.
-/// Period `2^64 - 1` — fine for the sample sizes we'll hand it.
-pub struct Xorshift64(pub u64);
+/// Used by bootstrap CI and Monte Carlo shuffles. Strategy-orchestration
+/// loops (evolutionary search, reflective improvement) live in agent-eval —
+/// not here — so this PRNG stays crate-private.
+pub(crate) struct Xorshift64(pub(crate) u64);
 
-#[allow(clippy::should_implement_trait)] // `next` here is the PRNG step, not Iterator::next
 impl Xorshift64 {
-    pub fn from_seed(seed: u64) -> Self {
+    pub(crate) fn from_seed(seed: u64) -> Self {
         Self(seed.wrapping_add(0x9E3779B97F4A7C15))
     }
-    pub fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         let mut s = self.0;
         s ^= s << 13;
         s ^= s >> 7;
@@ -51,7 +49,7 @@ impl Xorshift64 {
         self.0 = s;
         s
     }
-    pub fn index(&mut self, len: usize) -> usize {
+    pub(crate) fn index(&mut self, len: usize) -> usize {
         debug_assert!(len > 0);
         (self.next() as usize) % len
     }
