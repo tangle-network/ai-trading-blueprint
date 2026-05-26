@@ -783,6 +783,12 @@ contract TradingVault is IERC7575, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function setAdminUnwindMaxDrawdownBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        // H-1 fix (2026-04-19 audit): the storage value 0 silently falls back to
+        // DEFAULT_ADMIN_UNWIND_MAX_DRAWDOWN_BPS via adminUnwindDrawdownCap(), but
+        // an admin must never be able to *intentionally* set 0 here — that
+        // would read as "I deliberately removed the drawdown protection" while
+        // looking benign on-chain. Force every explicit set to be a real bound.
+        if (bps == 0 || bps > 10000) revert InvalidBps();
         VaultAdminLib.setAdminUnwindMaxDrawdownBps(bps);
     }
 
