@@ -25,9 +25,8 @@ use crate::backtest::Interval;
 use crate::error::TradingError;
 
 const DRIFT_BASE: &str = "https://data.api.drift.trade";
-// Drift's data API doesn't document an explicit per-request cap. 5000 is a
-// safe-by-experience batch; pagination walks startTs backward.
-const MAX_BARS_PER_PAGE: u32 = 5_000;
+// Drift's data API rejects limit > 1000 with a 400 ValidationError.
+const MAX_BARS_PER_PAGE: u32 = 1_000;
 
 #[derive(Debug, Deserialize)]
 struct DriftCandlesResponse {

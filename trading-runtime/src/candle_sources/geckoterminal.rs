@@ -103,7 +103,15 @@ pub async fn fetch_pool(
     let mut before_ts: Option<i64> = None;
     let mut remaining = limit;
 
+    // Free tier ~30 requests / minute; throttle to be a good citizen.
+    let mut request_count = 0u32;
     while remaining > 0 {
+        if request_count > 0 {
+            // Small inter-request delay (1.2s) keeps us safely under the
+            // documented free-tier rate limit even on aggressive backfills.
+            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        }
+        request_count += 1;
         let page_size = remaining.min(MAX_BARS_PER_PAGE);
         let mut url = format!(
             "{GECKO_BASE}/networks/{network}/pools/{pool_address}/ohlcv/{tf}?aggregate={aggregate}&limit={page_size}",
