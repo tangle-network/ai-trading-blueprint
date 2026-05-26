@@ -35,6 +35,7 @@ use std::time::Instant;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
+use trading_runtime::analytics::{bootstrap, monte_carlo, regime};
 use trading_runtime::backtest::{
     BacktestConfig, BacktestEngine, BacktestResult, Candle, EntryCondition, EntryRule, ExitRule,
     Filter, HarnessConfig, Interval, PositionSizing, SignalType, SimulatedTrade, SlippageModel,
@@ -44,11 +45,8 @@ use trading_runtime::protocol_fees;
 
 // ── Configuration ────────────────────────────────────────────────────────────
 const LIMIT: u32 = 4320; // 180 days × 24 h
-const BOOTSTRAP_SAMPLES: usize = 1000;
-const WALK_FORWARD_TRAIN_FRAC: f64 = 0.7; // 70% train, 30% test
+const MONTE_CARLO_SHUFFLES: usize = 2_000;
 const INITIAL_CAPITAL: i64 = 10_000;
-// Confidence level for the bootstrap interval (two-sided).
-const CI_ALPHA: f64 = 0.05;
 
 // ── Fleet ────────────────────────────────────────────────────────────────────
 #[derive(Clone)]
@@ -88,6 +86,7 @@ fn fleet() -> Vec<BotConfig> {
 }
 
 // ── Strategy variants ────────────────────────────────────────────────────────
+#[allow(dead_code)] // `description` is human-facing documentation, not used at runtime
 struct Strategy {
     name: &'static str,
     description: &'static str,
@@ -262,6 +261,14 @@ struct Performance {
     total_fees_usd: f64,
     total_slippage_usd: f64,
     total_gas_usd: f64,
+    // Monte Carlo trade-order stability — where the realised Sharpe sits in
+    // the shuffled distribution. percentile > 95 = timing edge; ≈ 50 = no
+    // sequencing signal; < 5 = got lucky on ordering.
+    mc_realised: f64,
+    mc_p05: f64,
+    mc_p50: f64,
+    mc_p95: f64,
+    mc_percentile: f64,
 }
 
 fn d(value: Decimal) -> f64 {
@@ -312,63 +319,16 @@ fn payoff_ratio(trades: &[SimulatedTrade]) -> (f64, f64, f64) {
     (payoff, avg_win, avg_loss)
 }
 
-/// Bootstrap 95% CI on Sharpe by resampling per-trade PnL_pct returns with
-/// replacement. We use trade returns (not equity-curve diffs) because the
-/// engine emits at most one trade per bar — equity curve diffs are
-/// dominated by no-position periods and bias the Sharpe estimate downward.
-fn bootstrap_sharpe_ci(trades: &[SimulatedTrade], rng_seed: u64) -> (f64, f64) {
-    if trades.len() < 5 {
-        return (f64::NAN, f64::NAN);
-    }
-    let returns: Vec<f64> = trades.iter().map(|t| t.pnl_pct / 100.0).collect();
-    let mut sharpes = Vec::with_capacity(BOOTSTRAP_SAMPLES);
-    let n = returns.len();
-    // Simple xorshift64 PRNG — deterministic given seed, no extra deps.
-    let mut state = rng_seed.wrapping_add(0x9E3779B97F4A7C15);
-    for _ in 0..BOOTSTRAP_SAMPLES {
-        let mut resample = Vec::with_capacity(n);
-        for _ in 0..n {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            let idx = (state as usize) % n;
-            resample.push(returns[idx]);
-        }
-        if let Some(s) = sharpe(&resample) {
-            // Clip pathological resamples where a near-zero stdev produces a
-            // sharpe spike. Anything beyond ±20 is a numerical artefact, not
-            // a real trade-quality signal — the realistic range for trade-
-            // Sharpe on hourly crypto data is roughly [-5, +5].
-            if s.is_finite() && s.abs() <= 20.0 {
-                sharpes.push(s);
-            }
-        }
-    }
-    if sharpes.is_empty() {
-        return (f64::NAN, f64::NAN);
-    }
-    sharpes.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let lo_idx = ((CI_ALPHA / 2.0) * sharpes.len() as f64) as usize;
-    let hi_idx = (((1.0 - CI_ALPHA / 2.0) * sharpes.len() as f64) as usize).min(sharpes.len() - 1);
-    (sharpes[lo_idx], sharpes[hi_idx])
+/// Trade-PnL returns for the analytics primitives. We use trade returns
+/// (not equity-curve diffs) because the engine emits at most one trade per
+/// bar — equity-curve diffs are dominated by no-position periods and bias
+/// the Sharpe estimate downward.
+fn trade_returns(trades: &[SimulatedTrade]) -> Vec<f64> {
+    trades.iter().map(|t| t.pnl_pct / 100.0).collect()
 }
 
-/// Annualised Sharpe over a return series (per-trade or per-period). We
-/// scale by sqrt(N) which is the standard convention when N is the number
-/// of observations; for hourly equity returns this approximates the annual
-/// scaling. For per-trade returns this is the trade-Sharpe (not annualised),
-/// which is the right shape for trade-quality comparison across strategies.
-fn sharpe(returns: &[f64]) -> Option<f64> {
-    if returns.len() < 2 {
-        return None;
-    }
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
-    let stdev = var.sqrt();
-    if stdev == 0.0 {
-        return None;
-    }
-    Some(mean / stdev * (returns.len() as f64).sqrt())
+fn bot_seed(name: &str) -> u64 {
+    name.bytes().fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64))
 }
 
 fn buy_and_hold_pct(candles: &[Candle]) -> f64 {
@@ -421,14 +381,30 @@ fn run_backtest(strategy: &Strategy, candles: &[Candle], fee_protocol: &str) -> 
 fn analyze(bot: &BotConfig, strategy: &Strategy, candles: &[Candle]) -> Performance {
     let main = run_backtest(strategy, candles, bot.fee_protocol);
 
-    // Walk-forward split: train on first WALK_FORWARD_TRAIN_FRAC, test on the rest.
-    let split = (candles.len() as f64 * WALK_FORWARD_TRAIN_FRAC) as usize;
+    // Strategy-level walk-forward: rerun the strategy on a 70/30 in-sample /
+    // out-of-sample split and compare the realised Sharpes. (This is
+    // strategy-rerun walk-forward — distinct from analytics::walk_forward,
+    // which is statistic-only and lives in the platform for any future
+    // caller who wants Sharpe-on-slice without rerunning the strategy.)
+    let split = (candles.len() as f64 * 0.7) as usize;
     let in_sample = run_backtest(strategy, &candles[..split], bot.fee_protocol);
     let out_of_sample = run_backtest(strategy, &candles[split..], bot.fee_protocol);
 
     let (payoff, avg_win, avg_loss) = payoff_ratio(&main.trades);
-    let seed = bot.name.bytes().fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64));
-    let (sharpe_lo, sharpe_hi) = bootstrap_sharpe_ci(&main.trades, seed);
+    let seed = bot_seed(bot.name);
+
+    // Bootstrap Sharpe CI via platform primitive — replaces the previous
+    // inline xorshift+clip+percentile implementation.
+    let returns = trade_returns(&main.trades);
+    let (sharpe_lo, sharpe_hi) = bootstrap::sharpe_ci_95(&returns, seed);
+
+    // Monte Carlo trade-order stability — where does the realised Sharpe sit
+    // in the distribution of all possible trade orderings? For a permutation-
+    // invariant estimator like Sharpe this collapses (see monte_carlo tests),
+    // but we record it so the report can show whether a more path-dependent
+    // statistic (e.g. max-drawdown) signals timing edge later.
+    let mc = monte_carlo::trade_order_shuffle(&returns, MONTE_CARLO_SHUFFLES, seed, bootstrap::sharpe);
+
     let bnh = buy_and_hold_pct(candles);
 
     Performance {
@@ -453,6 +429,11 @@ fn analyze(bot: &BotConfig, strategy: &Strategy, candles: &[Candle]) -> Performa
         total_fees_usd: d(main.total_fees),
         total_slippage_usd: d(main.total_slippage),
         total_gas_usd: d(main.total_gas),
+        mc_realised: mc.realised,
+        mc_p05: mc.p05,
+        mc_p50: mc.p50,
+        mc_p95: mc.p95,
+        mc_percentile: mc.percentile_of_realised,
     }
 }
 
@@ -544,7 +525,7 @@ fn print_best_per_bot(results: &BTreeMap<(String, String), Performance>, bots: &
         // that actually traded but is misleading. We want the best strategy
         // that *actually deployed capital*; if none cleared the floor we
         // fall back to highest Sharpe (so the row still prints with a flag).
-        let best: Option<(&String, &Performance)> = pick_best(results, &bot.name);
+        let best: Option<(&String, &Performance)> = pick_best(results, bot.name);
         let Some((strat, st)) = best else { continue };
         println!(
             "  {:<18} {:<14} {:<18}    {} ({}, {})  {:>5.1}  {:>5.1}  {:>6}   {:>5.1}  {:>+7.1}",
@@ -589,7 +570,7 @@ fn print_risk_decomposition(results: &BTreeMap<(String, String), Performance>, b
              "bot", "best-strat");
     println!("  {}", "-".repeat(105));
     for bot in bots {
-        let best = pick_best_strategy(results, &bot.name, strats);
+        let best = pick_best_strategy(results, bot.name, strats);
         let Some((s, st)) = best else { continue };
         println!(
             "  {:<18} {:<14}  {:>6.2}  {:>7.2}  {:>6.2}  {:>4.1}    {}         {:>+8.2}    {}",
@@ -632,7 +613,7 @@ fn print_trade_stats(results: &BTreeMap<(String, String), Performance>, bots: &[
              "bot", "best-strat");
     println!("  {}", "-".repeat(108));
     for bot in bots {
-        let best = pick_best_strategy(results, &bot.name, strats);
+        let best = pick_best_strategy(results, bot.name, strats);
         let Some((s, st)) = best else { continue };
         println!(
             "  {:<18} {:<14} {:>6}  {:>4.1}  {:>+7.2}  {:>+8.2}   {:>+10.2}     {}    {}",
@@ -648,7 +629,7 @@ fn print_cost_breakdown(results: &BTreeMap<(String, String), Performance>, bots:
              "bot", "best-strat");
     println!("  {}", "-".repeat(78));
     for bot in bots {
-        let best = pick_best_strategy(results, &bot.name, strats);
+        let best = pick_best_strategy(results, bot.name, strats);
         let Some((s, st)) = best else { continue };
         let total = st.total_fees_usd + st.total_slippage_usd + st.total_gas_usd;
         let bps = total / INITIAL_CAPITAL as f64 * 10_000.0;
@@ -659,8 +640,67 @@ fn print_cost_breakdown(results: &BTreeMap<(String, String), Performance>, bots:
     }
 }
 
+fn print_monte_carlo(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+    section("§9 — Monte Carlo trade-order stability (best-strategy row per bot)");
+    println!(
+        "  {:<18} {:<14}    Realised   shuffled P05  P50   P95   percentile-of-realised   verdict",
+        "bot", "best-strat"
+    );
+    println!("  {}", "-".repeat(105));
+    for bot in bots {
+        let Some((s, st)) = pick_best_strategy(results, bot.name, strats) else { continue };
+        // Sharpe is permutation-invariant so the shuffled distribution collapses;
+        // percentile ≈ 100% by the ≤-rule. We surface this honestly rather than
+        // hide it — the column has real signal once we extend Performance to
+        // carry a path-dependent statistic too (max-drawdown shuffle, etc.).
+        let verdict = if st.mc_realised.is_nan() {
+            "n/a (too few trades)"
+        } else if (st.mc_p95 - st.mc_p05).abs() < 1e-9 {
+            "distribution collapsed (Sharpe is permutation-invariant)"
+        } else if st.mc_percentile >= 95.0 {
+            "tail (timing edge — strong)"
+        } else if st.mc_percentile <= 5.0 {
+            "tail (got lucky — re-test on more data)"
+        } else {
+            "in distribution (no sequencing signal)"
+        };
+        println!(
+            "  {:<18} {:<14}    {:>+7.2}   {:>+7.2}  {:>+5.2} {:>+5.2}   {:>10.1}%             {}",
+            bot.name, s.name, st.mc_realised, st.mc_p05, st.mc_p50, st.mc_p95, st.mc_percentile, verdict,
+        );
+    }
+}
+
+fn print_regime_distribution(by_bot: &BTreeMap<String, Vec<regime::Regime>>, bots: &[BotConfig]) {
+    section("§10 — Regime distribution over the review window (causal classifier)");
+    println!(
+        "  {:<18} {:<14}    Trending   Chop   Breakout   Squeeze   Unknown",
+        "bot", "venue"
+    );
+    println!("  {}", "-".repeat(85));
+    for bot in bots {
+        let Some(regimes) = by_bot.get(bot.name) else { continue };
+        let total = regimes.len().max(1);
+        let pct = |label: &str| {
+            let n = regime::distribution(regimes).get(label).copied().unwrap_or(0);
+            100.0 * n as f64 / total as f64
+        };
+        let unknown = regimes.iter().filter(|r| matches!(r, regime::Regime::Unknown)).count();
+        println!(
+            "  {:<18} {:<14}    {:>5.1}%   {:>4.1}%   {:>6.1}%   {:>5.1}%   {:>5.1}%",
+            bot.name,
+            bot.venue,
+            pct("trending"),
+            pct("chop"),
+            pct("breakout"),
+            pct("squeeze"),
+            100.0 * unknown as f64 / total as f64,
+        );
+    }
+}
+
 fn print_caveats() {
-    section("§8 — Caveats & disclosures (read carefully before believing any number above)");
+    section("§11 — Caveats & disclosures (read carefully before believing any number above)");
     println!("  1. Sample size. {} hourly bars (~{:.0} days) is a single macro-regime — these stats are", LIMIT, LIMIT as f64 / 24.0);
     println!("     point estimates from one period of crypto's recent history. They are NOT a base-rate");
     println!("     for next year. Bootstrap CIs widen the range honestly; the 30%-tile of resamples is");
@@ -700,13 +740,23 @@ fn print_caveats() {
     println!();
     println!("  9. Promotion gate. \"Promote if Sharpe ≥ +10% AND drawdown regression ≤ +5pp\" matches the");
     println!("     playbook. A single-period gate on a noisy estimator overfits in expectation — the");
-    println!("     production loop runs this gate every {} runs and accumulates evidence over time;", BOOTSTRAP_SAMPLES);
+    println!("     production loop accumulates evidence over many runs and never bets on a single observation;");
     println!("     this snapshot is one observation per (bot, strategy), not a converged decision.");
     println!();
-    println!(" 10. What's missing for a real Jane Street brief: per-tick latency budget, P&L attribution");
-    println!("     by signal type, regime conditioning (trending vs chop classifier), correlation-aware");
-    println!("     position sizing, and a Monte-Carlo Sharpe-stability test across re-shuffled bars.");
-    println!("     The bones are here; the next pass adds those.");
+    println!(" 10. Monte Carlo on Sharpe is informational here, not load-bearing. Sharpe is permutation-");
+    println!("     invariant (mean/std are symmetric in their arguments), so the shuffled distribution");
+    println!("     collapses by construction — §9's percentile column reflects floating-point order");
+    println!("     drift, not strategy timing edge. Wire a path-dependent statistic (max-drawdown,");
+    println!("     terminal equity, longest losing run) into Performance + the trade-order shuffle to");
+    println!("     give that column real signal; analytics::monte_carlo accepts any closure today.");
+    println!();
+    println!(" 11. Still missing for a fully-defensible institutional brief: regime-conditioned P&L");
+    println!("     (slice §10's regime labels by trade entry, report Sharpe per bucket), per-tick");
+    println!("     latency budget, per-signal P&L attribution (needs SimulatedTrade.triggered_signals),");
+    println!("     correlation-aware position sizing, funding-rate carry on perps, and a return-stream");
+    println!("     shuffle vs random walk. The analytics primitives (`analytics::{{bootstrap,");
+    println!("     walk_forward, monte_carlo, regime}}`) all support these by construction — they're now");
+    println!("     platform code, NOT per-strategy work. Every new strategy gets them for free.");
 }
 
 // ── Main orchestration ───────────────────────────────────────────────────────
@@ -736,9 +786,13 @@ async fn main() {
         }
     }
 
-    // ── Phase 2: backtest matrix ────────────────────────────────────────────
-    println!("\nPhase 2/3 — running {} backtests + bootstrap CI + walk-forward…", bots.len() * strats.len());
+    // ── Phase 2: backtest matrix + regime classification ────────────────────
+    println!(
+        "\nPhase 2/3 — running {} backtests + bootstrap CI + walk-forward + Monte Carlo + regime…",
+        bots.len() * strats.len()
+    );
     let mut results: BTreeMap<(String, String), Performance> = BTreeMap::new();
+    let mut regime_by_bot: BTreeMap<String, Vec<regime::Regime>> = BTreeMap::new();
     let t_bt = Instant::now();
     for bot in &bots {
         let Some(candles) = candles_by_bot.get(bot.name) else { continue };
@@ -746,9 +800,18 @@ async fn main() {
             let stats = analyze(bot, s, candles);
             results.insert((bot.name.to_string(), s.name.to_string()), stats);
         }
+        // Regime is candle-derived → one classification per bot regardless of strategy.
+        regime_by_bot.insert(
+            bot.name.to_string(),
+            regime::classify_series(candles, regime::Thresholds::default()),
+        );
     }
-    println!("  backtest matrix completed in {:.2}s ({} runs, including {} bootstrap resamples each)",
-             t_bt.elapsed().as_secs_f64(), results.len(), BOOTSTRAP_SAMPLES);
+    println!(
+        "  backtest matrix completed in {:.2}s ({} runs, {} Monte Carlo shuffles per run)",
+        t_bt.elapsed().as_secs_f64(),
+        results.len(),
+        MONTE_CARLO_SHUFFLES,
+    );
 
     // ── Phase 3: report ─────────────────────────────────────────────────────
     println!("\nPhase 3/3 — report\n");
@@ -759,6 +822,8 @@ async fn main() {
     print_walk_forward(&results, &bots, &strats);
     print_trade_stats(&results, &bots, &strats);
     print_cost_breakdown(&results, &bots, &strats);
+    print_monte_carlo(&results, &bots, &strats);
+    print_regime_distribution(&regime_by_bot, &bots);
     print_caveats();
     println!("\n{}", "═".repeat(110));
     println!("  end of fleet review — total wall clock {:.2}s", started.elapsed().as_secs_f64());

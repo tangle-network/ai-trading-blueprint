@@ -1,5 +1,6 @@
 pub mod aave_v3_registry;
 pub mod adapters;
+pub mod analytics;
 pub mod backtest;
 pub mod calldata_decoder;
 pub mod candle_sources;
