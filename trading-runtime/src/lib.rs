@@ -2,6 +2,7 @@ pub mod aave_v3_registry;
 pub mod adapters;
 pub mod backtest;
 pub mod calldata_decoder;
+pub mod candle_sources;
 pub mod chain;
 #[allow(clippy::too_many_arguments)]
 pub mod contracts;
