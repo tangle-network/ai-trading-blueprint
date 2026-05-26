@@ -18,7 +18,8 @@
     "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",
     "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
     "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit",
-    "eval:harness-self-improve": "npm run build:evals --silent && node dist/evals/bin/harness-self-improve-eval.js"
+    "eval:harness-self-improve": "npm run build:evals --silent && node dist/evals/bin/harness-self-improve-eval.js",
+    "eval:per-bot-self-improve": "npm run build:evals --silent && node dist/evals/bin/per-bot-self-improve-eval.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
