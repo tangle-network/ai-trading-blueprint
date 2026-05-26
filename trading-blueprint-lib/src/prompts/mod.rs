@@ -310,8 +310,15 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         _ => MULTI_FRAGMENT,
     };
 
+    // Splice the canonical protocol fee schedule into every system prompt so
+    // the agent reasons with venue-specific fees + minimum-notional floors at
+    // its core. The runtime fee gate (gate_min_notional in protocol_fees)
+    // enforces the same table — the prompt makes the responsibility explicit
+    // upstream so trades are never sized below the floor in the first place.
+    let fee_schedule = trading_runtime::protocol_fees::render_agent_context();
+
     format!(
-        "{base}\n## Strategy\n{strategy_fragment}\n\n{SELF_IMPROVEMENT_BLOCK}\n\n{MEMORY_BLOCK}"
+        "{base}\n## Strategy\n{strategy_fragment}\n\n{fee_schedule}\n\n{SELF_IMPROVEMENT_BLOCK}\n\n{MEMORY_BLOCK}"
     )
 }
 
