@@ -5,16 +5,15 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Existing tag to (re)build a release for'
-        required: true
+      tag: { description: 'Existing tag to (re)build', required: true }
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: ${{ vars.BINARY_NAME || 'trading-blueprint' }}
+  # This repo ships multiple blueprints — build + host every operator binary.
+  BINARIES: "trading-blueprint trading-instance-blueprint trading-tee-instance-blueprint trading-validator"
   TARGET: x86_64-unknown-linux-gnu
 
 jobs:
@@ -24,35 +23,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
-
       - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        run: cargo build --release --bin "$BINARY_NAME"
-
-      - name: Package archive + checksum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build all blueprint binaries
         run: |
-          BIN="target/release/${BINARY_NAME}"
-          test -f "$BIN" || { echo "::error::binary not found: $BIN"; exit 1; }
-          strip "$BIN" 2>/dev/null || true
-          ARCHIVE="${BINARY_NAME}-${TARGET}.tar.xz"
-          tar -cJf "$ARCHIVE" -C target/release "$BINARY_NAME"
-          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          cat "${ARCHIVE}.sha256"
-
+          ARGS=""; for b in $BINARIES; do ARGS="$ARGS --bin $b"; done
+          cargo build --release $ARGS
+      - name: Package each binary + checksum
+        run: |
+          FILES=""
+          for b in $BINARIES; do
+            BIN="target/release/$b"
+            test -f "$BIN" || { echo "::error::missing $BIN"; exit 1; }
+            strip "$BIN" 2>/dev/null || true
+            A="${b}-${TARGET}.tar.xz"
+            tar -cJf "$A" -C target/release "$b"
+            sha256sum "$A" > "${A}.sha256"; cat "${A}.sha256"
+            FILES="$FILES $A ${A}.sha256"
+          done
+          echo "FILES=$FILES" >> "$GITHUB_ENV"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binary \`${TARGET}\`. Verify: sha256sum -c ${ARCHIVE}.sha256"
-          gh release upload "$TAG" "$ARCHIVE" "${ARCHIVE}.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binaries (${TARGET}): $BINARIES"
+          gh release upload "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --clobber
