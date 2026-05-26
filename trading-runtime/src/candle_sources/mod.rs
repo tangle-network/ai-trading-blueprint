@@ -28,17 +28,31 @@ use crate::backtest::{Interval, fetch_candles as binance_fetch};
 use crate::error::TradingError;
 
 pub mod coinbase;
+pub mod drift;
+pub mod geckoterminal;
 pub mod hyperliquid;
+pub mod polymarket;
 
 /// Canonical candle-data venue. Strings are case-insensitive on parse so
 /// `target_protocol` values like `"hyperliquid_perp"` resolve to the same
 /// source as `"hyperliquid"` (we strip the `_perp` / `_spot` suffix).
+///
+/// Adding a venue: implement `async fn fetch(symbol, interval, limit) ->
+/// Result<Vec<Candle>>`, add a variant here + arms in `name`/`parse`/
+/// `fetch_from_source`. Per-pool / per-network venues (subgraphs etc.) can
+/// use the `"network:POOL_OR_SYMBOL"` symbol convention modelled by
+/// `geckoterminal::fetch` so the dispatch signature stays uniform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     Hyperliquid,
     Binance,
     Coinbase,
+    Drift,
+    Polymarket,
+    /// Multi-DEX aggregator across 100+ networks. Pass `token` as
+    /// `"network:POOL_OR_SYMBOL"` (e.g. `"base:ETH"`, `"eth:0x88e6…"`).
+    GeckoTerminal,
 }
 
 impl Source {
@@ -47,6 +61,9 @@ impl Source {
             Self::Hyperliquid => "hyperliquid",
             Self::Binance => "binance",
             Self::Coinbase => "coinbase",
+            Self::Drift => "drift",
+            Self::Polymarket => "polymarket",
+            Self::GeckoTerminal => "geckoterminal",
         }
     }
 
@@ -62,23 +79,45 @@ impl Source {
             "hyperliquid" | "hl" => Ok(Self::Hyperliquid),
             "binance" => Ok(Self::Binance),
             "coinbase" | "cb" => Ok(Self::Coinbase),
+            "drift" => Ok(Self::Drift),
+            "polymarket" | "poly" => Ok(Self::Polymarket),
+            "geckoterminal" | "gecko" | "gt" => Ok(Self::GeckoTerminal),
             other => Err(format!(
-                "unknown candle source '{other}' — expected one of: hyperliquid, binance, coinbase"
+                "unknown candle source '{other}' — expected one of: hyperliquid, binance, coinbase, drift, polymarket, geckoterminal"
             )),
         }
     }
 
     /// Best-default source for a given `target_protocol` id. The strategy's
-    /// own venue wins when we have it (Hyperliquid perp → HL candles); CEX
-    /// fallbacks cover EVM / Solana DEXs where we don't yet have a native
-    /// candle stream wired.
+    /// own venue wins when we have it; CEX fallbacks cover the rest.
+    ///
+    /// | protocol prefix | source |
+    /// |---|---|
+    /// | hyperliquid* | Hyperliquid |
+    /// | drift, solana* | Drift |
+    /// | polymarket | Polymarket |
+    /// | uniswap*, pancakeswap*, curve, aerodrome, jupiter | GeckoTerminal (caller supplies network:pool) |
+    /// | gmx_v2, vertex | Binance (closest CEX reference for the perp universe) |
+    /// | binance, coinbase, * | Binance |
     pub fn default_for_protocol(protocol: &str) -> Self {
         let key = protocol.trim().to_ascii_lowercase();
         if key.starts_with("hyperliquid") {
             return Self::Hyperliquid;
         }
-        // Binance covers ETH / BTC / SOL / ARB / etc. — the standard universe
-        // a momentum / mm strategy will reference even when executing on a DEX.
+        if key == "drift" || key.starts_with("solana") {
+            return Self::Drift;
+        }
+        if key == "polymarket" {
+            return Self::Polymarket;
+        }
+        if key.starts_with("uniswap")
+            || key.starts_with("pancakeswap")
+            || key == "curve"
+            || key == "aerodrome"
+            || key == "jupiter"
+        {
+            return Self::GeckoTerminal;
+        }
         Self::Binance
     }
 }
@@ -95,6 +134,9 @@ pub async fn fetch_from_source(
         Source::Hyperliquid => hyperliquid::fetch(symbol, interval, limit).await,
         Source::Binance => binance_fetch(symbol, interval, limit).await,
         Source::Coinbase => coinbase::fetch(symbol, interval, limit).await,
+        Source::Drift => drift::fetch(symbol, interval, limit).await,
+        Source::Polymarket => polymarket::fetch(symbol, interval, limit).await,
+        Source::GeckoTerminal => geckoterminal::fetch(symbol, interval, limit).await,
     }
 }
 
@@ -139,8 +181,30 @@ mod tests {
             Source::default_for_protocol("hyperliquid"),
             Source::Hyperliquid
         );
-        // DEX / generic protocols → Binance for the broadest universe
-        assert_eq!(Source::default_for_protocol("uniswap_v3"), Source::Binance);
+        assert_eq!(Source::default_for_protocol("drift"), Source::Drift);
+        assert_eq!(Source::default_for_protocol("polymarket"), Source::Polymarket);
+        // DEX adapters → GeckoTerminal (caller passes network:pool)
+        assert_eq!(
+            Source::default_for_protocol("uniswap_v3"),
+            Source::GeckoTerminal
+        );
+        assert_eq!(
+            Source::default_for_protocol("pancakeswap_v3"),
+            Source::GeckoTerminal
+        );
+        assert_eq!(Source::default_for_protocol("aerodrome"), Source::GeckoTerminal);
+        // Yield / unmodeled venues fall back to Binance for the broadest universe
         assert_eq!(Source::default_for_protocol("aave_v3"), Source::Binance);
+        assert_eq!(Source::default_for_protocol("gmx_v2"), Source::Binance);
+    }
+
+    #[test]
+    fn parses_new_sources() {
+        assert_eq!(Source::parse("drift").unwrap(), Source::Drift);
+        assert_eq!(Source::parse("polymarket").unwrap(), Source::Polymarket);
+        assert_eq!(Source::parse("poly").unwrap(), Source::Polymarket);
+        assert_eq!(Source::parse("geckoterminal").unwrap(), Source::GeckoTerminal);
+        assert_eq!(Source::parse("gecko").unwrap(), Source::GeckoTerminal);
+        assert_eq!(Source::parse("gt").unwrap(), Source::GeckoTerminal);
     }
 }
