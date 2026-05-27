@@ -35,6 +35,33 @@ export type SignalType =
   | { type: 'sma_cross'; short_period: number; long_period: number }
   | { type: 'price_momentum'; lookback_candles: number }
   | { type: 'atr_breakout'; period: number; multiplier: number }
+  | { type: 'mean_reversion'; lookback_candles: number; z_score_threshold: number }
+  | { type: 'macd'; fast_period: number; slow_period: number; signal_period: number }
+  | { type: 'bollinger_band'; period: number; std_dev: number }
+
+export type Filter =
+  | { type: 'volatility_gate'; min_atr_pct: number; max_atr_pct: number; period: number }
+  | { type: 'time_filter'; skip_hours: number[] }
+  | { type: 'min_volume'; threshold: string }
+
+/** A candle row, wire-shape-compatible with the Rust `Candle` struct.
+ *  Decimals are JSON strings (rust_decimal's default serde wire format). */
+export interface Candle {
+  timestamp: number
+  token: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
+/** A funding-rate sample, wire-compatible with Rust `FundingSnapshot`. */
+export interface FundingSnapshot {
+  timestamp: number
+  token: string
+  rate: string
+}
 
 export type EntryCondition =
   | { type: 'below'; threshold: number }
