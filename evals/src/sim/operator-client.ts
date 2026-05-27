@@ -35,6 +35,13 @@ export type StrategyType = 'yield' | 'prediction' | 'perp' | 'dex'
 export interface OperatorClientConfig {
   operatorUrl: string
   token: string
+  /** Epoch seconds when `token` expires. If omitted, refresh is disabled and
+   *  expired tokens will surface as 401. Supplied by `authenticate()`. */
+  tokenExpiresAt?: number
+  /** Callback to acquire a fresh token. Used when the current token is within
+   *  60s of expiry, OR when a request returns 401 with PASETO ClaimValidation.
+   *  Returns the new token + its expiry. `authenticate()` wires this for you. */
+  refreshToken?: () => Promise<{ token: string; expiresAt: number }>
   timeoutMs?: number
   pollIntervalMs?: number
   fetchImpl?: typeof fetch
@@ -94,7 +101,9 @@ export class OperatorApiError extends Error {
 
 export class OperatorClient {
   private readonly url: string
-  private readonly token: string
+  private token: string
+  private tokenExpiresAt: number
+  private readonly refreshFn: (() => Promise<{ token: string; expiresAt: number }>) | undefined
   private readonly timeoutMs: number
   private readonly pollIntervalMs: number
   private readonly fetchImpl: typeof fetch
@@ -102,9 +111,31 @@ export class OperatorClient {
   constructor(cfg: OperatorClientConfig) {
     this.url = cfg.operatorUrl.replace(/\/$/, '')
     this.token = cfg.token
+    // If no expiry passed, assume the token is fresh enough that proactive
+    // refresh isn't needed; falls back to reactive refresh on 401.
+    this.tokenExpiresAt = cfg.tokenExpiresAt ?? Number.MAX_SAFE_INTEGER
+    this.refreshFn = cfg.refreshToken
     this.timeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.pollIntervalMs = cfg.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     this.fetchImpl = cfg.fetchImpl ?? fetch
+  }
+
+  /** Refresh the token if within 60s of expiry. No-op if no refresh callback
+   *  was wired in (e.g. tests). Called before every request. */
+  private async ensureFreshToken(): Promise<void> {
+    if (!this.refreshFn) return
+    const nowSec = Date.now() / 1000
+    if (nowSec + 60 < this.tokenExpiresAt) return
+    const fresh = await this.refreshFn()
+    this.token = fresh.token
+    this.tokenExpiresAt = fresh.expiresAt
+  }
+
+  /** Re-auth and retry once on 401. The operator-api uses PASETO tokens that
+   *  return 401 "PASETO decryption failed: ClaimValidation" when expired —
+   *  surface that as a transparent refresh so multi-hour campaigns don't die. */
+  private isAuthExpired(status: number, body: string): boolean {
+    return status === 401 && /PASETO|ClaimValidation|expired|unauthorized/i.test(body)
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────
@@ -114,67 +145,100 @@ export class OperatorClient {
   static async authenticate(operatorUrl: string, privateKey: string, opts: { fetchImpl?: typeof fetch } = {}): Promise<OperatorClient> {
     const base = operatorUrl.replace(/\/$/, '')
     const fetchImpl = opts.fetchImpl ?? fetch
-    const challengeRes = await fetchImpl(`${base}/api/auth/challenge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-    if (!challengeRes.ok) {
-      throw new OperatorApiError('POST', '/api/auth/challenge', challengeRes.status, await challengeRes.text())
+    // The challenge+sign+session dance; reusable so the client can refresh
+    // its token mid-campaign without forcing the caller to re-construct.
+    const doAuth = async (): Promise<{ token: string; expiresAt: number }> => {
+      const challengeRes = await fetchImpl(`${base}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!challengeRes.ok) {
+        throw new OperatorApiError('POST', '/api/auth/challenge', challengeRes.status, await challengeRes.text())
+      }
+      const challenge = (await challengeRes.json()) as { nonce: string; message: string }
+      const signProc = spawnSync('cast', ['wallet', 'sign', '--private-key', privateKey, challenge.message], {
+        encoding: 'utf8',
+      })
+      if (signProc.status !== 0) throw new Error(`cast wallet sign failed: ${signProc.stderr}`)
+      const sessionRes = await fetchImpl(`${base}/api/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nonce: challenge.nonce, signature: signProc.stdout.trim() }),
+      })
+      if (!sessionRes.ok) {
+        throw new OperatorApiError('POST', '/api/auth/session', sessionRes.status, await sessionRes.text())
+      }
+      const session = (await sessionRes.json()) as { token: string; expires_at: number }
+      // expires_at is epoch seconds.
+      return { token: session.token, expiresAt: session.expires_at }
     }
-    const challenge = (await challengeRes.json()) as { nonce: string; message: string }
-    const signProc = spawnSync('cast', ['wallet', 'sign', '--private-key', privateKey, challenge.message], {
-      encoding: 'utf8',
+    const first = await doAuth()
+    return new OperatorClient({
+      operatorUrl,
+      token: first.token,
+      tokenExpiresAt: first.expiresAt,
+      refreshToken: doAuth,
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     })
-    if (signProc.status !== 0) throw new Error(`cast wallet sign failed: ${signProc.stderr}`)
-    const sessionRes = await fetchImpl(`${base}/api/auth/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nonce: challenge.nonce, signature: signProc.stdout.trim() }),
-    })
-    if (!sessionRes.ok) {
-      throw new OperatorApiError('POST', '/api/auth/session', sessionRes.status, await sessionRes.text())
-    }
-    const session = (await sessionRes.json()) as { token: string; expires_at: number }
-    return new OperatorClient({ operatorUrl, token: session.token, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) })
   }
 
   // ── Core HTTP (exposed so bot-artifacts.ts can probe arbitrary
   //    operator-api paths without having to re-implement auth+timeout). ──
 
   async post<T>(path: string, body: unknown): Promise<T> {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
-    try {
-      const res = await this.fetchImpl(`${this.url}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      })
-      const text = await res.text()
-      if (!res.ok) throw new OperatorApiError('POST', path, res.status, text)
-      return (text ? JSON.parse(text) : {}) as T
-    } finally {
-      clearTimeout(timer)
+    await this.ensureFreshToken()
+    const send = async (): Promise<{ status: number; text: string }> => {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
+      try {
+        const res = await this.fetchImpl(`${this.url}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        })
+        return { status: res.status, text: await res.text() }
+      } finally {
+        clearTimeout(timer)
+      }
     }
+    let { status, text } = await send()
+    if (this.isAuthExpired(status, text) && this.refreshFn) {
+      const fresh = await this.refreshFn()
+      this.token = fresh.token
+      this.tokenExpiresAt = fresh.expiresAt
+      ;({ status, text } = await send())
+    }
+    if (status < 200 || status >= 300) throw new OperatorApiError('POST', path, status, text)
+    return (text ? JSON.parse(text) : {}) as T
   }
 
   async get<T>(path: string): Promise<T> {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
-    try {
-      const res = await this.fetchImpl(`${this.url}${path}`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${this.token}` },
-        signal: ctrl.signal,
-      })
-      const text = await res.text()
-      if (!res.ok) throw new OperatorApiError('GET', path, res.status, text)
-      return (text ? JSON.parse(text) : {}) as T
-    } finally {
-      clearTimeout(timer)
+    await this.ensureFreshToken()
+    const send = async (): Promise<{ status: number; text: string }> => {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
+      try {
+        const res = await this.fetchImpl(`${this.url}${path}`, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${this.token}` },
+          signal: ctrl.signal,
+        })
+        return { status: res.status, text: await res.text() }
+      } finally {
+        clearTimeout(timer)
+      }
     }
+    let { status, text } = await send()
+    if (this.isAuthExpired(status, text) && this.refreshFn) {
+      const fresh = await this.refreshFn()
+      this.token = fresh.token
+      this.tokenExpiresAt = fresh.expiresAt
+      ;({ status, text } = await send())
+    }
+    if (status < 200 || status >= 300) throw new OperatorApiError('GET', path, status, text)
+    return (text ? JSON.parse(text) : {}) as T
   }
 
   // ── Bot lifecycle ─────────────────────────────────────────────────────
